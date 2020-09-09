@@ -33,12 +33,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
+/**
+ * 增强了jdk原生的 future对象
+ * @param <V>
+ */
 public abstract class BaseFuture<V> implements Future<V> {
 
     private static final String BLOCKING_OP_REASON = "Blocking operation";
 
     /**
      * Synchronization control for AbstractFutures.
+     * 同步队列的实现类 用于实现线程安全
      */
     private final Sync<V> sync = new Sync<>();
 
@@ -191,6 +196,7 @@ public abstract class BaseFuture<V> implements Future<V> {
      * <p>
      * We don't use the integer argument passed between acquire methods so we
      * pass around a -1 everywhere.
+     * 这个哈皮把jdk的 Sync代码拷贝了一遍
      */
     static final class Sync<V> extends AbstractQueuedSynchronizer {
         /* Valid states. */
@@ -232,6 +238,7 @@ public abstract class BaseFuture<V> implements Future<V> {
                 ExecutionException, InterruptedException {
 
             // Attempt to acquire the shared lock with a timeout.
+            // 尝试获取节点的数据 直到超时
             if (!tryAcquireSharedNanos(-1, nanos)) {
                 throw new TimeoutException("Timeout waiting for task.");
             }
@@ -257,17 +264,21 @@ public abstract class BaseFuture<V> implements Future<V> {
          * Implementation of the actual value retrieval.  Will return the value
          * on success, an exception on failure, a cancellation on cancellation, or
          * an illegal state if the synchronizer is in an invalid state.
+         * 获取设置到future的数据
          */
         private V getValue() throws CancellationException, ExecutionException {
             int state = getState();
             switch (state) {
                 case COMPLETED:
+                    // 代表是以异常形式终止的
                     if (exception != null) {
                         throw new ExecutionException(exception);
                     } else {
+                        // 获取设置到future的值
                         return value;
                     }
 
+                    // 本次future对象被关闭 无法正常获取数据
                 case CANCELLED:
                     throw new CancellationException("Task was cancelled.");
 
@@ -300,6 +311,7 @@ public abstract class BaseFuture<V> implements Future<V> {
 
         /**
          * Transition to the COMPLETED state and set the exception.
+         * 将异常作为结果设置到future上
          */
         boolean setException(Throwable t) {
             return complete(null, t, COMPLETED);
@@ -335,6 +347,7 @@ public abstract class BaseFuture<V> implements Future<V> {
             } else if (getState() == COMPLETING) {
                 // If some other thread is currently completing the future, block until
                 // they are done so we can guarantee completion.
+                // 阻塞等待其他线程设置完结果
                 acquireShared(-1);
             }
             return doCompletion;

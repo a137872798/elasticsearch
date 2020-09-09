@@ -26,8 +26,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * An extension to {@link Future} allowing for simplified "get" operations.
- *
- *
+ * 拓展了JDK 原生的 future
  */
 public interface ActionFuture<T> extends Future<T> {
 
@@ -42,8 +41,12 @@ public interface ActionFuture<T> extends Future<T> {
      * Similar to {@link #get(long, java.util.concurrent.TimeUnit)}, just catching the {@link InterruptedException} and throwing
      * an {@link IllegalStateException} instead. Also catches
      * {@link java.util.concurrent.ExecutionException} and throws the actual cause instead.
+     *
+     * 支持传入超时时间
      */
     T actionGet(String timeout);
+
+    // 下面几种api可以理解为 actionGet(String timeout)的变种
 
     /**
      * Similar to {@link #get(long, java.util.concurrent.TimeUnit)}, just catching the {@link InterruptedException} and throwing

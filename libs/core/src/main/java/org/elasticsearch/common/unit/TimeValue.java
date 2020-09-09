@@ -23,6 +23,9 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 用于描述时间单位
+ */
 public class TimeValue implements Comparable<TimeValue> {
 
     /** How many nano-seconds in one milli-second */
@@ -39,7 +42,14 @@ public class TimeValue implements Comparable<TimeValue> {
     private static final long C5 = C4 * 60L;
     private static final long C6 = C5 * 24L;
 
+    /**
+     * 时间的数值
+     */
     private final long duration;
+
+    /**
+     * 描述时间单位
+     */
     private final TimeUnit timeUnit;
 
     public TimeValue(long millis) {
@@ -95,6 +105,8 @@ public class TimeValue implements Comparable<TimeValue> {
     public long duration() {
         return duration;
     }
+
+    // 下面的api是设置时间 以及单位转换
 
     public long nanos() {
         return timeUnit.toNanos(duration);
