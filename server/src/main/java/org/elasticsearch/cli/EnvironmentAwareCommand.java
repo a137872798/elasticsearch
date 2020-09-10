@@ -60,6 +60,12 @@ public abstract class EnvironmentAwareCommand extends Command {
         this.settingOption = parser.accepts("E", "Configure a setting").withRequiredArg().ofType(KeyValuePair.class);
     }
 
+    /**
+     * 启动es时 触发该方法
+     * @param terminal
+     * @param options
+     * @throws Exception
+     */
     @Override
     protected void execute(Terminal terminal, OptionSet options) throws Exception {
         final Map<String, String> settings = new HashMap<>();
@@ -79,6 +85,7 @@ public abstract class EnvironmentAwareCommand extends Command {
             settings.put(kvp.key, kvp.value);
         }
 
+        // 某些属性如果未在 命令行中解析出来 就尝试从系统变量中解析出来  反之如果重复设置就抛出异常
         putSystemPropertyIfSettingIsMissing(settings, "path.data", "es.path.data");
         putSystemPropertyIfSettingIsMissing(settings, "path.home", "es.path.home");
         putSystemPropertyIfSettingIsMissing(settings, "path.logs", "es.path.logs");
@@ -86,20 +93,30 @@ public abstract class EnvironmentAwareCommand extends Command {
         execute(terminal, options, createEnv(settings));
     }
 
-    /** Create an {@link Environment} for the command to use. Overrideable for tests. */
+    /**
+     * Create an {@link Environment} for the command to use. Overrideable for tests.
+     * 通过此时获取的配置参数初始化环境对象
+     */
     protected Environment createEnv(final Map<String, String> settings) throws UserException {
         return createEnv(Settings.EMPTY, settings);
     }
 
-    /** Create an {@link Environment} for the command to use. Overrideable for tests. */
+    /**
+     * Create an {@link Environment} for the command to use. Overrideable for tests.
+     * @param baseSettings 存储默认配置
+     * @param settings 本次新增的配置信息 用于初始化环境对象
+     */
     protected final Environment createEnv(final Settings baseSettings, final Map<String, String> settings) throws UserException {
+        // 从配置文件中读取参数用于初始化
         final String esPathConf = System.getProperty("es.path.conf");
         if (esPathConf == null) {
             throw new UserException(ExitCodes.CONFIG, "the system property [es.path.conf] must be set");
         }
         return InternalSettingsPreparer.prepareEnvironment(baseSettings, settings,
+            // 将文件名转换成一个路径对象
             getConfigPath(esPathConf),
             // HOSTNAME is set by elasticsearch-env and elasticsearch-env.bat so it is always available
+            // 获取此时的主机名  本进程会作为一个node启动 该host就是节点的地址  该属性会通过批程序设置 所以一定能获取到
             () -> System.getenv("HOSTNAME"));
     }
 

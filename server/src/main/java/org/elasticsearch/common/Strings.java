@@ -46,7 +46,10 @@ import java.util.function.Supplier;
 import static java.util.Collections.unmodifiableSet;
 import static org.elasticsearch.common.util.set.Sets.newHashSet;
 
-public class Strings {
+/**
+ * string的静态工具类
+ */
+public final class Strings {
 
     public static final String[] EMPTY_ARRAY = new String[0];
 
@@ -258,6 +261,7 @@ public class Strings {
      * @param str       the original string (or StringBuilder)
      * @param index     the index in the original string to start matching against
      * @param substring the substring to match at the given index
+     *                  仅从当前首个字符开始匹配  如果首个字符匹配失败 则不继续尝试
      */
     public static boolean substringMatch(CharSequence str, int index, CharSequence substring) {
         for (int j = 0; j < substring.length(); j++) {

@@ -43,7 +43,7 @@ import java.util.stream.Collectors;
 
 /**
  * The environment of where things exists.
- * 包含ES相关的环境信息
+ * 包含ES相关的环境信息  从这里可以获取各种想要的配置
  */
 @SuppressForbidden(reason = "configures paths for the system")
 // TODO: move PathUtils to be package-private here instead of

@@ -27,7 +27,7 @@ import java.util.Set;
 
 /**
  * An accessor for settings which are securely stored. See {@link SecureSetting}.
- * 某些配置是加密过的
+ * 代表这些配置项重要性比较高 会进行加密
  */
 public interface SecureSettings extends Closeable {
 

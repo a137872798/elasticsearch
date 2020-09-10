@@ -52,9 +52,12 @@ class Elasticsearch extends EnvironmentAwareCommand {
     private final OptionSpec<Path> pidfileOption;
     private final OptionSpecBuilder quietOption;
 
-    // visible for testing
+    /**
+     * 在 main方法中会创建Elasticsearch 实例
+     */
     Elasticsearch() {
         super("Starts Elasticsearch", () -> {}); // we configure logging later so we override the base class from configuring logging
+        // 这里是命令行相关的 先忽略
         versionOption = parser.acceptsAll(Arrays.asList("V", "version"),
             "Prints Elasticsearch version information and exits");
         daemonizeOption = parser.acceptsAll(Arrays.asList("d", "daemonize"),
@@ -95,12 +98,15 @@ class Elasticsearch extends EnvironmentAwareCommand {
         // TODO log4j相关的骚操作还是先忽略吧
         LogConfigurator.registerErrorListener();
         final Elasticsearch elasticsearch = new Elasticsearch();
+        // 启动mian函数
         int status = main(args, elasticsearch, Terminal.DEFAULT);
+        // 代表启动失败了
         if (status != ExitCodes.OK) {
             final String basePath = System.getProperty("es.logs.base_path");
             // It's possible to fail before logging has been configured, in which case there's no point
             // suggesting that the user look in the log file.
             if (basePath != null) {
+                // 将异常信息输出到控制台
                 Terminal.DEFAULT.errorPrintln(
                     "ERROR: Elasticsearch did not exit normally - check the logs at "
                         + basePath
@@ -132,6 +138,14 @@ class Elasticsearch extends EnvironmentAwareCommand {
         }
     }
 
+    /**
+     * es  会通过该函数启动
+     * @param args
+     * @param elasticsearch  启动的实例
+     * @param terminal  描述终端类型 分为 控制台和system
+     * @return
+     * @throws Exception
+     */
     static int main(final String[] args, final Elasticsearch elasticsearch, final Terminal terminal) throws Exception {
         return elasticsearch.main(args, terminal);
     }

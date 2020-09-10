@@ -47,16 +47,18 @@ public class InternalSettingsPreparer {
     /**
      * Prepares the settings by gathering all elasticsearch system properties, optionally loading the configuration settings.
      *
-     * @param input      the custom settings to use; these are not overwritten by settings in the configuration file
-     * @param properties map of properties key/value pairs (usually from the command-line)
-     * @param configPath path to config directory; (use null to indicate the default)
-     * @param defaultNodeName supplier for the default node.name if the setting isn't defined
+     * @param input      the custom settings to use; these are not overwritten by settings in the configuration file   基础配置信息
+     * @param properties map of properties key/value pairs (usually from the command-line)    从cli中解析出的配置信息
+     * @param configPath path to config directory; (use null to indicate the default)   配置文件地址
+     * @param defaultNodeName supplier for the default node.name if the setting isn't defined  获取当前应用所在的hostName 并会作为nodeName
      * @return the {@link Environment}
      */
     public static Environment prepareEnvironment(Settings input, Map<String, String> properties,
             Path configPath, Supplier<String> defaultNodeName) {
         // just create enough settings to build the environment, to get the config dir
+        // 创建一个生成 settings的builder对象
         Settings.Builder output = Settings.builder();
+        // 将基础配置 以及从cli中解析出来的配置合并
         initializeSettings(output, input, properties);
         Environment environment = new Environment(output.build(), configPath);
 
@@ -89,13 +91,15 @@ public class InternalSettingsPreparer {
      * Initializes the builder with the given input settings, and applies settings from the specified map (these settings typically come
      * from the command line).
      *
-     * @param output the settings builder to apply the input and default settings to
-     * @param input the input settings
-     * @param esSettings a map from which to apply settings
+     * @param output the settings builder to apply the input and default settings to   用于整合2个配置
+     * @param input the input settings         基础配置
+     * @param esSettings a map from which to apply settings        从cli中解析出来的配置
      */
     static void initializeSettings(final Settings.Builder output, final Settings input, final Map<String, String> esSettings) {
         output.put(input);
+        // 将map中的数据填充到 settings中
         output.putProperties(esSettings, Function.identity());
+        // 如果配置项中存在占位符 将占位符替换成实际的参数值
         output.replacePropertyPlaceholders();
     }
 

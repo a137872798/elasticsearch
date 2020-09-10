@@ -61,15 +61,24 @@ public abstract class Command implements Closeable {
 
     private Thread shutdownHookThread;
 
-    /** Parses options for this command from args and executes it. */
+    /**
+     * 解析cli参数 并完成初始化
+     * @param args
+     * @param terminal
+     * @return
+     * @throws Exception
+     */
     public final int main(String[] args, Terminal terminal) throws Exception {
+        // 默认情况下需要追加终结钩子
         if (addShutdownHook()) {
 
+            // 该线程会在进程终止时执行
             shutdownHookThread = new Thread(() -> {
                 try {
                     this.close();
                 } catch (final IOException e) {
                     try (
+                        // 当出现异常时 将信息输出到终端
                         StringWriter sw = new StringWriter();
                         PrintWriter pw = new PrintWriter(sw)) {
                         e.printStackTrace(pw);
@@ -84,6 +93,7 @@ public abstract class Command implements Closeable {
             Runtime.getRuntime().addShutdownHook(shutdownHookThread);
         }
 
+        // 执行前置函数  默认情况下是 NOOP
         beforeMain.run();
 
         try {
@@ -107,10 +117,12 @@ public abstract class Command implements Closeable {
 
     /**
      * Executes the command, but all errors are thrown.
+     * 解析命令行参数 并根据获取的 option运行程序
      */
     void mainWithoutErrorHandling(String[] args, Terminal terminal) throws Exception {
         final OptionSet options = parser.parse(args);
 
+        // 代表本次输入的命令行是帮助相关的信息
         if (options.has(helpOption)) {
             printHelp(terminal, false);
             return;
@@ -124,6 +136,7 @@ public abstract class Command implements Closeable {
             terminal.setVerbosity(Terminal.Verbosity.NORMAL);
         }
 
+        // 运行程序
         execute(terminal, options);
     }
 
@@ -170,6 +183,10 @@ public abstract class Command implements Closeable {
         return shutdownHookThread;
     }
 
+    /**
+     * 默认情况下 终止程序不会执行任何逻辑
+     * @throws IOException
+     */
     @Override
     public void close() throws IOException {
 

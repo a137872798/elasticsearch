@@ -38,6 +38,7 @@ import java.util.Locale;
  * which allows {@link #println(Verbosity,String)} calls which act like a logger,
  * only actually printing if the verbosity level of the terminal is above
  * the verbosity of the message.
+ * 代表一个从命令行读取/写入数据的终端
 */
 public abstract class Terminal {
 
@@ -207,6 +208,9 @@ public abstract class Terminal {
         this.getErrorWriter().flush();
     }
 
+    /**
+     * 从控制台输入/将数据输出到控制台
+     */
     private static class ConsoleTerminal extends Terminal {
 
         private static final Console CONSOLE = System.console();
@@ -235,7 +239,9 @@ public abstract class Terminal {
         }
     }
 
-    /** visible for testing */
+    /**
+     * 从系统标准输入流读取数据 或者将输出写出到标准输出流
+     */
     static class SystemTerminal extends Terminal {
 
         private static final PrintWriter WRITER = newWriter();

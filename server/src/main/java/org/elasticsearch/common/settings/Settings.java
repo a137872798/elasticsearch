@@ -84,10 +84,16 @@ public final class Settings implements ToXContentFragment {
 
     public static final Settings EMPTY = new Builder().build();
 
-    /** The raw settings from the full key to raw string value. */
+    /**
+     * The raw settings from the full key to raw string value.
+     * 将配置信息以 K,V的形式存储
+     * */
     private final Map<String, Object> settings;
 
-    /** The secure settings storage associated with these settings. */ // 代表一组加密数据  value 应该都是byte[]
+    /**
+     * The secure settings storage associated with these settings.
+     * 安全性要求比较高的配置 一般加密使用 比如密码
+     * */
     private final SecureSettings secureSettings;
 
     /** The first level of setting names. This is constructed lazily in {@link #names()}. */ // SetOnce只可以调用一次set 之后调用会抛出异常
@@ -113,6 +119,7 @@ public final class Settings implements ToXContentFragment {
 
     /**
      * Retrieve the secure settings in these settings.
+     * 加密的配置项
      */
     SecureSettings getSecureSettings() {
         // pkg private so it can only be accessed by local subclasses of SecureSetting
@@ -791,7 +798,13 @@ public final class Settings implements ToXContentFragment {
             return secureSettings.get();
         }
 
+        /**
+         * 设置加密项配置
+         * @param secureSettings
+         * @return
+         */
         public Builder setSecureSettings(SecureSettings secureSettings) {
+            // 在存储加密项配置时 必须要求已经加载完毕
             if (secureSettings.isLoaded() == false) {
                 throw new IllegalStateException("Secure settings must already be loaded");
             }
@@ -1022,6 +1035,7 @@ public final class Settings implements ToXContentFragment {
 
         /**
          * Sets all the provided settings including secure settings
+         * 将传入的settings的配置信息拷贝到当前对象
          */
         public Builder put(Settings settings) {
             return put(settings, true);
@@ -1030,10 +1044,12 @@ public final class Settings implements ToXContentFragment {
         /**
          * Sets all the provided settings.
          * @param settings the settings to set
-         * @param copySecureSettings if <code>true</code> all settings including secure settings are copied.
+         * @param copySecureSettings if <code>true</code> all settings including secure settings are copied.  加密配置项也进行拷贝
          */
         public Builder put(Settings settings, boolean copySecureSettings) {
             Map<String, Object> settingsMap = new HashMap<>(settings.settings);
+
+            // 处理遗留参数  先忽略
             processLegacyLists(settingsMap);
             map.putAll(settingsMap);
             if (copySecureSettings && settings.getSecureSettings() != null) {
@@ -1042,11 +1058,13 @@ public final class Settings implements ToXContentFragment {
             return this;
         }
 
+
         private void processLegacyLists(Map<String, Object> map) {
             String[] array = map.keySet().toArray(new String[map.size()]);
             for (String key : array) {
                 if (key.endsWith(".0")) { // let's only look at the head of the list and convert in order starting there.
                     int counter = 0;
+                    // 获取 .0 前面的部分
                     String prefix = key.substring(0, key.lastIndexOf('.'));
                     if (map.containsKey(prefix)) {
                         throw new IllegalStateException("settings builder can't contain values for [" + prefix + "=" + map.get(prefix)
@@ -1121,6 +1139,12 @@ public final class Settings implements ToXContentFragment {
             return this;
         }
 
+        /**
+         * 将map的属性填充到 settings中
+         * @param esSettings
+         * @param keyFunction   对key做一层映射后存储
+         * @return
+         */
         public Builder putProperties(final Map<String, String> esSettings, final Function<String, String> keyFunction) {
             for (final Map.Entry<String, String> esSetting : esSettings.entrySet()) {
                 final String key = esSetting.getKey();
@@ -1133,21 +1157,29 @@ public final class Settings implements ToXContentFragment {
          * Runs across all the settings set on this builder and
          * replaces {@code ${...}} elements in each setting with
          * another setting already set on this builder.
+         * 处理占位符
          */
         public Builder replacePropertyPlaceholders() {
             return replacePropertyPlaceholders(System::getenv);
         }
 
-        // visible for testing
+        /**
+         * 处理占位符
+         * @param getenv  尝试从系统环境中获取配置项信息
+         * @return
+         */
         Builder replacePropertyPlaceholders(Function<String, String> getenv) {
             PropertyPlaceholder propertyPlaceholder = new PropertyPlaceholder("${", "}", false);
+            // 该对象定义了如何处理占位符
             PropertyPlaceholder.PlaceholderResolver placeholderResolver = new PropertyPlaceholder.PlaceholderResolver() {
                 @Override
                 public String resolvePlaceholder(String placeholderName) {
+                    // 优先从环境变量中获取
                     final String value = getenv.apply(placeholderName);
                     if (value != null) {
                         return value;
                     }
+                    // 其次尝试从其他配置中获取 当然其他配置中同样可能存在占位符 这是一个循环的关系
                     return Settings.toString(map.get(placeholderName));
                 }
 
@@ -1163,16 +1195,19 @@ public final class Settings implements ToXContentFragment {
             };
 
             Iterator<Map.Entry<String, Object>> entryItr = map.entrySet().iterator();
+            // 遍历每个配置项 并检测是否存在占位符
             while (entryItr.hasNext()) {
                 Map.Entry<String, Object> entry = entryItr.next();
                 if (entry.getValue() == null) {
                     // a null value obviously can't be replaced
                     continue;
                 }
+                // 当配置项是一个list时 迭代进行处理
                 if (entry.getValue() instanceof List) {
                     final ListIterator<String> li = ((List<String>) entry.getValue()).listIterator();
                     while (li.hasNext()) {
                         final String settingValueRaw = li.next();
+                        // 检测是否存在占位符 并进行替换
                         final String settingValueResolved = propertyPlaceholder.replacePlaceholders(settingValueRaw, placeholderResolver);
                         li.set(settingValueResolved);
                     }
