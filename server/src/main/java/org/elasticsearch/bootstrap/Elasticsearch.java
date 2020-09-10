@@ -42,9 +42,11 @@ import java.util.Locale;
 
 /**
  * This class starts elasticsearch.
+ * 该对象是整个es的入口 主要的引导逻辑则交给  Bootstrap
  */
 class Elasticsearch extends EnvironmentAwareCommand {
 
+    // 命令行解析器 通过joptsimple框架实现
     private final OptionSpecBuilder versionOption;
     private final OptionSpecBuilder daemonizeOption;
     private final OptionSpec<Path> pidfileOption;
@@ -71,9 +73,12 @@ class Elasticsearch extends EnvironmentAwareCommand {
 
     /**
      * Main entry point for starting elasticsearch
+     * 这个主函数是用于启动es的
      */
     public static void main(final String[] args) throws Exception {
+        // 尝试检测有关dns缓存失效时间的配置是否设置 并写入到Security中
         overrideDnsCachePolicyProperties();
+        // TODO 系统安全的先忽略吧
         /*
          * We want the JVM to think there is a security manager installed so that if internal policy decisions that would be based on the
          * presence of a security manager or lack thereof act as if there is a security manager present (e.g., DNS cache policy). This
@@ -87,6 +92,7 @@ class Elasticsearch extends EnvironmentAwareCommand {
             }
 
         });
+        // TODO log4j相关的骚操作还是先忽略吧
         LogConfigurator.registerErrorListener();
         final Elasticsearch elasticsearch = new Elasticsearch();
         int status = main(args, elasticsearch, Terminal.DEFAULT);
@@ -106,6 +112,10 @@ class Elasticsearch extends EnvironmentAwareCommand {
         }
     }
 
+    /**
+     * 这里在尝试加载dns缓存的配置信息 可能因为这个配置属于安全系数比较高的配置 并且要作用它 就要设置到 Security中
+     * 当安全管理器校验失败时 会抛出运行时异常
+     */
     private static void overrideDnsCachePolicyProperties() {
         for (final String property : new String[] {"networkaddress.cache.ttl", "networkaddress.cache.negative.ttl" }) {
             final String overrideProperty = "es." + property;

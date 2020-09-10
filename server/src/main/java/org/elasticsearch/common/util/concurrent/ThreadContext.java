@@ -78,7 +78,7 @@ import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_MAX_WARN
  *     }
  *     // previous context is restored on StoredContext#close()
  * </pre>
- *
+ * 描述线程状态的上下文对象 可以将自身信息写入到一个输出流中
  */
 public final class ThreadContext implements Writeable {
 

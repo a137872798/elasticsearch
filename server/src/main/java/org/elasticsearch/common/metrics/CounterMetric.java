@@ -21,8 +21,14 @@ package org.elasticsearch.common.metrics;
 
 import java.util.concurrent.atomic.LongAdder;
 
+/**
+ * 计数器对象
+ */
 public class CounterMetric implements Metric {
 
+    /**
+     * 支持并发累加
+     */
     private final LongAdder counter = new LongAdder();
 
     public void inc() {

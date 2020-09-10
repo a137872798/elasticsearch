@@ -66,11 +66,15 @@ import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_MAX_HEAD
 
 /**
  * Task Manager service for keeping track of currently running tasks on the nodes
+ * 任务管理器
  */
 public class TaskManager implements ClusterStateApplier {
 
     private static final Logger logger = LogManager.getLogger(TaskManager.class);
 
+    /**
+     * 代表每个任务最多等待多长时间
+     */
     private static final TimeValue WAIT_FOR_COMPLETION_POLL = timeValueMillis(100);
 
     /** Rest headers that are copied to the task */

@@ -62,6 +62,9 @@ import java.util.stream.Collectors;
 import static java.util.Collections.unmodifiableMap;
 import static java.util.Map.entry;
 
+/**
+ * 该对象实现了 ReportingService 接口  可以获取到描述该线程池的信息
+ */
 public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
 
     private static final Logger logger = LogManager.getLogger(ThreadPool.class);
@@ -84,6 +87,9 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         public static final String FETCH_SHARD_STORE = "fetch_shard_store";
     }
 
+    /**
+     * 标识了线程池的类型
+     */
     public enum ThreadPoolType {
         DIRECT("direct"),
         FIXED("fixed"),
@@ -103,6 +109,11 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         private static final Map<String, ThreadPoolType> TYPE_MAP =
             Arrays.stream(ThreadPoolType.values()).collect(Collectors.toUnmodifiableMap(ThreadPoolType::getType, Function.identity()));
 
+        /**
+         * 通过描述类型的字符串 查询枚举
+         * @param type
+         * @return
+         */
         public static ThreadPoolType fromType(String type) {
             ThreadPoolType threadPoolType = TYPE_MAP.get(type);
             if (threadPoolType == null) {
@@ -112,6 +123,9 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         }
     }
 
+    /**
+     * 这里好像是为特殊的操作指定了线程池类型
+     */
     public static final Map<String, ThreadPoolType> THREAD_POOL_TYPES = Map.ofEntries(
         entry(Names.SAME, ThreadPoolType.DIRECT),
         entry(Names.GENERIC, ThreadPoolType.SCALING),
@@ -131,24 +145,49 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
 
     private final Map<String, ExecutorHolder> executors;
 
+    /**
+     * 描述有关该线程池的所有信息
+     */
     private final ThreadPoolInfo threadPoolInfo;
 
+    /**
+     * 定期维护当前纳秒/毫秒的线程
+     */
     private final CachedTimeThread cachedTimeThread;
 
+    /**
+     * 直接线程池 实际上就是用本线程执行任务 不借助额外线程
+     */
     static final ExecutorService DIRECT_EXECUTOR = EsExecutors.newDirectExecutorService();
 
+    /**
+     * 描述线程池上下文的对象
+     */
     private final ThreadContext threadContext;
 
+    /**
+     * 缓存了基于不同的线程池类型 使用的builder对象 builder对象中存储了线程池相关的属性
+     */
     @SuppressWarnings("rawtypes")
     private final Map<String, ExecutorBuilder> builders;
 
+    /**
+     * jdk定时器
+     */
     private final ScheduledThreadPoolExecutor scheduler;
 
+    /**
+     * 返回此时所有的builder信息
+     * @return
+     */
     @SuppressWarnings("rawtypes")
     public Collection<ExecutorBuilder> builders() {
         return Collections.unmodifiableCollection(builders.values());
     }
 
+    /**
+     * 一个时间类型的配置常量   预估的时间间隔???
+     */
     public static Setting<TimeValue> ESTIMATED_TIME_INTERVAL_SETTING =
         Setting.timeSetting("thread_pool.estimated_time_interval",
             TimeValue.timeValueMillis(200), TimeValue.ZERO, Setting.Property.NodeScope);
@@ -488,12 +527,22 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
      * {@link System#nanoTime()} and {@link System#currentTimeMillis()}.
      *
      * The values are updated at a specified interval.
+     * 用于缓存当前时间的线程
      */
     static class CachedTimeThread extends Thread {
 
+        /**
+         * 每次更新时间的间隔
+         */
         final long interval;
         volatile boolean running = true;
+        /**
+         * 当前纳秒
+         */
         volatile long relativeNanos;
+        /**
+         * 当前毫秒
+         */
         volatile long absoluteMillis;
 
         CachedTimeThread(String name, long interval) {
@@ -535,6 +584,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
 
         @Override
         public void run() {
+            // 沉睡间隔时间后 更新 毫秒/纳秒
             while (running && 0 < interval) {
                 relativeNanos = System.nanoTime();
                 absoluteMillis = System.currentTimeMillis();
@@ -548,6 +598,9 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         }
     }
 
+    /**
+     * 包装了线程池和信息对象
+     */
     static class ExecutorHolder {
         private final ExecutorService executor;
         public final Info info;
@@ -563,6 +616,9 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         }
     }
 
+    /**
+     * 描述线程池的信息
+     */
     public static class Info implements Writeable, ToXContentFragment {
 
         private final String name;
@@ -589,8 +645,15 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
             this.queueSize = queueSize;
         }
 
+        /**
+         * 该对象支持使用一个 数据流进行初始化
+         * @param in
+         * @throws IOException
+         */
         public Info(StreamInput in) throws IOException {
+            // 读取基于UTF8存储的数据
             name = in.readString();
+            // 将字符串转换成线程池类型
             type = ThreadPoolType.fromType(in.readString());
             min = in.readInt();
             max = in.readInt();
@@ -598,6 +661,11 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
             queueSize = in.readOptionalWriteable(SizeValue::new);
         }
 
+        /**
+         * 将自身信息写入到输出流中
+         * @param out
+         * @throws IOException
+         */
         @Override
         public void writeTo(StreamOutput out) throws IOException {
             out.writeString(name);

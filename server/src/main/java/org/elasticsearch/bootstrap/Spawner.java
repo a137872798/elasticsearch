@@ -43,7 +43,7 @@ final class Spawner implements Closeable {
 
     /*
      * References to the processes that have been spawned, so that we can destroy them.
-     * 这个对象是用于控制java进程的
+     * 这个对象是用于控制java进程的   看来加入到该列表中的对象还会是 Closeable的子类 所以在close中可以强转
      */
     private final List<Process> processes = new ArrayList<>();
     private AtomicBoolean spawned = new AtomicBoolean();

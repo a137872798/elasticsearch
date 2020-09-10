@@ -30,6 +30,7 @@ import java.util.List;
  * Base class for executor builders.
  *
  * @param <U> the underlying type of the executor settings
+ *           该对象负责构建线程池   泛型U代表某种具体的线程池对应的配置项
  */
 public abstract class ExecutorBuilder<U extends ExecutorBuilder.ExecutorSettings> {
 
@@ -43,6 +44,12 @@ public abstract class ExecutorBuilder<U extends ExecutorBuilder.ExecutorSettings
         return name;
     }
 
+    /**
+     * 生成配置名
+     * @param prefix
+     * @param key
+     * @return
+     */
     protected static String settingsKey(final String prefix, final String key) {
         return String.join(".", prefix, key);
     }
@@ -87,6 +94,9 @@ public abstract class ExecutorBuilder<U extends ExecutorBuilder.ExecutorSettings
      */
     abstract String formatInfo(ThreadPool.Info info);
 
+    /**
+     * 描述线程池配置的对象
+     */
     abstract static class ExecutorSettings {
 
         protected final String nodeName;

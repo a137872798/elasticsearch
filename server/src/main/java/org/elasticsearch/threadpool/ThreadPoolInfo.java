@@ -29,18 +29,38 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 
+/**
+ * 返回描述线程池的一组信息
+ */
 public class ThreadPoolInfo implements ReportingService.Info, Iterable<ThreadPool.Info> {
 
+    /**
+     * 信息内容
+     */
     private final List<ThreadPool.Info> infos;
 
+    /**
+     * 通过一组信息对象进行初始化
+     * @param infos
+     */
     public ThreadPoolInfo(List<ThreadPool.Info> infos) {
         this.infos = Collections.unmodifiableList(infos);
     }
 
+    /**
+     * 将输入流转换成 Info
+     * @param in
+     * @throws IOException
+     */
     public ThreadPoolInfo(StreamInput in) throws IOException {
         this.infos = Collections.unmodifiableList(in.readList(ThreadPool.Info::new));
     }
 
+    /**
+     * 将当前infos信息写入到一个输出流对象中
+     * @param out
+     * @throws IOException
+     */
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeList(infos);

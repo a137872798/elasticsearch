@@ -106,6 +106,7 @@ public class EsExecutors {
      *
      * @param runnable the runnable to inspect, should be a RunnableFuture
      * @return non fatal exception or null if no exception.
+     * 检测结果是否存在异常 并返回
      */
     public static Throwable rethrowErrors(Runnable runnable) {
         if (runnable instanceof RunnableFuture) {
@@ -124,6 +125,7 @@ public class EsExecutors {
                     || e instanceof InterruptedException
                     || e instanceof ExecutionException : e;
                 final Optional<Error> maybeError = ExceptionsHelper.maybeError(e);
+                // 当检测到 Error时 还是要抛出异常
                 if (maybeError.isPresent()) {
                     // throw this error where it will propagate to the uncaught exception handler
                     throw maybeError.get();
@@ -132,6 +134,7 @@ public class EsExecutors {
                     // restore the interrupt status
                     Thread.currentThread().interrupt();
                 }
+                // 当遇到这种异常时才返回 其余异常忽略
                 if (e instanceof ExecutionException) {
                     return e.getCause();
                 }
@@ -141,6 +144,9 @@ public class EsExecutors {
         return null;
     }
 
+    /**
+     * 这里定义了一个直接线程池 也就是不依赖额外线程 直接使用当前线程执行
+     */
     private static final class DirectExecutorService extends AbstractExecutorService {
 
         @SuppressForbidden(reason = "properly rethrowing errors, see EsExecutors.rethrowErrors")
@@ -187,6 +193,7 @@ public class EsExecutors {
      * shutdown.
      *
      * @return an {@link ExecutorService} that executes submitted tasks on the current thread
+     * 返回一个常量
      */
     public static ExecutorService newDirectExecutorService() {
         return DIRECT_EXECUTOR_SERVICE;

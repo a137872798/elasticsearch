@@ -90,9 +90,13 @@ import static org.elasticsearch.ElasticsearchException.readStackTrace;
  * everywhere. That being said, this class deals primarily with {@code List}s rather than Arrays. For the most part calls should adapt to
  * lists, either by storing {@code List}s internally or just converting to and from a {@code List} when calling. This comment is repeated
  * on {@link StreamInput}.
+ * 代表一个输入流
  */
 public abstract class StreamInput extends InputStream {
 
+    /**
+     * 将byte映射到时间类型上
+     */
     private static final Map<Byte, TimeUnit> BYTE_TIME_UNIT_MAP;
 
     static {
@@ -112,6 +116,9 @@ public abstract class StreamInput extends InputStream {
         BYTE_TIME_UNIT_MAP = Collections.unmodifiableMap(byteTimeUnitMap);
     }
 
+    /**
+     * 描述当前 es的版本信息
+     */
     private Version version = Version.CURRENT;
 
     /**
@@ -408,6 +415,7 @@ public abstract class StreamInput extends InputStream {
     private static final ThreadLocal<byte[]> stringReadBuffer = ThreadLocal.withInitial(() -> new byte[1024]);
 
     // Thread-local buffer for smaller strings
+    // 每个线程允许维护一个长期存在的空容器  这样就可以避免频繁创建/销毁对象 所带来的GC开销了
     private static final ThreadLocal<CharsRef> smallSpare = ThreadLocal.withInitial(() -> new CharsRef(SMALL_STRING_LIMIT));
 
     // Larger buffer used for long strings that can't fit into the thread-local buffer
@@ -415,12 +423,22 @@ public abstract class StreamInput extends InputStream {
     // this prevents calling grow for every character since we don't need this
     private CharsRef largeSpare;
 
+    /**
+     * 这个编码方式好像就是 UTF8
+     * @return
+     * @throws IOException
+     */
     public String readString() throws IOException {
+        // 读取string的长度
         final int charCount = readArraySize();
+        // 这个就是lucene的类啊...
         final CharsRef charsRef;
+        // 当所需空间比较大时 就创建新容器 否则复用本地线程创建的容器
         if (charCount > SMALL_STRING_LIMIT) {
+            // TODO 这里没有做线程安全啊
             if (largeSpare == null) {
                 largeSpare = new CharsRef(ArrayUtil.oversize(charCount, Character.BYTES));
+            // 扩容
             } else if (largeSpare.chars.length < charCount) {
                 // we don't use ArrayUtils.grow since there is no need to copy the array
                 largeSpare.chars = new char[ArrayUtil.oversize(charCount, Character.BYTES)];
@@ -432,12 +450,18 @@ public abstract class StreamInput extends InputStream {
         charsRef.length = charCount;
         int charsOffset = 0;
         int offsetByteArray = 0;
+        // 对应buffer的起始偏移量 代表数据从哪开始写入
         int sizeByteArray = 0;
+        // 代表某次读取的数据 无法构成完整的string
         int missingFromPartial = 0;
+        // 使用本地线程维护的 byte[]    能够最好利用这种本地线程模式的就是线程池了 每个线程都被长时间复用 确保对象被很好的利用 如果线程是创建完就删除 那么就没有长期维护这个byte[]的必要了
         final byte[] byteBuffer = stringReadBuffer.get();
         final char[] charBuffer = charsRef.chars;
+        // 只要没有读取到预期的量 还会继续读取  一个可能的限制因素 就是当前buffer的容器不足以一次存储所有的数据
         for (; charsOffset < charCount; ) {
+            // 代表本次要读取的长度
             final int charsLeft = charCount - charsOffset;
+            // 代表buffer 的剩余空间
             int bufferFree = byteBuffer.length - sizeByteArray;
             // Determine the minimum amount of bytes that are left in the string
             final int minRemainingBytes;
@@ -447,14 +471,18 @@ public abstract class StreamInput extends InputStream {
                 missingFromPartial = 0;
             } else {
                 // Each char has at least a single byte
+                // 首次调用 就是本次要读取的长度
                 minRemainingBytes = charsLeft;
             }
             final int toRead;
+            // 当容量不足时
             if (bufferFree < minRemainingBytes) {
                 // We don't have enough space left in the byte array to read as much as we'd like to so we free up as many bytes in the
                 // buffer by moving unused bytes that didn't make up a full char in the last iteration to the beginning of the buffer,
                 // if there are any
+                // 代表上次并没有读取全部的数据
                 if (offsetByteArray > 0) {
+                    // 将最后的数据移动到前面  并从新的sizeByteArray 开始读取数据
                     sizeByteArray = sizeByteArray - offsetByteArray;
                     switch (sizeByteArray) { // We only have 0, 1 or 2 => no need to bother with a native call to System#arrayCopy
                         case 1:
@@ -469,16 +497,22 @@ public abstract class StreamInput extends InputStream {
                     toRead = Math.min(bufferFree + offsetByteArray, minRemainingBytes);
                     offsetByteArray = 0;
                 } else {
+                    // 首次循环 进入这里 也就是读取buffer剩余空间的长度
                     toRead = bufferFree;
                 }
             } else {
+                // 容量足够时 就一次将数据读取完
                 toRead = minRemainingBytes;
             }
+            // 代表要读取 toRead 长度的数据到 byteBuffer中
             readBytes(byteBuffer, sizeByteArray, toRead);
+            // 更新此时byteArray中写入的长度 下次会从这里开始续写
             sizeByteArray += toRead;
             // As long as we at least have three bytes buffered we don't need to do any bounds checking when getting the next char since we
             // read 3 bytes per char/iteration at most
+            // 处理此时已经写入到 byteBuffer的数据
             for (; offsetByteArray < sizeByteArray - 2; offsetByteArray++) {
+                //  ff 对应8位
                 final int c = byteBuffer[offsetByteArray] & 0xff;
                 switch (c >> 4) {
                     case 0:
@@ -488,23 +522,29 @@ public abstract class StreamInput extends InputStream {
                     case 4:
                     case 5:
                     case 6:
-                    case 7:
+                        // 在此前都是至多占3位(包含7)
+                    case 7:   //  0 + 4 + 2 + 1
+                        // 将7位 转换成char后设置到 charBuffer中
                         charBuffer[charsOffset++] = (char) c;
                         break;
-                    case 12:
-                    case 13:
+                        // 下面的占8位
+                    case 12:  //  8 + 4 + 0 + 0
+                    case 13:  //  8 + 4 + 0 + 1            将下一个值的低6位与当前值的高5位拼接起来    3f总计需要6位
                         charBuffer[charsOffset++] = (char) ((c & 0x1F) << 6 | byteBuffer[++offsetByteArray] & 0x3F);
                         break;
-                    case 14:
+                    case 14:  //  8 + 4 + 2 + 0            将下下个值的低6位 与下个值的低6位 与当前值的高4位拼接起来
                         charBuffer[charsOffset++] = (char) (
                             (c & 0x0F) << 12 | (byteBuffer[++offsetByteArray] & 0x3F) << 6 | (byteBuffer[++offsetByteArray] & 0x3F));
                         break;
+                        // 其余情况都不支持
                     default:
                         throwOnBrokenChar(c);
                 }
             }
             // try to extract chars from remaining bytes with bounds checks for multi-byte chars
+            // 下面的处理逻辑实际上就是上面的变种
             final int bufferedBytesRemaining = sizeByteArray - offsetByteArray;
+            // 剩余的数据按照下面的规则解析
             for (int i = 0; i < bufferedBytesRemaining; i++) {
                 final int c = byteBuffer[offsetByteArray] & 0xff;
                 switch (c >> 4) {
@@ -521,6 +561,7 @@ public abstract class StreamInput extends InputStream {
                         break;
                     case 12:
                     case 13:
+                        // 代表还缺少多少数据未读取
                         missingFromPartial = 2 - (bufferedBytesRemaining - i);
                         if (missingFromPartial == 0) {
                             offsetByteArray++;
@@ -987,6 +1028,13 @@ public abstract class StreamInput extends InputStream {
         return readBoolean() ? readArray(reader, arraySupplier) : null;
     }
 
+    /**
+     * 根据指定的函数 读取数据并转换成目标对象
+     * @param reader
+     * @param <T>
+     * @return
+     * @throws IOException
+     */
     @Nullable
     public <T extends Writeable> T readOptionalWriteable(Writeable.Reader<T> reader) throws IOException {
         if (readBoolean()) {
@@ -1154,6 +1202,7 @@ public abstract class StreamInput extends InputStream {
      *
      * @return the list of objects
      * @throws IOException if an I/O exception occurs reading the list
+     * 将输入流内的数据按照函数转换成一个list
      */
     public <T> List<T> readList(final Writeable.Reader<T> reader) throws IOException {
         return readCollection(reader, ArrayList::new, Collections.emptyList());
@@ -1196,16 +1245,22 @@ public abstract class StreamInput extends InputStream {
 
     /**
      * Reads a collection of objects
+     * @param reader 转换函数
+     * @param constructor 构造存储容器的函数
+     * @param empty 如果没数据时返回的空对象
      */
     private <T, C extends Collection<? super T>> C readCollection(Writeable.Reader<T> reader,
                                                                   IntFunction<C> constructor,
                                                                   C empty) throws IOException {
+        // 返回数据流的长度
         int count = readArraySize();
         if (count == 0) {
+            // 为0的话返回之前传入的空对象
             return empty;
         }
         C builder = constructor.apply(count);
         for (int i=0; i<count; i++) {
+            // 构造容器后 挨个解析数据流 并将生成的对象插入到队列中后返回
             builder.add(reader.read(this));
         }
         return builder;
@@ -1265,8 +1320,10 @@ public abstract class StreamInput extends InputStream {
     /**
      * Reads a vint via {@link #readVInt()} and applies basic checks to ensure the read array size is sane.
      * This method uses {@link #ensureCanReadBytes(int)} to ensure this stream has enough bytes to read for the read array size.
+     * 读取下一个int值 作为数据流的总长度
      */
     private int readArraySize() throws IOException {
+        // 跟 lucene的编码套路一致
         final int arraySize = readVInt();
         if (arraySize > ArrayUtil.MAX_ARRAY_LENGTH) {
             throw new IllegalStateException("array length must be <= to " + ArrayUtil.MAX_ARRAY_LENGTH  + " but was: " + arraySize);
@@ -1277,6 +1334,7 @@ public abstract class StreamInput extends InputStream {
         // lets do a sanity check that if we are reading an array size that is bigger that the remaining bytes we can safely
         // throw an exception instead of allocating the array based on the size. A simple corrutpted byte can make a node go OOM
         // if the size is large and for perf reasons we allocate arrays ahead of time
+        // 确保此时能读取这么多数据
         ensureCanReadBytes(arraySize);
         return arraySize;
     }
@@ -1291,13 +1349,16 @@ public abstract class StreamInput extends InputStream {
      * Read a {@link TimeValue} from the stream
      */
     public TimeValue readTimeValue() throws IOException {
+        // 读取一个时间属性 因为可能会出现负数 所以使用 ZIGZAG 存储
         long duration = readZLong();
+        // 读取时间单位
         TimeUnit timeUnit = BYTE_TIME_UNIT_MAP.get(readByte());
         return new TimeValue(duration, timeUnit);
     }
 
     /**
      * Read an optional {@link TimeValue} from the stream, returning null if no TimeValue was written.
+     * 尝试读取一个time类型的数据
      */
     public @Nullable TimeValue readOptionalTimeValue() throws IOException {
         if (readBoolean()) {

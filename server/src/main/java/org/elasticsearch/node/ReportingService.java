@@ -22,9 +22,16 @@ package org.elasticsearch.node;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.xcontent.ToXContent;
 
+/**
+ * 报告服务接口 可以获取对应的报告信息
+ * @param <I>
+ */
 public interface ReportingService<I extends ReportingService.Info> {
     I info();
 
+    /**
+     * 报告信息实现的接口
+     */
     interface Info extends Writeable, ToXContent {
 
     }

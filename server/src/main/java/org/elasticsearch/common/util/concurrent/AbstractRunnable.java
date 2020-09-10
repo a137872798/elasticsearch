@@ -21,16 +21,21 @@ package org.elasticsearch.common.util.concurrent;
 
 /**
  * An extension to runnable.
+ * es拓展了runnable接口
  */
 public abstract class AbstractRunnable implements Runnable {
 
     /**
      * Should the runnable force its execution in case it gets rejected?
+     * 该任务被拒绝时 是否应该强制执行
      */
     public boolean isForceExecution() {
         return false;
     }
 
+    /**
+     * 同时使用模板方法 定义处理完的后置逻辑 以及异常处理
+     */
     @Override
     public final void run() {
         try {

@@ -40,6 +40,7 @@ import java.util.function.Consumer;
 
 /**
  * Scheduler that allows to schedule one-shot and periodic commands.
+ * 定时器对象
  */
 public interface Scheduler {
 

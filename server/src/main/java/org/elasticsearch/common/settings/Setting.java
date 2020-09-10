@@ -83,6 +83,7 @@ import java.util.stream.Stream;
  *     new Setting<>("my.color.setting", Color.RED.toString(), Color::valueOf, SettingsProperty.NodeScope);
  * }
  * </pre>
+ * 代表某个配置信息
  */
 public class Setting<T> implements ToXContentObject {
 
@@ -1151,6 +1152,14 @@ public class Setting<T> implements ToXContentObject {
             (s) -> parseInt(s, minValue, maxValue, key, isFiltered(properties)), properties);
     }
 
+    /**
+     * 创建一个配置值为int类型的配置对象
+     * @param key
+     * @param defaultValue
+     * @param minValue
+     * @param properties
+     * @return
+     */
     public static Setting<Integer> intSetting(String key, int defaultValue, int minValue, Property... properties) {
         return new Setting<>(key, (s) -> Integer.toString(defaultValue), (s) -> parseInt(s, minValue, key, isFiltered(properties)),
             properties);
@@ -1260,6 +1269,13 @@ public class Setting<T> implements ToXContentObject {
         return timeValue;
     }
 
+    /**
+     * 使用一个描述配置的key  配置值 和额外的属性信息初始化一个 配置对象
+     * @param key
+     * @param defaultValue
+     * @param properties
+     * @return
+     */
     public static Setting<Integer> intSetting(String key, int defaultValue, Property... properties) {
         return intSetting(key, defaultValue, Integer.MIN_VALUE, properties);
     }
@@ -1635,11 +1651,27 @@ public class Setting<T> implements ToXContentObject {
         };
     }
 
+    /**
+     *
+     * @param key
+     * @param defaultValue
+     * @param minValue 代表该配置允许的最小值  推测配置支持修改
+     * @param properties
+     * @return
+     */
     public static Setting<TimeValue> timeSetting(String key, TimeValue defaultValue, TimeValue minValue, Property... properties) {
         return timeSetting(key, (s) -> defaultValue, minValue, properties);
     }
 
+    /**
+     * 生成一个时间类型的配置项
+     * @param key
+     * @param defaultValue
+     * @param properties
+     * @return
+     */
     public static Setting<TimeValue> timeSetting(String key, TimeValue defaultValue, Property... properties) {
+        // defaultValue.getStringRep() 将时间以string的形式表现出来
         return new Setting<>(key, (s) -> defaultValue.getStringRep(), (s) -> TimeValue.parseTimeValue(s, key), properties);
     }
 
@@ -1732,10 +1764,16 @@ public class Setting<T> implements ToXContentObject {
         return new AffixSetting<>(key, delegate, delegateFactory, dependencies);
     }
 
+    /**
+     * 包含一个 检测key是否匹配的api
+     */
     public interface Key {
         boolean match(String key);
     }
 
+    /**
+     * 描述 配置项的key
+     */
     public static class SimpleKey implements Key {
         protected final String key;
 

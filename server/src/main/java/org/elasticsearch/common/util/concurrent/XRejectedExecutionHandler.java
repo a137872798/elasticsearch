@@ -21,6 +21,9 @@ package org.elasticsearch.common.util.concurrent;
 
 import java.util.concurrent.RejectedExecutionHandler;
 
+/**
+ * 当线程池满了 继续添加任务 就会交由该对象进行处理  es拓展了原生jdk的处理器 增加了一个返回拒绝任务数量的api
+ */
 public interface XRejectedExecutionHandler extends RejectedExecutionHandler {
 
     /**

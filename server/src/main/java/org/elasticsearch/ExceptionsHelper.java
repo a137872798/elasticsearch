@@ -218,6 +218,7 @@ public final class ExceptionsHelper {
         final Queue<Throwable> queue = new LinkedList<>();
         queue.add(cause);
         final Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        // 将异常拆解 直到遇到满足谓语条件的异常时才返回
         while (queue.isEmpty() == false) {
             final Throwable current = queue.remove();
             if (seen.add(current) == false) {

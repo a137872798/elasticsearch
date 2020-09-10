@@ -83,6 +83,9 @@ final class Bootstrap {
     private volatile Node node;
     private final CountDownLatch keepAliveLatch = new CountDownLatch(1);
     private final Thread keepAliveThread;
+    /**
+     * 该对象用于控制进程的资源释放
+     */
     private final Spawner spawner = new Spawner();
 
     /** creates a new instance */

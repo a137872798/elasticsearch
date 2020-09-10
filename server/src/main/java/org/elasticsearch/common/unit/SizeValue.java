@@ -27,6 +27,9 @@ import org.elasticsearch.common.io.stream.Writeable;
 
 import java.io.IOException;
 
+/**
+ * 描述有关大小的信息
+ */
 public class SizeValue implements Writeable, Comparable<SizeValue> {
 
     private final long size;
@@ -44,6 +47,11 @@ public class SizeValue implements Writeable, Comparable<SizeValue> {
         this.sizeUnit = sizeUnit;
     }
 
+    /**
+     * 该对象支持通过 输入流进行初始化
+     * @param in
+     * @throws IOException
+     */
     public SizeValue(StreamInput in) throws IOException {
         size = in.readVLong();
         sizeUnit = SizeUnit.SINGLE;

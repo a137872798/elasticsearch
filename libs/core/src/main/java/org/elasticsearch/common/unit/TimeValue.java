@@ -324,6 +324,10 @@ public class TimeValue implements Comparable<TimeValue> {
         }
     }
 
+    /**
+     * 将当前时间信息转换成字符串
+     * @return
+     */
     public String getStringRep() {
         if (duration < 0) {
             return Long.toString(duration);

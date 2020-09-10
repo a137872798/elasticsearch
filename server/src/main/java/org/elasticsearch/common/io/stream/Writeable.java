@@ -25,12 +25,12 @@ import java.io.IOException;
  * Implementers can be written to a {@linkplain StreamOutput} and read from a {@linkplain StreamInput}. This allows them to be "thrown
  * across the wire" using Elasticsearch's internal protocol. If the implementer also implements equals and hashCode then a copy made by
  * serializing and deserializing must be equal and have the same hashCode. It isn't required that such a copy be entirely unchanged.
- * 一个基层的接口 代表可写入
  */
 public interface Writeable {
 
     /**
      * Write this into the {@linkplain StreamOutput}.
+     * 可以将对象本身写入到 StreamOut中
      */
     void writeTo(StreamOutput out) throws IOException;
 
@@ -75,6 +75,7 @@ public interface Writeable {
      *     this.someMap = in.readMapOfLists(StreamInput::readString, StreamInput::readString);
      * }
      * </code></pre>
+     * 该接口代表数据可以通过 streamInput 进行还原
      */
     @FunctionalInterface
     interface Reader<V> {

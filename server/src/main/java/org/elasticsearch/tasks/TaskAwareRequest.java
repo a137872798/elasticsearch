@@ -23,6 +23,7 @@ import java.util.Map;
 
 /**
  * An interface for a request that can be used to register a task manager task
+ * 代表该请求可以注册到 任务管理器上
  */
 public interface TaskAwareRequest {
     /**

@@ -114,8 +114,14 @@ public final class FixedExecutorBuilder extends ExecutorBuilder<FixedExecutorBui
             info.getQueueSize() == null ? "unbounded" : info.getQueueSize());
     }
 
+    /**
+     * 描述固定线程池配置的对象
+     */
     static class FixedExecutorSettings extends ExecutorBuilder.ExecutorSettings {
 
+        /**
+         * 线程数量固定
+         */
         private final int size;
         private final int queueSize;
 

@@ -421,6 +421,11 @@ public abstract class StreamOutput extends OutputStream {
         }
     }
 
+    /**
+     * 以utf8的形式写入数据  与读取相反就不细看了
+     * @param str
+     * @throws IOException
+     */
     public void writeString(String str) throws IOException {
         final int charCount = str.length();
         byte[] buffer = scratch.get();
@@ -1207,10 +1212,13 @@ public abstract class StreamOutput extends OutputStream {
      *
      * @param collection the collection of objects
      * @throws IOException if an I/O exception occurs writing the collection
+     * 写入一组可以将自身转换成输出流的对象   与 StreamInput相反
      */
     public <T> void writeCollection(final Collection<T> collection, final Writer<T> writer) throws IOException {
+        // 先写入总计有多少对象
         writeVInt(collection.size());
         for (final T val: collection) {
+            // 写入数据信息
             writer.write(this, val);
         }
     }

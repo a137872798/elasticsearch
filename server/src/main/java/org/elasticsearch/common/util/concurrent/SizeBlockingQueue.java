@@ -31,12 +31,22 @@ import java.util.concurrent.atomic.AtomicInteger;
  * A size based queue wrapping another blocking queue to provide (somewhat relaxed) capacity checks.
  * Mainly makes sense to use with blocking queues that are unbounded to provide the ability to do
  * capacity verification.
+ * es特定的任务队列
  */
 public class SizeBlockingQueue<E> extends AbstractQueue<E> implements BlockingQueue<E> {
 
+    /**
+     * 一般功能委托给该对象实现
+     */
     private final BlockingQueue<E> queue;
+    /**
+     * 定义了队列的容量
+     */
     private final int capacity;
 
+    /**
+     * 此时队列中存储了多少任务
+     */
     private final AtomicInteger size = new AtomicInteger();
 
     public SizeBlockingQueue(BlockingQueue<E> queue, int capacity) {
@@ -116,6 +126,7 @@ public class SizeBlockingQueue<E> extends AbstractQueue<E> implements BlockingQu
 
     /**
      * Forces adding an element to the queue, without doing size checks.
+     * 不进行 capacity检查 而是强制插入任务 如果被队列拒绝则抛出异常
      */
     public void forcePut(E e) throws InterruptedException {
         size.incrementAndGet();

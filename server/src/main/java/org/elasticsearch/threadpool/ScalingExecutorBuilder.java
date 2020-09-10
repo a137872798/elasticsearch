@@ -35,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * A builder for scaling executors.
+ * 该对象负责构建 范围线程池
  */
 public final class ScalingExecutorBuilder extends ExecutorBuilder<ScalingExecutorBuilder.ScalingExecutorSettings> {
 
@@ -66,9 +67,11 @@ public final class ScalingExecutorBuilder extends ExecutorBuilder<ScalingExecuto
      * @param keepAlive the time that spare threads above {@code core}
      *                  threads will be kept alive
      * @param prefix    the prefix for the settings keys
+     *                  通过相关配置设置 builder内部的信息
      */
     public ScalingExecutorBuilder(final String name, final int core, final int max, final TimeValue keepAlive, final String prefix) {
         super(name);
+        // settingsKey(prefix, "core") 用于生成配置名    指定该配置的范围是针对某个 node的 应该是值这个线程池的配置只作用在当前服务器(一个es-server实例就是一个node)
         this.coreSetting =
             Setting.intSetting(settingsKey(prefix, "core"), core, Setting.Property.NodeScope);
         this.maxSetting = Setting.intSetting(settingsKey(prefix, "max"), max, Setting.Property.NodeScope);
@@ -76,6 +79,10 @@ public final class ScalingExecutorBuilder extends ExecutorBuilder<ScalingExecuto
             Setting.timeSetting(settingsKey(prefix, "keep_alive"), keepAlive, Setting.Property.NodeScope);
     }
 
+    /**
+     * 返回此时builder 中已经设置的配置信息
+     * @return
+     */
     @Override
     public List<Setting<?>> getRegisteredSettings() {
         return Arrays.asList(coreSetting, maxSetting, keepAliveSetting);
@@ -119,10 +126,19 @@ public final class ScalingExecutorBuilder extends ExecutorBuilder<ScalingExecuto
             info.getKeepAlive());
     }
 
+    /**
+     * 范围线程池配置  这个范围指的应该就是线程数是浮动的吧   按照es的说法jdk默认的线程池就是一种范围线程池
+     */
     static class ScalingExecutorSettings extends ExecutorBuilder.ExecutorSettings {
 
+        /**
+         * 核心线程数
+         */
         private final int core;
         private final int max;
+        /**
+         * 非核心线程数的存活时间
+         */
         private final TimeValue keepAlive;
 
         ScalingExecutorSettings(final String nodeName, final int core, final int max, final TimeValue keepAlive) {
