@@ -28,11 +28,12 @@ import java.util.Set;
 
 /**
  * A generic abstraction on top of handling content, inspired by JSON and pull parsing.
- * 一种通用的数据结构体
+ * 该对象具备创建数据体对应的解析器的能力
  */
 public interface XContent {
     /**
      * The type this content handles and produces.
+     * 支持解析的类型
      */
     XContentType type();
 

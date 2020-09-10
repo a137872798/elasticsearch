@@ -37,6 +37,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+/**
+ * 结构体数据的解析器骨架类
+ */
 public abstract class AbstractXContentParser implements XContentParser {
 
     // Currently this is not a setting that can be changed and is a policy
@@ -55,7 +58,13 @@ public abstract class AbstractXContentParser implements XContentParser {
         }
     }
 
+    /**
+     * 该对象内部注册了一些 描述解析后数据体的 entry信息
+     */
     private final NamedXContentRegistry xContentRegistry;
+    /**
+     * 该对象在遇到解析出被丢弃的field时进行处理
+     */
     private final DeprecationHandler deprecationHandler;
 
     public AbstractXContentParser(NamedXContentRegistry xContentRegistry, DeprecationHandler deprecationHandler) {

@@ -62,18 +62,36 @@ public class Environment {
     public static final Setting<String> PATH_SHARED_DATA_SETTING = Setting.simpleString("path.shared_data", Property.NodeScope);
     public static final Setting<String> NODE_PIDFILE_SETTING = Setting.simpleString("node.pidfile", Property.NodeScope);
 
+    /**
+     * 将初始化该对象的配置 + 下面这些文件的dir 整合后生成的 最终配置对象
+     */
     private final Settings settings;
 
+    /**
+     * 数据文件路径是一个列表
+     */
     private final Path[] dataFiles;
 
+    /**
+     * 回购路径???
+     */
     private final Path[] repoFiles;
 
+    /**
+     * 配置文件路径
+     */
     private final Path configFile;
 
+    /**
+     * 插件路径
+     */
     private final Path pluginsFile;
 
     private final Path modulesFile;
 
+    /**
+     * 共享数据文件的路径
+     */
     private final Path sharedDataFile;
 
     /** location of bin/, used by plugin manager */
@@ -82,9 +100,15 @@ public class Environment {
     /** location of lib/, */
     private final Path libFile;
 
+    /**
+     * 存储日志文件的dir
+     */
     private final Path logsFile;
 
-    /** Path to the PID file (can be null if no PID file is configured) **/
+    /**
+     * Path to the PID file (can be null if no PID file is configured)
+     * 存储pid文件
+     * **/
     private final Path pidFile;
 
     /** Path to the temporary file directory used by the JDK */
@@ -94,15 +118,21 @@ public class Environment {
         this(settings, configPath, PathUtils.get(System.getProperty("java.io.tmpdir")));
     }
 
-    // Should only be called directly by this class's unit tests
+    /**
+     * Should only be called directly by this class's unit tests
+     * @param tmpPath 存储临时文件的文件夹路径
+     */
     Environment(final Settings settings, final Path configPath, final Path tmpPath) {
+        // 必须存在home 路径
         final Path homeFile;
+        // 从settings中获取 homeFile路径
         if (PATH_HOME_SETTING.exists(settings)) {
             homeFile = PathUtils.get(PATH_HOME_SETTING.get(settings)).toAbsolutePath().normalize();
         } else {
             throw new IllegalStateException(PATH_HOME_SETTING.getKey() + " is not configured");
         }
 
+        // 设置配置文件的路径
         if (configPath != null) {
             configFile = configPath.toAbsolutePath().normalize();
         } else {
@@ -111,9 +141,12 @@ public class Environment {
 
         tmpFile = Objects.requireNonNull(tmpPath);
 
+        // 定位到 plugins的路径
         pluginsFile = homeFile.resolve("plugins");
 
+        // 数据文件路径属性是一个列表(多个dir)
         List<String> dataPaths = PATH_DATA_SETTING.get(settings);
+        // 获取集群名配置
         final ClusterName clusterName = ClusterName.CLUSTER_NAME_SETTING.get(settings);
         if (dataPaths.isEmpty() == false) {
             dataFiles = new Path[dataPaths.size()];
@@ -121,13 +154,16 @@ public class Environment {
                 dataFiles[i] = PathUtils.get(dataPaths.get(i)).toAbsolutePath().normalize();
             }
         } else {
+            // 当数据路径为空时  使用home.data路径作为数据路径
             dataFiles = new Path[]{homeFile.resolve("data")};
         }
+        // 尝试获取共享数据路径
         if (PATH_SHARED_DATA_SETTING.exists(settings)) {
             sharedDataFile = PathUtils.get(PATH_SHARED_DATA_SETTING.get(settings)).toAbsolutePath().normalize();
         } else {
             sharedDataFile = null;
         }
+        // 尝试获取 回购路径
         List<String> repoPaths = PATH_REPO_SETTING.get(settings);
         if (repoPaths.isEmpty()) {
             repoFiles = EMPTY_PATH_ARRAY;
@@ -139,6 +175,7 @@ public class Environment {
         }
 
         // this is trappy, Setting#get(Settings) will get a fallback setting yet return false for Settings#exists(Settings)
+        // 找到日志文件的路径 如果不存在则以home路径为基准 将home.logs作为存储日志文件的dir
         if (PATH_LOGS_SETTING.exists(settings)) {
             logsFile = PathUtils.get(PATH_LOGS_SETTING.get(settings)).toAbsolutePath().normalize();
         } else {
@@ -155,6 +192,7 @@ public class Environment {
         libFile = homeFile.resolve("lib");
         modulesFile = homeFile.resolve("modules");
 
+        // 将以上包含文件dir的setting设置到settings中 作为最终配置并返回
         final Settings.Builder finalSettings = Settings.builder().put(settings);
         if (PATH_DATA_SETTING.exists(settings)) {
             finalSettings.putList(PATH_DATA_SETTING.getKey(), Arrays.stream(dataFiles).map(Path::toString).collect(Collectors.toList()));

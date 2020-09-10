@@ -32,6 +32,7 @@ import java.io.OutputStream;
 
 /**
  * A one stop to use {@link org.elasticsearch.common.xcontent.XContent} and {@link XContentBuilder}.
+ * 该对象可以构建 解析对应文件类型的对象
  */
 public class XContentFactory {
 
@@ -127,6 +128,7 @@ public class XContentFactory {
 
     /**
      * Returns the {@link org.elasticsearch.common.xcontent.XContent} for the provided content type.
+     * 返回对应的数据体解析器
      */
     public static XContent xContent(XContentType type) {
         if (type == null) {

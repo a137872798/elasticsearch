@@ -38,10 +38,13 @@ import java.util.function.Supplier;
  *     XContentParser parser = xContentType.xContent().createParser(
  *          NamedXContentRegistry.EMPTY, ParserField."{\"key\" : \"value\"}");
  * </pre>
+ * 解析器通过一个输入流进行初始化  并在内部完成解析 对外暴露读取数据的api
+ *      从观察api感觉像lucene的分词器 解析后每个单词被称为token
  */
 public interface XContentParser extends Closeable {
 
     enum Token {
+        // 代表一个对象的开始 应该是类似于 json的 {
         START_OBJECT {
             @Override
             public boolean isValue() {
@@ -49,6 +52,7 @@ public interface XContentParser extends Closeable {
             }
         },
 
+        // 代表某个对象读取结束了  类似于json的 }
         END_OBJECT {
             @Override
             public boolean isValue() {
@@ -56,6 +60,7 @@ public interface XContentParser extends Closeable {
             }
         },
 
+        // 代表开始读取一个数组 类似于json的 [
         START_ARRAY {
             @Override
             public boolean isValue() {
@@ -63,6 +68,7 @@ public interface XContentParser extends Closeable {
             }
         },
 
+        // 代表开始读取一个数组 类似于json的 [
         END_ARRAY {
             @Override
             public boolean isValue() {
@@ -70,6 +76,7 @@ public interface XContentParser extends Closeable {
             }
         },
 
+        // 类似于 key
         FIELD_NAME {
             @Override
             public boolean isValue() {
@@ -113,15 +120,31 @@ public interface XContentParser extends Closeable {
             }
         };
 
+        /**
+         * 当前解析出来的token 是否代表着一个数值
+         * @return
+         */
         public abstract boolean isValue();
     }
 
+    /**
+     * 允许解析的数字类型
+     */
     enum NumberType {
         INT, BIG_INTEGER, LONG, FLOAT, DOUBLE, BIG_DECIMAL
     }
 
+    /**
+     * 对应的 结构体数据类型
+     * @return
+     */
     XContentType contentType();
 
+    /**
+     * 解析下一个token
+     * @return
+     * @throws IOException
+     */
     Token nextToken() throws IOException;
 
     void skipChildren() throws IOException;

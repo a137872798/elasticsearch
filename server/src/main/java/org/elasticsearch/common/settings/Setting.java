@@ -83,10 +83,13 @@ import java.util.stream.Stream;
  *     new Setting<>("my.color.setting", Color.RED.toString(), Color::valueOf, SettingsProperty.NodeScope);
  * }
  * </pre>
- * 代表某个配置信息
+ * Settings代表一堆配置的集合  而该对象更像是对某种配置的定义
  */
 public class Setting<T> implements ToXContentObject {
 
+    /**
+     * 定义了该配置生效的范围
+     */
     public enum Property {
         /**
          * should be filtered in some api (mask password/credentials)
@@ -106,6 +109,7 @@ public class Setting<T> implements ToXContentObject {
 
         /**
          * mark this setting as deprecated
+         * 代表该配置被废弃  将来可能会移除
          */
         Deprecated,
 
@@ -152,6 +156,15 @@ public class Setting<T> implements ToXContentObject {
 
     private static final EnumSet<Property> EMPTY_PROPERTIES = EnumSet.noneOf(Property.class);
 
+    /**
+     * 初始化配置对象    注意该对象 与 Settings不一样 Settings只是一个简单的map
+     * @param key   配置名
+     * @param fallbackSetting
+     * @param defaultValue   提供默认值得函数
+     * @param parser     可以将字符串转换成配置值
+     * @param validator   校验配置是否有效的校验器
+     * @param properties  描述这个配置的属性 比如有效范围
+     */
     private Setting(Key key, @Nullable Setting<T> fallbackSetting, Function<Settings, String> defaultValue, Function<String, T> parser,
                     Validator<T> validator, Property... properties) {
         assert this instanceof SecureSetting || this.isGroupSetting() || parser.apply(defaultValue.apply(Settings.EMPTY)) != null
@@ -167,10 +180,12 @@ public class Setting<T> implements ToXContentObject {
         if (properties.length == 0) {
             this.properties = EMPTY_PROPERTIES;
         } else {
+            // 生成配置属性set
             final EnumSet<Property> propertiesAsSet = EnumSet.copyOf(Arrays.asList(properties));
             if (propertiesAsSet.contains(Property.Dynamic) && propertiesAsSet.contains(Property.Final)) {
                 throw new IllegalArgumentException("final setting [" + key + "] cannot be dynamic");
             }
+            // 下面这几种属性都要求 配置同时携带了 IndexScope属性  这里只是做校验
             checkPropertyRequiresIndexScope(propertiesAsSet, Property.NotCopyableOnResize);
             checkPropertyRequiresIndexScope(propertiesAsSet, Property.InternalIndex);
             checkPropertyRequiresIndexScope(propertiesAsSet, Property.PrivateIndex);
@@ -404,6 +419,7 @@ public class Setting<T> implements ToXContentObject {
      *
      * @param settings the settings
      * @return true if the setting is present in the given settings instance, otherwise false
+     * 检测settings是否仅存在于 普通配置中 不存在于加密配置
      */
     public boolean exists(final Settings settings) {
         SecureSettings secureSettings = settings.getSecureSettings();
@@ -424,16 +440,25 @@ public class Setting<T> implements ToXContentObject {
     /**
      * Returns the settings value. If the setting is not present in the given settings object the default value is returned
      * instead.
+     * 从settings中抽取需要的属性
      */
     public T get(Settings settings) {
         return get(settings, true);
     }
 
+    /**
+     * 从settings中获取该setting.key 对应的配置值
+     * @param settings
+     * @param validate  代表需要对结果做校验
+     * @return
+     */
     private T get(Settings settings, boolean validate) {
         String value = getRaw(settings);
         try {
+            // 转换成正确的类型
             T parsed = parser.apply(value);
             if (validate) {
+                // TODO 先忽略
                 final Iterator<Setting<?>> it = validator.settings();
                 final Map<Setting<?>, Object> map;
                 if (it.hasNext()) {
@@ -454,6 +479,7 @@ public class Setting<T> implements ToXContentObject {
                 } else {
                     map = Collections.emptyMap();
                 }
+                // TODO 先忽略 还不明白他想要做什么
                 validator.validate(parsed);
                 validator.validate(parsed, map);
                 validator.validate(parsed, map, exists(settings));
@@ -488,8 +514,10 @@ public class Setting<T> implements ToXContentObject {
     /**
      * Returns the raw (string) settings value. If the setting is not present in the given settings object the default value is returned
      * instead. This is useful if the value can't be parsed due to an invalid value to access the actual value.
+     * 从settings中获取配置
      */
     private String getRaw(final Settings settings) {
+        // 检测该配置是否已经被标记为废弃 是的话 打印日志
         checkDeprecation(settings);
         return innerGetRaw(settings);
     }
@@ -500,6 +528,7 @@ public class Setting<T> implements ToXContentObject {
      *
      * @param settings the settings instance
      * @return the raw string representation of the setting value
+     * 一般setting要求必须仅存在于 普通配置 而不能是加密配置
      */
     String innerGetRaw(final Settings settings) {
         SecureSettings secureSettings = settings.getSecureSettings();
@@ -510,7 +539,10 @@ public class Setting<T> implements ToXContentObject {
         return settings.get(getKey(), defaultValue.apply(settings));
     }
 
-    /** Logs a deprecation warning if the setting is deprecated and used. */
+    /**
+     * Logs a deprecation warning if the setting is deprecated and used.
+     * 检测是否使用了被废弃的配置 是的话打印日志
+     * */
     void checkDeprecation(Settings settings) {
         // They're using the setting, so we need to tell them to stop
         if (this.isDeprecated() && this.exists(settings)) {

@@ -24,7 +24,7 @@ import java.util.function.Supplier;
 /**
  * Callback for notifying the creator of the {@link XContentParser} that
  * parsing hit a deprecated field.
- * 当发现某个被丢弃字段时如何处理
+ * 解析结构化数据时  可能field 已经被es标记为被废弃  比如json格式 {"nb":3}  结果 "nb" 已经不允许使用了  这种情况就交由该对象处理
  */
 public interface DeprecationHandler {
     /**
@@ -32,8 +32,17 @@ public interface DeprecationHandler {
      * deprecated field. Use this when creating an {@link XContentParser}
      * that won't interact with deprecation logic at all or when you want
      * to fail fast when parsing deprecated fields.
+     * 该对象只要发现了被废弃的字段 都会选择抛出异常
      */
     DeprecationHandler THROW_UNSUPPORTED_OPERATION = new DeprecationHandler() {
+
+        /**
+         *
+         * @param parserName
+         * @param location  描述该被废弃字段的位置信息
+         * @param usedName the provided field name
+         * @param replacedWith the name of the field that replaced this field
+         */
         @Override
         public void usedDeprecatedField(String parserName, Supplier<XContentLocation> location, String usedName, String replacedWith) {
             if (parserName != null) {

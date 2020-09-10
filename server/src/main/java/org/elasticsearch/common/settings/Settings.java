@@ -279,6 +279,7 @@ public final class Settings implements ToXContentFragment {
     /**
      * Returns the setting value associated with the setting key. If it does not exists,
      * returns the default value provided.
+     * 根据配置名查找属性 不存在则使用默认值
      */
     public String get(String setting, String defaultValue) {
         String retVal = get(setting);
@@ -627,18 +628,29 @@ public final class Settings implements ToXContentFragment {
         return fromXContent(parser, true, false);
     }
 
+    /**
+     *
+     * @param parser   具备读取解析后数据的能力
+     * @param allowNullValues   是否允许读取到null值
+     * @param validateEndOfStream  是否需要检测 此时已经读取到末尾
+     * @return
+     * @throws IOException
+     */
     private static Settings fromXContent(XContentParser parser, boolean allowNullValues, boolean validateEndOfStream) throws IOException {
         if (parser.currentToken() == null) {
             parser.nextToken();
         }
+        // 检测当前token是否是START_OBJECT   不是则抛出异常
         XContentParserUtils.ensureExpectedToken(XContentParser.Token.START_OBJECT, parser.currentToken(), parser::getTokenLocation);
         Builder innerBuilder = Settings.builder();
         StringBuilder currentKeyBuilder = new StringBuilder();
+        // 读取数据 并设置到settings中  这里头会自动递归 读取完所有对象信息
         fromXContent(parser, currentKeyBuilder, innerBuilder, allowNullValues);
         if (validateEndOfStream) {
             // ensure we reached the end of the stream
             XContentParser.Token lastToken = null;
             try {
+                // 不断读取直到所有token都获取完
                 while (!parser.isClosed() && (lastToken = parser.nextToken()) == null) ;
             } catch (Exception e) {
                 throw new ElasticsearchParseException(
@@ -656,18 +668,32 @@ public final class Settings implements ToXContentFragment {
         return innerBuilder.build();
     }
 
+    /**
+     * 读取数据并设置到 settings中
+     * @param parser
+     * @param keyBuilder
+     * @param builder
+     * @param allowNullValues
+     * @throws IOException
+     */
     private static void fromXContent(XContentParser parser, StringBuilder keyBuilder, Settings.Builder builder,
                                      boolean allowNullValues) throws IOException {
         final int length = keyBuilder.length();
+        // 只要没有读取到 obj的末尾 就不断地读取数据
         while (parser.nextToken() != XContentParser.Token.END_OBJECT) {
+            // 可以理解为就是某个对象
             if (parser.currentToken() == XContentParser.Token.FIELD_NAME) {
+                // 设置字段信息到stringBuilder中
                 keyBuilder.setLength(length);
                 keyBuilder.append(parser.currentName());
+                // 代表发生了嵌套
             } else if (parser.currentToken() == XContentParser.Token.START_OBJECT) {
                 keyBuilder.append('.');
                 fromXContent(parser, keyBuilder, builder, allowNullValues);
+                // 代表此时读取到了一个数组
             } else if (parser.currentToken() == XContentParser.Token.START_ARRAY) {
                 List<String> list = new ArrayList<>();
+                // 直到读取到数组末尾 将其余数据填充到list中
                 while (parser.nextToken() != XContentParser.Token.END_ARRAY) {
                     if (parser.currentToken() == XContentParser.Token.VALUE_STRING) {
                         list.add(parser.text());
@@ -680,8 +706,11 @@ public final class Settings implements ToXContentFragment {
                     }
                 }
                 String key = keyBuilder.toString();
+                // 当前值如果为null 且不允许出现null时 抛出异常
                 validateValue(key, list, parser, allowNullValues);
+                // 将配置项设置到 settings中
                 builder.putList(key, list);
+                // 如果本次读取到的值就是null 在校验后设置到settings中
             } else if (parser.currentToken() == XContentParser.Token.VALUE_NULL) {
                 String key = keyBuilder.toString();
                 validateValue(key, null, parser, allowNullValues);
@@ -702,6 +731,13 @@ public final class Settings implements ToXContentFragment {
         }
     }
 
+    /**
+     * 当前值如果为null 且不允许出现null时 抛出异常
+     * @param key
+     * @param currentValue
+     * @param parser
+     * @param allowNullValues
+     */
     private static void validateValue(String key, Object currentValue, XContentParser parser, boolean allowNullValues) {
         if (currentValue == null && allowNullValues == false) {
             throw new ElasticsearchParseException(
@@ -731,7 +767,10 @@ public final class Settings implements ToXContentFragment {
         return keySet().size();
     }
 
-    /** Returns the fully qualified setting names contained in this settings object. */
+    /**
+     * Returns the fully qualified setting names contained in this settings object.
+     * lazy-init
+     * */
     public Set<String> keySet() {
         if (keys.get() == null) {
             synchronized (keys) {
@@ -1023,7 +1062,7 @@ public final class Settings implements ToXContentFragment {
         /**
          * Sets the setting with the provided setting key and a list of values.
          *
-         * @param setting The setting key
+         * @param setting The setting key  如果存在旧值就更新
          * @param values  The values
          * @return The builder
          */
@@ -1102,6 +1141,7 @@ public final class Settings implements ToXContentFragment {
         /**
          * Loads settings from a url that represents them using {@link #fromXContent(XContentParser)}
          * Note: Loading from a path doesn't allow <code>null</code> values in the incoming xcontent
+         * 从文件中读取配置 并填充到map中
          */
         public Builder loadFromPath(Path path) throws IOException {
             // NOTE: loadFromStream will close the input stream
@@ -1110,9 +1150,13 @@ public final class Settings implements ToXContentFragment {
 
         /**
          * Loads settings from a stream that represents them using {@link #fromXContent(XContentParser)}
+         * @param resourceName 资源的名字 比如配置文件 那么该属性就是配置文件的名字
+         * @param is 对应的输入流
+         * @param acceptNullValues 是否允许读取空值   默认为false
          */
         public Builder loadFromStream(String resourceName, InputStream is, boolean acceptNullValues) throws IOException {
             final XContentType xContentType;
+            // 仅允许从 json 和 yml 中读取属性
             if (resourceName.endsWith(".json")) {
                 xContentType = XContentType.JSON;
             } else if (resourceName.endsWith(".yml") || resourceName.endsWith(".yaml")) {
@@ -1121,13 +1165,17 @@ public final class Settings implements ToXContentFragment {
                 throw new IllegalArgumentException("unable to detect content type from resource name [" + resourceName + "]");
             }
             // fromXContent doesn't use named xcontent or deprecation.
+            // 通过当前输入流创建解析器对象
             try (XContentParser parser =  XContentFactory.xContent(xContentType)
+                // 这里传入了一个 没有注册任何entry的 Registry对象 以及一个 遇到被废弃field 就抛出异常的对象
                     .createParser(NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, is)) {
+                // 代表是一个空数据流 无法解析出任何数据
                 if (parser.currentToken() == null) {
                     if (parser.nextToken() == null) {
                         return this; // empty file
                     }
                 }
+                // 将解析出来的数据填充到 settings中
                 put(fromXContent(parser, acceptNullValues, true));
             } catch (ElasticsearchParseException e) {
                 throw e;
@@ -1214,6 +1262,7 @@ public final class Settings implements ToXContentFragment {
                     continue;
                 }
 
+                // 代表非list类型的配置  也要检测是否包含占位符
                 String value = propertyPlaceholder.replacePlaceholders(Settings.toString(entry.getValue()), placeholderResolver);
                 // if the values exists and has length, we should maintain it  in the map
                 // otherwise, the replace process resolved into removing it
@@ -1251,6 +1300,7 @@ public final class Settings implements ToXContentFragment {
          * set on this builder.
          */
         public Settings build() {
+            // 忽略兼容性代码
             processLegacyLists(map);
             return new Settings(map, secureSettings.get());
         }

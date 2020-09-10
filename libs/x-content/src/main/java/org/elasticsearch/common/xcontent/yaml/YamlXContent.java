@@ -39,6 +39,7 @@ import java.util.Set;
 
 /**
  * A YAML based content implementation using Jackson.
+ * 该对象具备创建yml文件解析器对象
  */
 public class YamlXContent implements XContent {
 
@@ -46,10 +47,18 @@ public class YamlXContent implements XContent {
         return XContentBuilder.builder(yamlXContent);
     }
 
+    /**
+     * 全局静态变量
+     */
     static final YAMLFactory yamlFactory;
+
+    /**
+     * 单例模式
+     */
     public static final YamlXContent yamlXContent;
 
     static {
+        // 这里借助了第三方框架
         yamlFactory = new YAMLFactory();
         yamlFactory.configure(JsonParser.Feature.STRICT_DUPLICATE_DETECTION, true);
         yamlXContent = new YamlXContent();
@@ -79,9 +88,18 @@ public class YamlXContent implements XContent {
         return new YamlXContentParser(xContentRegistry, deprecationHandler, yamlFactory.createParser(new StringReader(content)));
     }
 
+    /**
+     * 创建yml文件解析器对象
+     * @param xContentRegistry
+     * @param deprecationHandler
+     * @param is  结构化数据对应的输入流
+     * @return
+     * @throws IOException
+     */
     @Override
     public XContentParser createParser(NamedXContentRegistry xContentRegistry,
             DeprecationHandler deprecationHandler, InputStream is) throws IOException {
+        // yamlFactory.createParser 是第三方框架的api 通过一个解析器对象解析输入流 并对外开放读取属性的api
         return new YamlXContentParser(xContentRegistry, deprecationHandler, yamlFactory.createParser(is));
     }
 

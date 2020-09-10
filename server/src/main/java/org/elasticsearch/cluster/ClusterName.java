@@ -29,6 +29,9 @@ import java.io.IOException;
 import java.util.Objects;
 import java.util.function.Predicate;
 
+/**
+ * 用于描述该node所在的集群
+ */
 public class ClusterName implements Writeable {
 
     public static final Setting<ClusterName> CLUSTER_NAME_SETTING = new Setting<>("cluster.name", "elasticsearch", (s) -> {
@@ -41,8 +44,14 @@ public class ClusterName implements Writeable {
         return new ClusterName(s);
     }, Setting.Property.NodeScope);
 
+    /**
+     * 从空对象中获取 相当于直接使用默认值
+     */
     public static final ClusterName DEFAULT = CLUSTER_NAME_SETTING.getDefault(Settings.EMPTY);
 
+    /**
+     * 集群名
+     */
     private final String value;
 
     public ClusterName(StreamInput input) throws IOException {
@@ -56,6 +65,11 @@ public class ClusterName implements Writeable {
         return this.value;
     }
 
+    /**
+     * 可以将自身信息写入到一个输出流中
+     * @param out
+     * @throws IOException
+     */
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeString(value);

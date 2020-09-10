@@ -104,13 +104,19 @@ public class KeyStoreWrapper implements SecureSettings {
      */
     private static final Pattern ALLOWED_SETTING_NAME = Pattern.compile("[A-Za-z0-9_\\-.]+");
 
+    /**
+     * 代表一个因子
+     */
     public static final Setting<SecureString> SEED_SETTING = SecureSetting.secureString("keystore.seed", null);
 
     /** Characters that may be used in the bootstrap seed setting added to all keystores. */
     private static final char[] SEED_CHARS = ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" +
         "~!@#$%^&*-_=+?").toCharArray();
 
-    /** The name of the keystore file to read and write. */
+    /**
+     * The name of the keystore file to read and write.
+     * 存储加密配置的文件
+     * */
     private static final String KEYSTORE_FILENAME = "elasticsearch.keystore";
 
     /** The version of the metadata written before the keystore data. */
@@ -165,6 +171,11 @@ public class KeyStoreWrapper implements SecureSettings {
     private final SetOnce<Map<String, Entry>> entries = new SetOnce<>();
     private volatile boolean closed;
 
+    /**
+     * @param formatVersion   keystore文件的格式版本
+     * @param hasPassword   文件中是否包含密码
+     * @param dataBytes    一串数据
+     */
     private KeyStoreWrapper(int formatVersion, boolean hasPassword, byte[] dataBytes) {
         this.formatVersion = formatVersion;
         this.hasPassword = hasPassword;
@@ -183,7 +194,10 @@ public class KeyStoreWrapper implements SecureSettings {
         return configDir.resolve(KEYSTORE_FILENAME);
     }
 
-    /** Constructs a new keystore with the given password. */
+    /**
+     * Constructs a new keystore with the given password.
+     * 创建一个空对象
+     * */
     public static KeyStoreWrapper create() {
         KeyStoreWrapper wrapper = new KeyStoreWrapper(FORMAT_VERSION, false, null);
         wrapper.entries.set(new HashMap<>());
@@ -191,9 +205,13 @@ public class KeyStoreWrapper implements SecureSettings {
         return wrapper;
     }
 
-    /** Add the bootstrap seed setting, which may be used as a unique, secure, random value by the node */
+    /**
+     * Add the bootstrap seed setting, which may be used as a unique, secure, random value by the node
+     * 设置启动因子
+     * */
     public static void addBootstrapSeed(KeyStoreWrapper wrapper) {
         assert wrapper.getSettingNames().contains(SEED_SETTING.getKey()) == false;
+        // 生成随机数的对象
         SecureRandom random = Randomness.createSecure();
         int passwordLength = 20; // Generate 20 character passwords
         char[] characters = new char[passwordLength];
@@ -209,6 +227,7 @@ public class KeyStoreWrapper implements SecureSettings {
      *
      * {@link #decrypt(char[])} must be called before reading or writing any entries.
      * Returns {@code null} if no keystore exists.
+     * 从配置文件中加载 加密配置
      */
     public static KeyStoreWrapper load(Path configDir) throws IOException {
         Path keystoreFile = keystorePath(configDir);
@@ -216,7 +235,9 @@ public class KeyStoreWrapper implements SecureSettings {
             return null;
         }
 
+        // 该对象是 lucene的目录对象  下面这套操作是标准的lucene操作
         SimpleFSDirectory directory = new SimpleFSDirectory(configDir);
+        // 打开文件输入流
         try (IndexInput indexInput = directory.openInput(KEYSTORE_FILENAME, IOContext.READONCE)) {
             ChecksumIndexInput input = new BufferedChecksumIndexInput(indexInput);
             final int formatVersion;
@@ -229,6 +250,7 @@ public class KeyStoreWrapper implements SecureSettings {
                 throw new IllegalStateException("The Elasticsearch keystore [" + keystoreFile + "] format is too new. " +
                     "Are you trying to downgrade? You should delete and recreate it in order to downgrade.", e);
             }
+            // 是否包含密码信息
             byte hasPasswordByte = input.readByte();
             boolean hasPassword = hasPasswordByte == 1;
             if (hasPassword == false && hasPasswordByte != 0) {
@@ -236,6 +258,7 @@ public class KeyStoreWrapper implements SecureSettings {
                     + String.format(Locale.ROOT, "%02x", hasPasswordByte));
             }
 
+            // 兼容性代码 忽略
             if (formatVersion <= 2) {
                 String type = input.readString();
                 if (type.equals("PKCS12") == false) {
@@ -254,6 +277,7 @@ public class KeyStoreWrapper implements SecureSettings {
                 }
             }
 
+            // 兼容代码 忽略
             final byte[] dataBytes;
             if (formatVersion == 2) {
                 // For v2 we had a map of strings containing the types for each setting. In v3 this map is now
@@ -275,6 +299,7 @@ public class KeyStoreWrapper implements SecureSettings {
                 }
                 dataBytes = bytes.toByteArray();
             } else {
+                // 读取一串数据   应该是这样 如果要输入密码 就将输入的密码与 读取的数据串对比 如果不需要密码 忽略这个操作
                 int dataBytesLen = input.readInt();
                 dataBytes = new byte[dataBytesLen];
                 input.readBytes(dataBytes, 0, dataBytesLen);
@@ -386,7 +411,10 @@ public class KeyStoreWrapper implements SecureSettings {
         }
     }
 
-    /** Encrypt the keystore entries and return the encrypted data. */
+    /**
+     * Encrypt the keystore entries and return the encrypted data.
+     * 对密码进行加密
+     * */
     private byte[] encrypt(char[] password, byte[] salt, byte[] iv) throws GeneralSecurityException, IOException {
         assert isLoaded();
 
@@ -478,17 +506,22 @@ public class KeyStoreWrapper implements SecureSettings {
         }
     }
 
-    /** Write the keystore to the given config directory. */
+    /**
+     * Write the keystore to the given config directory.
+     * 生成 keystore文件
+     * */
     public synchronized void save(Path configDir, char[] password) throws Exception {
         ensureOpen();
 
         SimpleFSDirectory directory = new SimpleFSDirectory(configDir);
         // write to tmp file first, then overwrite
         String tmpFile = KEYSTORE_FILENAME + ".tmp";
+        // 打开一个临时文件
         try (IndexOutput output = directory.createOutput(tmpFile, IOContext.DEFAULT)) {
             CodecUtil.writeHeader(output, KEYSTORE_FILENAME, FORMAT_VERSION);
             output.writeByte(password.length == 0 ? (byte)0 : (byte)1);
 
+            // 这个是加密用的  类似于密钥的东西
             // new cipher params
             SecureRandom random = Randomness.createSecure();
             // use 64 bytes salt, which surpasses that recommended by OWASP
@@ -500,8 +533,10 @@ public class KeyStoreWrapper implements SecureSettings {
             byte[] iv = new byte[12];
             random.nextBytes(iv);
             // encrypted data
+            // 通过密钥和 生成的2串数据 对密码进行加密
             byte[] encryptedBytes = encrypt(password, salt, iv);
 
+            // 原来一开始在keystore中写入的一串数据是用来解密的
             // size of data block
             output.writeInt(4 + salt.length + 4 + iv.length + 4 + encryptedBytes.length);
 
@@ -523,6 +558,7 @@ public class KeyStoreWrapper implements SecureSettings {
             throw new UserException(ExitCodes.CONFIG, message, e);
         }
 
+        // 找到文件应当存储的目录
         Path keystoreFile = keystorePath(configDir);
         Files.move(configDir.resolve(tmpFile), keystoreFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         PosixFileAttributeView attrs = Files.getFileAttributeView(keystoreFile, PosixFileAttributeView.class);
@@ -586,6 +622,7 @@ public class KeyStoreWrapper implements SecureSettings {
 
     /**
      * Set a string setting.
+     * 将某项配置设置到entries中
      */
     synchronized void setString(String setting, char[] value) {
         ensureOpen();

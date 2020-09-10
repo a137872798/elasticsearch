@@ -29,7 +29,7 @@ import java.util.Objects;
 
 /**
  * The content type of {@link org.elasticsearch.common.xcontent.XContent}.
- * XContent 代表一种通用的数据结构体   这里包含了一些XContent的具体类型
+ * 描述文件数据体的类型
  */
 public enum XContentType {
 

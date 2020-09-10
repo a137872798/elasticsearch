@@ -24,7 +24,7 @@ package org.elasticsearch.common.xcontent;
  * in some XContent e.g. JSON. Locations are typically used to communicate the
  * position of a parsing error to end users and consequently have line and
  * column numbers starting from 1.
- * 用于标记某个数据体的行号和列号
+ * 描述了某个结构体数据的被解析后对应的某个token 所在的位置 通过行号和列号来定位
  */
 public final class XContentLocation {
 

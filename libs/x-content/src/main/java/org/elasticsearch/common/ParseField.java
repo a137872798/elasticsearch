@@ -30,7 +30,6 @@ import java.util.function.Supplier;
 /**
  * Holds a field that can be found in a request while parsing and its different
  * variants, which may be deprecated.
- * 代表某个被解析的字段 ???
  */
 public class ParseField {
     private final String name;  // 某个字段名

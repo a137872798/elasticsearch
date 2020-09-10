@@ -39,9 +39,16 @@ public abstract class SecureSetting<T> extends Setting<T> {
         Property.NodeScope
     };
 
+    /**
+     *
+     * @param key
+     * @param properties
+     */
     private SecureSetting(String key, Property... properties) {
+        // 在初始化时 为 prop 追加一个FIXED_PROPERTIES
         super(key, (String)null, null, ArrayUtils.concat(properties, FIXED_PROPERTIES, Property.class));
         assert assertAllowedProperties(properties);
+        // 对名字进行正则校验 非法名字将会抛出异常
         KeyStoreWrapper.validateSettingName(key);
     }
 
@@ -129,6 +136,9 @@ public abstract class SecureSetting<T> extends Setting<T> {
      * A setting which contains a sensitive string.
      *
      * This may be any sensitive string, e.g. a username, a password, an auth token, etc.
+     * @param name  配置名
+     * @param fallback  当获取不到配置时的降级处理
+     * @param properties 描述该配置的属性
      */
     public static Setting<SecureString> secureString(String name, Setting<SecureString> fallback,
                                                      Property... properties) {
@@ -145,6 +155,9 @@ public abstract class SecureSetting<T> extends Setting<T> {
         return new SecureFileSetting(name, fallback, properties);
     }
 
+    /**
+     * 代表配置值是 string类型的
+     */
     private static class SecureStringSetting extends SecureSetting<SecureString> {
         private final Setting<SecureString> fallback;
 

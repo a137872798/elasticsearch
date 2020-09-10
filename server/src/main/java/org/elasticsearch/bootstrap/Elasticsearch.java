@@ -150,6 +150,13 @@ class Elasticsearch extends EnvironmentAwareCommand {
         return elasticsearch.main(args, terminal);
     }
 
+    /**
+     * 当环境初始化结束后 开始运行es
+     * @param terminal
+     * @param options
+     * @param env
+     * @throws UserException
+     */
     @Override
     protected void execute(Terminal terminal, OptionSet options, Environment env) throws UserException {
         if (options.nonOptionArguments().isEmpty() == false) {
@@ -170,12 +177,14 @@ class Elasticsearch extends EnvironmentAwareCommand {
             return;
         }
 
+        // 代表cli设置了有关后台运行的参数
         final boolean daemonize = options.has(daemonizeOption);
         final Path pidFile = pidfileOption.value(options);
         final boolean quiet = options.has(quietOption);
 
         // a misconfigured java.io.tmpdir can cause hard-to-diagnose problems later, so reject it immediately
         try {
+            // 确保tmpFile的路径有效
             env.validateTmpFile();
         } catch (IOException e) {
             throw new UserException(ExitCodes.CONFIG, e.getMessage());
@@ -188,6 +197,15 @@ class Elasticsearch extends EnvironmentAwareCommand {
         }
     }
 
+    /**
+     * 进行初始化工作
+     * @param daemonize  是否在cli中包含了  后台运行的参数
+     * @param pidFile   是否包含了 pid的dir路径
+     * @param quiet   是否设置了 quiet相关的参数
+     * @param initialEnv   当前环境 内部包含了各种需要的配置
+     * @throws NodeValidationException
+     * @throws UserException
+     */
     void init(final boolean daemonize, final Path pidFile, final boolean quiet, Environment initialEnv)
         throws NodeValidationException, UserException {
         try {

@@ -34,6 +34,9 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
+/**
+ * 该对象的作用就是从各个地方采集信息 生成一个 settings对象 为运行es做准备
+ */
 public class InternalSettingsPreparer {
 
     // TODO: refactor this method out, it used to exist for the transport client
@@ -60,20 +63,25 @@ public class InternalSettingsPreparer {
         Settings.Builder output = Settings.builder();
         // 将基础配置 以及从cli中解析出来的配置合并
         initializeSettings(output, input, properties);
+        // 使用setting 和配置文件的path初始化环境对象
         Environment environment = new Environment(output.build(), configPath);
 
+        // 如果存在yaml文件 抛出异常 （文件后缀名必须为 yml）
         if (Files.exists(environment.configFile().resolve("elasticsearch.yaml"))) {
             throw new SettingsException("elasticsearch.yaml was deprecated in 5.5.0 and must be renamed to elasticsearch.yml");
         }
 
+        // 该版本已经不支持json文件了
         if (Files.exists(environment.configFile().resolve("elasticsearch.json"))) {
             throw new SettingsException("elasticsearch.json was deprecated in 5.5.0 and must be converted to elasticsearch.yml");
         }
 
+        // 将yml文件中的配置读取出来生成 settings
         output = Settings.builder(); // start with a fresh output
         Path path = environment.configFile().resolve("elasticsearch.yml");
         if (Files.exists(path)) {
             try {
+                // 将yml文件中的配置信息读取出来 并填充到 settings中
                 output.loadFromPath(path);
             } catch (IOException e) {
                 throw new SettingsException("Failed to load settings from " + path.toString(), e);
@@ -81,7 +89,9 @@ public class InternalSettingsPreparer {
         }
 
         // re-initialize settings now that the config file has been loaded
+        // 因为从配置文件中加载了一些配置 所以之前存在的占位符也许现在就可以读取到了
         initializeSettings(output, input, properties);
+        // 做一些收尾工作
         finalizeSettings(output, defaultNodeName);
 
         return new Environment(output.build(), configPath);
@@ -105,25 +115,31 @@ public class InternalSettingsPreparer {
 
     /**
      * Finish preparing settings by replacing forced settings and any defaults that need to be added.
+     * 处理 settings的 最后一步
      */
     private static void finalizeSettings(Settings.Builder output, Supplier<String> defaultNodeName) {
         // allow to force set properties based on configuration of the settings provided
+        // 将携带 force前缀的 配置读取出来 并存储在该list中
         List<String> forcedSettings = new ArrayList<>();
         for (String setting : output.keys()) {
             if (setting.startsWith("force.")) {
                 forcedSettings.add(setting);
             }
         }
+        // 将force前缀去除后重新设置到settings中  感觉这个force好像能起到最高优先级的作用 比如多个属性重复 那么force的会覆盖其他的
         for (String forcedSetting : forcedSettings) {
             String value = output.remove(forcedSetting);
             output.put(forcedSetting.substring("force.".length()), value);
         }
+        // 再次尝试解析占位符
         output.replacePropertyPlaceholders();
 
         // put the cluster and node name if they aren't set
+        // 当不存在clusterName 信息时   使用默认集群名 "elasticsearch"
         if (output.get(ClusterName.CLUSTER_NAME_SETTING.getKey()) == null) {
             output.put(ClusterName.CLUSTER_NAME_SETTING.getKey(), ClusterName.CLUSTER_NAME_SETTING.getDefault(Settings.EMPTY).value());
         }
+        // 如果未设置nodeName 则使用默认值
         if (output.get(Node.NODE_NAME_SETTING.getKey()) == null) {
             output.put(Node.NODE_NAME_SETTING.getKey(), defaultNodeName.get());
         }

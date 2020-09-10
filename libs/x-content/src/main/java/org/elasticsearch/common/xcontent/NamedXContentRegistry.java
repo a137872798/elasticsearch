@@ -33,6 +33,9 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.unmodifiableMap;
 
+/**
+ * 该对象允许注册一些东西
+ */
 public class NamedXContentRegistry {
     /**
      * The empty {@link NamedXContentRegistry} for use when you are sure that you aren't going to call
@@ -40,21 +43,27 @@ public class NamedXContentRegistry {
      * every call to {@linkplain XContentParser#namedObject(Class, String, Object)}. Every non-test usage really should be checked
      * thoroughly and marked with a comment about how it was checked. That way anyone that sees code that uses it knows that it is
      * potentially dangerous.
-     * 这是一个空对象
      */
     public static final NamedXContentRegistry EMPTY = new NamedXContentRegistry(emptyList());
 
     /**
      * An entry in the {@linkplain NamedXContentRegistry} containing the name of the object and the parser that can parse it.
+     * 被注册的实体被称为 entry
      */
     public static class Entry {
-        /** The class that this entry can read. */  // 代表它支持的读取类型
+        /**
+         * The class that this entry can read.
+         * 数据将会被反序列化成什么类型的对象
+         * */
         public final Class<?> categoryClass;
 
-        /** A name for the entry which is unique within the {@link #categoryClass}. */  // 代表一个解析后的字段
+        /** A name for the entry which is unique within the {@link #categoryClass}. */
         public final ParseField name;
 
-        /** A parser capability of parser the entry's class. */  // 代表使用的解析器
+        /**
+         * A parser capability of parser the entry's class.
+         * 代表该entry对应的数据片段被解析后获取的各种属性
+         * */
         private final ContextParser<Object, ?> parser;
 
         /** Creates a new entry which can be stored by the registry. */
@@ -74,20 +83,31 @@ public class NamedXContentRegistry {
         }
     }
 
+    /**
+     * 记录内部注册的对象
+     */
     private final Map<Class<?>, Map<String, Entry>> registry;
 
+
+    /**
+     * 该对象通过一组entry进行初始化
+     * @param entries
+     */
     public NamedXContentRegistry(List<Entry> entries) {
         if (entries.isEmpty()) {
             registry = emptyMap();
             return;
         }
+        // 这些entry 按照class的名字进行排序
         entries = new ArrayList<>(entries);
         entries.sort((e1, e2) -> e1.categoryClass.getName().compareTo(e2.categoryClass.getName()));
 
         Map<Class<?>, Map<String, Entry>> registry = new HashMap<>();
         Map<String, Entry> parsers = null;
         Class<?> currentCategory = null;
+        // 这里是将所有entry 的信息填充到 registry中
         for (Entry entry : entries) {
+            // 因为上面已经排序过了 所以currentCategory != entry.categoryClass 后类不会出现重复
             if (currentCategory != entry.categoryClass) {
                 if (currentCategory != null) {
                     // we've seen the last of this category, put it into the big map

@@ -169,6 +169,7 @@ public abstract class Terminal {
      * character is immediately preceded by a carriage return, we have
      * a Windows-style newline, so we discard the carriage return as well
      * as the newline.
+     * 按行解析数据
      */
     public static char[] readLineToCharArray(Reader reader, int maxLength) {
         char[] buf = new char[maxLength + 2];

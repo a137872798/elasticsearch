@@ -256,9 +256,16 @@ final class Bootstrap {
         };
     }
 
+    /**
+     * 加载加密配置
+     * @param initialEnv  环境对象
+     * @return
+     * @throws BootstrapException
+     */
     static SecureSettings loadSecureSettings(Environment initialEnv) throws BootstrapException {
         final KeyStoreWrapper keystore;
         try {
+            // 加载keystore文件
             keystore = KeyStoreWrapper.load(initialEnv.configFile());
         } catch (IOException e) {
             throw new BootstrapException(e);
@@ -266,6 +273,7 @@ final class Bootstrap {
 
         SecureString password;
         try {
+            // 需要写入密码
             if (keystore != null && keystore.hasPassword()) {
                 password = readPassphrase(System.in, KeyStoreAwareCommand.MAX_PASSPHRASE_LENGTH);
             } else {
@@ -276,8 +284,10 @@ final class Bootstrap {
         }
 
         try (password) {
+            // 当不存在 keystore文件时 生成一个文件
             if (keystore == null) {
                 final KeyStoreWrapper keyStoreWrapper = KeyStoreWrapper.create();
+                // 此时密码为空
                 keyStoreWrapper.save(initialEnv.configFile(), new char[0]);
                 return keyStoreWrapper;
             } else {
@@ -294,6 +304,7 @@ final class Bootstrap {
     /**
      * Read from an InputStream up to the first carriage return or newline,
      * returning no more than maxLength characters.
+     * 从控制台读取密码
      */
     static SecureString readPassphrase(InputStream stream, int maxLength) throws IOException {
         SecureString passphrase;
@@ -354,18 +365,22 @@ final class Bootstrap {
 
     /**
      * This method is invoked by {@link Elasticsearch#main(String[])} to startup elasticsearch.
+     * Elasticsearch 作为整个es启动的入口 在初始化环境和解析cli后 通过Bootstrap启动应用
      */
     static void init(
-            final boolean foreground,
-            final Path pidFile,
-            final boolean quiet,
-            final Environment initialEnv) throws BootstrapException, NodeValidationException, UserException {
+            final boolean foreground,   // 是否在前台运行
+            final Path pidFile,   // pid文件存储的路径
+            final boolean quiet,    // 代表开启安静模式
+            final Environment initialEnv  // 当前运行环境
+    ) throws BootstrapException, NodeValidationException, UserException {
         // force the class initializer for BootstrapInfo to run before
         // the security manager is installed
+        // 这是一个空方法啊  啥意思 ???
         BootstrapInfo.init();
 
         INSTANCE = new Bootstrap();
 
+        // 加载加密配置
         final SecureSettings keystore = loadSecureSettings(initialEnv);
         final Environment environment = createEnvironment(pidFile, keystore, initialEnv.settings(), initialEnv.configFile());
 

@@ -32,6 +32,9 @@ import org.elasticsearch.core.internal.io.IOUtils;
 import java.io.IOException;
 import java.nio.CharBuffer;
 
+/**
+ * 内嵌jackson 完成json格式数据的解析
+ */
 public class JsonXContentParser extends AbstractXContentParser {
 
     final JsonParser parser;
@@ -213,6 +216,11 @@ public class JsonXContentParser extends AbstractXContentParser {
         throw new IllegalStateException("No matching token for number_type [" + numberType + "]");
     }
 
+    /**
+     * 将解析出来的数据转换成token
+     * @param token
+     * @return
+     */
     private Token convertToken(JsonToken token) {
         if (token == null) {
             return null;

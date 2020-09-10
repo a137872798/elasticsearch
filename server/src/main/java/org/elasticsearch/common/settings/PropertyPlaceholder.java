@@ -95,7 +95,8 @@ class PropertyPlaceholder {
             if (endIndex != -1) {
                 // 截取占位符的部分 当然内部可能发生了嵌套
                 String placeholder = buf.substring(startIndex + this.placeholderPrefix.length(), endIndex);
-                // 代表发生循环依赖
+                // 单纯看上面的递归是不可能发生循环依赖的
+                // 当下面解析出一个占位符时 发现解析出来的结果 是外层的另一个占位符 那么此时才发生循环依赖
                 if (!visitedPlaceholders.add(placeholder)) {
                     throw new IllegalArgumentException(
                             "Circular placeholder reference '" + placeholder + "' in property definitions");
@@ -107,10 +108,12 @@ class PropertyPlaceholder {
                 // Now obtain the value for the fully resolved key...
                 int defaultValueIdx = placeholder.indexOf(':');
                 String defaultValue = null;
+                // 代表存在默认值
                 if (defaultValueIdx != -1) {
                     defaultValue = placeholder.substring(defaultValueIdx + 1);
                     placeholder = placeholder.substring(0, defaultValueIdx);
                 }
+                // 根据占位符的名字 获取对应的属性
                 String propVal = placeholderResolver.resolvePlaceholder(placeholder);
                 if (propVal == null) {
                     propVal = defaultValue;
@@ -122,12 +125,14 @@ class PropertyPlaceholder {
                         return strVal;
                     }
                 }
+                // 解析出来的结果可能还包含了占位符
                 if (propVal != null) {
                     // Recursive invocation, parsing placeholders contained in the
                     // previously resolved placeholder value.
                     propVal = parseStringValue(propVal, placeholderResolver, visitedPlaceholders);
                     buf.replace(startIndex, endIndex + this.placeholderSuffix.length(), propVal);
                     startIndex = buf.indexOf(this.placeholderPrefix, startIndex + propVal.length());
+                // 这种情况 代表placeholderResolver.shouldIgnoreMissing(placeholder) 判断为false  这时就看配置是否支持ignore 否则抛出异常
                 } else if (this.ignoreUnresolvablePlaceholders) {
                     // Proceed with unprocessed value.
                     startIndex = buf.indexOf(this.placeholderPrefix, endIndex + this.placeholderSuffix.length());

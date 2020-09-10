@@ -26,6 +26,7 @@ import java.util.Enumeration;
 
 /**
  * Exposes system startup information
+ *
  */
 @SuppressForbidden(reason = "exposes read-only view of system properties")
 public final class BootstrapInfo {
