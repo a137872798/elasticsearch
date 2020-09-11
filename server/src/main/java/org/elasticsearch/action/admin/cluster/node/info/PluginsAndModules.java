@@ -33,6 +33,7 @@ import java.util.List;
 
 /**
  * Information about plugins and modules
+ * module 和 plugin目录下的类 都被称为 plugin
  */
 public class PluginsAndModules implements ReportingService.Info {
     private final List<PluginInfo> plugins;

@@ -46,6 +46,7 @@ import java.util.stream.Collectors;
 
 /**
  * A discovery node represents a node that is part of the cluster.
+ * 描述当前节点在集群中的角色
  */
 public class DiscoveryNode implements Writeable, ToXContentFragment {
 
@@ -442,12 +443,20 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
         return builder;
     }
 
+    /**
+     * 当前node 可以作为的角色
+     */
     private static Map<String, DiscoveryNodeRole> roleNameToPossibleRoles;
 
+    /**
+     *
+     * @param possibleRoles
+     */
     public static void setPossibleRoles(final Set<DiscoveryNodeRole> possibleRoles) {
         final Map<String, DiscoveryNodeRole> roleNameToPossibleRoles =
                 possibleRoles.stream().collect(Collectors.toUnmodifiableMap(DiscoveryNodeRole::roleName, Function.identity()));
         // collect the abbreviation names into a map to ensure that there are not any duplicate abbreviations
+        // roleNameAbbreviation 是role的缩写
         final Map<String, DiscoveryNodeRole> roleNameAbbreviationToPossibleRoles = roleNameToPossibleRoles.values()
                 .stream()
                 .collect(Collectors.toUnmodifiableMap(DiscoveryNodeRole::roleNameAbbreviation, Function.identity()));

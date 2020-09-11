@@ -44,7 +44,7 @@ public interface SecureSettings extends Closeable {
     InputStream getFile(String setting) throws GeneralSecurityException;
 
     /**
-     * 将配置项以密文形式返回
+     * 将配置项以按照 SHA256解密后的形式返回
      * @param setting
      * @return
      * @throws GeneralSecurityException

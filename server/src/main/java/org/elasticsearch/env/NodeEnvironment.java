@@ -93,8 +93,13 @@ import java.util.stream.Stream;
 
 /**
  * A component that holds all data paths for a single node.
+ * 描述运行node 所需要的环境
  */
 public final class NodeEnvironment  implements Closeable {
+
+    /**
+     * 包装数据dir的路径
+     */
     public static class NodePath {
         /* ${data.paths} */
         public final Path path;
@@ -179,12 +184,27 @@ public final class NodeEnvironment  implements Closeable {
     public static final String INDICES_FOLDER = "indices";
     public static final String NODE_LOCK_FILENAME = "node.lock";
 
+
+    /**
+     * 这个对象应该是会将所有数据文件上锁 确保这些文件当前仅支持通过node访问  避免数据文件被修改
+     */
     public static class NodeLock implements Releasable {
 
+        /**
+         * 这个是lucene的锁  支持进程锁 和 线程锁 进程锁基于文件系统实现
+         * 每个数据文件目录对应一个文件锁
+         */
         private final Lock[] locks;
         private final NodePath[] nodePaths;
 
 
+        /**
+         *
+         * @param logger
+         * @param environment
+         * @param pathFunction  检验path是否有效
+         * @throws IOException
+         */
         public NodeLock(final Logger logger,
                         final Environment environment,
                         final CheckedFunction<Path, Boolean, IOException> pathFunction) throws IOException {
@@ -194,12 +214,15 @@ public final class NodeEnvironment  implements Closeable {
         /**
          * Tries to acquire a node lock for a node id, throws {@code IOException} if it is unable to acquire it
          * @param pathFunction function to check node path before attempt of acquiring a node lock
+         *                     初始化节点锁对象
+         * @param subPathMapping  提供了一个对path进行映射的钩子
          */
         public NodeLock(final Logger logger,
                         final Environment environment,
                         final CheckedFunction<Path, Boolean, IOException> pathFunction,
                         final Function<Path, Path> subPathMapping) throws IOException {
             nodePaths = new NodePath[environment.dataFiles().length];
+            // 每个目录对应一个锁
             locks = new Lock[nodePaths.length];
             try {
                 final Path[] dataPaths = environment.dataFiles();
@@ -209,6 +232,7 @@ public final class NodeEnvironment  implements Closeable {
                     if (pathFunction.apply(dir) == false) {
                         continue;
                     }
+                    // 将目录和锁工厂包装成一个 lucene的 directory对象 该对象具备独占锁的api
                     try (Directory luceneDir = FSDirectory.open(dir, NativeFSLockFactory.INSTANCE)) {
                         logger.trace("obtaining node lock on {} ...", dir.toAbsolutePath());
                         locks[dirIndex] = luceneDir.obtainLock(NODE_LOCK_FILENAME);
@@ -244,14 +268,17 @@ public final class NodeEnvironment  implements Closeable {
 
     /**
      * Setup the environment.
-     * @param settings settings from elasticsearch.yml
+     * @param settings settings from elasticsearch.yml  未更新插件携带的setting前的配置
+     * @param environment 此时使用的环境
      */
     public NodeEnvironment(Settings settings, Environment environment) throws IOException {
         boolean success = false;
 
         try {
+            // 找到共享数据的目录
             sharedDataPath = environment.sharedDataFile();
 
+            // 创建目录
             for (Path path : environment.dataFiles()) {
                 Files.createDirectories(path);
             }

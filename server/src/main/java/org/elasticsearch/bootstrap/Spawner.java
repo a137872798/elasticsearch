@@ -62,26 +62,31 @@ final class Spawner implements Closeable {
      *
      * @param environment the node environment
      * @throws IOException if an I/O error occurs reading the module or spawning a native process
-     * 使用一个环境对象进行初始化
+     * 启动插件程序     这个nativeController应该就是理解成插件的启动程序吧
      */
     void spawnNativeControllers(final Environment environment) throws IOException {
         if (!spawned.compareAndSet(false, true)) {
             throw new IllegalStateException("native controllers already spawned");
         }
+        // 存储模块的dir 必须存在 默认使用home.module目录
         if (!Files.exists(environment.modulesFile())) {
             throw new IllegalStateException("modules directory [" + environment.modulesFile() + "] not found");
         }
         /*
          * For each module, attempt to spawn the controller daemon. Silently ignore any module that doesn't include a controller for the
          * correct platform.
+         * 找到 module目录下的所有插件目录
          */
         List<Path> paths = PluginsService.findPluginDirs(environment.modulesFile());
         for (final Path modules : paths) {
+            // 从 plugin.prop 文件中抽取信息并包装成info对象
             final PluginInfo info = PluginInfo.readFromProperties(modules);
+            // 定位到 nativeController的路径 在window下通常是一个 exe文件
             final Path spawnPath = Platforms.nativeControllerPath(modules);
             if (!Files.isRegularFile(spawnPath)) {
                 continue;
             }
+            // 如果该插件不包含 nativeController 则抛出异常
             if (!info.hasNativeController()) {
                 final String message = String.format(
                     Locale.ROOT,
@@ -89,6 +94,7 @@ final class Spawner implements Closeable {
                     modules.getFileName());
                 throw new IllegalArgumentException(message);
             }
+            // 启动nativeController.exe 同时将进程存储到列表中
             final Process process = spawnNativeController(spawnPath, environment.tmpFile());
             processes.add(process);
         }
@@ -97,6 +103,8 @@ final class Spawner implements Closeable {
     /**
      * Attempt to spawn the controller daemon for a given module. The spawned process will remain connected to this JVM via its stdin,
      * stdout, and stderr streams, but the references to these streams are not available to code outside this package.
+     * @param spawnPath nativeController的路径
+     * @param tmpPath 存储临时文件的路径
      */
     private Process spawnNativeController(final Path spawnPath, final Path tmpPath) throws IOException {
         final String command;
@@ -117,6 +125,7 @@ final class Spawner implements Closeable {
         final ProcessBuilder pb = new ProcessBuilder(command);
 
         // the only environment variable passes on the path to the temporary directory
+        // 更新当前进程的临时文件目录  并启动exe程序
         pb.environment().clear();
         pb.environment().put("TMPDIR", tmpPath.toString());
 

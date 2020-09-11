@@ -71,6 +71,9 @@ import java.util.function.Supplier;
  */
 public final class PainlessPlugin extends Plugin implements ScriptPlugin, ExtensiblePlugin, ActionPlugin {
 
+    /**
+     * 存储白名单信息 每次使用新的 classLoader进行加载时 新的白名单信息就会追加到这个列表
+     */
     private static final Map<ScriptContext<?>, List<Whitelist>> whitelists;
 
     /*
@@ -128,6 +131,10 @@ public final class PainlessPlugin extends Plugin implements ScriptPlugin, Extens
         return Arrays.asList(CompilerSettings.REGEX_ENABLED);
     }
 
+    /**
+     * 将通过本类加载器读取到的所有实现类 填充到容器中
+     * @param loader
+     */
     @Override
     public void reloadSPI(ClassLoader loader) {
         for (PainlessExtension extension : ServiceLoader.load(PainlessExtension.class, loader)) {

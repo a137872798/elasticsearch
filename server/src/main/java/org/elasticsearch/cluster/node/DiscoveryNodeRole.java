@@ -152,6 +152,7 @@ public abstract class DiscoveryNodeRole implements Comparable<DiscoveryNodeRole>
 
     /**
      * The built-in node roles.
+     * 所有节点可能的角色
      */
     public static SortedSet<DiscoveryNodeRole> BUILT_IN_ROLES =
         Set.of(DATA_ROLE, INGEST_ROLE, MASTER_ROLE, REMOTE_CLUSTER_CLIENT_ROLE).stream().collect(Sets.toUnmodifiableSortedSet());

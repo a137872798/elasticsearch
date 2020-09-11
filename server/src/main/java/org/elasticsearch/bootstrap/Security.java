@@ -112,11 +112,12 @@ final class Security {
      * Initializes SecurityManager for the environment
      * Can only happen once!
      * @param environment configuration for generating dynamic permissions
-     * @param filterBadDefaults true if we should filter out bad java defaults in the system policy.
+     * @param filterBadDefaults true if we should filter out bad java defaults in the system policy.   默认为true  代表过滤掉一些不合适的策略
      */
     static void configure(Environment environment, boolean filterBadDefaults) throws IOException, NoSuchAlgorithmException {
 
         // enable security policy: union of template and environment-based paths, and possibly plugin permissions
+        // key是jar包的名字 value是该jar所在的路径
         Map<String, URL> codebases = getCodebaseJarMap(JarHell.parseClassPath());
         Policy.setPolicy(new ESPolicy(codebases, createPermissions(environment), getPluginPermissions(environment), filterBadDefaults));
 
@@ -134,6 +135,7 @@ final class Security {
 
     /**
      * Return a map from codebase name to codebase url of jar codebases used by ES core.
+     * @param urls 存储一组jar的目录   将所有jar包填充到map后返回
      */
     @SuppressForbidden(reason = "find URL path")
     static Map<String, URL> getCodebaseJarMap(Set<URL> urls) {

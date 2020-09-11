@@ -192,7 +192,7 @@ import static java.util.stream.Collectors.toList;
 /**
  * A node represent a node within a cluster ({@code cluster.name}). The {@link #client()} can be used
  * in order to use a {@link Client} to perform actions/operations against the cluster.
- * 代表集群中某个ES节点
+ * 每个启动的es进程都会作为一个node
  */
 public class Node implements Closeable {
     public static final Setting<Boolean> WRITE_PORTS_FILE_SETTING =
@@ -254,6 +254,10 @@ public class Node implements Closeable {
     private final NodeService nodeService;
     final NamedWriteableRegistry namedWriteableRegistry;
 
+    /**
+     * 使用环境对象完成node的初始化
+     * @param environment  该对象抽取了各种配置信息
+     */
     public Node(Environment environment) {
         this(environment, Collections.emptyList(), true);
     }
@@ -261,10 +265,10 @@ public class Node implements Closeable {
     /**
      * Constructs a node
      *
-     * @param initialEnvironment         the initial environment for this node, which will be added to by plugins
-     * @param classpathPlugins           the plugins to be loaded from the classpath
+     * @param initialEnvironment         the initial environment for this node, which will be added to by plugins  包含各种需要的配置
+     * @param classpathPlugins           the plugins to be loaded from the classpath     默认情况加载的插件为空
      * @param forbidPrivateIndexSettings whether or not private index settings are forbidden when creating an index; this is used in the
-     *                                   test framework for tests that rely on being able to set private settings
+     *                                   test framework for tests that rely on being able to set private settings    创建索引时是否禁止私有索引配置 默认为true
      */
     protected Node(final Environment initialEnvironment,
                    Collection<Class<? extends Plugin>> classpathPlugins, boolean forbidPrivateIndexSettings) {
@@ -272,9 +276,11 @@ public class Node implements Closeable {
         final List<Closeable> resourcesToClose = new ArrayList<>(); // register everything we need to release in the case of an error
         boolean success = false;
         try {
+            // 设置客户端类型 因为每个node 既可以作为服务器 也可以作为 client
             Settings tmpSettings = Settings.builder().put(initialEnvironment.settings())
                 .put(Client.CLIENT_TYPE_SETTING_S.getKey(), CLIENT_TYPE).build();
 
+            // 获取当前jvm状态
             final JvmInfo jvmInfo = JvmInfo.jvmInfo();
             logger.info(
                 "version[{}], pid[{}], build[{}/{}/{}/{}], OS[{}/{}/{}], JVM[{}/{}/{}/{}]",
@@ -305,10 +311,13 @@ public class Node implements Closeable {
                     initialEnvironment.logsFile(), initialEnvironment.pluginsFile());
             }
 
+            // 初始化插件服务
             this.pluginsService = new PluginsService(tmpSettings, initialEnvironment.configFile(), initialEnvironment.modulesFile(),
                 initialEnvironment.pluginsFile(), classpathPlugins);
+            // 从插件中获取配置 并追加到settings中
             final Settings settings = pluginsService.updatedSettings();
 
+            // 从插件中判断当前node 可能出现的角色
             final Set<DiscoveryNodeRole> possibleRoles = Stream.concat(
                     DiscoveryNodeRole.BUILT_IN_ROLES.stream(),
                     pluginsService.filterPlugins(Plugin.class)
@@ -321,9 +330,12 @@ public class Node implements Closeable {
             /*
              * Create the environment based on the finalized view of the settings. This is to ensure that components get the same setting
              * values, no matter they ask for them from.
+             * 使用新的settings 重新设置一次环境
              */
             this.environment = new Environment(settings, initialEnvironment.configFile());
             Environment.assertEquivalent(initialEnvironment, this.environment);
+
+            // 生成一个node相关的环境
             nodeEnvironment = new NodeEnvironment(tmpSettings, environment);
             logger.info("node name [{}], node ID [{}], cluster name [{}]",
                 NODE_NAME_SETTING.get(tmpSettings), nodeEnvironment.nodeId(), ClusterName.CLUSTER_NAME_SETTING.get(tmpSettings).value());
@@ -632,6 +644,7 @@ public class Node implements Closeable {
             logger.info("initialized");
 
             success = true;
+            // 比如尝试为 dataFile上锁时失败 会抛出IO异常 这时 es启动失败
         } catch (IOException ex) {
             throw new ElasticsearchException("failed to bind service", ex);
         } finally {

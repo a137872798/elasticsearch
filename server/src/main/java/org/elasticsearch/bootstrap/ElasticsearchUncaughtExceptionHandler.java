@@ -28,6 +28,9 @@ import java.io.IOError;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 
+/**
+ * 该对象负责处理线程抛出的所有异常   仅打印日志
+ */
 class ElasticsearchUncaughtExceptionHandler implements Thread.UncaughtExceptionHandler {
     private static final Logger logger = LogManager.getLogger(ElasticsearchUncaughtExceptionHandler.class);
 

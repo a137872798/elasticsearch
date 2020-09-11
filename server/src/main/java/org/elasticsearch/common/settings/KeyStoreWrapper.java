@@ -88,9 +88,17 @@ public class KeyStoreWrapper implements SecureSettings {
         FILE
     }
 
-    /** An entry in the keystore. The bytes are opaque and interpreted based on the entry type. */
+    /**
+     * An entry in the keystore. The bytes are opaque and interpreted based on the entry type.
+     * */
     private static class Entry {
+        /**
+         * 加密的配置项信息
+         */
         final byte[] bytes;
+        /**
+         * 使用 sha256算法解密后的数据
+         */
         final byte[] sha256Digest;
 
         Entry(byte[] bytes) {
@@ -310,7 +318,10 @@ public class KeyStoreWrapper implements SecureSettings {
         }
     }
 
-    /** Upgrades the format of the keystore, if necessary. */
+    /**
+     * Upgrades the format of the keystore, if necessary.
+     * 检测 keystore文件的格式版本 并尝试进行升级  兼容性代码先忽略
+     * */
     public static void upgrade(KeyStoreWrapper wrapper, Path configDir, char[] password) throws Exception {
         if (wrapper.getFormatVersion() == FORMAT_VERSION && wrapper.getSettingNames().contains(SEED_SETTING.getKey())) {
             return;
@@ -322,6 +333,10 @@ public class KeyStoreWrapper implements SecureSettings {
         wrapper.save(configDir, password);
     }
 
+    /**
+     * 代表已经从相关文件中读取过数据了
+     * @return
+     */
     @Override
     public boolean isLoaded() {
         return entries.get() != null;
@@ -349,6 +364,7 @@ public class KeyStoreWrapper implements SecureSettings {
      * Decrypts the underlying keystore data.
      *
      * This may only be called once.
+     * 对密码进行解密 解析后的数据串代表了一系列的 配置项 将他们设置到entries中
      */
     public void decrypt(char[] password) throws GeneralSecurityException, IOException {
         if (entries.get() != null) {
@@ -413,7 +429,7 @@ public class KeyStoreWrapper implements SecureSettings {
 
     /**
      * Encrypt the keystore entries and return the encrypted data.
-     * 对密码进行加密
+     * 将内置的 entries通过password 和2个加密用的因子进行加密
      * */
     private byte[] encrypt(char[] password, byte[] salt, byte[] iv) throws GeneralSecurityException, IOException {
         assert isLoaded();

@@ -39,6 +39,7 @@ import java.util.List;
 
 /**
  * Library for Windows/Kernel32
+ * 该对象负责完成java.api 到本地c函数库的映射
  */
 final class JNAKernel32Library {
 

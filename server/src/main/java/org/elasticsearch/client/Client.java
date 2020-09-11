@@ -83,6 +83,9 @@ import java.util.Map;
  */
 public interface Client extends ElasticsearchClient, Releasable {
 
+    /**
+     * 当前节点的类型
+     */
     Setting<String> CLIENT_TYPE_SETTING_S = new Setting<>("client.type", "node", (s) -> {
         switch (s) {
             case "node":

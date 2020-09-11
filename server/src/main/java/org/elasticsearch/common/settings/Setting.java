@@ -1437,6 +1437,15 @@ public class Setting<T> implements ToXContentObject {
         return new Setting<>(key, (s) -> defaultPercentage, (s) -> MemorySizeValue.parseBytesSizeValueOrHeapRatio(s, key), properties);
     }
 
+    /**
+     * 代表该配置的值应该是一个列表
+     * @param key
+     * @param defaultStringValue
+     * @param singleValueParser
+     * @param properties
+     * @param <T>
+     * @return
+     */
     public static <T> Setting<List<T>> listSetting(
             final String key,
             final List<String> defaultStringValue,
@@ -1480,6 +1489,16 @@ public class Setting<T> implements ToXContentObject {
         return listSetting(key, null, singleValueParser, defaultStringValue, validator, properties);
     }
 
+    /**
+     * 获取一个 值为list的配置项
+     * @param key
+     * @param fallbackSetting
+     * @param singleValueParser  将字符串解析成配置值
+     * @param defaultStringValue  从settings中获取默认值
+     * @param properties
+     * @param <T>
+     * @return
+     */
     public static <T> Setting<List<T>> listSetting(
             final String key,
             final @Nullable Setting<List<T>> fallbackSetting,
@@ -1489,6 +1508,17 @@ public class Setting<T> implements ToXContentObject {
         return listSetting(key, fallbackSetting, singleValueParser, defaultStringValue, v -> {}, properties);
     }
 
+    /**
+     *
+     * @param key
+     * @param fallbackSetting
+     * @param singleValueParser
+     * @param defaultStringValue
+     * @param validator   属性值校验器
+     * @param properties
+     * @param <T>
+     * @return
+     */
     public static <T> Setting<List<T>> listSetting(
         final String key,
         final @Nullable Setting<List<T>> fallbackSetting,
@@ -1499,12 +1529,18 @@ public class Setting<T> implements ToXContentObject {
         if (defaultStringValue.apply(Settings.EMPTY) == null) {
             throw new IllegalArgumentException("default value function must not return null");
         }
+        // 定义了如何将字符串转换成配置值
         Function<String, List<T>> parser = (s) ->
             parseableStringToList(s).stream().map(singleValueParser).collect(Collectors.toList());
 
         return new ListSetting<>(key, fallbackSetting, defaultStringValue, parser, validator, properties);
     }
 
+    /**
+     * 将字符串转换成配置值
+     * @param parsableString
+     * @return
+     */
     private static List<String> parseableStringToList(String parsableString) {
         // fromXContent doesn't use named xcontent or deprecation.
         try (XContentParser xContentParser = XContentType.JSON.xContent()
@@ -1526,6 +1562,11 @@ public class Setting<T> implements ToXContentObject {
         }
     }
 
+    /**
+     * 将一串数组转换成 格式化数据字符串
+     * @param array
+     * @return
+     */
     private static String arrayToParsableString(List<String> array) {
         try {
             XContentBuilder builder = XContentBuilder.builder(XContentType.JSON.xContent());
@@ -1540,6 +1581,10 @@ public class Setting<T> implements ToXContentObject {
         }
     }
 
+    /**
+     * 代表一个 配置值为 list的配置对象
+     * @param <T>
+     */
     private static class ListSetting<T> extends Setting<List<T>> {
 
         private final Function<Settings, List<String>> defaultStringValue;

@@ -26,12 +26,18 @@ import java.util.List;
 
 /**
  * A classloader that is a union over the parent core classloader and classloaders of extended plugins.
+ * es自己封装的类加载器
  */
 public class ExtendedPluginsClassLoader extends ClassLoader {
 
     /** Loaders of plugins extended by a plugin. */
     private final List<ClassLoader> extendedLoaders;
 
+    /**
+     *
+     * @param parent
+     * @param extendedLoaders  加载子插件所使用的类加载器
+     */
     private ExtendedPluginsClassLoader(ClassLoader parent, List<ClassLoader> extendedLoaders) {
         super(parent);
         this.extendedLoaders = Collections.unmodifiableList(extendedLoaders);
@@ -39,6 +45,7 @@ public class ExtendedPluginsClassLoader extends ClassLoader {
 
     @Override
     protected Class<?> findClass(String name) throws ClassNotFoundException {
+        // 尝试使用加载子插件的类加载器查找类
         for (ClassLoader loader : extendedLoaders) {
             try {
                 return loader.loadClass(name);

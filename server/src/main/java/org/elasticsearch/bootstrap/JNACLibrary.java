@@ -32,7 +32,7 @@ import java.util.List;
 
 /**
  * java mapping to some libc functions
- * 该类自定义了一些本地方法  通过 JNANatives 来调用
+ * 将java api 映射到c函数库
  */
 final class JNACLibrary {
 
@@ -55,6 +55,10 @@ final class JNACLibrary {
 
     static native int mlockall(int flags);
 
+    /**
+     * 获取当前用户id  如果id为0 代表是root用户
+     * @return
+     */
     static native int geteuid();
 
     /** corresponds to struct rlimit */

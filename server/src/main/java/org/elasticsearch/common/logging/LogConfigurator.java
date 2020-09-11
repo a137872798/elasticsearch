@@ -67,6 +67,9 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.StreamSupport;
 
+/**
+ * 日志配置对象
+ */
 public class LogConfigurator {
 
     /*

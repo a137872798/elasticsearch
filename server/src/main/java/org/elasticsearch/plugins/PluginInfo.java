@@ -43,6 +43,7 @@ import java.util.stream.Collectors;
 
 /**
  * An in-memory representation of the plugin descriptor.
+ * 描述一个插件的信息
  */
 public class PluginInfo implements Writeable, ToXContentObject {
 
@@ -114,11 +115,13 @@ public class PluginInfo implements Writeable, ToXContentObject {
     /**
      * Reads the plugin descriptor file.
      *
-     * @param path           the path to the root directory for the plugin
+     * @param path           the path to the root directory for the plugin   代表某个插件目录
      * @return the plugin info
      * @throws IOException if an I/O exception occurred reading the plugin descriptor
+     *
      */
     public static PluginInfo readFromProperties(final Path path) throws IOException {
+        // 找到目录下描述插件的 prop文件
         final Path descriptor = path.resolve(ES_PLUGIN_PROPERTIES);
 
         final Map<String, String> propsMap;
@@ -130,6 +133,7 @@ public class PluginInfo implements Writeable, ToXContentObject {
             propsMap = props.stringPropertyNames().stream().collect(Collectors.toMap(Function.identity(), props::getProperty));
         }
 
+        // 从prop文件中抽取相关属性 不存在则抛出异常  并且将这些信息抽象成 PluginInfo对象
         final String name = propsMap.remove("name");
         if (name == null || name.isEmpty()) {
             throw new IllegalArgumentException(

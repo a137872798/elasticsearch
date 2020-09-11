@@ -54,17 +54,19 @@ class JNANatives {
     static boolean LOCAL_SYSTEM_CALL_FILTER_ALL = false;
     // set to the maximum number of threads that can be created for
     // the user ID that owns the running Elasticsearch process
+    // 当前进程允许创建的线程总数
     static long MAX_NUMBER_OF_THREADS = -1;
 
+    /**
+     * 使用的最大虚拟内存
+     */
     static long MAX_SIZE_VIRTUAL_MEMORY = Long.MIN_VALUE;
 
+    /**
+     * 指定允许创建的最大文件长度
+     */
     static long MAX_FILE_SIZE = Long.MIN_VALUE;
 
-    /**
-     * 这些函数会间接调用到 ES 内置的 native方法  (通过JNACLibrary)
-     * mlock会锁定物理内存  进而避免这段内存被操作系统swap
-     * 这个又涉及到内存页交换了  因为一般情况下如果某个页面处于空闲状态 而长时间没有被使用 那么很可能会替换成其他缓存页
-      */
     static void tryMlockall() {
         int errno = Integer.MIN_VALUE;
         String errMsg = null;
@@ -73,7 +75,6 @@ class JNANatives {
         long hardLimit = 0;
 
         try {
-            // 传入了一个起始指针
             int result = JNACLibrary.mlockall(JNACLibrary.MCL_CURRENT);
             if (result == 0) {
                 LOCAL_MLOCKALL = true;
@@ -170,7 +171,10 @@ class JNANatives {
         }
     }
 
-    /** Returns true if user is root, false if not, or if we don't know */ // 如果当前是windows 环境 那么代表当前不在root目录
+    /**
+     * Returns true if user is root, false if not, or if we don't know
+     * 检测当前用户是否是root用户
+     **/
     static boolean definitelyRunningAsRoot() {
         if (Constants.WINDOWS) {
             return false; // don't know
@@ -264,7 +268,7 @@ class JNANatives {
     }
 
     /**
-     * 在指定目录生成系统调用过滤器
+     *
      * @param tmpFile
      */
     static void tryInstallSystemCallFilter(Path tmpFile) {

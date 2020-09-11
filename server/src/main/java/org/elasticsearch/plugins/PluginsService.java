@@ -65,6 +65,9 @@ import java.util.stream.Collectors;
 
 import static org.elasticsearch.common.io.FileSystemUtils.isAccessibleDirectory;
 
+/**
+ * 管理插件的对象
+ */
 public class PluginsService implements ReportingService<PluginsAndModules> {
 
     private static final Logger logger = LogManager.getLogger(PluginsService.class);
@@ -74,10 +77,18 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
 
     /**
      * We keep around a list of plugins and modules
+     * 存储了实例化后的 plugin
      */
     private final List<Tuple<PluginInfo, Plugin>> plugins;
+
+    /**
+     * 维护了从 module ， plugin目录下加载的所有插件信息
+     */
     private final PluginsAndModules info;
 
+    /**
+     * 代表必须设置某些插件才可以启动 找不到会抛出异常
+     */
     public static final Setting<List<String>> MANDATORY_SETTING =
         Setting.listSetting("plugin.mandatory", Collections.emptyList(), Function.identity(), Property.NodeScope);
 
@@ -91,10 +102,10 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
 
     /**
      * Constructs a new PluginService
-     * @param settings The settings of the system
-     * @param modulesDirectory The directory modules exist in, or null if modules should not be loaded from the filesystem
-     * @param pluginsDirectory The directory plugins exist in, or null if plugins should not be loaded from the filesystem
-     * @param classpathPlugins Plugins that exist in the classpath which should be loaded
+     * @param settings The settings of the system   当前已经加载的配置
+     * @param modulesDirectory The directory modules exist in, or null if modules should not be loaded from the filesystem   模块目录
+     * @param pluginsDirectory The directory plugins exist in, or null if plugins should not be loaded from the filesystem   插件目录
+     * @param classpathPlugins Plugins that exist in the classpath which should be loaded              代表某些存在于  classpath的插件
      */
     public PluginsService(
         Settings settings,
@@ -111,6 +122,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         // we need to build a List of plugins for checking mandatory plugins
         final List<String> pluginsNames = new ArrayList<>();
         // first we load plugins that are on the classpath. this is for tests
+        // TODO 先忽略这种情况 一般classpathPlugins为空
         for (Class<? extends Plugin> pluginClass : classpathPlugins) {
             Plugin plugin = loadPlugin(pluginClass, settings, configPath);
             PluginInfo pluginInfo = new PluginInfo(pluginClass.getName(), "classpath plugin", "NA", Version.CURRENT, "1.8",
@@ -125,7 +137,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
 
         Set<Bundle> seenBundles = new LinkedHashSet<>();
         List<PluginInfo> modulesList = new ArrayList<>();
-        // load modules
+        // load modules   将module目录下所有的jar包加入到set中
         if (modulesDirectory != null) {
             try {
                 Set<Bundle> modules = getModuleBundles(modulesDirectory);
@@ -139,6 +151,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         }
 
         // now, find all the ones that are in plugins/
+        // 将 .plugins 目录下的jar包抽取出来
         if (pluginsDirectory != null) {
             try {
                 // TODO: remove this leniency, but tests bogusly rely on it
@@ -156,6 +169,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
             }
         }
 
+        // 将所有插件实例化
         List<Tuple<PluginInfo, Plugin>> loaded = loadBundles(seenBundles);
         pluginsLoaded.addAll(loaded);
 
@@ -163,6 +177,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         this.plugins = Collections.unmodifiableList(pluginsLoaded);
 
         // Checking expected plugins
+        // 检测强制性插件是否存在
         List<String> mandatoryPlugins = MANDATORY_SETTING.get(settings);
         if (mandatoryPlugins.isEmpty() == false) {
             Set<String> missingPlugins = new HashSet<>();
@@ -198,12 +213,17 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         }
     }
 
+    /**
+     * 从插件中获取配置信息 并更新初始化该对象时使用的 settings对象
+     * @return
+     */
     public Settings updatedSettings() {
         Map<String, String> foundSettings = new HashMap<>();
         final Settings.Builder builder = Settings.builder();
         for (Tuple<PluginInfo, Plugin> plugin : plugins) {
             Settings settings = plugin.v2().additionalSettings();
             for (String setting : settings.keySet()) {
+                // 代表冲突了
                 String oldPlugin = foundSettings.put(setting, plugin.v1().getName());
                 if (oldPlugin != null) {
                     throw new IllegalArgumentException("Cannot have additional setting [" + setting + "] " +
@@ -237,7 +257,10 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         return info;
     }
 
-    // a "bundle" is a group of jars in a single classloader
+    /**
+     * a "bundle" is a group of jars in a single classloader
+     * 描述一个插件的信息 以及下面所有jar包   有一类插件在启动时 必须先运行exe文件 而这类插件仅仅以jar包形式使用
+     */
     static class Bundle {
         final PluginInfo plugin;
         final Set<URL> urls;
@@ -278,13 +301,16 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
      * @param rootPath the path where the plugins are installed
      * @return a list of all plugin paths installed in the {@code rootPath}
      * @throws IOException if an I/O exception occurred reading the directories
+     * 从根目录下找到所有插件目录
      */
     public static List<Path> findPluginDirs(final Path rootPath) throws IOException {
         final List<Path> plugins = new ArrayList<>();
+        // 避免重复
         final Set<String> seen = new HashSet<>();
         if (Files.exists(rootPath)) {
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(rootPath)) {
                 for (Path plugin : stream) {
+                    // 忽略某些文件
                     if (FileSystemUtils.isDesktopServicesStore(plugin) ||
                         plugin.getFileName().toString().startsWith(".removing-")) {
                         continue;
@@ -310,6 +336,11 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         JarHell.checkJavaVersion(info.getName(), info.getJavaVersion());
     }
 
+    /**
+     * 如果检测到插件目录下有包含 removing- 的目录 抛出异常
+     * @param pluginsDirectory
+     * @throws IOException
+     */
     static void checkForFailedPluginRemovals(final Path pluginsDirectory) throws IOException {
         /*
          * Check for the existence of a marker file that indicates any plugins are in a garbage state from a failed attempt to remove the
@@ -341,7 +372,11 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         return findBundles(pluginsDirectory, "plugin");
     }
 
-    // searches subdirectories under the given directory for plugin directories
+    /**
+     * searches subdirectories under the given directory for plugin directories
+     * @param directory 处理的目标目录
+     * @param type 本次加载的类型  比如 module, plugin
+     */
     private static Set<Bundle> findBundles(final Path directory, String type) throws IOException {
         final Set<Bundle> bundles = new HashSet<>();
         for (final Path plugin : findPluginDirs(directory)) {
@@ -352,16 +387,25 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         return bundles;
     }
 
-    // get a bundle for a single plugin dir
+    /**
+     * get a bundle for a single plugin dir
+     * @param bundles  主要是用来检测是否冲突的
+     * @param plugin  某个 plugin/module的路径
+     * @param type
+     * @return
+     * @throws IOException
+     */
     private static Bundle readPluginBundle(final Set<Bundle> bundles, final Path plugin, String type) throws IOException {
         LogManager.getLogger(PluginsService.class).trace("--- adding [{}] [{}]", type, plugin.toAbsolutePath());
         final PluginInfo info;
         try {
+            // 将目录下的 plugin-descriptor.properties 信息抽取出来 生成pluginInfo
             info = PluginInfo.readFromProperties(plugin);
         } catch (final IOException e) {
             throw new IllegalStateException("Could not load plugin descriptor for " + type +
                                             " directory [" + plugin.getFileName() + "]", e);
         }
+        // 将目录路径与 插件信息合成一个bundle对象
         final Bundle bundle = new Bundle(info, plugin);
         if (bundles.add(bundle) == false) {
             throw new IllegalStateException("duplicate " + type + ": " + info);
@@ -376,8 +420,8 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
      * their relative order from iteration of the provided set will not change.
      *
      * @throws IllegalStateException if a dependency cycle is found
+     * 处理后 bundle会按照被依赖顺序排序
      */
-    // pkg private for tests
     static List<Bundle> sortBundles(Set<Bundle> bundles) {
         Map<String, Bundle> namedBundles = bundles.stream().collect(Collectors.toMap(b -> b.plugin.getName(), Function.identity()));
         LinkedHashSet<Bundle> sortedBundles = new LinkedHashSet<>();
@@ -388,11 +432,18 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         return new ArrayList<>(sortedBundles);
     }
 
-    // add the given bundle to the sorted bundles, first adding dependencies
+    /**
+     * add the given bundle to the sorted bundles, first adding dependencies
+     * @param bundle 当前正在处理的bundle
+     * @param bundles  存放所有待处理的 bundle
+     * @param sortedBundles  存储排序后的结果
+     * @param dependencyStack
+     */
     private static void addSortedBundle(Bundle bundle, Map<String, Bundle> bundles, LinkedHashSet<Bundle> sortedBundles,
                                         LinkedHashSet<String> dependencyStack) {
 
         String name = bundle.plugin.getName();
+        // 循环依赖
         if (dependencyStack.contains(name)) {
             StringBuilder msg = new StringBuilder("Cycle found in plugin dependencies: ");
             dependencyStack.forEach(s -> {
@@ -407,7 +458,9 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
             return;
         }
 
+        // 加入到用于检测循环依赖的容器1
         dependencyStack.add(name);
+        // 遍历所有依赖的插件    每个插件可能会依托于其他插件才能使用
         for (String dependency : bundle.plugin.getExtendedPlugins()) {
             Bundle depBundle = bundles.get(dependency);
             if (depBundle == null) {
@@ -425,12 +478,14 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         List<Tuple<PluginInfo, Plugin>> plugins = new ArrayList<>();
         Map<String, Plugin> loaded = new HashMap<>();
         Map<String, Set<URL>> transitiveUrls = new HashMap<>();
+        // 按照加载顺序为插件排序
         List<Bundle> sortedBundles = sortBundles(bundles);
 
         for (Bundle bundle : sortedBundles) {
             checkBundleJarHell(JarHell.parseClassPath(), bundle, transitiveUrls);
 
             final Plugin plugin = loadBundle(bundle, loaded);
+            // 将实例化后的插件对象 与插件的描述信息包装成一个对象后设置到列表中
             plugins.add(new Tuple<>(bundle.plugin, plugin));
         }
 
@@ -487,9 +542,16 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         }
     }
 
+    /**
+     * 加载插件
+     * @param bundle
+     * @param loaded 存储已经加载完的插件
+     * @return
+     */
     private Plugin loadBundle(Bundle bundle, Map<String, Plugin> loaded) {
         String name = bundle.plugin.getName();
 
+        // 校验兼容性 先忽略
         verifyCompatibility(bundle.plugin);
 
         // collect loaders of extended plugins
@@ -497,25 +559,37 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         for (String extendedPluginName : bundle.plugin.getExtendedPlugins()) {
             Plugin extendedPlugin = loaded.get(extendedPluginName);
             assert extendedPlugin != null;
+            // 子插件实现类 必须实现 ExtensiblePlugin 接口
             if (ExtensiblePlugin.class.isInstance(extendedPlugin) == false) {
                 throw new IllegalStateException("Plugin [" + name + "] cannot extend non-extensible plugin [" + extendedPluginName + "]");
             }
+            // 获取依赖插件的类加载器
             extendedLoaders.add(extendedPlugin.getClass().getClassLoader());
         }
 
+        // 每个插件都定义了唯一的路径 在该路径下有自己的 SPI拓展类
+
         // create a child to load the plugin in this bundle
+        // 按照排序顺序 应该是先加载不需要依赖其他插件的插件
         ClassLoader parentLoader = PluginLoaderIndirection.createLoader(getClass().getClassLoader(), extendedLoaders);
+        // URLClassLoader 支持从一个额外的范围查找class 默认类加载器应该是只支持从classpath下查找类
+        // 该loader还是遵循双亲委派的加载顺序 优先尝试从parentLoader 查找
         ClassLoader loader = URLClassLoader.newInstance(bundle.urls.toArray(new URL[0]), parentLoader);
 
         // reload SPI with any new services from the plugin
+        // 加载插件下自定义的分词器  token过滤器 等等
         reloadLuceneSPI(loader);
+        // 因为排序过的关系 所以子插件肯定先生成   如果父插件处理完 要对子插件进行重加载  TODO 这里的细节先不看
         for (String extendedPluginName : bundle.plugin.getExtendedPlugins()) {
             // note: already asserted above that extended plugins are loaded and extensible
             ExtensiblePlugin.class.cast(loaded.get(extendedPluginName)).reloadSPI(loader);
         }
 
+        // 获取 Plugin的class对象
         Class<? extends Plugin> pluginClass = loadPluginClass(bundle.plugin.getClassname(), loader);
+        // 使用相关参数对 plugin进行实例化
         Plugin plugin = loadPlugin(pluginClass, settings, configPath);
+        // 将结果存储到容器中
         loaded.put(name, plugin);
         return plugin;
     }
@@ -528,13 +602,23 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
     static void reloadLuceneSPI(ClassLoader loader) {
         // do NOT change the order of these method calls!
 
+        // 在lucene中 以下2种可以是以field为单位写入的  同时用户可以自行实现存储格式
+
         // Codecs:
+        // 使用传入的类加载器加载所有 PostingsFormat 的实现类  (基于SPI机制)
         PostingsFormat.reloadPostingsFormats(loader);
+        // 同上
         DocValuesFormat.reloadDocValuesFormats(loader);
+
+        // 下面这些跟语言规范有关 就不细看了
+
+        // Codec 类定义了存储所有数据使用的格式 通过修改该类就可以将写入工作转交给用户自定义的format对象了
         Codec.reloadCodecs(loader);
-        // Analysis:
+        // Analysis:  这个应该是针对char级别进行过滤
         CharFilterFactory.reloadCharFilters(loader);
+        // 对解析出来的token进行过滤 过滤的单位更细 比如 stopFilter 就是一种tokenFilter  它的作用是对term起到过滤的作用
         TokenFilterFactory.reloadTokenFilters(loader);
+        // 该对象加载自定义分词器
         TokenizerFactory.reloadTokenizers(loader);
     }
 
@@ -546,6 +630,13 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         }
     }
 
+    /**
+     * 使用配置信息实例化 plugin 对象
+     * @param pluginClass
+     * @param settings
+     * @param configPath
+     * @return
+     */
     private Plugin loadPlugin(Class<? extends Plugin> pluginClass, Settings settings, Path configPath) {
         final Constructor<?>[] constructors = pluginClass.getConstructors();
         if (constructors.length == 0) {

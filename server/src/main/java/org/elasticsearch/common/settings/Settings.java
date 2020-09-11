@@ -843,7 +843,7 @@ public final class Settings implements ToXContentFragment {
          * @return
          */
         public Builder setSecureSettings(SecureSettings secureSettings) {
-            // 在存储加密项配置时 必须要求已经加载完毕
+            // 在设置加密项配置时 必须要求已经加载完毕
             if (secureSettings.isLoaded() == false) {
                 throw new IllegalStateException("Secure settings must already be loaded");
             }
