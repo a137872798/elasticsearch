@@ -348,6 +348,12 @@ public class Environment {
         }
     }
 
+    /**
+     * 获取文件空间信息
+     * @param path
+     * @return
+     * @throws IOException
+     */
     public static FileStore getFileStore(final Path path) throws IOException {
         return new ESFileStore(Files.getFileStore(path));
     }

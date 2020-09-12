@@ -36,20 +36,24 @@ import java.util.List;
  * additional features, such as SSD detection and better
  * filesystem information for the root filesystem.
  * @see Environment#getFileStore(Path)
+ * FileStore 表明了当前文件对应的存储空间
  */
 class ESFileStore extends FileStore {
     /** Underlying filestore */
     final FileStore in;
     private int majorDeviceNumber;
     private int minorDeviceNumber;
-    
+
+    /**
+     * 为文件空间增加额外功能
+     * @param in
+     */
     @SuppressForbidden(reason = "tries to determine if disk is spinning")
-    // TODO: move PathUtils to be package-private here instead of 
-    // public+forbidden api!
     ESFileStore(final FileStore in) {
         this.in = in;
         if (Constants.LINUX) {
             try {
+                // proc/self/mountinfo 记录当前系统所有挂载文件的信息
                 final List<String> lines = Files.readAllLines(PathUtils.get("/proc/self/mountinfo"));
                 for (final String line : lines) {
                     final String[] fields = line.trim().split("\\s+");

@@ -108,13 +108,16 @@ public final class NodeEnvironment  implements Closeable {
         /** Cached FileStore from path */
         public final FileStore fileStore;
 
+        // 设备号信息  仅linux系统支持获取
         public final int majorDeviceNumber;
         public final int minorDeviceNumber;
 
         public NodePath(Path path) throws IOException {
             this.path = path;
             this.indicesPath = path.resolve(INDICES_FOLDER);
+            // 获取系统为当下目录开辟的存储空间
             this.fileStore = Environment.getFileStore(path);
+            // 这里返回的 FileStore 是 ESFileStore 重写了supportsFileAttributeView  当入参为"lucene"时 必然返回true
             if (fileStore.supportsFileAttributeView("lucene")) {
                 this.majorDeviceNumber = (int) fileStore.getAttribute("lucene:major_device_number");
                 this.minorDeviceNumber = (int) fileStore.getAttribute("lucene:minor_device_number");
@@ -283,6 +286,7 @@ public final class NodeEnvironment  implements Closeable {
                 Files.createDirectories(path);
             }
 
+            // 为当前操作目录 添加文件锁
             final NodeLock nodeLock;
             try {
                 nodeLock = new NodeLock(logger, environment, dir -> true);
@@ -300,14 +304,17 @@ public final class NodeEnvironment  implements Closeable {
 
             logger.debug("using node location {}", Arrays.toString(nodePaths));
 
+            // 打印日志信息的先忽略
             maybeLogPathDetails();
             maybeLogHeapDetails();
 
             applySegmentInfosTrace(settings);
-            assertCanWrite();
 
+            // 检测能否正常创建临时文件 以及进行原子化移动
+            assertCanWrite();
             ensureAtomicMoveSupported(nodePaths);
 
+            // 忽略兼容性代码
             if (upgradeLegacyNodeFolders(logger, settings, environment, nodeLock)) {
                 assertCanWrite();
             }
@@ -558,6 +565,7 @@ public final class NodeEnvironment  implements Closeable {
     @SuppressForbidden(reason = "System.out.*")
     static void applySegmentInfosTrace(Settings settings) {
         if (ENABLE_LUCENE_SEGMENT_INFOS_TRACE_SETTING.get(settings)) {
+            // lucene是可以设置输入日志对象的
             SegmentInfos.setInfoStream(System.out);
         }
     }
