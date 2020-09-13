@@ -27,6 +27,9 @@ import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.threadpool.ThreadPool;
 
+/**
+ * es 客户端api
+ */
 public interface ElasticsearchClient {
 
     /**

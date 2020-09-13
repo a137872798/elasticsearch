@@ -35,6 +35,7 @@ import java.util.stream.Stream;
 
 /**
  * Manages building {@link ScriptService}.
+ * 解析脚本的对象
  */
 public class ScriptModule {
 
@@ -69,6 +70,11 @@ public class ScriptModule {
     public final Map<String, ScriptEngine> engines;
     public final Map<String, ScriptContext<?>> contexts;
 
+    /**
+     *
+     * @param settings
+     * @param scriptPlugins 一组用于解析脚本的对象
+     */
     public ScriptModule(Settings settings, List<ScriptPlugin> scriptPlugins) {
         Map<String, ScriptEngine> engines = new HashMap<>();
         Map<String, ScriptContext<?>> contexts = new HashMap<>(CORE_CONTEXTS);

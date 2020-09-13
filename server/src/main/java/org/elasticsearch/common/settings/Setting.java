@@ -1005,6 +1005,9 @@ public class Setting<T> implements ToXContentObject {
 
     }
 
+    /**
+     * 代表符合某些条件的 setting 会被抽取出来 生成一个settings
+     */
     private static class GroupSetting extends Setting<Settings> {
         private final String key;
         private final Consumer<Settings> validator;
@@ -1034,8 +1037,14 @@ public class Setting<T> implements ToXContentObject {
             }
         }
 
+        /**
+         * 从当前配置中 抽取符合条件的 settings
+         * @param settings
+         * @return
+         */
         @Override
         public Settings get(Settings settings) {
+            // 获取使用目标前缀的所有 settings
             Settings byPrefix = settings.getByPrefix(getKey());
             validator.accept(byPrefix);
             return byPrefix;

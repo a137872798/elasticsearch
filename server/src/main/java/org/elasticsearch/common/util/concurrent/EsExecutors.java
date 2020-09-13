@@ -82,18 +82,31 @@ public class EsExecutors {
         return executor;
     }
 
+    /**
+     * 创建一个固定线程数的线程工厂
+     * @param name
+     * @param size
+     * @param queueCapacity
+     * @param threadFactory
+     * @param contextHolder
+     * @param trackEWMA
+     * @return
+     */
     public static EsThreadPoolExecutor newFixed(String name, int size, int queueCapacity,
                                                 ThreadFactory threadFactory, ThreadContext contextHolder, boolean trackEWMA) {
         BlockingQueue<Runnable> queue;
         if (queueCapacity < 0) {
             queue = ConcurrentCollections.newBlockingQueue();
         } else {
+            // 为阻塞队列额外封装一层  增加一个 forcePut的api 当阻塞队列无法加入元素时 会选择抛出异常
             queue = new SizeBlockingQueue<>(ConcurrentCollections.<Runnable>newBlockingQueue(), queueCapacity);
         }
         if (trackEWMA) {
+            // 在EsThreadPoolExecutor的基础上追加了一个记录runnable平均耗时的功能
             return new EWMATrackingEsThreadPoolExecutor(name, size, size, 0, TimeUnit.MILLISECONDS,
                 queue, TimedRunnable::new, threadFactory, new EsAbortPolicy(), contextHolder);
         } else {
+            // 在原有线程池基础上追加了一些钩子  配合模板方法使用
             return new EsThreadPoolExecutor(name, size, size, 0, TimeUnit.MILLISECONDS,
                 queue, threadFactory, new EsAbortPolicy(), contextHolder);
         }
@@ -217,6 +230,12 @@ public class EsExecutors {
         }
     }
 
+    /**
+     * 生成线程名前缀
+     * @param nodeName
+     * @param namePrefix
+     * @return
+     */
     public static String threadName(final String nodeName, final String namePrefix) {
         // TODO missing node names should only be allowed in tests
         return "elasticsearch" + (nodeName.isEmpty() ? "" : "[") + nodeName + (nodeName.isEmpty() ? "" : "]") + "[" + namePrefix + "]";
@@ -239,8 +258,14 @@ public class EsExecutors {
         return new EsThreadFactory(namePrefix);
     }
 
+    /**
+     * ES 封装的线程工厂
+     */
     static class EsThreadFactory implements ThreadFactory {
 
+        /**
+         * 线程组的作用就是能对这组线程统一执行一些操作
+         */
         final ThreadGroup group;
         final AtomicInteger threadNumber = new AtomicInteger(1);
         final String namePrefix;
@@ -252,6 +277,11 @@ public class EsExecutors {
                     Thread.currentThread().getThreadGroup();
         }
 
+        /**
+         * 由该工厂创建的线程都会归并到这个线程组中
+         * @param r
+         * @return
+         */
         @Override
         public Thread newThread(Runnable r) {
             Thread t = new Thread(group, r,
@@ -269,19 +299,32 @@ public class EsExecutors {
     private EsExecutors() {
     }
 
+    /**
+     * 弹性线程池专用的任务队列是加工过的
+     * 而  LinkedTransferQueue 是SynchronousQueue 的增强类   SynchronousQueue相当于一个长度为1的阻塞队列
+     * @param <E>
+     */
     static class ExecutorScalingQueue<E> extends LinkedTransferQueue<E> {
 
+        /**
+         * 该属性对应的就是  EsThreadPoolExecutor
+         */
         ThreadPoolExecutor executor;
 
         ExecutorScalingQueue() {
         }
 
+        /**
+         * @param e
+         * @return
+         */
         @Override
         public boolean offer(E e) {
             // first try to transfer to a waiting worker thread
             if (!tryTransfer(e)) {
                 // check if there might be spare capacity in the thread
                 // pool executor
+                // 线程池正常的运行流程一定是等到阻塞队列无法添加任务了 才会增加线程数  这里的逻辑应该是会配合某个主动增加线程数的地方 否则默认情况left肯定是0啊
                 int left = executor.getMaximumPoolSize() - executor.getCorePoolSize();
                 if (left > 0) {
                     // reject queuing the task to force the thread pool
@@ -291,6 +334,7 @@ public class EsExecutors {
                     // only queue when there is no spare capacity
                     return false;
                 } else {
+                    // LinkedTransferQueue.offer 永远返回 true
                     return super.offer(e);
                 }
             } else {
@@ -303,6 +347,7 @@ public class EsExecutors {
     /**
      * A handler for rejected tasks that adds the specified element to this queue,
      * waiting if necessary for space to become available.
+     * 该拒绝策略不会丢弃任务 而是强制添加到队列中
      */
     static class ForceQueuePolicy implements XRejectedExecutionHandler {
 

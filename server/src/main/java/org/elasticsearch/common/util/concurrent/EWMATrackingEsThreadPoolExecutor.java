@@ -29,12 +29,16 @@ import java.util.function.Function;
 
 /**
  * An extension to thread pool executor, which tracks the exponentially weighted moving average of the task execution time.
+ * 这个线程池好像会记录执行的所有任务的平均耗时时长
  */
 public final class EWMATrackingEsThreadPoolExecutor extends EsThreadPoolExecutor {
 
     // This is a random starting point alpha. TODO: revisit this with actual testing and/or make it configurable
     public static double EWMA_ALPHA = 0.3;
 
+    /**
+     * 一个包装函数  通过该线程池执行的任务会被包装成一个记录运行时间的对象
+     */
     private final Function<Runnable, WrappedRunnable> runnableWrapper;
     private final ExponentiallyWeightedMovingAverage executionEWMA;
 

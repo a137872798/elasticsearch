@@ -33,6 +33,9 @@ import java.io.IOException;
  */
 public class BoundTransportAddress implements Writeable {
 
+    /**
+     * TransportAddress 代表一个传输层的  ip + port
+     */
     private TransportAddress[] boundAddresses;
 
     private TransportAddress publishAddress;

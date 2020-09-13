@@ -54,6 +54,7 @@ public class Version implements Comparable<Version>, ToXContentFragment {
      * The unreleased last major is the next major release, e.g. _8_.0.0
      * The unreleased last minor is the current major with a upped minor: 7._4_.0
      * The unreleased revision is the very release with a upped revision 7.3._1_
+     * 下面描述了  es 和lucene适配的版本
      */
     public static final int V_EMPTY_ID = 0;
     public static final Version V_EMPTY = new Version(V_EMPTY_ID, org.apache.lucene.util.Version.LATEST);
@@ -81,6 +82,9 @@ public class Version implements Comparable<Version>, ToXContentFragment {
     public static final Version V_8_0_0 = new Version(8000099, org.apache.lucene.util.Version.LUCENE_8_5_1);
     public static final Version CURRENT = V_8_0_0;
 
+    /**
+     * ImmutableOpenIntMap 就当作一个支持以int作为key 查询数据的容器
+     */
     private static final ImmutableOpenIntMap<Version> idToVersion;
 
     static {
@@ -95,7 +99,10 @@ public class Version implements Comparable<Version>, ToXContentFragment {
                 assert fieldName.matches("V_\\d+_\\d+_\\d+")
                         : "expected Version field [" + fieldName + "] to match V_\\d+_\\d+_\\d+";
                 try {
+                    // 获取常量属性
                     final Version version = (Version) declaredField.get(null);
+
+                    // 忽略断言
                     if (Assertions.ENABLED) {
                         final String[] fields = fieldName.split("_");
                         final int major = Integer.valueOf(fields[1]) * 1000000;
@@ -123,10 +130,18 @@ public class Version implements Comparable<Version>, ToXContentFragment {
         return fromId(in.readVInt());
     }
 
+    /**
+     * 通过版本id 映射到版本号信息
+     * @param id
+     * @return
+     */
     public static Version fromId(int id) {
+        // 使用常量容器存储
         if (idToVersion.containsKey(id)) {
             return idToVersion.get(id);
         }
+
+        // 下面这种情况就忽略吧 一般都会传入可靠的id
         switch (id) {
             case V_EMPTY_ID:
                 return V_EMPTY;

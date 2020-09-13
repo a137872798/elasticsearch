@@ -97,6 +97,12 @@ public final class ScalingExecutorBuilder extends ExecutorBuilder<ScalingExecuto
         return new ScalingExecutorSettings(nodeName, coreThreads, maxThreads, keepAlive);
     }
 
+    /**
+     * 构建弹性线程池
+     * @param settings      the executor settings
+     * @param threadContext the current thread context
+     * @return
+     */
     ThreadPool.ExecutorHolder build(final ScalingExecutorSettings settings, final ThreadContext threadContext) {
         TimeValue keepAlive = settings.keepAlive;
         int core = settings.core;

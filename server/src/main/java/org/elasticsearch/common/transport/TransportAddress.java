@@ -33,6 +33,7 @@ import java.net.UnknownHostException;
 
 /**
  * A transport address used for IP socket address (wraps {@link java.net.InetSocketAddress}).
+ * 描述了一个传输层的地址信息
  */
 public final class TransportAddress implements Writeable, ToXContentFragment {
 
@@ -50,8 +51,16 @@ public final class TransportAddress implements Writeable, ToXContentFragment {
         }
     }
 
+    /**
+     * 存储的是该节点的ip地址 + port
+     */
     private final InetSocketAddress address;
 
+    /**
+     * 通过ip地址和port进行初始化
+     * @param address
+     * @param port
+     */
     public TransportAddress(InetAddress address, int port) {
         this(new InetSocketAddress(address, port));
     }

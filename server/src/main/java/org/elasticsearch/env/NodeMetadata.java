@@ -34,14 +34,21 @@ import java.util.Objects;
 /**
  * Metadata associated with this node: its persistent node ID and its version.
  * The metadata is persisted in the data folder of this node and is reused across restarts.
+ * 节点的元数据信息
  */
 public final class NodeMetadata {
 
     static final String NODE_ID_KEY = "node_id";
     static final String NODE_VERSION_KEY = "node_version";
 
+    /**
+     * 当前节点的id
+     */
     private final String nodeId;
 
+    /**
+     * 对应的lucene版本
+     */
     private final Version nodeVersion;
 
     public NodeMetadata(final String nodeId, final Version nodeVersion) {
@@ -79,6 +86,10 @@ public final class NodeMetadata {
         return nodeVersion;
     }
 
+    /**
+     * 获取升级后的版本
+     * @return
+     */
     public NodeMetadata upgradeToCurrentVersion() {
         if (nodeVersion.equals(Version.V_EMPTY)) {
             assert Version.CURRENT.major <= Version.V_7_0_0.major + 1 : "version is required in the node metadata from v9 onwards";

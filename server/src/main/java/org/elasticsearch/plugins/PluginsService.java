@@ -235,6 +235,11 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         return builder.put(this.settings).build();
     }
 
+    /**
+     * 从 getExecutorBuilders default实现可以看到 并非每个plugin都包含生成线程池builder的代码
+     * @param settings
+     * @return
+     */
     public List<ExecutorBuilder<?>> getExecutorBuilders(Settings settings) {
         final ArrayList<ExecutorBuilder<?>> builders = new ArrayList<>();
         for (final Tuple<PluginInfo, Plugin> plugin : plugins) {

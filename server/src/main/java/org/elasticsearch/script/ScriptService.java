@@ -148,6 +148,9 @@ public class ScriptService implements Closeable, ClusterStateApplier {
     public static final Setting<List<String>> CONTEXTS_ALLOWED_SETTING =
         Setting.listSetting("script.allowed_contexts", Collections.emptyList(), Function.identity(), Setting.Property.NodeScope);
 
+    /**
+     * 支持解析的脚本类型
+     */
     private final Set<String> typesAllowed;
     private final Set<String> contextsAllowed;
 
@@ -161,6 +164,12 @@ public class ScriptService implements Closeable, ClusterStateApplier {
     // package private for tests
     final AtomicReference<CacheHolder> cacheHolder = new AtomicReference<>();
 
+    /**
+     * 使用解析引擎 创建解析服务
+     * @param settings
+     * @param engines
+     * @param contexts
+     */
     public ScriptService(Settings settings, Map<String, ScriptEngine> engines, Map<String, ScriptContext<?>> contexts) {
         this.engines = Objects.requireNonNull(engines);
         this.contexts = Objects.requireNonNull(contexts);
@@ -171,6 +180,7 @@ public class ScriptService implements Closeable, ClusterStateApplier {
                     "using `script.disable_dynamic: false` in elasticsearch.yml");
         }
 
+        // 获取支持解析的脚本类型
         this.typesAllowed = TYPES_ALLOWED_SETTING.exists(settings) ? new HashSet<>() : null;
 
         if (this.typesAllowed != null) {
@@ -182,6 +192,7 @@ public class ScriptService implements Closeable, ClusterStateApplier {
             }
 
             for (String settingType : typesAllowedList) {
+                // 代表不支持解析脚本 这时不应该存在其他类型的脚本 否则抛出异常
                 if (ALLOW_NONE.equals(settingType)) {
                     if (typesAllowedList.size() != 1) {
                         throw new IllegalArgumentException("cannot specify both [" + ALLOW_NONE + "]" +

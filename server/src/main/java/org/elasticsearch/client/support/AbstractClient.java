@@ -333,6 +333,9 @@ import org.elasticsearch.threadpool.ThreadPool;
 
 import java.util.Map;
 
+/**
+ * client 骨架对象
+ */
 public abstract class AbstractClient implements Client {
 
     protected final Logger logger;
@@ -625,7 +628,13 @@ public abstract class AbstractClient implements Client {
 
     static class Admin implements AdminClient {
 
+        /**
+         * 集群监控对象
+         */
         private final ClusterAdmin clusterAdmin;
+        /**
+         * 索引监控对象
+         */
         private final IndicesAdmin indicesAdmin;
 
         Admin(ElasticsearchClient client) {

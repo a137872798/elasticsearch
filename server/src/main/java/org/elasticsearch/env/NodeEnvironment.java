@@ -278,10 +278,10 @@ public final class NodeEnvironment  implements Closeable {
         boolean success = false;
 
         try {
-            // 找到共享数据的目录
+            // 找到分片数据的目录
             sharedDataPath = environment.sharedDataFile();
 
-            // 创建目录
+            // 找到数据目录
             for (Path path : environment.dataFiles()) {
                 Files.createDirectories(path);
             }
@@ -319,14 +319,19 @@ public final class NodeEnvironment  implements Closeable {
                 assertCanWrite();
             }
 
+            // 从配置文件中的信息判断当前node是否是数据节点
             if (DiscoveryNode.isDataNode(settings) == false) {
                 if (DiscoveryNode.isMasterNode(settings) == false) {
+                    // 当该节点既不是数据节点也不是主节点时   代表该节点不存在索引数据
+                    // 如果监测到了 _state (应该是存储索引数据元数据的文件)  则抛出异常  好严格的校验啊 不使用不就好了吗
                     ensureNoIndexMetadata(nodePaths);
                 }
 
+                // 只要不是数据节点 就不应该存在分片相关的元数据  这里分片相关的元数据被认为是纯数字的文件夹
                 ensureNoShardData(nodePaths);
             }
 
+            // 从 所有数据目录下的_state 下找到所有segment_N 并抽取nodeId 和lucene版本信息 合并成metadata
             this.nodeMetadata = loadNodeMetadata(settings, logger, nodePaths);
 
             success = true;
@@ -523,11 +528,16 @@ public final class NodeEnvironment  implements Closeable {
 
     /**
      * scans the node paths and loads existing metadata file. If not found a new meta data will be generated
+     * 加载节点元数据
      */
     private static NodeMetadata loadNodeMetadata(Settings settings, Logger logger,
                                                  NodePath... nodePaths) throws IOException {
+
+        // 将所有 数据文件夹路径抽取出来
         final Path[] paths = Arrays.stream(nodePaths).map(np -> np.path).toArray(Path[]::new);
+        // 从这些数据文件夹 对应的 _state 目录下找到最新的 segment_N 文件 从中抽取nodeId 以及nodeVersionId 找到lucene版本号 将他们合并成 metadata
         NodeMetadata metadata = PersistedClusterStateService.nodeMetadata(paths);
+        // 忽略兼容性代码
         if (metadata == null) {
             // load legacy metadata
             final Set<String> nodeIds = new HashSet<>();
@@ -1191,6 +1201,11 @@ public final class NodeEnvironment  implements Closeable {
         }
     }
 
+    /**
+     * 检测不存在分片数据
+     * @param nodePaths
+     * @throws IOException
+     */
     private void ensureNoShardData(final NodePath[] nodePaths) throws IOException {
         List<Path> shardDataPaths = collectShardDataPaths(nodePaths);
         if (shardDataPaths.isEmpty() == false) {
@@ -1203,7 +1218,13 @@ public final class NodeEnvironment  implements Closeable {
         }
     }
 
+    /**
+     * 检测是否所有数据文件路径下都不包含索引数据
+     * @param nodePaths
+     * @throws IOException
+     */
     private void ensureNoIndexMetadata(final NodePath[] nodePaths) throws IOException {
+        // 找到所有 _state 文件目录  当目录不为空时 抛出异常
         List<Path> indexMetadataPaths = collectIndexMetadataPaths(nodePaths);
         if (indexMetadataPaths.isEmpty() == false) {
             throw new IllegalStateException("Node is started with "
@@ -1228,18 +1249,28 @@ public final class NodeEnvironment  implements Closeable {
     /**
      * Collect the paths containing index meta data in the indicated node paths. The returned paths will point to the
      * {@link MetadataStateFormat#STATE_DIR_NAME} folder
+     * 找到每个 dir下的 data目录 并获取  _state文件夹
      */
     static List<Path> collectIndexMetadataPaths(NodePath[] nodePaths) throws IOException {
         return collectIndexSubPaths(nodePaths, NodeEnvironment::isIndexMetadataPath);
     }
 
+    /**
+     * 找到目录目录下所有的  索引文件夹 并生成路径后返回
+     * @param nodePaths
+     * @param subPathPredicate   检测目标是否包含元数据文件
+     * @return
+     * @throws IOException
+     */
     private static List<Path> collectIndexSubPaths(NodePath[] nodePaths, Predicate<Path> subPathPredicate) throws IOException {
         List<Path> indexSubPaths = new ArrayList<>();
         for (NodePath nodePath : nodePaths) {
+            // 该路径在基础路径上增加了 /indices 后缀
             Path indicesPath = nodePath.indicesPath;
             if (Files.isDirectory(indicesPath)) {
                 try (DirectoryStream<Path> indexStream = Files.newDirectoryStream(indicesPath)) {
                     for (Path indexPath : indexStream) {
+                        // 挨个检测 /indices 下所有的文件路径 找到 索引文件夹
                         if (Files.isDirectory(indexPath)) {
                             try (Stream<Path> shardStream = Files.list(indexPath)) {
                                 shardStream.filter(subPathPredicate)
@@ -1255,6 +1286,11 @@ public final class NodeEnvironment  implements Closeable {
         return indexSubPaths;
     }
 
+    /**
+     * 找到分片数据的文件夹 只要文件夹名字是纯数字就认为是 分片目录
+     * @param path
+     * @return
+     */
     private static boolean isShardPath(Path path) {
         return Files.isDirectory(path)
             && path.getFileName().toString().chars().allMatch(Character::isDigit);

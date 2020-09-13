@@ -273,6 +273,7 @@ public class Node implements Closeable {
     protected Node(final Environment initialEnvironment,
                    Collection<Class<? extends Plugin>> classpathPlugins, boolean forbidPrivateIndexSettings) {
         logger = LogManager.getLogger(Node.class);
+        // 设置到 close列表中 之后在 close() 方法中便于一次关闭
         final List<Closeable> resourcesToClose = new ArrayList<>(); // register everything we need to release in the case of an error
         boolean success = false;
         try {
@@ -340,25 +341,35 @@ public class Node implements Closeable {
             logger.info("node name [{}], node ID [{}], cluster name [{}]",
                 NODE_NAME_SETTING.get(tmpSettings), nodeEnvironment.nodeId(), ClusterName.CLUSTER_NAME_SETTING.get(tmpSettings).value());
             resourcesToClose.add(nodeEnvironment);
+
+            // 基于配置文件 和 nodeId 生成一个 节点工厂
             localNodeFactory = new LocalNodeFactory(settings, nodeEnvironment.nodeId());
 
+            // 这里的含义是 某些插件可能运行在自己定义的线程池中 这时 插件会通过getExecutorBuilders 返回它定制的线程池builder
+            // 我们将这些builder 与 es自带的线程池builder 统统交由 ThreadPool 来管理
             final List<ExecutorBuilder<?>> executorBuilders = pluginsService.getExecutorBuilders(settings);
 
+            // 创建es 封装的线程池
             final ThreadPool threadPool = new ThreadPool(settings, executorBuilders.toArray(new ExecutorBuilder[0]));
             resourcesToClose.add(() -> ThreadPool.terminate(threadPool, 10, TimeUnit.SECONDS));
+
+            // 初始化监控资源的服务对象
             final ResourceWatcherService resourceWatcherService = new ResourceWatcherService(settings, threadPool);
             resourcesToClose.add(resourceWatcherService);
             // adds the context to the DeprecationLogger so that it does not need to be injected everywhere
             DeprecationLogger.setThreadContext(threadPool.getThreadContext());
             resourcesToClose.add(() -> DeprecationLogger.removeThreadContext(threadPool.getThreadContext()));
 
+            // 找到该插件需要的配置
             final List<Setting<?>> additionalSettings = new ArrayList<>(pluginsService.getPluginSettings());
             final List<String> additionalSettingsFilter = new ArrayList<>(pluginsService.getPluginSettingsFilter());
             for (final ExecutorBuilder<?> builder : threadPool.builders()) {
                 additionalSettings.addAll(builder.getRegisteredSettings());
             }
+            // 创建该节点发挥作为client能力的对象
             client = new NodeClient(settings, threadPool);
 
+            // 解析脚本相关
             final ScriptModule scriptModule = new ScriptModule(settings, pluginsService.filterPlugins(ScriptPlugin.class));
             final ScriptService scriptService = newScriptService(settings, scriptModule.engines, scriptModule.contexts);
             AnalysisModule analysisModule = new AnalysisModule(this.environment, pluginsService.filterPlugins(AnalysisPlugin.class));
@@ -1094,6 +1105,11 @@ public class Node implements Closeable {
         private final String persistentNodeId;
         private final Settings settings;
 
+        /**
+         *
+         * @param settings  存储了配置信息
+         * @param persistentNodeId   上次从 segment_N  userData中获取的 nodeId
+         */
         private LocalNodeFactory(Settings settings, String persistentNodeId) {
             this.persistentNodeId = persistentNodeId;
             this.settings = settings;

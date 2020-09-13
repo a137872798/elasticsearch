@@ -166,7 +166,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
     private final ThreadContext threadContext;
 
     /**
-     * 缓存了基于不同的线程池类型 使用的builder对象 builder对象中存储了线程池相关的属性
+     * 管理当前节点下所有 线程池构造器  包含es内置的 和插件需要的
      */
     @SuppressWarnings("rawtypes")
     private final Map<String, ExecutorBuilder> builders;
@@ -185,26 +185,38 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         return Collections.unmodifiableCollection(builders.values());
     }
 
-    /**
-     * 一个时间类型的配置常量   预估的时间间隔???
-     */
+
     public static Setting<TimeValue> ESTIMATED_TIME_INTERVAL_SETTING =
         Setting.timeSetting("thread_pool.estimated_time_interval",
             TimeValue.timeValueMillis(200), TimeValue.ZERO, Setting.Property.NodeScope);
 
+    /**
+     *
+     * @param settings      从配置文件，cli 中抽取出来的配置信息
+     * @param customBuilders     外部自定义的线程池builder 比如来自于插件    同时该对象在初始化时 会生成 es内置的 线程池builder
+     */
     @SuppressWarnings({"rawtypes", "unchecked"})
     public ThreadPool(final Settings settings, final ExecutorBuilder<?>... customBuilders) {
         assert Node.NODE_NAME_SETTING.exists(settings);
 
         final Map<String, ExecutorBuilder> builders = new HashMap<>();
+        // 获取cpu核数
         final int allocatedProcessors = EsExecutors.allocatedProcessors(settings);
+
+        // 除以2的四舍五入   最大值分别允许为 5 和 10
         final int halfProcMaxAt5 = halfAllocatedProcessorsMaxFive(allocatedProcessors);
         final int halfProcMaxAt10 = halfAllocatedProcessorsMaxTen(allocatedProcessors);
+        // 允许使用的最大线程数
         final int genericThreadPoolMax = boundedBy(4 * allocatedProcessors, 128, 512);
+        // scalingExecutor 对应弹性线程池  也就是具备一个 core线程数  和一个max线程数
         builders.put(Names.GENERIC, new ScalingExecutorBuilder(Names.GENERIC, 4, genericThreadPoolMax, TimeValue.timeValueSeconds(30)));
+        // fixedExecutor 对应固定线程池 注意这里没有使用无界队列
+        // 这些key 应该是api的指令吧 不同的api背后交托给不同的线程池  比如跟IO相关的就会尽可能使用固定线程池  以为IO操作本身无法借由提高线程数来提高并行能力
         builders.put(Names.WRITE, new FixedExecutorBuilder(settings, Names.WRITE, allocatedProcessors, 200, false));
         builders.put(Names.GET, new FixedExecutorBuilder(settings, Names.GET, allocatedProcessors, 1000, false));
         builders.put(Names.ANALYZE, new FixedExecutorBuilder(settings, Names.ANALYZE, 1, 16, false));
+
+        // search 线程还是调整过的 看不懂调整的含义
         builders.put(Names.SEARCH, new FixedExecutorBuilder(settings, Names.SEARCH, searchThreadPoolSize(allocatedProcessors), 1000, true));
         builders.put(Names.SEARCH_THROTTLED, new FixedExecutorBuilder(settings, Names.SEARCH_THROTTLED, 1, 100, true));
         builders.put(Names.MANAGEMENT, new ScalingExecutorBuilder(Names.MANAGEMENT, 1, 5, TimeValue.timeValueMinutes(5)));
@@ -219,6 +231,8 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         builders.put(Names.FORCE_MERGE, new FixedExecutorBuilder(settings, Names.FORCE_MERGE, 1, -1, false));
         builders.put(Names.FETCH_SHARD_STORE,
                 new ScalingExecutorBuilder(Names.FETCH_SHARD_STORE, 1, 2 * allocatedProcessors, TimeValue.timeValueMinutes(5)));
+
+        // 追加自定义builder  builder之间是依靠 key进行去重的
         for (final ExecutorBuilder<?> builder : customBuilders) {
             if (builders.containsKey(builder.name())) {
                 throw new IllegalArgumentException("builder with name [" + builder.name() + "] already exists");
@@ -227,11 +241,14 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         }
         this.builders = Collections.unmodifiableMap(builders);
 
+        // 从配置中获取不同请求头对应的value  以及 请求头数量和 请求头长度
         threadContext = new ThreadContext(settings);
 
         final Map<String, ExecutorHolder> executors = new HashMap<>();
         for (final Map.Entry<String, ExecutorBuilder> entry : builders.entrySet()) {
+            // 抽取只关于创建线程池的配置
             final ExecutorBuilder.ExecutorSettings executorSettings = entry.getValue().getSettings(settings);
+            // 构建线程池
             final ExecutorHolder executorHolder = entry.getValue().build(executorSettings, threadContext);
             if (executors.containsKey(executorHolder.info.getName())) {
                 throw new IllegalStateException("duplicate executors with name [" + executorHolder.info.getName() + "] registered");
@@ -240,9 +257,11 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
             executors.put(entry.getKey(), executorHolder);
         }
 
+        // same指令使用的是一个DirectExecutor 就是直接用当前线程执行任务
         executors.put(Names.SAME, new ExecutorHolder(DIRECT_EXECUTOR, new Info(Names.SAME, ThreadPoolType.DIRECT)));
         this.executors = unmodifiableMap(executors);
 
+        // 将描述每个线程池的info对象抽取出来 合成infos
         final List<Info> infos =
                 executors
                         .values()
@@ -251,7 +270,9 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
                         .map(holder -> holder.info)
                         .collect(Collectors.toList());
         this.threadPoolInfo = new ThreadPoolInfo(infos);
+        // 创建定时器对象
         this.scheduler = Scheduler.initScheduler(settings);
+        // 基于当前间隔时间 创建一个定时更新当前时间的线程
         TimeValue estimatedTimeInterval = ESTIMATED_TIME_INTERVAL_SETTING.get(settings);
         this.cachedTimeThread = new CachedTimeThread(EsExecutors.threadName(settings, "[timer]"), estimatedTimeInterval.millis());
         this.cachedTimeThread.start();

@@ -51,6 +51,7 @@ public interface Scheduler {
      * be logged as a warning. This includes jobs started using execute, submit and schedule.
      * @param settings the settings to use
      * @return executor
+     * 基于配置对象生成定时线程池
      */
     static ScheduledThreadPoolExecutor initScheduler(Settings settings) {
         final ScheduledThreadPoolExecutor scheduler = new SafeScheduledThreadPoolExecutor(1,
@@ -268,8 +269,13 @@ public interface Scheduler {
             super(corePoolSize);
         }
 
+        /**
+         * @param r
+         * @param t
+         */
         @Override
         protected void afterExecute(Runnable r, Throwable t) {
+            // 以异常形式结束时 直接返回
             if (t != null) return;
             // Scheduler only allows Runnable's so we expect no checked exceptions here. If anyone uses submit directly on `this`, we
             // accept the wrapped exception in the output.

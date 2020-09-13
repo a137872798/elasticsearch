@@ -84,21 +84,35 @@ public final class FixedExecutorBuilder extends ExecutorBuilder<FixedExecutorBui
         return Arrays.asList(sizeSetting, queueSizeSetting);
     }
 
+    /**
+     * 从settings中仅抽取与创建线程池相关的配置
+     * @param settings the node-level settings
+     * @return
+     */
     @Override
     FixedExecutorSettings getSettings(Settings settings) {
         final String nodeName = Node.NODE_NAME_SETTING.get(settings);
+        // 获取线程数 以及阻塞队列长度信息
         final int size = sizeSetting.get(settings);
         final int queueSize = queueSizeSetting.get(settings);
         return new FixedExecutorSettings(nodeName, size, queueSize);
     }
 
+    /**
+     * 创建线程池持有对象
+     * @param settings      the executor settings   仅存储固定线程数量线程池的配置
+     * @param threadContext the current thread context    包含一些公用的信息
+     * @return
+     */
     @Override
     ThreadPool.ExecutorHolder build(final FixedExecutorSettings settings, final ThreadContext threadContext) {
         int size = settings.size;
         int queueSize = settings.queueSize;
+        // 获取es专用的线程工厂   与一般的线程工厂不同的地方在于 它创建的线程会归纳到一个线程组中
         final ThreadFactory threadFactory = EsExecutors.daemonThreadFactory(EsExecutors.threadName(settings.nodeName, name()));
         final ExecutorService executor =
                 EsExecutors.newFixed(settings.nodeName + "/" + name(), size, queueSize, threadFactory, threadContext, trackEWMA);
+        // 生成当前线程池的描述信息对象
         final ThreadPool.Info info =
             new ThreadPool.Info(name(), ThreadPool.ThreadPoolType.FIXED, size, size, null, queueSize < 0 ? null : new SizeValue(queueSize));
         return new ThreadPool.ExecutorHolder(executor, info);

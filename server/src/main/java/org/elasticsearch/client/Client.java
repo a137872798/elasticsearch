@@ -80,6 +80,7 @@ import java.util.Map;
  * A client can be retrieved from a started {@link org.elasticsearch.node.Node}.
  *
  * @see org.elasticsearch.node.Node#client()
+ * 该接口对应的层级是 集群   ElasticsearchClient 对应层级是 应用层
  */
 public interface Client extends ElasticsearchClient, Releasable {
 

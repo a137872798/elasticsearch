@@ -35,6 +35,8 @@ public class ExponentiallyWeightedMovingAverage {
      * Create a new EWMA with a given {@code alpha} and {@code initialAvg}. A smaller alpha means
      * that new data points will have less weight, where a high alpha means older data points will
      * have a lower influence.
+     * @param alpha 默认0.3
+     * @param initialAvg 默认0
      */
     public ExponentiallyWeightedMovingAverage(double alpha, double initialAvg) {
         if (alpha < 0 || alpha > 1) {
@@ -48,11 +50,16 @@ public class ExponentiallyWeightedMovingAverage {
         return Double.longBitsToDouble(this.averageBits.get());
     }
 
+    /**
+     * 每当线程池执行完一个任务时
+     * @param newValue
+     */
     public void addValue(double newValue) {
         boolean successful = false;
         do {
             final long currentBits = this.averageBits.get();
             final double currentAvg = getAverage();
+            // 新值*0.3 + 旧值*0.7
             final double newAvg = (alpha * newValue) + ((1 - alpha) * currentAvg);
             final long newBits = Double.doubleToLongBits(newAvg);
             successful = averageBits.compareAndSet(currentBits, newBits);

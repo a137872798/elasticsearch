@@ -40,6 +40,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
  * method. This service will call {@link org.elasticsearch.watcher.ResourceWatcher#checkAndNotify()} method of all
  * registered watcher periodically. The frequency of checks can be specified using {@code resource.reload.interval} setting, which
  * defaults to {@code 60s}. The service can be disabled by setting {@code resource.reload.enabled} setting to {@code false}.
+ * 用于监控 es内部资源使用情况的服务
  */
 public class ResourceWatcherService implements Closeable {
     private static final Logger logger = LogManager.getLogger(ResourceWatcherService.class);
@@ -76,6 +77,10 @@ public class ResourceWatcherService implements Closeable {
     public static final Setting<TimeValue> RELOAD_INTERVAL_LOW =
         Setting.timeSetting("resource.reload.interval.low", Frequency.LOW.interval, Property.NodeScope);
 
+
+    /**
+     * 是否支持重新加载资源
+     */
     private final boolean enabled;
 
     final ResourceMonitor lowMonitor;
@@ -86,10 +91,18 @@ public class ResourceWatcherService implements Closeable {
     private final Cancellable mediumFuture;
     private final Cancellable highFuture;
 
+    /**
+     *
+     * @param settings  包含所有配置的对象
+     * @param threadPool  所有使用的线程池的总控对象
+     */
     public ResourceWatcherService(Settings settings, ThreadPool threadPool) {
         this.enabled = ENABLED.get(settings);
 
+        // 重新检测资源的间隔时间
         TimeValue interval = RELOAD_INTERVAL_LOW.get(settings);
+
+        // 这里以3种不同的时间间隔 创建了3个资源管理器
         lowMonitor = new ResourceMonitor(interval, Frequency.LOW);
         interval = RELOAD_INTERVAL_MEDIUM.get(settings);
         mediumMonitor = new ResourceMonitor(interval, Frequency.MEDIUM);
@@ -157,7 +170,13 @@ public class ResourceWatcherService implements Closeable {
 
     static class ResourceMonitor implements Runnable {
 
+        /**
+         * 该资源监控器对应触发任务的间隔时间
+         */
         final TimeValue interval;
+        /**
+         * 触发的频率
+         */
         final Frequency frequency;
 
         final Set<ResourceWatcher> watchers = new CopyOnWriteArraySet<>();
@@ -167,6 +186,12 @@ public class ResourceWatcherService implements Closeable {
             this.frequency = frequency;
         }
 
+        /**
+         * 追加一个资源监视器  同时返回一个句柄对象 通过操作该句柄对象可以将watcher从 watchers中移除
+         * @param watcher
+         * @param <W>
+         * @return
+         */
         private <W extends ResourceWatcher> WatcherHandle<W> add(W watcher) {
             watchers.add(watcher);
             return new WatcherHandle<>(this, watcher);

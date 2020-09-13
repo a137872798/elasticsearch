@@ -113,6 +113,7 @@ import java.util.function.Supplier;
  * +---------------------------+-------------------------+-------------------------------------------------------------------------------+
  *
  * (the last-accepted term is recorded in Metadata → CoordinationMetadata so does not need repeating here)
+ * 描述集群状态的 服务
  */
 public class PersistedClusterStateService {
     private static final Logger logger = LogManager.getLogger(PersistedClusterStateService.class);
@@ -251,18 +252,26 @@ public class PersistedClusterStateService {
     /**
      * Returns the node metadata for the given data paths, and checks if the node ids are unique
      * @param dataPaths the data paths to scan
+     *                  根据数据文件夹 生成一个元数据
      */
     @Nullable
     public static NodeMetadata nodeMetadata(Path... dataPaths) throws IOException {
         String nodeId = null;
         Version version = null;
         for (final Path dataPath : dataPaths) {
+            // 找到元数据文件夹  _state
             final Path indexPath = dataPath.resolve(METADATA_DIRECTORY_NAME);
             if (Files.exists(indexPath)) {
+                // 默认创建的 就是StandardDirectoryReader 啊  这是一个具备随时更新内部 segmentInfos 能力的对象 这样就能及时读取到最新写入lucene的数据了
+                // 从 _state 下寻找 segment_N 文件 并生成 directoryReader对象 注意这时liveDoc == hardLiveDoc 也就是感应不到软删除  软删除到底怎么用???
+                // 在读取segmentInfos 的过程中 会读取Codec类 (基于SPI机制  这样就可以跳过lucene的默认编解码策略 Lucene84Codec 这样就可以自定义索引格式了)
+                // es会简单遵循lucene的编解码方式 还是会自己进行改造呢 ???
                 try (DirectoryReader reader = DirectoryReader.open(new SimpleFSDirectory(dataPath.resolve(METADATA_DIRECTORY_NAME)))) {
+                    // IndexCommit 是 segmentInfos 和 directory封装后的类 这里获取写入时的用户信息
                     final Map<String, String> userData = reader.getIndexCommit().getUserData();
                     assert userData.get(NODE_VERSION_KEY) != null;
 
+                    // 必须确保每个数据文件夹下 _state 文件夹下解析的 segment_N 文件的 nodeId 数据是一致的
                     final String thisNodeId = userData.get(NODE_ID_KEY);
                     assert thisNodeId != null;
                     if (nodeId != null && nodeId.equals(thisNodeId) == false) {
@@ -270,6 +279,7 @@ public class PersistedClusterStateService {
                             "] in [" + dataPath + "] but expected [" + nodeId + "]");
                     } else if (nodeId == null) {
                         nodeId = thisNodeId;
+                        // 获取lucene 版本信息
                         version = Version.fromId(Integer.parseInt(userData.get(NODE_VERSION_KEY)));
                     }
                 } catch (IndexNotFoundException e) {
@@ -280,6 +290,7 @@ public class PersistedClusterStateService {
         if (nodeId == null) {
             return null;
         }
+        // 上面 这么多操作就是为了解析一个 nodeId 吗
         return new NodeMetadata(nodeId, version);
     }
 

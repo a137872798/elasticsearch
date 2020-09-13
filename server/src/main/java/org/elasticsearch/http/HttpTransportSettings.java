@@ -37,6 +37,9 @@ import static org.elasticsearch.common.settings.Setting.boolSetting;
 import static org.elasticsearch.common.settings.Setting.intSetting;
 import static org.elasticsearch.common.settings.Setting.listSetting;
 
+/**
+ * 基于http协议的传输层对象
+ */
 public final class HttpTransportSettings {
 
     public static final Setting<Boolean> SETTING_CORS_ENABLED =

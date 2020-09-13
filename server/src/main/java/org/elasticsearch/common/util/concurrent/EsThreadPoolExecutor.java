@@ -29,6 +29,7 @@ import java.util.stream.Stream;
 
 /**
  * An extension to thread pool executor, allowing (in the future) to add specific additional stats to it.
+ * es增强的线程池
  */
 public class EsThreadPoolExecutor extends ThreadPoolExecutor {
 
@@ -59,6 +60,9 @@ public class EsThreadPoolExecutor extends ThreadPoolExecutor {
         this.contextHolder = contextHolder;
     }
 
+    /**
+     * 在原来的基础上增加了  终止时的监听器
+     */
     @Override
     protected synchronized void terminated() {
         super.terminated();
@@ -77,6 +81,10 @@ public class EsThreadPoolExecutor extends ThreadPoolExecutor {
         void onTerminated();
     }
 
+    /**
+     * 包装runnable 当出现异常时 触发包装类的相关钩子
+     * @param command
+     */
     @Override
     public void execute(Runnable command) {
         command = wrapRunnable(command);
@@ -98,6 +106,11 @@ public class EsThreadPoolExecutor extends ThreadPoolExecutor {
         }
     }
 
+    /**
+     * 当执行完某个任务时触发的后置钩子
+     * @param r
+     * @param t
+     */
     @Override
     protected void afterExecute(Runnable r, Throwable t) {
         super.afterExecute(r, t);
@@ -148,6 +161,11 @@ public class EsThreadPoolExecutor extends ThreadPoolExecutor {
 
     }
 
+    /**
+     * 在执行任务前交由 context进行包装
+     * @param command
+     * @return
+     */
     protected Runnable wrapRunnable(Runnable command) {
         return contextHolder.preserveContext(command);
     }

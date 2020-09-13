@@ -24,12 +24,26 @@ import org.elasticsearch.ExceptionsHelper;
 /**
  * A class used to wrap a {@code Runnable} that allows capturing the time of the task since creation
  * through execution as well as only execution time.
+ * 该执行对象 会记录执行时长
  */
 class TimedRunnable extends AbstractRunnable implements WrappedRunnable {
+
+    /**
+     * 被包装的实际对象
+     */
     private final Runnable original;
     private final long creationTimeNanos;
+    /**
+     * 记录任务起始时间
+     */
     private long startTimeNanos;
+    /**
+     * 记录任务结束时间
+     */
     private long finishTimeNanos = -1;
+    /**
+     * 本次任务是否由于被拒绝 没有正常执行
+     */
     private boolean failedOrRejected = false;
 
     TimedRunnable(final Runnable original) {

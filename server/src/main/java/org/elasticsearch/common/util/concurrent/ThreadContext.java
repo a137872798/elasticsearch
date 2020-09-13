@@ -78,7 +78,7 @@ import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_MAX_WARN
  *     }
  *     // previous context is restored on StoredContext#close()
  * </pre>
- * 描述线程状态的上下文对象 可以将自身信息写入到一个输出流中
+ * 在这里有创建线程池需要的各种参数
  */
 public final class ThreadContext implements Writeable {
 
@@ -100,10 +100,14 @@ public final class ThreadContext implements Writeable {
     /**
      * Creates a new ThreadContext instance
      * @param settings the settings to read the default request headers from
+     *
      */
     public ThreadContext(Settings settings) {
+        // 从配置中抽取 使用 request.headers. 作为配置key的所有value值 每个请求api 都对应一种请求头
+        // 因为与es的交互是通过http请求的
         this.defaultHeader = buildDefaultHeaders(settings);
         this.threadLocal = ThreadLocal.withInitial(() -> DEFAULT_CONTEXT);
+        // 标记请求头的数量以及长度
         this.maxWarningHeaderCount = SETTING_HTTP_MAX_WARNING_HEADER_COUNT.get(settings);
         this.maxWarningHeaderSize = SETTING_HTTP_MAX_WARNING_HEADER_SIZE.get(settings).getBytes();
     }
@@ -367,6 +371,7 @@ public final class ThreadContext implements Writeable {
     /**
      * Saves the current thread context and wraps command in a Runnable that restores that context before running command. If
      * <code>command</code> has already been passed through this method then it is returned unaltered rather than wrapped twice.
+     * 当es线程池执行某个 runnable时 尝试进行封装
      */
     public Runnable preserveContext(Runnable command) {
         if (command instanceof ContextPreservingAbstractRunnable) {
@@ -423,7 +428,13 @@ public final class ThreadContext implements Writeable {
         }
     }
 
+    /**
+     * 线程名前缀吧
+     * @param settings
+     * @return
+     */
     public static Map<String, String> buildDefaultHeaders(Settings settings) {
+        // 当没有相关配置时 返回一个空容器
         Settings headers = DEFAULT_HEADERS_SETTING.get(settings);
         if (headers == null) {
             return Collections.emptyMap();
@@ -436,6 +447,9 @@ public final class ThreadContext implements Writeable {
         }
     }
 
+    /**
+     * 结构体  每个线程会通过 本地线程变量共享一个  ThreadContextStruct
+     */
     private static final class ThreadContextStruct {
 
         private static final ThreadContextStruct EMPTY =
@@ -455,6 +469,14 @@ public final class ThreadContext implements Writeable {
             return new ThreadContextStruct(requestHeaders, responseHeaders, transientHeaders, true);
         }
 
+        /**
+         * 每个线程会维护自己的 结构体
+         * @param requestHeaders
+         * @param responseHeaders
+         * @param transientHeaders
+         *                            3个map初始状态下都是空
+         * @param isSystemContext     默认为false
+         */
         private ThreadContextStruct(Map<String, String> requestHeaders,
                                     Map<String, Set<String>> responseHeaders,
                                     Map<String, Object> transientHeaders, boolean isSystemContext) {
