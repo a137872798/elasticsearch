@@ -32,6 +32,7 @@ import java.util.function.Supplier;
 
 /**
  * An extension point for {@link Plugin} implementations to customer behavior of cluster management.
+ * 集群相关的插件
  */
 public interface ClusterPlugin {
 

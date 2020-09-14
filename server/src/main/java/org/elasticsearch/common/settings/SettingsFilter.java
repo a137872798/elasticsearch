@@ -32,6 +32,7 @@ import java.util.Set;
 /**
  * A class that allows to filter settings objects by simple regular expression patterns or full settings keys.
  * It's used for response filtering on the rest layer to for instance filter out sensitive information like access keys.
+ * 包含了所有需要过滤的settings
  */
 public final class SettingsFilter {
     /**

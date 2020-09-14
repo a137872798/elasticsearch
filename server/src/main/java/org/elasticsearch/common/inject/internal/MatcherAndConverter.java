@@ -24,6 +24,7 @@ import java.util.Objects;
 
 /**
  * @author crazybob@google.com (Bob Lee)
+ * 该对象集成了 类型转换器 以及类型匹配器
  */
 public final class MatcherAndConverter {
 

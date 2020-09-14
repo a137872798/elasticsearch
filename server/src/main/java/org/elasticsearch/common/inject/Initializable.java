@@ -23,6 +23,7 @@ import org.elasticsearch.common.inject.internal.ErrorsException;
  * Holds a reference that requires initialization to be performed before it can be used.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 代表
  */
 interface Initializable<T> {
 

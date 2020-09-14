@@ -157,6 +157,9 @@ public class ScriptService implements Closeable, ClusterStateApplier {
     private final Map<String, ScriptEngine> engines;
     private final Map<String, ScriptContext<?>> contexts;
 
+    /**
+     * 该对象本身会注册到 ClusterApplierService上 随时监听最新的集群状态 并同步
+     */
     private ClusterState clusterState;
 
     private int maxSizeInBytes;

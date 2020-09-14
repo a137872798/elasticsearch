@@ -41,6 +41,7 @@ import java.util.stream.IntStream;
 
 /**
  * A module that binds the provided settings to the {@link Settings} interface.
+ * 该模块管理所有的 settings
  */
 public class SettingsModule implements Module {
     private static final Logger logger = LogManager.getLogger(SettingsModule.class);
@@ -58,6 +59,13 @@ public class SettingsModule implements Module {
         this(settings, Arrays.asList(additionalSettings), Collections.emptyList(), Collections.emptySet());
     }
 
+    /**
+     *
+     * @param settings   一组配置对象
+     * @param additionalSettings   插件需要的额外配置
+     * @param settingsFilter      配置过滤器
+     * @param settingUpgraders    升级相关的配置
+     */
     public SettingsModule(
             Settings settings,
             List<Setting<?>> additionalSettings,
@@ -72,6 +80,16 @@ public class SettingsModule implements Module {
             IndexScopedSettings.BUILT_IN_INDEX_SETTINGS);
     }
 
+
+    /**
+     *
+     * @param settings      从配置文件中获取的配置
+     * @param additionalSettings     插件定义的额外配置
+     * @param settingsFilter        从插件上找到的配置过滤器
+     * @param settingUpgraders      插件配置升级器
+     * @param registeredClusterSettings   集群相关的配置
+     * @param registeredIndexSettings    索引相关的配置
+     */
     SettingsModule(
         final Settings settings,
         final List<Setting<?>> additionalSettings,
@@ -93,6 +111,7 @@ public class SettingsModule implements Module {
         for (String filter : settingsFilter) {
             registerSettingsFilter(filter);
         }
+        // 除了传入的 集群升级配置外 还添加了内置的集群升级配置
         final Set<SettingUpgrader<?>> clusterSettingUpgraders = new HashSet<>();
         for (final SettingUpgrader<?> settingUpgrader : ClusterSettings.BUILT_IN_SETTING_UPGRADERS) {
             assert settingUpgrader.getSetting().hasNodeScope() : settingUpgrader.getSetting().getKey();
@@ -104,6 +123,7 @@ public class SettingsModule implements Module {
             final boolean added = clusterSettingUpgraders.add(settingUpgrader);
             assert added : settingUpgrader.getSetting().getKey();
         }
+        // 分别生成 index/cluster相关的配置对象
         this.indexScopedSettings = new IndexScopedSettings(settings, new HashSet<>(this.indexSettings.values()));
         this.clusterSettings = new ClusterSettings(settings, new HashSet<>(this.nodeSettings.values()), clusterSettingUpgraders);
         Settings indexSettings = settings.filter((s) -> s.startsWith("index.") && clusterSettings.get(s) == null);
@@ -158,6 +178,7 @@ public class SettingsModule implements Module {
         }
         // by now we are fully configured, lets check node level settings for unregistered index settings
         clusterSettings.validate(settings, true);
+        // 将所有需要过滤的settings 包装成一个 settingsFilter对象
         this.settingsFilter = new SettingsFilter(settingsFilterPattern);
     }
 
@@ -173,22 +194,27 @@ public class SettingsModule implements Module {
      * Registers a new setting. This method should be used by plugins in order to expose any custom settings the plugin defines.
      * Unless a setting is registered the setting is unusable. If a setting is never the less specified the node will reject
      * the setting during startup.
+     * 注册某个配置项
      */
     private void registerSetting(Setting<?> setting) {
         if (setting.getKey().contains(".") == false) {
             throw new IllegalArgumentException("setting [" + setting.getKey() + "] is not in any namespace, its name must contain a dot");
         }
+        // 代表该配置包含了 Prop.Filter  意味着在使用时可能要先输入密码等
         if (setting.isFiltered()) {
             if (settingsFilterPattern.contains(setting.getKey()) == false) {
                 registerSettingsFilter(setting.getKey());
             }
         }
+        // 如果该配置是针对 node 或者针对 index的
+        // 下面的逻辑就是将settings 按照 prop进行分类  存储到不同的容器中
         if (setting.hasNodeScope() || setting.hasIndexScope()) {
             if (setting.hasNodeScope()) {
                 Setting<?> existingSetting = nodeSettings.get(setting.getKey());
                 if (existingSetting != null) {
                     throw new IllegalArgumentException("Cannot register setting [" + setting.getKey() + "] twice");
                 }
+                // 设置一致性相关的配置
                 if (setting.isConsistent()) {
                     if (setting instanceof Setting.AffixSetting<?>) {
                         if (((Setting.AffixSetting<?>)setting).getConcreteSettingForNamespace("_na_") instanceof SecureSetting<?>) {
@@ -215,6 +241,7 @@ public class SettingsModule implements Module {
                 indexSettings.put(setting.getKey(), setting);
             }
         } else {
+            // 其余情况选择抛出异常
             throw new IllegalArgumentException("No scope found for setting [" + setting.getKey() + "]");
         }
     }
@@ -222,11 +249,13 @@ public class SettingsModule implements Module {
     /**
      * Registers a settings filter pattern that allows to filter out certain settings that for instance contain sensitive information
      * or if a setting is for internal purposes only. The given pattern must either be a valid settings key or a simple regexp pattern.
+     * 注册需要先输入密码/权限校验才能使用的配置
      */
     private void registerSettingsFilter(String filter) {
         if (SettingsFilter.isValidPattern(filter) == false) {
             throw new IllegalArgumentException("filter [" + filter +"] is invalid must be either a key or a regex pattern");
         }
+        // 拒绝重复加入
         if (settingsFilterPattern.contains(filter)) {
             throw new IllegalArgumentException("filter [" + filter + "] has already been registered");
         }

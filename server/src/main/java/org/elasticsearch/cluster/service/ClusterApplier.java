@@ -23,6 +23,9 @@ import org.elasticsearch.cluster.ClusterState;
 
 import java.util.function.Supplier;
 
+/**
+ * 用于控制集群状态的接口
+ */
 public interface ClusterApplier {
     /**
      * Sets the initial state for this applier. Should only be called once.

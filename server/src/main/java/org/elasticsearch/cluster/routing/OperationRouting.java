@@ -39,6 +39,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+/**
+ * 操作路由对象
+ */
 public class OperationRouting {
 
     public static final Setting<Boolean> USE_ADAPTIVE_REPLICA_SELECTION_SETTING =
@@ -47,8 +50,14 @@ public class OperationRouting {
 
     private boolean useAdaptiveReplicaSelection;
 
+    /**
+     *
+     * @param settings   从配置文件中抽取出来的配置
+     * @param clusterSettings   集群相关配置
+     */
     public OperationRouting(Settings settings, ClusterSettings clusterSettings) {
         this.useAdaptiveReplicaSelection = USE_ADAPTIVE_REPLICA_SELECTION_SETTING.get(settings);
+        // TODO 这里也涉及到更新了 这个更新指的是什么
         clusterSettings.addSettingsUpdateConsumer(USE_ADAPTIVE_REPLICA_SELECTION_SETTING, this::setUseAdaptiveReplicaSelection);
     }
 

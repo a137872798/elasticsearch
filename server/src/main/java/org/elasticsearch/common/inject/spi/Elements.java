@@ -76,9 +76,11 @@ public final class Elements {
 
     /**
      * Records the elements executed by {@code modules}.
+     * 构建recordsBinder对象 处理 module
      */
     public static List<Element> getElements(Stage stage, Iterable<? extends Module> modules) {
         RecordingBinder binder = new RecordingBinder(stage);
+        // 将所有模块对象交由 binder处理
         for (Module module : modules) {
             binder.install(module);
         }
@@ -99,9 +101,16 @@ public final class Elements {
         };
     }
 
+    /**
+     * Binder 内置实现只有该类
+     */
     private static class RecordingBinder implements Binder, PrivateBinder {
         private final Stage stage;
         private final Set<Module> modules;
+
+        /**
+         * 推测绑定的 对象会存储到这个列表中
+         */
         private final List<Element> elements;
         private final Object source;
         private final SourceProvider sourceProvider;
@@ -112,11 +121,17 @@ public final class Elements {
         private final RecordingBinder parent;
         private final PrivateElementsImpl privateElements;
 
+
+        /**
+         * 使用一个描述阶段的对象进行初始化
+         * @param stage
+         */
         private RecordingBinder(Stage stage) {
             this.stage = stage;
             this.modules = new HashSet<>();
             this.elements = new ArrayList<>();
             this.source = null;
+            // 标记某些 provider 需要被跳过
             this.sourceProvider = new SourceProvider().plusSkippedClasses(
                     Elements.class, RecordingBinder.class, AbstractModule.class,
                     ConstantBindingBuilderImpl.class, AbstractBindingBuilder.class, BindingBuilder.class);
@@ -196,6 +211,10 @@ public final class Elements {
             }
         }
 
+        /**
+         * 添加这些module对象 在添加过程中 还会进行配置
+         * @param module
+         */
         @Override
         public void install(Module module) {
             if (modules.add(module)) {
@@ -242,6 +261,12 @@ public final class Elements {
             elements.add(message);
         }
 
+        /**
+         * 在当前对象上绑定一个 key
+         * @param key
+         * @param <T>
+         * @return
+         */
         @Override
         public <T> AnnotatedBindingBuilder<T> bind(Key<T> key) {
             return new BindingBuilder<>(this, elements, getSource(), key);
@@ -252,6 +277,12 @@ public final class Elements {
             return bind(Key.get(typeLiteral));
         }
 
+        /**
+         * 在初始化Node对象的过程中 会将各种组件类绑定到Binder上
+         * @param type
+         * @param <T>
+         * @return
+         */
         @Override
         public <T> AnnotatedBindingBuilder<T> bind(Class<T> type) {
             return bind(Key.get(type));

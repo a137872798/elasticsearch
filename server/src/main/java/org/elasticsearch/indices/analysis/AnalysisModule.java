@@ -61,6 +61,7 @@ import static org.elasticsearch.plugins.AnalysisPlugin.requiresAnalysisSettings;
 
 /**
  * Sets up {@link AnalysisRegistry}.
+ * 分析模块
  */
 public final class AnalysisModule {
     static {
@@ -77,6 +78,12 @@ public final class AnalysisModule {
     private final HunspellService hunspellService;
     private final AnalysisRegistry analysisRegistry;
 
+    /**
+     *
+     * @param environment
+     * @param plugins  一组具备分析能力的插件
+     * @throws IOException
+     */
     public AnalysisModule(Environment environment, List<AnalysisPlugin> plugins) throws IOException {
         NamedRegistry<AnalysisProvider<CharFilterFactory>> charFilters = setupCharFilters(plugins);
         NamedRegistry<org.apache.lucene.analysis.hunspell.Dictionary> hunspellDictionaries = setupHunspellDictionaries(plugins);

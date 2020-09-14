@@ -83,10 +83,15 @@ public interface CircuitBreaker {
         }
     }
 
+    /**
+     * 持久性 ???
+     */
     enum Durability {
         // The condition that tripped the circuit breaker fixes itself eventually.
+        // 瞬时
         TRANSIENT,
         // The condition that tripped the circuit breaker requires manual intervention.
+        // 永久
         PERMANENT
     }
 

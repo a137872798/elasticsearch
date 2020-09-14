@@ -32,14 +32,26 @@ import org.elasticsearch.cluster.ClusterInfoService;
 
 import java.io.IOException;
 
+/**
+ * 监控服务
+ */
 public class MonitorService extends AbstractLifecycleComponent {
 
+    // 维护各种维度的信息 比如进程级别 jvm级别 os级别 fileSystem 等等
     private final JvmGcMonitorService jvmGcMonitorService;
     private final OsService osService;
     private final ProcessService processService;
     private final JvmService jvmService;
     private final FsService fsService;
 
+    /**
+     *
+     * @param settings
+     * @param nodeEnvironment
+     * @param threadPool
+     * @param clusterInfoService
+     * @throws IOException
+     */
     public MonitorService(Settings settings, NodeEnvironment nodeEnvironment, ThreadPool threadPool,
                           ClusterInfoService clusterInfoService) throws IOException {
         this.jvmGcMonitorService = new JvmGcMonitorService(settings, threadPool);

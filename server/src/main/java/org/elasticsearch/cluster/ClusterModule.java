@@ -90,6 +90,7 @@ import java.util.function.Supplier;
 
 /**
  * Configures classes and services that affect the entire cluster.
+ * 各个服务会被包装成模块对象 之后模块会被包装成注入点(Injector)
  */
 public class ClusterModule extends AbstractModule {
 
@@ -106,6 +107,14 @@ public class ClusterModule extends AbstractModule {
     final Collection<AllocationDecider> deciderList;
     final ShardsAllocator shardsAllocator;
 
+
+    /**
+     *
+     * @param settings
+     * @param clusterService   集群服务对象
+     * @param clusterPlugins    集群相关插件
+     * @param clusterInfoService   集群信息服务对象
+     */
     public ClusterModule(Settings settings, ClusterService clusterService, List<ClusterPlugin> clusterPlugins,
                          ClusterInfoService clusterInfoService) {
         this.clusterPlugins = clusterPlugins;
@@ -186,7 +195,10 @@ public class ClusterModule extends AbstractModule {
     }
 
     // TODO: this is public so allocation benchmark can access the default deciders...can we do that in another way?
-    /** Return a new {@link AllocationDecider} instance with builtin deciders as well as those from plugins. */
+    /**
+     * Return a new {@link AllocationDecider} instance with builtin deciders as well as those from plugins.
+     * 这里添加了一系列的  decider
+     * */
     public static Collection<AllocationDecider> createAllocationDeciders(Settings settings, ClusterSettings clusterSettings,
                                                                          List<ClusterPlugin> clusterPlugins) {
         // collect deciders by class so that we can detect duplicates

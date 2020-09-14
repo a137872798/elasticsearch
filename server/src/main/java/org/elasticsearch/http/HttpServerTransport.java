@@ -39,6 +39,7 @@ public interface HttpServerTransport extends LifecycleComponent, ReportingServic
 
     /**
      * Dispatches HTTP requests.
+     * http 请求分发器
      */
     interface Dispatcher {
 

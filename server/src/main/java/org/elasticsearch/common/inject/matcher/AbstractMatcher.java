@@ -20,6 +20,7 @@ package org.elasticsearch.common.inject.matcher;
  * Implements {@code and()} and {@code or()}.
  *
  * @author crazybob@google.com (Bob Lee)
+ * matcher对象骨架类
  */
 public abstract class AbstractMatcher<T> implements Matcher<T> {
 
@@ -33,6 +34,11 @@ public abstract class AbstractMatcher<T> implements Matcher<T> {
         return new OrMatcher<>(this, other);
     }
 
+
+    /**
+     * 代表matches 需要同时满足2个对象
+     * @param <T>
+     */
     private static class AndMatcher<T> extends AbstractMatcher<T> {
         private final Matcher<? super T> a, b;
 
@@ -64,6 +70,10 @@ public abstract class AbstractMatcher<T> implements Matcher<T> {
         }
     }
 
+    /**
+     * 仅匹配成功一个对象即认为匹配成功
+     * @param <T>
+     */
     private static class OrMatcher<T> extends AbstractMatcher<T> {
         private final Matcher<? super T> a, b;
 

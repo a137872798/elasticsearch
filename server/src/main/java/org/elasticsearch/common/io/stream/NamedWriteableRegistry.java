@@ -37,7 +37,10 @@ public class NamedWriteableRegistry {
     /** An entry in the registry, made up of a category class and name, and a reader for that category class. */
     public static class Entry {
 
-        /** The superclass of a {@link NamedWriteable} which will be read by {@link #reader}. */
+        /**
+         * The superclass of a {@link NamedWriteable} which will be read by {@link #reader}.
+         * 该属性可以重复
+         * */
         public final Class<?> categoryClass;
 
         /** A name for the writeable which is unique to the {@link #categoryClass}. */
@@ -62,6 +65,7 @@ public class NamedWriteableRegistry {
 
     /**
      * Constructs a new registry from the given entries.
+     * 基于传入的entry 创建一个 registry对象
      */
     @SuppressWarnings("rawtypes")
     public NamedWriteableRegistry(List<Entry> entries) {
@@ -79,6 +83,7 @@ public class NamedWriteableRegistry {
             if (currentCategory != entry.categoryClass) {
                 if (currentCategory != null) {
                     // we've seen the last of this category, put it into the big map
+                    // 当类型发生变化的时候 提前设置到 registry中  看来多个entryr的 categoryClass 是可以重复的
                     registry.put(currentCategory, Collections.unmodifiableMap(readers));
                 }
                 readers = new HashMap<>();

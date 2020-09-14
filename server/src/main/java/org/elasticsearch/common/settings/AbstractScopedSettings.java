@@ -47,6 +47,7 @@ import java.util.stream.Collectors;
 /**
  * A basic setting service that can be used for per-index and per-cluster settings.
  * This service offers transactional application of updates settings.
+ * 范围配置骨架类
  */
 public abstract class AbstractScopedSettings {
 
@@ -65,6 +66,12 @@ public abstract class AbstractScopedSettings {
     private final Setting.Property scope;
     private Settings lastSettingsApplied;
 
+    /**
+     * @param settings  所有配置信息
+     * @param settingsSet  仅仅包含某个scope 的配置
+     * @param settingUpgraders  升级相关的配置
+     * @param scope   范围类型  cluster/index
+     */
     protected AbstractScopedSettings(
             final Settings settings,
             final Set<Setting<?>> settingsSet,

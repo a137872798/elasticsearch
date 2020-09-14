@@ -81,6 +81,9 @@ public class MasterService extends AbstractLifecycleComponent {
 
     ClusterStatePublisher clusterStatePublisher;
 
+    /**
+     * 当前节点的名字
+     */
     private final String nodeName;
 
     private java.util.function.Supplier<ClusterState> clusterStateSupplier;
@@ -92,6 +95,12 @@ public class MasterService extends AbstractLifecycleComponent {
     private volatile PrioritizedEsThreadPoolExecutor threadPoolExecutor;
     private volatile Batcher taskBatcher;
 
+    /**
+     *
+     * @param settings   所有解析出来的配置
+     * @param clusterSettings    仅集群相关的配置
+     * @param threadPool     管理所有线程池
+     */
     public MasterService(Settings settings, ClusterSettings clusterSettings, ThreadPool threadPool) {
         this.nodeName = Objects.requireNonNull(Node.NODE_NAME_SETTING.get(settings));
 

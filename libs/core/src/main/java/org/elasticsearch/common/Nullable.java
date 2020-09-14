@@ -32,7 +32,7 @@ import java.lang.annotation.Target;
  * {@code null} is an acceptable value for that parameter.  It should not be
  * used for parameters of primitive types.
  *
- *
+ * 标注某个参数允许为null
  */
 @Documented
 @TypeQualifierNickname

@@ -24,6 +24,7 @@ import org.elasticsearch.common.breaker.NoopCircuitBreaker;
 
 /**
  * Class that returns a breaker that never breaks
+ * 空断路器 不做任何处理
  */
 public class NoneCircuitBreakerService extends CircuitBreakerService {
 

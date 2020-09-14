@@ -20,17 +20,20 @@ package org.elasticsearch.common.inject.matcher;
  * Returns {@code true} or {@code false} for a given input.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 具备匹配能力的接口
  */
 public interface Matcher<T> {
 
     /**
      * Returns {@code true} if this matches {@code t}, {@code false} otherwise.
+     * 检测当前对象与传入的对象是否匹配
      */
     boolean matches(T t);
 
     /**
      * Returns a new matcher which returns {@code true} if both this and the
      * given matcher return {@code true}.
+     * 将当前对象与另一个对象合并   要满足 matches() 必须要求同时满足2个对象的匹配条件
      */
     Matcher<T> and(Matcher<? super T> other);
 

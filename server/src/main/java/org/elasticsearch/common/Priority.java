@@ -24,6 +24,9 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 
 import java.io.IOException;
 
+/**
+ * 优先级数字从小到大 依次提高紧要程度
+ */
 public enum Priority {
 
     IMMEDIATE((byte) 0),

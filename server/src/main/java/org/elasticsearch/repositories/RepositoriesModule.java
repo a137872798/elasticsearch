@@ -35,6 +35,7 @@ import java.util.Map;
 
 /**
  * Sets up classes for Snapshot/Restore.
+ * 存储模块
  */
 public final class RepositoriesModule {
 

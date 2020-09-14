@@ -44,6 +44,7 @@ import java.util.function.Supplier;
  *     }
  * }
  * }</pre>
+ * 地址服务 类似注册中心 用于发现其他节点的地址
  */
 public interface DiscoveryPlugin {
 

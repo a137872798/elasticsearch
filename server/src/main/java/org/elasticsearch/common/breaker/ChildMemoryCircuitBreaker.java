@@ -45,7 +45,7 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
      * bytes grows above the limit. All estimations will be multiplied by
      * the given overheadConstant. This breaker starts with 0 bytes used.
      * @param settings settings to configure this breaker
-     * @param parent parent circuit breaker service to delegate tripped breakers to
+     * @param parent parent circuit breaker service to delegate tripped breakers to    该断路器是由哪个 断路service创建的
      * @param name the name of the breaker
      */
     public ChildMemoryCircuitBreaker(BreakerSettings settings, Logger logger,

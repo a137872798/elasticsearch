@@ -182,6 +182,9 @@ public final class ClusterSettings extends AbstractScopedSettings {
         }
     }
 
+    /**
+     * 集群相关的所有插件
+     */
     public static Set<Setting<?>> BUILT_IN_CLUSTER_SETTINGS = Set.of(
             AwarenessAllocationDecider.CLUSTER_ROUTING_ALLOCATION_AWARENESS_ATTRIBUTE_SETTING,
             AwarenessAllocationDecider.CLUSTER_ROUTING_ALLOCATION_AWARENESS_FORCE_GROUP_SETTING,

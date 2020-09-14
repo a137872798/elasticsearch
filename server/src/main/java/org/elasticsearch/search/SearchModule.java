@@ -261,6 +261,7 @@ import static java.util.Objects.requireNonNull;
 
 /**
  * Sets up things that can be done at search time like queries, aggregations, and suggesters.
+ * 查询模块
  */
 public class SearchModule {
     public static final Setting<Integer> INDICES_MAX_CLAUSE_COUNT_SETTING = Setting.intSetting("indices.query.bool.max_clause_count",
@@ -282,6 +283,7 @@ public class SearchModule {
      *       When constructed, a static flag is set in Lucene {@link BooleanQuery#setMaxClauseCount} according to the settings.
      * @param settings Current settings
      * @param plugins List of included {@link SearchPlugin} objects.
+     *                从插件中安装各种需要的特性
      */
     public SearchModule(Settings settings, List<SearchPlugin> plugins) {
         this.settings = settings;

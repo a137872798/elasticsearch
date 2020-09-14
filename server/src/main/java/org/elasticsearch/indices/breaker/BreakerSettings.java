@@ -37,6 +37,14 @@ public final class BreakerSettings {
         this(name, limitBytes, overhead, CircuitBreaker.Type.MEMORY, CircuitBreaker.Durability.PERMANENT);
     }
 
+    /**
+     *
+     * @param name      本次针对断路的数据类型
+     * @param limitBytes    限制量
+     * @param overhead
+     * @param type
+     * @param durability  持久性相关的枚举
+     */
     public BreakerSettings(String name, long limitBytes, double overhead, CircuitBreaker.Type type, CircuitBreaker.Durability durability) {
         this.name = name;
         this.limitBytes = limitBytes;

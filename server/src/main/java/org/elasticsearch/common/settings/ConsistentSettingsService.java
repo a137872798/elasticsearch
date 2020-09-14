@@ -52,6 +52,7 @@ import javax.crypto.spec.PBEKeySpec;
  * Used to publish secure setting hashes in the cluster state and to validate those hashes against the local values of those same settings.
  * This is colloquially referred to as the secure setting consistency check. It will publish and verify hashes only for the collection
  * of settings passed in the constructor. The settings have to have the {@link Setting.Property#Consistent} property.
+ * 一致性配置服务  难道一个集群下 所有node都会与master的settings做同步吗
  */
 public final class ConsistentSettingsService {
     private static final Logger logger = LogManager.getLogger(ConsistentSettingsService.class);
@@ -61,6 +62,12 @@ public final class ConsistentSettingsService {
     private final Collection<Setting<?>> secureSettingsCollection;
     private final SecretKeyFactory pbkdf2KeyFactory;
 
+    /**
+     *
+     * @param settings    从配置文件中抽取的配置
+     * @param clusterService    集群相关的配置
+     * @param secureSettingsCollection  一致性相关的配置
+     */
     public ConsistentSettingsService(Settings settings, ClusterService clusterService,
                                      Collection<Setting<?>> secureSettingsCollection) {
         this.settings = settings;
@@ -77,9 +84,11 @@ public final class ConsistentSettingsService {
     /**
      * Returns a {@link LocalNodeMasterListener} that will publish hashes of all the settings passed in the constructor. These hashes are
      * published by the master node only. Note that this is not designed for {@link SecureSettings} implementations that are mutable.
+     * 返回一个 集群角色状态监听器
      */
     public LocalNodeMasterListener newHashPublisher() {
         // eagerly compute hashes to be published
+        // 计算每个加密配置项的 hash值
         final Map<String, String> computedHashesOfConsistentSettings = computeHashesOfConsistentSecureSettings();
         return new HashesPublisher(computedHashesOfConsistentSettings, clusterService);
     }
@@ -157,7 +166,8 @@ public final class ConsistentSettingsService {
 
     /**
      * Iterate over the passed in secure settings, expanding {@link Setting.AffixSetting} to concrete settings, in the scope of the local
-     * settings.
+     * settings
+     * 使用传入的函数 处理所有 加密配置项.
      */
     private void forEachConcreteSecureSettingDo(Consumer<SecureSetting<?>> secureSettingConsumer) {
         for (Setting<?> setting : secureSettingsCollection) {
@@ -175,12 +185,18 @@ public final class ConsistentSettingsService {
         }
     }
 
+    /**
+     * 计算加密配置的hash值
+     * @return
+     */
     private Map<String, String> computeHashesOfConsistentSecureSettings() {
         final Map<String, String> hashesBySettingKey = new HashMap<>();
         forEachConcreteSecureSettingDo(concreteSecureSetting -> {
+            // 返回解密后的数据
             final byte[] localHash = concreteSecureSetting.getSecretDigest(settings);
             if (localHash != null) {
                 final String salt = UUIDs.randomBase64UUID();
+                // 计算一个hash值
                 final byte[] publicHash = computeSaltedPBKDF2Hash(localHash, salt.getBytes(StandardCharsets.UTF_8));
                 final String encodedPublicHash = new String(Base64.getEncoder().encode(publicHash), StandardCharsets.UTF_8);
                 hashesBySettingKey.put(concreteSecureSetting.getKey(), salt + ":" + encodedPublicHash);
@@ -207,9 +223,13 @@ public final class ConsistentSettingsService {
         }
     }
 
+    /**
+     * 该对象会监听集群角色的变化
+     */
     static final class HashesPublisher implements LocalNodeMasterListener {
 
         // eagerly compute hashes to be published
+        // 加密配置以keyName作为key hash值作为value
         final Map<String, String> computedHashesOfConsistentSettings;
         final ClusterService clusterService;
 
@@ -218,9 +238,18 @@ public final class ConsistentSettingsService {
             this.clusterService = clusterService;
         }
 
+        /**
+         * 当感知到当前节点成为master节点时 处理一个 状态更新任务
+         */
         @Override
         public void onMaster() {
             clusterService.submitStateUpdateTask("publish-secure-settings-hashes", new ClusterStateUpdateTask(Priority.URGENT) {
+
+                /**
+                 * 这里是在检测配置本身是否发生变化   在eureka中比较注册中心上信息是否变化 也是通过比较hash值而不是挨个比较数据内容
+                 * @param currentState
+                 * @return
+                 */
                 @Override
                 public ClusterState execute(ClusterState currentState) {
                     final Map<String, String> publishedHashesOfConsistentSettings = currentState.metadata()
@@ -229,6 +258,7 @@ public final class ConsistentSettingsService {
                         logger.debug("Nothing to publish. What is already published matches this node's view.");
                         return currentState;
                     } else {
+                        // 返回同步后的状态
                         return ClusterState.builder(currentState).metadata(Metadata.builder(currentState.metadata())
                                 .hashesOfConsistentSettings(computedHashesOfConsistentSettings)).build();
                     }

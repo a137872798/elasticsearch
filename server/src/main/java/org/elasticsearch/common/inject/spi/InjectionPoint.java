@@ -52,6 +52,7 @@ import static org.elasticsearch.common.inject.internal.MoreTypes.getRawType;
  *
  * @author crazybob@google.com (Bob Lee)
  * @since 2.0
+ * 代表一个注入点  或者说增强点
  */
 public final class InjectionPoint {
 

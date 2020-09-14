@@ -106,6 +106,7 @@ public final class NetworkModule {
     /**
      * Creates a network module that custom networking classes can be plugged into.
      * @param settings The settings for the node
+     *                 构建网络模块
      */
     public NetworkModule(Settings settings, List<NetworkPlugin> plugins, ThreadPool threadPool,
                          BigArrays bigArrays,

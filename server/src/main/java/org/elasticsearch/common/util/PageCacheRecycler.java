@@ -71,6 +71,10 @@ public class PageCacheRecycler {
         NON_RECYCLING_INSTANCE = new PageCacheRecycler(Settings.builder().put(LIMIT_HEAP_SETTING.getKey(), "0%").build());
     }
 
+    /**
+     * 使用配置对象 创建 pageCacheRecycler对象
+     * @param settings
+     */
     public PageCacheRecycler(Settings settings) {
         final Type type = TYPE_SETTING.get(settings);
         final long limit = LIMIT_HEAP_SETTING.get(settings).getBytes();

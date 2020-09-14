@@ -33,12 +33,19 @@ import java.util.Set;
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
  * @author mikeward@google.com (Mike Ward)
+ * 该处理器用于处理 requestInjection/requestStaticInjection
  */
 class InjectionRequestProcessor extends AbstractProcessor {
 
     private final List<StaticInjection> staticInjections = new ArrayList<>();
     private final Initializer initializer;
 
+
+    /**
+     *
+     * @param errors   存储错误信息
+     * @param initializer    用于控制注入对象
+     */
     InjectionRequestProcessor(Errors errors, Initializer initializer) {
         super(errors);
         this.initializer = initializer;

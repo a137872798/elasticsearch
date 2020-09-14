@@ -21,6 +21,9 @@ package org.elasticsearch.gateway;
 
 import org.elasticsearch.common.inject.AbstractModule;
 
+/**
+ * 网关模块
+ */
 public class GatewayModule extends AbstractModule {
 
 

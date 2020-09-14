@@ -36,6 +36,9 @@ import static java.util.Collections.emptySet;
  */
 interface State {
 
+    /**
+     * 空状态对象  
+     */
     State NONE = new State() {
         @Override
         public State parent() {

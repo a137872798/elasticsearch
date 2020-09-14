@@ -44,6 +44,9 @@ import java.util.List;
 abstract class AbstractProcessor implements ElementVisitor<Boolean> {
 
     protected Errors errors;
+    /**
+     * 每个处理器都会维护 注入对象
+     */
     protected InjectorImpl injector;
 
     protected AbstractProcessor(Errors errors) {

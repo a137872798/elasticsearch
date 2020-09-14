@@ -82,6 +82,7 @@ import java.util.stream.StreamSupport;
  * make sure that the correct diffs are applied. If uuids don’t match, the {@link ClusterStateDiff#apply} method
  * throws the {@link IncompatibleClusterStateVersionException}, which causes the publishing mechanism to send
  * a full version of the cluster state to the node on which this exception was thrown.
+ * 由于实现了 Diffable 接口 能反映当前状态与之前状态的变化
  */
 public class ClusterState implements ToXContentFragment, Diffable<ClusterState> {
 
@@ -107,6 +108,9 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
 
     private final long version;
 
+    /**
+     * 每次状态都会包含一个唯一性id
+     */
     private final String stateUUID;
 
     private final RoutingTable routingTable;
@@ -603,6 +607,11 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
         }
     }
 
+    /**
+     * 返回一个 代表当前状态与之前状态的对象
+     * @param previousState
+     * @return
+     */
     @Override
     public Diff<ClusterState> diff(ClusterState previousState) {
         return new ClusterStateDiff(previousState, this);
@@ -659,6 +668,9 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
         }
     }
 
+    /**
+     * 描述当前状态与之前状态的变化
+     */
     private static class ClusterStateDiff implements Diff<ClusterState> {
 
         private final long toVersion;
@@ -679,6 +691,10 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
 
         private final Diff<ImmutableOpenMap<String, Custom>> customs;
 
+        /**
+         * @param before
+         * @param after
+         */
         ClusterStateDiff(ClusterState before, ClusterState after) {
             fromUuid = before.stateUUID;
             toUuid = after.stateUUID;

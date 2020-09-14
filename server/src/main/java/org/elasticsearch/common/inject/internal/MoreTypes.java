@@ -43,6 +43,14 @@ import static java.util.Collections.singleton;
  * public {@code Types} API.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ *
+ * GenericArrayType 代表的是泛型数组 比如 T[]   (List<T>[]/List<String>[] 这种也是)  也就是只要携带泛型的数组
+ * RawType 或者说通常意义上的class 代表包括数组在内的一般类 (也包含原始类型)
+ * TypeVariable 代表T本身
+ * WildcardType   代表携带通配符的泛型 比如 <? extends List>
+ * ParameterizedType  代表包含泛型的其他类型 比如 List<T>/List<String>
+ *     List<T> 在没剥掉外壳前是ParameterizedType 剥掉后是TypeVariable
+ *     T[] 在没剥掉外壳前是GenericArrayType 剥掉后是TypeVariable
  */
 public class MoreTypes {
 
@@ -51,6 +59,9 @@ public class MoreTypes {
     private MoreTypes() {
     }
 
+    /**
+     * 维护原始类型与包装类型的映射关系
+     */
     private static final Map<TypeLiteral<?>, TypeLiteral<?>> PRIMITIVE_TO_WRAPPER = Map.of(
         TypeLiteral.get(boolean.class), TypeLiteral.get(Boolean.class),
         TypeLiteral.get(byte.class), TypeLiteral.get(Byte.class),
@@ -69,11 +80,13 @@ public class MoreTypes {
      * @throws ConfigurationException if {@code type} contains a type variable
      */
     public static <T> TypeLiteral<T> makeKeySafe(TypeLiteral<T> type) {
+        // 本身的要求就是不允许携带未确定的泛型信息 比如 T  允许出现 List<String>这种
         if (!isFullySpecified(type.getType())) {
             String message = type + " cannot be used as a key; It is not fully specified.";
             throw new ConfigurationException(singleton(new Message(message)));
         }
 
+        // 如果使用的是原始类型  转换成包装类型
         @SuppressWarnings("unchecked")
         TypeLiteral<T> wrappedPrimitives = (TypeLiteral<T>) PRIMITIVE_TO_WRAPPER.get(type);
         return wrappedPrimitives != null
@@ -91,6 +104,7 @@ public class MoreTypes {
         } else if (type instanceof CompositeType) {
             return ((CompositeType) type).isFullySpecified();
 
+            // 通过TypeLiteral解析泛型类型的目的就是为了确保最终不包含泛型类型 都能解析成明确的类型
         } else if (type instanceof TypeVariable) {
             return false;
 
@@ -102,12 +116,16 @@ public class MoreTypes {
     /**
      * Returns a type that is functionally equal but not necessarily equal
      * according to {@link Object#equals(Object) Object.equals()}.
+     * 进行标准化处理
      */
     public static Type canonicalize(Type type) {
+        // 这里代表是es自己生成的实现类 就不需要做处理了
         if (type instanceof ParameterizedTypeImpl
                 || type instanceof GenericArrayTypeImpl
                 || type instanceof WildcardTypeImpl) {
             return type;
+
+        // 将对应的信息抽取出来生成 impl类
 
         } else if (type instanceof ParameterizedType) {
             ParameterizedType p = (ParameterizedType) type;
@@ -116,23 +134,33 @@ public class MoreTypes {
 
         } else if (type instanceof GenericArrayType) {
             GenericArrayType g = (GenericArrayType) type;
+            // g.getGenericComponentType() 返回泛型数组中泛型类型 比如 T[] 的 T  List<T>[] 的 List<T>
             return new GenericArrayTypeImpl(g.getGenericComponentType());
 
+            // 如果是数组类型的class getComponentType() 会返回内部元素的类型
         } else if (type instanceof Class && ((Class<?>) type).isArray()) {
             Class<?> c = (Class<?>) type;
             return new GenericArrayTypeImpl(c.getComponentType());
 
+            // 代表 <? extends T> 或者 <? super T>
         } else if (type instanceof WildcardType) {
             WildcardType w = (WildcardType) type;
             return new WildcardTypeImpl(w.getUpperBounds(), w.getLowerBounds());
 
         } else {
             // type is either serializable as-is or unsupported
+            // Class 或者 TypeVariable  这时不需要处理
             return type;
         }
     }
 
+    /**
+     * 尝试获取原始类型
+     * @param type
+     * @return
+     */
     public static Class<?> getRawType(Type type) {
+        // 非泛型类型 直接返回
         if (type instanceof Class<?>) {
             // type is a normal class.
             return (Class<?>) type;
@@ -143,6 +171,7 @@ public class MoreTypes {
             // I'm not exactly sure why getRawType() returns Type instead of Class.
             // Neal isn't either but suspects some pathological case related
             // to nested classes exists.
+            // 好吧 那我也不知道为啥就一定是class了
             Type rawType = parameterizedType.getRawType();
             if (!(rawType instanceof Class)) {
                 throw new IllegalArgumentException(
@@ -151,10 +180,12 @@ public class MoreTypes {
             }
             return (Class<?>) rawType;
 
+            // 泛型数组 直接返回Object
         } else if (type instanceof GenericArrayType) {
             // TODO: Is this sufficient?
             return Object[].class;
 
+            // 简单的 T 直接返回Object
         } else if (type instanceof TypeVariable) {
             // we could use the variable's bounds, but that'll won't work if there are multiple.
             // having a raw type that's more general than necessary is okay
@@ -262,11 +293,13 @@ public class MoreTypes {
         } else if (type instanceof ParameterizedType) {
             ParameterizedType parameterizedType = (ParameterizedType) type;
             Type[] arguments = parameterizedType.getActualTypeArguments();
+            // getOwnerType 只有内部类该方法才会有用 返回的是外部类的信息 比如 Map.Entry Entry 调用会返回Map
             Type ownerType = parameterizedType.getOwnerType();
             StringBuilder stringBuilder = new StringBuilder();
             if (ownerType != null) {
                 stringBuilder.append(toString(ownerType)).append(".");
             }
+            // getRawType 一般就是 Map<String,Object> 返回 Map
             stringBuilder.append(toString(parameterizedType.getRawType()));
             if (arguments.length > 0) {
                 stringBuilder
@@ -432,8 +465,18 @@ public class MoreTypes {
 
     public static class ParameterizedTypeImpl
             implements ParameterizedType, CompositeType {
+
+        /**
+         * 针对内部类而言 比如 Map.Entry<K,V>  会返回 Map<K,V>
+         */
         private final Type ownerType;
+        /**
+         * 比如 Map
+         */
         private final Type rawType;
+        /**
+         * K,V 的实际类型
+         */
         private final Type[] typeArguments;
 
         public ParameterizedTypeImpl(Type ownerType, Type rawType, Type... typeArguments) {
@@ -449,6 +492,7 @@ public class MoreTypes {
 
             }
 
+            // 递归进行规范化处理
             this.ownerType = ownerType == null ? null : canonicalize(ownerType);
             this.rawType = canonicalize(rawType);
             this.typeArguments = typeArguments.clone();
@@ -512,6 +556,9 @@ public class MoreTypes {
 
     public static class GenericArrayTypeImpl
             implements GenericArrayType, CompositeType {
+        /**
+         * 比如 T[] componentType 就代表T   List<T>[] componentType 就代表List<T>
+         */
         private final Type componentType;
 
         public GenericArrayTypeImpl(Type componentType) {
@@ -665,10 +712,12 @@ public class MoreTypes {
 
     /**
      * A type formed from other types, such as arrays, parameterized types or wildcard types
+     * 代表组合类型 比如数组 参数化类型 通配符类型
      */
     private interface CompositeType {
         /**
          * Returns true if there are no type variables in this type.
+         * 确保 type中不包含 T
          */
         boolean isFullySpecified();
     }

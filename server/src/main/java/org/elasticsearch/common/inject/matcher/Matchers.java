@@ -185,6 +185,7 @@ public class Matchers {
     /**
      * Returns a matcher which matches subclasses of the given type (as well as
      * the given type).
+     * 主要传入的值是目标值的子类 就认为匹配成功
      */
     public static Matcher<Class> subclassesOf(final Class<?> superclass) {
         return new SubclassesOf(superclass);
@@ -262,6 +263,9 @@ public class Matchers {
         return new IdenticalTo(value);
     }
 
+    /**
+     * 意味着必须2者完全相同 matcher 才会为true
+     */
     private static class IdenticalTo extends AbstractMatcher<Object> {
         private final Object value;
 

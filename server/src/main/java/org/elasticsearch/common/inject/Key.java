@@ -48,6 +48,9 @@ import java.util.Objects;
  */
 public class Key<T> {
 
+    /**
+     * 代表一个基于注解的增强点  内部指定了注解属性
+     */
     private final AnnotationStrategy annotationStrategy;
 
     private final TypeLiteral<T> typeLiteral;
@@ -112,10 +115,13 @@ public class Key<T> {
 
     /**
      * Unsafe. Constructs a key from a manually specified type.
+     * @param type 使用更上层的type接口是因为入参不一定是class  如果想要表达泛型类型 无法直接用class表示 而是要用类似 ParameterizedType 这种类型去表示
+     * @param annotationStrategy 代表以哪个注解作为切入点
      */
     @SuppressWarnings("unchecked")
     private Key(Type type, AnnotationStrategy annotationStrategy) {
         this.annotationStrategy = annotationStrategy;
+        // 一连串方法的目的就是最终不存在不确定的泛型类型
         this.typeLiteral = MoreTypes.makeKeySafe((TypeLiteral<T>) TypeLiteral.get(type));
         this.hashCode = computeHashCode();
     }
@@ -215,6 +221,7 @@ public class Key<T> {
 
     /**
      * Gets a key for an injection type.
+     * 仅使用 type来初始化时 代表不需要考虑注解信息
      */
     public static <T> Key<T> get(Class<T> type) {
         return new Key<>(type, NullAnnotationStrategy.INSTANCE);
@@ -319,6 +326,9 @@ public class Key<T> {
         return new Key<>(typeLiteral, annotationStrategy.withoutAttributes());
     }
 
+    /**
+     * 代表绑定的数据是借助哪个注解进行增强的
+     */
     interface AnnotationStrategy {
         Annotation getAnnotation();
 
@@ -380,6 +390,9 @@ public class Key<T> {
         }
     }
 
+    /**
+     * 代表本次binder对象没有基于注解寻找注入点
+     */
     enum NullAnnotationStrategy implements AnnotationStrategy {
         INSTANCE;
 
@@ -409,9 +422,15 @@ public class Key<T> {
         }
     }
 
-    // this class not test-covered
+    /**
+     * this class not test-covered
+     * 代表以某个注解作为切入点 进行增强
+     */
     static class AnnotationInstanceStrategy implements AnnotationStrategy {
 
+        /**
+         * 切入的注解
+         */
         final Annotation annotation;
 
         AnnotationInstanceStrategy(Annotation annotation) {

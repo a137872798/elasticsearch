@@ -24,6 +24,7 @@ import org.elasticsearch.common.io.stream.Writeable;
 
 /**
  * Cluster state part, changes in which can be serialized
+ * 表示当前状态与之前状态的变化
  */
 public interface Diffable<T> extends Writeable {
 

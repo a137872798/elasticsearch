@@ -77,10 +77,15 @@ import java.util.function.Predicate;
 
 /**
  * Configures classes and services that are shared by indices on each node.
+ * 索引模块
  */
 public class IndicesModule extends AbstractModule {
     private final MapperRegistry mapperRegistry;
 
+    /**
+     * 映射相关插件
+     * @param mapperPlugins
+     */
     public IndicesModule(List<MapperPlugin> mapperPlugins) {
         this.mapperRegistry = new MapperRegistry(getMappers(mapperPlugins), getMetadataMappers(mapperPlugins),
                 getFieldFilter(mapperPlugins));
@@ -104,6 +109,11 @@ public class IndicesModule extends AbstractModule {
         );
     }
 
+    /**
+     * 生成映射对象
+     * @param mapperPlugins
+     * @return
+     */
     public static Map<String, Mapper.TypeParser> getMappers(List<MapperPlugin> mapperPlugins) {
         Map<String, Mapper.TypeParser> mappers = new LinkedHashMap<>();
 

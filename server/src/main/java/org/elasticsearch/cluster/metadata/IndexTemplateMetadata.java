@@ -49,6 +49,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+/**
+ * 索引模板是啥玩意
+ */
 public class IndexTemplateMetadata extends AbstractDiffable<IndexTemplateMetadata> {
 
     private final String name;

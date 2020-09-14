@@ -61,6 +61,7 @@ import static java.util.Collections.singletonMap;
 
 /**
  * Upgrades Templates on behalf of installed {@link Plugin}s when a node joins the cluster
+ *
  */
 public class TemplateUpgradeService implements ClusterStateListener {
 

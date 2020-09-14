@@ -70,6 +70,9 @@ import java.util.stream.Stream;
 
 import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
 
+/**
+ * 处理集群状态变化
+ */
 public class ClusterApplierService extends AbstractLifecycleComponent implements ClusterApplier {
     private static final Logger logger = LogManager.getLogger(ClusterApplierService.class);
 
@@ -90,6 +93,10 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
      * Those 3 state listeners are changing infrequently - CopyOnWriteArrayList is just fine
      */
     private final Collection<ClusterStateApplier> highPriorityStateAppliers = new CopyOnWriteArrayList<>();
+
+    /**
+     * 增加某个处理集群状态变化的对象
+     */
     private final Collection<ClusterStateApplier> normalPriorityStateAppliers = new CopyOnWriteArrayList<>();
     private final Collection<ClusterStateApplier> lowPriorityStateAppliers = new CopyOnWriteArrayList<>();
     private final Iterable<ClusterStateApplier> clusterStateAppliers = Iterables.concat(highPriorityStateAppliers,
@@ -99,6 +106,9 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     private final Collection<TimeoutClusterStateListener> timeoutClusterStateListeners =
         Collections.newSetFromMap(new ConcurrentHashMap<>());
 
+    /**
+     * 维护所有监听节点角色变化的监听器
+     */
     private final LocalNodeMasterListeners localNodeMasterListeners;
 
     private final Queue<NotifyTimeout> onGoingTimeouts = ConcurrentCollections.newQueue();
@@ -109,13 +119,22 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
 
     private NodeConnectionsService nodeConnectionsService;
 
+    /**
+     *
+     * @param nodeName  当前节点名
+     * @param settings   从配置文件中解析的配置
+     * @param clusterSettings   集群相关配置
+     * @param threadPool   线程池
+     */
     public ClusterApplierService(String nodeName, Settings settings, ClusterSettings clusterSettings, ThreadPool threadPool) {
         this.clusterSettings = clusterSettings;
         this.threadPool = threadPool;
         this.state = new AtomicReference<>();
+        // 监听当前节点在集群中角色的变化
         this.localNodeMasterListeners = new LocalNodeMasterListeners(threadPool);
         this.nodeName = nodeName;
 
+        // TODO 更新相关的先忽略
         this.slowTaskLoggingThreshold = CLUSTER_SERVICE_SLOW_TASK_LOGGING_THRESHOLD_SETTING.get(settings);
         this.clusterSettings.addSettingsUpdateConsumer(CLUSTER_SERVICE_SLOW_TASK_LOGGING_THRESHOLD_SETTING,
             this::setSlowTaskLoggingThreshold);
@@ -595,20 +614,36 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         }
     }
 
+    /**
+     * 接收集群状态变化的事件 并进行处理
+     */
     private static class LocalNodeMasterListeners implements ClusterStateListener {
 
+        /**
+         * 感应集群状态变化的监听器
+         */
         private final List<LocalNodeMasterListener> listeners = new CopyOnWriteArrayList<>();
         private final ThreadPool threadPool;
+
+        /**
+         * 当前节点在 集群中是否属于master节点
+         */
         private volatile boolean master = false;
 
         private LocalNodeMasterListeners(ThreadPool threadPool) {
             this.threadPool = threadPool;
         }
 
+        /**
+         * 当集群状态发生变化时 委托给线程池执行
+         * @param event
+         */
         @Override
         public void clusterChanged(ClusterChangedEvent event) {
+            // 代表当前node被选举为集群的master节点 (基于什么算法实现的??? 欺负算法???)
             if (!master && event.localNodeMaster()) {
                 master = true;
+
                 for (LocalNodeMasterListener listener : listeners) {
                     java.util.concurrent.Executor executor = threadPool.executor(listener.executorName());
                     executor.execute(new OnMasterRunnable(listener));
@@ -631,6 +666,8 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
 
     }
 
+
+    // 将监听器触发事件交托给线程池执行
     private static class OnMasterRunnable implements Runnable {
 
         private final LocalNodeMasterListener listener;

@@ -24,6 +24,7 @@ import java.util.logging.Logger;
  * Enables simple performance monitoring.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 停表对象具备计时功能
  */
 public class Stopwatch {
     private static final Logger logger = Logger.getLogger(Stopwatch.class.getName());

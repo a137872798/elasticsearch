@@ -37,10 +37,18 @@ import static java.util.Collections.emptySet;
  * Bind a non-constant key.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 代表将某个组件绑定到某个东西上
  */
 public class BindingBuilder<T> extends AbstractBindingBuilder<T>
         implements AnnotatedBindingBuilder<T> {
 
+    /**
+     *
+     * @param binder   该对象是由哪个builder创建的
+     * @param elements  当生成有效信息时 会回填到这个list中
+     * @param source
+     * @param key   代表绑定的是哪个类 以及使用的注解策略
+     */
     public BindingBuilder(Binder binder, List<Element> elements, Object source, Key<T> key) {
         super(binder, elements, source, key);
     }
@@ -85,6 +93,7 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
         Set<InjectionPoint> injectionPoints;
         if (instance != null) {
             try {
+                // 找到实例上所有的增强点
                 injectionPoints = InjectionPoint.forInstanceMethodsAndFields(instance.getClass());
             } catch (ConfigurationException e) {
                 for (Message message : e.getErrorMessages()) {

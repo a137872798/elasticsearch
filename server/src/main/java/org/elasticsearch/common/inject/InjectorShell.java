@@ -66,6 +66,10 @@ class InjectorShell {
 
     static class Builder {
         private final List<Element> elements = new ArrayList<>();
+
+        /**
+         * 存储本次生成inject对象需要的module
+         */
         private final List<Module> modules = new ArrayList<>();
 
         /**
@@ -87,6 +91,11 @@ class InjectorShell {
             return this;
         }
 
+        /**
+         * 更新builder的 stage信息
+         * @param stage
+         * @return
+         */
         Builder stage(Stage stage) {
             this.stage = stage;
             return this;
@@ -98,6 +107,10 @@ class InjectorShell {
             return this;
         }
 
+        /**
+         * 设置 module
+         * @param modules
+         */
         void addModules(Iterable<? extends Module> modules) {
             for (Module module : modules) {
                 this.modules.add(module);
@@ -115,12 +128,15 @@ class InjectorShell {
          * Creates and returns the injector shells for the current modules. Multiple shells will be
          * returned if any modules contain {@link Binder#newPrivateBinder private environments}. The
          * primary injector will be first in the returned list.
+         * @param initializer  该对象所属的初始器
+         * @param bindingProcessor  绑定请求相关的处理器
          */
         List<InjectorShell> build(Initializer initializer, BindingProcessor bindingProcessor,
                                   Stopwatch stopwatch, Errors errors) {
             if (stage == null) {
                 throw new IllegalStateException("Stage not initialized");
             }
+            // 默认情况下 privateElements 为null
             if (privateElements != null && parent == null) {
                 throw new IllegalStateException("PrivateElements with no parent");
             }
@@ -128,17 +144,22 @@ class InjectorShell {
                 throw new IllegalStateException("no state. Did you remember to lock() ?");
             }
 
+            // 生成注入实现类
             InjectorImpl injector = new InjectorImpl(state, initializer);
             if (privateElements != null) {
                 privateElements.initInjector(injector);
             }
 
             // bind Stage and Singleton if this is a top-level injector
+            // 默认情况下 parent也是null
             if (parent == null) {
+                // 此时在现有module下 追加一个rootModule
                 modules.add(0, new RootModule(stage));
+                // 往 injector.state 中注入各种转换器/匹配器
                 new TypeConverterBindingProcessor(errors).prepareBuiltInConverters(injector);
             }
 
+            // 将之前的module 包装成element
             elements.addAll(Elements.getElements(stage, modules));
             stopwatch.resetAndLog("Module execution");
 
@@ -252,6 +273,10 @@ class InjectorShell {
         }
     }
 
+
+    /**
+     * 代表一个根模块
+     */
     private static class RootModule implements Module {
         final Stage stage;
 
@@ -259,6 +284,10 @@ class InjectorShell {
             this.stage = Objects.requireNonNull(stage, "stage");
         }
 
+        /**
+         *
+         * @param binder
+         */
         @Override
         public void configure(Binder binder) {
             binder = binder.withSource(SourceProvider.UNKNOWN_SOURCE);

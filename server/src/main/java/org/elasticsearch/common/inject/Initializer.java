@@ -33,15 +33,18 @@ import java.util.concurrent.CountDownLatch;
  * {@link Initializable}, which attempts to perform injection before use.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 用于管理注入实例
  */
 class Initializer {
     /**
      * the only thread that we'll use to inject members.
+     * 初始化 Initializer 的线程
      */
     private final Thread creatingThread = Thread.currentThread();
 
     /**
      * zero means everything is injected.
+     * 当还未注入时 该值为1 应该是有一个向外暴露的接口检测该值 当该值归0时 代表注入完成
      */
     private final CountDownLatch ready = new CountDownLatch(1);
 

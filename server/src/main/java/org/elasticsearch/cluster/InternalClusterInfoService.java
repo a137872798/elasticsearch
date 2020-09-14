@@ -64,6 +64,7 @@ import java.util.function.Consumer;
  *
  * Every time the timer runs, gathers information about the disk usage and
  * shard sizes across the cluster.
+ * 集群信息服务
  */
 public class InternalClusterInfoService implements ClusterInfoService, LocalNodeMasterListener, ClusterStateListener {
 
@@ -90,7 +91,16 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
     private final NodeClient client;
     private final List<Consumer<ClusterInfo>> listeners = new CopyOnWriteArrayList<>();
 
+
+    /**
+     *
+     * @param settings    包含所有配置信息
+     * @param clusterService    集群服务
+     * @param threadPool   包含所有线程池
+     * @param client   当前节点作为client暴露到集群的对象
+     */
     public InternalClusterInfoService(Settings settings, ClusterService clusterService, ThreadPool threadPool, NodeClient client) {
+        // TODO 高效集合实现 先不管
         this.leastAvailableSpaceUsages = ImmutableOpenMap.of();
         this.mostAvailableSpaceUsages = ImmutableOpenMap.of();
         this.shardRoutingToDataPath = ImmutableOpenMap.of();
@@ -98,7 +108,9 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
         this.clusterService = clusterService;
         this.threadPool = threadPool;
         this.client = client;
+        // 每30秒尝试同步一次集群状态么 ???
         this.updateFrequency = INTERNAL_CLUSTER_INFO_UPDATE_INTERVAL_SETTING.get(settings);
+        // 这个是 ???
         this.fetchTimeout = INTERNAL_CLUSTER_INFO_TIMEOUT_SETTING.get(settings);
         this.enabled = DiskThresholdSettings.CLUSTER_ROUTING_ALLOCATION_DISK_THRESHOLD_ENABLED_SETTING.get(settings);
         ClusterSettings clusterSettings = clusterService.getClusterSettings();
@@ -125,6 +137,9 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
         this.updateFrequency = updateFrequency;
     }
 
+    /**
+     * 该对象会注册到集群服务中 监听状态变化
+     */
     @Override
     public void onMaster() {
         this.isMaster = true;
@@ -136,6 +151,7 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
         threadPool.scheduleUnlessShuttingDown(updateFrequency, executorName(), new SubmitReschedulingClusterInfoUpdatedJob());
 
         try {
+            // 当前节点成为master节点后 并且集群中数据节点超过1  这里在刷新数据   之后需要细看
             if (clusterService.state().getNodes().getDataNodes().size() > 1) {
                 // Submit an info update job to be run immediately
                 threadPool.executor(executorName()).execute(this::maybeRefresh);

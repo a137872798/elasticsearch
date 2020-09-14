@@ -62,18 +62,33 @@ public class ClusterService extends AbstractLifecycleComponent {
 
     private final String nodeName;
 
+    /**
+     *
+     * @param settings      从配置文件中抽取的配置 (包含cli)
+     * @param clusterSettings    集群相关配置
+     * @param threadPool  管理node下所有线程池
+     */
     public ClusterService(Settings settings, ClusterSettings clusterSettings, ThreadPool threadPool) {
         this(settings, clusterSettings, new MasterService(settings, clusterSettings, threadPool),
             new ClusterApplierService(Node.NODE_NAME_SETTING.get(settings), settings, clusterSettings, threadPool));
     }
 
+    /**
+     *
+     * @param settings      从配置文件中抽取的配置
+     * @param clusterSettings   集群相关配置
+     * @param masterService
+     * @param clusterApplierService   处理集群状态变化的service
+     */
     public ClusterService(Settings settings, ClusterSettings clusterSettings, MasterService masterService,
                           ClusterApplierService clusterApplierService) {
         this.settings = settings;
         this.nodeName = Node.NODE_NAME_SETTING.get(settings);
         this.masterService = masterService;
+        // 推测应该是 将api 转发到各种指令处理器上的类
         this.operationRouting = new OperationRouting(settings, clusterSettings);
         this.clusterSettings = clusterSettings;
+        // 从配置中获取集群名 并设置  默认所有node属于同一集群 "elasticsearch"
         this.clusterName = ClusterName.CLUSTER_NAME_SETTING.get(settings);
         // Add a no-op update consumer so changes are logged
         this.clusterSettings.addAffixUpdateConsumer(USER_DEFINED_METADATA, (first, second) -> {}, (first, second) -> {});
@@ -215,7 +230,7 @@ public class ClusterService extends AbstractLifecycleComponent {
      * Submits a cluster state update task; unlike {@link #submitStateUpdateTask(String, Object, ClusterStateTaskConfig,
      * ClusterStateTaskExecutor, ClusterStateTaskListener)}, submitted updates will not be batched.
      *
-     * @param source     the source of the cluster state update task
+     * @param source     the source of the cluster state update task    表明该任务是由谁创建的
      * @param updateTask the full context for the cluster state update
      *                   task
      *
@@ -256,10 +271,10 @@ public class ClusterService extends AbstractLifecycleComponent {
      * potentially with more tasks of the same executor.
      *
      * @param source   the source of the cluster state update task
-     * @param tasks    a map of update tasks and their corresponding listeners
-     * @param config   the cluster state update task configuration
+     * @param tasks    a map of update tasks and their corresponding listeners    任务本身
+     * @param config   the cluster state update task configuration            执行该任务相关的配置
      * @param executor the cluster state update task executor; tasks
-     *                 that share the same executor will be executed
+     *                 that share the same executor will be executed          执行任务的线程池
      *                 batches on this executor
      * @param <T>      the type of the cluster state update task state
      *

@@ -21,6 +21,7 @@ package org.elasticsearch.cluster;
 /**
  * Enables listening to master changes events of the local node (when the local node becomes the master, and when the local
  * node cease being a master).
+ * 感应当前节点在 master <-> slave 之间的变化
  */
 public interface LocalNodeMasterListener {
 

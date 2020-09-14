@@ -49,6 +49,7 @@ import java.util.stream.StreamSupport;
 /**
  * This class holds all {@link DiscoveryNode} in the cluster and provides convenience methods to
  * access, modify merge / diff discovery nodes.
+ * 当前集群中所有节点  一般集群下节点都是在初始化时手动设置的 (参考jraft)
  */
 public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements Iterable<DiscoveryNode> {
 

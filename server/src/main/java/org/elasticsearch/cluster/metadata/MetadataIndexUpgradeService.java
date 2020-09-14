@@ -50,6 +50,7 @@ import java.util.Set;
  * to upgrade the existing index metadata to the latest version of the cluster. It typically
  * occurs during cluster upgrade, when dangling indices are imported into the cluster or indices
  * are restored from a repository.
+ * 元数据升级服务
  */
 public class MetadataIndexUpgradeService {
 

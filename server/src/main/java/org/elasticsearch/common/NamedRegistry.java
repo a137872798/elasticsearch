@@ -49,6 +49,12 @@ public class NamedRegistry<T> {
         }
     }
 
+    /**
+     * 从插件列表中找到符合条件的插件 并注册
+     * @param plugins
+     * @param lookup
+     * @param <P>
+     */
     public <P> void extractAndRegister(List<P> plugins, Function<P, Map<String, T>> lookup) {
         for (P plugin : plugins) {
             for (Map.Entry<String, T> entry : lookup.apply(plugin).entrySet()) {

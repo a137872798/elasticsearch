@@ -36,6 +36,7 @@ import java.lang.reflect.Type;
  *
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
+ * 用于处理类型转换指令的处理器
  */
 class TypeConverterBindingProcessor extends AbstractProcessor {
 
@@ -50,6 +51,7 @@ class TypeConverterBindingProcessor extends AbstractProcessor {
         this.injector = injector;
         try {
             // Configure type converters.
+            // 设置默认的类型转换器
             convertToPrimitiveType(int.class, Integer.class);
             convertToPrimitiveType(long.class, Long.class);
             convertToPrimitiveType(boolean.class, Boolean.class);
@@ -58,6 +60,7 @@ class TypeConverterBindingProcessor extends AbstractProcessor {
             convertToPrimitiveType(float.class, Float.class);
             convertToPrimitiveType(double.class, Double.class);
 
+            // 这里追加几个特殊的类型转换器
             convertToClass(Character.class, new TypeConverter() {
                 @Override
                 public Object convert(String value, TypeLiteral<?> toType) {
@@ -120,8 +123,15 @@ class TypeConverterBindingProcessor extends AbstractProcessor {
         }
     }
 
+    /**
+     * 将包装类型转换成原始类型
+     * @param primitiveType
+     * @param wrapperType
+     * @param <T>
+     */
     private <T> void convertToPrimitiveType(Class<T> primitiveType, final Class<T> wrapperType) {
         try {
+            // 对应 parseInt() 等方法
             final Method parser = wrapperType.getMethod(
                     "parse" + Strings.capitalize(primitiveType.getName()), String.class);
 
@@ -129,6 +139,7 @@ class TypeConverterBindingProcessor extends AbstractProcessor {
                 @Override
                 public Object convert(String value, TypeLiteral<?> toType) {
                     try {
+                        // 因为这些 parseXXX 是静态方法 所以obj为null
                         return parser.invoke(null, value);
                     } catch (IllegalAccessException e) {
                         throw new AssertionError(e);
@@ -149,10 +160,21 @@ class TypeConverterBindingProcessor extends AbstractProcessor {
         }
     }
 
+    /**
+     * 追加某个类型 与对应类型转换器的映射关系
+     * @param type
+     * @param converter
+     * @param <T>
+     */
     private <T> void convertToClass(Class<T> type, TypeConverter converter) {
         convertToClasses(Matchers.identicalTo(type), converter);
     }
 
+    /**
+     *
+     * @param typeMatcher  代表符合该matcher的class 会通过converter进行转换
+     * @param converter
+     */
     private void convertToClasses(final Matcher<? super Class<?>> typeMatcher,
                                   TypeConverter converter) {
         internalConvertToTypes(new AbstractMatcher<TypeLiteral<?>>() {
@@ -173,6 +195,11 @@ class TypeConverterBindingProcessor extends AbstractProcessor {
         }, converter);
     }
 
+    /**
+     * 追加一组转换映射关系
+     * @param typeMatcher  匹配器 通过它才知道要使用哪个 converter
+     * @param converter   转换器对象
+     */
     private void internalConvertToTypes(Matcher<? super TypeLiteral<?>> typeMatcher,
                                         TypeConverter converter) {
         injector.state.addConverter(

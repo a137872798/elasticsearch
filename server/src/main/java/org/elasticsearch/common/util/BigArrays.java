@@ -362,11 +362,23 @@ public class BigArrays {
     private final BigArrays circuitBreakingInstance;
     private final String breakerName;
 
+    /**
+     *
+     * @param recycler
+     * @param breakerService
+     * @param breakerName   断路类型对应的key
+     */
     public BigArrays(PageCacheRecycler recycler, @Nullable final CircuitBreakerService breakerService, String breakerName) {
         // Checking the breaker is disabled if not specified
         this(recycler, breakerService, breakerName, false);
     }
 
+    /**
+     * @param recycler
+     * @param breakerService
+     * @param breakerName
+     * @param checkBreaker  检测是否断路 默认为false
+     */
     protected BigArrays(PageCacheRecycler recycler, @Nullable final CircuitBreakerService breakerService, String breakerName,
                         boolean checkBreaker) {
         this.checkBreaker = checkBreaker;
@@ -376,6 +388,7 @@ public class BigArrays {
         if (checkBreaker) {
             this.circuitBreakingInstance = this;
         } else {
+            // 不需要检测断路时 在内部创建一个需要检测断路的对象
             this.circuitBreakingInstance = new BigArrays(recycler, breakerService, breakerName, true);
         }
     }

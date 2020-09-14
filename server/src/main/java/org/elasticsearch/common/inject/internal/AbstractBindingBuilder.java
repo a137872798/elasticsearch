@@ -50,6 +50,13 @@ public abstract class AbstractBindingBuilder<T> {
     protected final Binder binder;
     private BindingImpl<T> binding;
 
+    /**
+     *
+     * @param binder  被绑定的对象
+     * @param elements   所有绑定对象都会存储到这个列表中
+     * @param source
+     * @param key
+     */
     public AbstractBindingBuilder(Binder binder, List<Element> elements, Object source, Key<T> key) {
         this.binder = binder;
         this.elements = elements;

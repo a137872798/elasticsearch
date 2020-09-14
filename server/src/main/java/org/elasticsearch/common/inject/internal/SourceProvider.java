@@ -34,14 +34,25 @@ public class SourceProvider {
      */
     public static final Object UNKNOWN_SOURCE = "[unknown source]";
 
+    /**
+     * 代表某些class 需要被跳过
+     */
     private final Set<String> classNamesToSkip;
 
+    /**
+     * 默认情况下仅跳过自身
+     */
     public SourceProvider() {
         this.classNamesToSkip = singleton(SourceProvider.class.getName());
     }
 
     public static final SourceProvider DEFAULT_INSTANCE = new SourceProvider();
 
+    /**
+     * 代表在之前类的基础上 增加一组需要跳过的class
+     * @param copy
+     * @param moreClassesToSkip
+     */
     @SuppressWarnings("rawtypes")
     private SourceProvider(SourceProvider copy, Class[] moreClassesToSkip) {
         Set<String> classNamesToSkip = new HashSet<>(copy.classNamesToSkip);
@@ -62,6 +73,7 @@ public class SourceProvider {
     /**
      * Returns the calling line of code. The selected line is the nearest to the top of the stack that
      * is not skipped.
+     * 获取当前栈轨迹信息
      */
     public StackTraceElement get() {
         for (final StackTraceElement element : new Throwable().getStackTrace()) {

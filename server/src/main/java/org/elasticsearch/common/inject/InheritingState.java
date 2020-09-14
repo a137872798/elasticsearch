@@ -37,9 +37,13 @@ import static java.util.Collections.emptySet;
 
 /**
  * @author jessewilson@google.com (Jesse Wilson)
+ * 维护了在inject环节需要的所有信息 同时它是一个链式结构 属性可以从父对象上继承
  */
 class InheritingState implements State {
 
+    /**
+     * 父状态
+     */
     private final State parent;
 
     // Must be a linked hashmap in order to preserve order of bindings in Modules.
@@ -47,11 +51,20 @@ class InheritingState implements State {
     private final Map<Key<?>, Binding<?>> explicitBindings
             = Collections.unmodifiableMap(explicitBindingsMutable);
     private final Map<Class<? extends Annotation>, Scope> scopes = new HashMap<>();
+
+    /**
+     * 存储所有类型转换器以及对应的匹配器
+     */
     private final List<MatcherAndConverter> converters = new ArrayList<>();
     private final List<TypeListenerBinding> listenerBindings = new ArrayList<>();
     private WeakKeySet blacklistedKeys = new WeakKeySet();
     private final Object lock;
 
+
+    /**
+     *
+     * @param parent  首次创建 那么parent是 State.NONE
+     */
     InheritingState(State parent) {
         this.parent = Objects.requireNonNull(parent, "parent");
         this.lock = (parent == State.NONE) ? this : parent.lock();
@@ -95,6 +108,10 @@ class InheritingState implements State {
         return converters;
     }
 
+    /**
+     * 追加一个类型转换器
+     * @param matcherAndConverter
+     */
     @Override
     public void addConverter(MatcherAndConverter matcherAndConverter) {
         converters.add(matcherAndConverter);

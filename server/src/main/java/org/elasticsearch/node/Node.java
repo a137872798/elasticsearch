@@ -372,10 +372,12 @@ public class Node implements Closeable {
             // 解析脚本相关
             final ScriptModule scriptModule = new ScriptModule(settings, pluginsService.filterPlugins(ScriptPlugin.class));
             final ScriptService scriptService = newScriptService(settings, scriptModule.engines, scriptModule.contexts);
+            // TODO 先忽略
             AnalysisModule analysisModule = new AnalysisModule(this.environment, pluginsService.filterPlugins(AnalysisPlugin.class));
             // this is as early as we can validate settings at this point. we already pass them to ScriptModule as well as ThreadPool
             // so we might be late here already
 
+            // 获取插件升级相关的配置
             final Set<SettingUpgrader<?>> settingsUpgraders = pluginsService.filterPlugins(Plugin.class)
                     .stream()
                     .map(Plugin::getSettingUpgraders)
@@ -384,31 +386,49 @@ public class Node implements Closeable {
 
             final SettingsModule settingsModule =
                     new SettingsModule(settings, additionalSettings, additionalSettingsFilter, settingsUpgraders);
+            // TODO 设置升级相关的东西  先忽略
             scriptModule.registerClusterSettingsListeners(scriptService, settingsModule.getClusterSettings());
+
+            // 找到地址发现服务
             final NetworkService networkService = new NetworkService(
                 getCustomNameResolvers(pluginsService.filterPlugins(DiscoveryPlugin.class)));
 
             List<ClusterPlugin> clusterPlugins = pluginsService.filterPlugins(ClusterPlugin.class);
+            // 生成集群服务对象
             final ClusterService clusterService = new ClusterService(settings, settingsModule.getClusterSettings(), threadPool);
             clusterService.addStateApplier(scriptService);
             resourcesToClose.add(clusterService);
+
+            // 增加一个用于同步 clusterState的对象
             clusterService.addLocalNodeMasterListener(
                     new ConsistentSettingsService(settings, clusterService, settingsModule.getConsistentSettings())
                             .newHashPublisher());
+
+            // 摄取服务
             final IngestService ingestService = new IngestService(clusterService, threadPool, this.environment,
                 scriptService, analysisModule.getAnalysisRegistry(),
                 pluginsService.filterPlugins(IngestPlugin.class), client);
+            // 集群信息服务
             final ClusterInfoService clusterInfoService = newClusterInfoService(settings, clusterService, threadPool, client);
+            // 有关内存使用率的 service
             final UsageService usageService = new UsageService();
 
+            // 添加各种module对象 并生成注入点对象
             ModulesBuilder modules = new ModulesBuilder();
+
+            // 监控服务
             final MonitorService monitorService = new MonitorService(settings, nodeEnvironment, threadPool, clusterInfoService);
+
+            // 生成集群模块
             ClusterModule clusterModule = new ClusterModule(settings, clusterService, clusterPlugins, clusterInfoService);
             modules.add(clusterModule);
+            // 索引模块
             IndicesModule indicesModule = new IndicesModule(pluginsService.filterPlugins(MapperPlugin.class));
             modules.add(indicesModule);
 
+            // 查询模块
             SearchModule searchModule = new SearchModule(settings, pluginsService.filterPlugins(SearchPlugin.class));
+            // 还具备断路功能吗
             CircuitBreakerService circuitBreakerService = createCircuitBreakerService(settingsModule.getSettings(),
                 settingsModule.getClusterSettings());
             resourcesToClose.add(circuitBreakerService);
@@ -416,8 +436,10 @@ public class Node implements Closeable {
 
 
             PageCacheRecycler pageCacheRecycler = createPageCacheRecycler(settings);
+            // 将分页器和 断路器包装成 BigArrays对象
             BigArrays bigArrays = createBigArrays(pageCacheRecycler, circuitBreakerService);
             modules.add(settingsModule);
+            // 将之前所有的 Entry抽取出来
             List<NamedWriteableRegistry.Entry> namedWriteables = Stream.of(
                 NetworkModule.getNamedWriteables().stream(),
                 IndicesModule.getNamedWriteables().stream(),
@@ -426,6 +448,7 @@ public class Node implements Closeable {
                     .flatMap(p -> p.getNamedWriteables().stream()),
                 ClusterModule.getNamedWriteables().stream())
                 .flatMap(Function.identity()).collect(Collectors.toList());
+            // 将抽取出来的entry 包装成registry对象
             final NamedWriteableRegistry namedWriteableRegistry = new NamedWriteableRegistry(namedWriteables);
             NamedXContentRegistry xContentRegistry = new NamedXContentRegistry(Stream.of(
                 NetworkModule.getNamedXContents().stream(),
@@ -435,13 +458,17 @@ public class Node implements Closeable {
                     .flatMap(p -> p.getNamedXContent().stream()),
                 ClusterModule.getNamedXWriteables().stream())
                 .flatMap(Function.identity()).collect(toList()));
+
+            // 元数据状态服务
             final MetaStateService metaStateService = new MetaStateService(nodeEnvironment, xContentRegistry);
+            // 持久化集群状态服务
             final PersistedClusterStateService lucenePersistedStateFactory
                 = new PersistedClusterStateService(nodeEnvironment, xContentRegistry, bigArrays, clusterService.getClusterSettings(),
                 threadPool::relativeTimeInMillis);
 
             // collect engine factory providers from server and from plugins
             final Collection<EnginePlugin> enginePlugins = pluginsService.filterPlugins(EnginePlugin.class);
+            // 抽取引擎工厂
             final Collection<Function<IndexSettings, Optional<EngineFactory>>> engineFactoryProviders =
                     Stream.concat(
                             indicesModule.getEngineFactories().stream(),
@@ -449,6 +476,7 @@ public class Node implements Closeable {
                     .collect(Collectors.toList());
 
 
+            // 获取索引存储插件工厂
             final Map<String, IndexStorePlugin.DirectoryFactory> indexStoreFactories =
                     pluginsService.filterPlugins(IndexStorePlugin.class)
                             .stream()
@@ -456,18 +484,21 @@ public class Node implements Closeable {
                             .flatMap(m -> m.entrySet().stream())
                             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
+            // 系统索引插件
             final Map<String, Collection<SystemIndexDescriptor>> systemIndexDescriptorMap = pluginsService
                 .filterPlugins(SystemIndexPlugin.class)
                 .stream()
                 .collect(Collectors.toUnmodifiableMap(
                     plugin -> plugin.getClass().getSimpleName(),
                     plugin -> plugin.getSystemIndexDescriptors(settings)));
+            // TODO 检测性代码先忽略
             SystemIndexDescriptor.checkForOverlappingPatterns(systemIndexDescriptorMap);
 
             final List<SystemIndexDescriptor> systemIndexDescriptors = systemIndexDescriptorMap.values().stream()
                 .flatMap(Collection::stream)
                 .collect(Collectors.toList());
 
+            // 索引服务  在初始化阶段基本只是做一些简单的赋值操作
             final IndicesService indicesService =
                 new IndicesService(settings, pluginsService, nodeEnvironment, xContentRegistry, analysisModule.getAnalysisRegistry(),
                     clusterModule.getIndexNameExpressionResolver(), indicesModule.getMapperRegistry(), namedWriteableRegistry,
@@ -475,8 +506,10 @@ public class Node implements Closeable {
                     clusterService, client, metaStateService, engineFactoryProviders, indexStoreFactories,
                     searchModule.getValuesSourceRegistry());
 
+            // 别名校验器
             final AliasValidator aliasValidator = new AliasValidator();
 
+            // 创建索引元数据的服务对象
             final MetadataCreateIndexService metadataCreateIndexService = new MetadataCreateIndexService(
                     settings,
                     clusterService,
@@ -491,6 +524,7 @@ public class Node implements Closeable {
                     forbidPrivateIndexSettings);
 
             final SetOnce<RepositoriesService> repositoriesServiceReference = new SetOnce<>();
+            // 使用这些参数构建插件需要的组件
             Collection<Object> pluginComponents = pluginsService.filterPlugins(Plugin.class).stream()
                 .flatMap(p -> p.createComponents(client, clusterService, threadPool, resourceWatcherService,
                                                  scriptService, xContentRegistry, environment, nodeEnvironment,
@@ -498,55 +532,75 @@ public class Node implements Closeable {
                                                  repositoriesServiceReference::get).stream())
                 .collect(Collectors.toList());
 
+            // 这个应该是指令模块吧
             ActionModule actionModule = new ActionModule(settings, clusterModule.getIndexNameExpressionResolver(),
                 settingsModule.getIndexScopedSettings(), settingsModule.getClusterSettings(), settingsModule.getSettingsFilter(),
                 threadPool, pluginsService.filterPlugins(ActionPlugin.class), client, circuitBreakerService, usageService, clusterService);
             modules.add(actionModule);
 
+            // 处理http请求 以及分发请求
             final RestController restController = actionModule.getRestController();
+            // 创建网络模块
             final NetworkModule networkModule = new NetworkModule(settings, pluginsService.filterPlugins(NetworkPlugin.class),
                 threadPool, bigArrays, pageCacheRecycler, circuitBreakerService, namedWriteableRegistry, xContentRegistry,
                 networkService, restController, clusterService.getClusterSettings());
+
+            // 索引模板是什么 ???
             Collection<UnaryOperator<Map<String, IndexTemplateMetadata>>> indexTemplateMetadataUpgraders =
                 pluginsService.filterPlugins(Plugin.class).stream()
                     .map(Plugin::getIndexTemplateMetadataUpgrader)
                     .collect(Collectors.toList());
+            // 元数据升级对象
             final MetadataUpgrader metadataUpgrader = new MetadataUpgrader(indexTemplateMetadataUpgraders);
             final MetadataIndexUpgradeService metadataIndexUpgradeService = new MetadataIndexUpgradeService(settings, xContentRegistry,
                 indicesModule.getMapperRegistry(), settingsModule.getIndexScopedSettings());
+
+            // 该对象在创建时 会将自己作为监听器注册到集群对象上 所以这里不需要维护它的引用
             new TemplateUpgradeService(client, clusterService, threadPool, indexTemplateMetadataUpgraders);
             final Transport transport = networkModule.getTransportSupplier().get();
             Set<String> taskHeaders = Stream.concat(
                 pluginsService.filterPlugins(ActionPlugin.class).stream().flatMap(p -> p.getTaskHeaders().stream()),
                 Stream.of(Task.X_OPAQUE_ID)
             ).collect(Collectors.toSet());
+            // 生成传输层服务
             final TransportService transportService = newTransportService(settings, transport, threadPool,
                 networkModule.getTransportInterceptor(), localNodeFactory, settingsModule.getClusterSettings(), taskHeaders);
+            // 网关元数据对象
             final GatewayMetaState gatewayMetaState = new GatewayMetaState();
+            // 同样将自己作为监听器注册到集群对象上
             final ResponseCollectorService responseCollectorService = new ResponseCollectorService(clusterService);
+            // 查询传输层服务
             final SearchTransportService searchTransportService =  new SearchTransportService(transportService,
                 SearchExecutionStatsCollector.makeWrapper(responseCollectorService));
+            // 生成http传输层服务
             final HttpServerTransport httpServerTransport = newHttpTransport(networkModule);
 
 
+            // 存储模块
             RepositoriesModule repositoriesModule = new RepositoriesModule(this.environment,
                 pluginsService.filterPlugins(RepositoryPlugin.class), transportService, clusterService, threadPool, xContentRegistry);
             RepositoriesService repositoryService = repositoriesModule.getRepositoryService();
             repositoriesServiceReference.set(repositoryService);
+            // 快照服务
             SnapshotsService snapshotsService = new SnapshotsService(settings, clusterService,
                 clusterModule.getIndexNameExpressionResolver(), repositoryService, threadPool);
+            // 数据分片快照服务
             SnapshotShardsService snapshotShardsService = new SnapshotShardsService(settings, clusterService, repositoryService,
                 threadPool, transportService, indicesService, actionModule.getActionFilters(),
                 clusterModule.getIndexNameExpressionResolver());
+            // 恢复服务
             RestoreService restoreService = new RestoreService(clusterService, repositoryService, clusterModule.getAllocationService(),
                 metadataCreateIndexService, metadataIndexUpgradeService, clusterService.getClusterSettings());
 
+            // 重路由服务
             final RerouteService rerouteService
                 = new BatchedRerouteService(clusterService, clusterModule.getAllocationService()::reroute);
+            // 磁盘阀值监控器
             final DiskThresholdMonitor diskThresholdMonitor = new DiskThresholdMonitor(settings, clusterService::state,
                 clusterService.getClusterSettings(), client, threadPool::relativeTimeInMillis, rerouteService);
             clusterInfoService.addListener(diskThresholdMonitor::onNewInfo);
 
+            // 自主发现新增节点么
             final DiscoveryModule discoveryModule = new DiscoveryModule(settings, transportService, namedWriteableRegistry,
                 networkService, clusterService.getMasterService(), clusterService.getClusterApplierService(),
                 clusterService.getClusterSettings(), pluginsService.filterPlugins(DiscoveryPlugin.class),
@@ -573,7 +627,11 @@ public class Node implements Closeable {
             resourcesToClose.add(persistentTasksClusterService);
             final PersistentTasksService persistentTasksService = new PersistentTasksService(clusterService, threadPool, client);
 
-            modules.add(b -> {
+            // 这里又加入了一个特殊模块
+            modules.add(
+                // 该函数对应 Module.configure
+                b -> {
+                    // 将各个组件绑定到  Binder上
                     b.bind(Node.class).toInstance(this);
                     b.bind(NodeService.class).toInstance(nodeService);
                     b.bind(NamedXContentRegistry.class).toInstance(xContentRegistry);
@@ -631,6 +689,7 @@ public class Node implements Closeable {
                     b.bind(RerouteService.class).toInstance(rerouteService);
                 }
             );
+            // 最后将所有绑定的对象包装成一个注入对象
             injector = modules.createInjector();
 
             // We allocate copies of existing shards by looking for a viable copy of the shard in the cluster and assigning the shard there.
@@ -1028,6 +1087,7 @@ public class Node implements Closeable {
     /**
      * Creates a new {@link CircuitBreakerService} based on the settings provided.
      * @see #BREAKER_TYPE_KEY
+     * 目前仅支持 hierarchy 断路器
      */
     public static CircuitBreakerService createCircuitBreakerService(Settings settings, ClusterSettings clusterSettings) {
         String type = BREAKER_TYPE_KEY.get(settings);
@@ -1077,6 +1137,7 @@ public class Node implements Closeable {
     /**
      * Get Custom Name Resolvers list based on a Discovery Plugins list
      * @param discoveryPlugins Discovery plugins list
+     *                         找到每个插件下的地址服务并返回
      */
     private List<NetworkService.CustomNameResolver> getCustomNameResolvers(List<DiscoveryPlugin> discoveryPlugins) {
         List<NetworkService.CustomNameResolver> customNameResolvers = new ArrayList<>();

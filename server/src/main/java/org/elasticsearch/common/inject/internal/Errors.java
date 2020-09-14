@@ -64,6 +64,7 @@ import static java.util.Collections.unmodifiableList;
  * method with an errors object that includes its context.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 记录所有异常信息的对象
  */
 public final class Errors {
 

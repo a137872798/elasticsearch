@@ -90,11 +90,23 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
     private final IngestMetric totalMetrics = new IngestMetric();
     private final List<Consumer<ClusterState>> ingestClusterStateListeners = new CopyOnWriteArrayList<>();
 
+    /**
+     * 初始化 摄取拂去
+     * @param clusterService   集群服务
+     * @param threadPool     线程池总控对象
+     * @param env             环境中包含需要的各种配置
+     * @param scriptService
+     * @param analysisRegistry
+     * @param ingestPlugins
+     * @param client
+     */
     public IngestService(ClusterService clusterService, ThreadPool threadPool,
                          Environment env, ScriptService scriptService, AnalysisRegistry analysisRegistry,
                          List<IngestPlugin> ingestPlugins, Client client) {
         this.clusterService = clusterService;
         this.scriptService = scriptService;
+
+        // 大概是从插件中 抽取什么processor
         this.processorFactories = processorFactories(
             ingestPlugins,
             new Processor.Parameters(
@@ -109,6 +121,12 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         this.threadPool = threadPool;
     }
 
+    /**
+     * 进程工厂
+     * @param ingestPlugins
+     * @param parameters
+     * @return
+     */
     private static Map<String, Processor.Factory> processorFactories(List<IngestPlugin> ingestPlugins,
         Processor.Parameters parameters) {
         Map<String, Processor.Factory> processorFactories = new HashMap<>();

@@ -54,6 +54,7 @@ import static org.elasticsearch.common.util.set.Sets.newHashSet;
  *
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
+ * 处理绑定请求的 处理器
  */
 class BindingProcessor extends AbstractProcessor {
 

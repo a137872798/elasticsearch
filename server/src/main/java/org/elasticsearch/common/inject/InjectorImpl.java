@@ -59,6 +59,7 @@ import static org.elasticsearch.common.inject.internal.Annotations.findScopeAnno
  *
  * @author crazybob@google.com (Bob Lee)
  * @see InjectorBuilder
+ * 注入实现类
  */
 class InjectorImpl implements Injector, Lookups {
     final State state;
@@ -73,6 +74,12 @@ class InjectorImpl implements Injector, Lookups {
 
     Lookups lookups = new DeferredLookups(this);
 
+
+    /**
+     * 使用 状态对象和 initializer 进行初始化
+     * @param state
+     * @param initializer
+     */
     InjectorImpl(State state, Initializer initializer) {
         this.state = state;
         this.initializer = initializer;

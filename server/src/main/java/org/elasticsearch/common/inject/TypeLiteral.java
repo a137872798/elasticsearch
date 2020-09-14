@@ -66,6 +66,9 @@ import static org.elasticsearch.common.inject.internal.MoreTypes.canonicalize;
  */
 public class TypeLiteral<T> {
 
+    /**
+     * 对应的原始类型
+     */
     final Class<? super T> rawType;
     final Type type;
     final int hashCode;
@@ -87,11 +90,15 @@ public class TypeLiteral<T> {
 
     /**
      * Unsafe. Constructs a type literal manually.
+     * @param type 描述类型的信息 比如 class 或者泛型类型
      */
     @SuppressWarnings("unchecked")
     TypeLiteral(Type type) {
+        // 发现泛型类型时 将信息抽取出来 并生成impl
         this.type = canonicalize(Objects.requireNonNull(type, "type"));
+        // 获取原始类型 一般就是 针对泛型一般就是 Object 如果是class类型 就是直接返回
         this.rawType = (Class<? super T>) MoreTypes.getRawType(this.type);
+        // 计算hash值
         this.hashCode = MoreTypes.hashCode(this.type);
     }
 

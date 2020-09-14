@@ -43,6 +43,7 @@ import java.util.stream.Collectors;
 /**
  * CircuitBreakerService that attempts to redistribute space between breakers
  * if tripped
+ * 基于等级制度的 断路器
  */
 public class HierarchyCircuitBreakerService extends CircuitBreakerService {
     private static final Logger logger = LogManager.getLogger(HierarchyCircuitBreakerService.class);
@@ -103,8 +104,16 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
     // Tripped count for when redistribution was attempted but wasn't successful
     private final AtomicLong parentTripCount = new AtomicLong(0);
 
+    /**
+     *
+     * @param settings   包含从配置文件中抽取的配置
+     * @param clusterSettings    集群相关配置
+     */
     public HierarchyCircuitBreakerService(Settings settings, ClusterSettings clusterSettings) {
         super();
+
+        // 会被断路的操作类型有很多种  这里根据不同操作类型 获取不同的settings
+
         this.fielddataSettings = new BreakerSettings(CircuitBreaker.FIELDDATA,
                 FIELDDATA_CIRCUIT_BREAKER_LIMIT_SETTING.get(settings).getBytes(),
                 FIELDDATA_CIRCUIT_BREAKER_OVERHEAD_SETTING.get(settings),
@@ -351,6 +360,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
     /**
      * Allows to register a custom circuit breaker.
      * Warning: Will overwrite any existing custom breaker with the same name.
+     * 注册断路器配置
      */
     @Override
     public void registerBreaker(BreakerSettings breakerSettings) {
@@ -371,6 +381,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
                 if (oldBreaker == null) {
                     return;
                 }
+                // 如果之前已经存在断路器了 以它作为parent 继续创建 ChildMemoryCircuitBreaker 这样就可以构建层级关系了
                 breaker = new ChildMemoryCircuitBreaker(breakerSettings,
                         (ChildMemoryCircuitBreaker)oldBreaker,
                         LogManager.getLogger(CHILD_LOGGER_PREFIX + breakerSettings.getName()),

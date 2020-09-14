@@ -52,6 +52,7 @@ import java.util.function.Predicate;
 /**
  * Encapsulates all valid index level settings.
  * @see Property#IndexScope
+ * 索引相关的配置
  */
 public final class IndexScopedSettings extends AbstractScopedSettings {
 

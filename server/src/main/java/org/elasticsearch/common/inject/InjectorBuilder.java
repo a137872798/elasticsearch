@@ -43,12 +43,23 @@ import java.util.List;
  *
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
+ * 该对象负责构建注入对象
  */
 class InjectorBuilder {
 
+    /**
+     * 停表对象 具备记录暂停时间的能力
+     */
     private final Stopwatch stopwatch = new Stopwatch();
+
+    /**
+     * 具备存储错误信息的能力
+     */
     private final Errors errors = new Errors();
 
+    /**
+     * 描述当前的运行环境
+     */
     private Stage stage;
 
     private final Initializer initializer = new Initializer();
@@ -66,6 +77,7 @@ class InjectorBuilder {
     /**
      * Sets the stage for the created injector. If the stage is {@link Stage#PRODUCTION}, this class
      * will eagerly load singletons.
+     * 设置当前所处的阶段
      */
     InjectorBuilder stage(Stage stage) {
         shellBuilder.stage(stage);
@@ -73,11 +85,20 @@ class InjectorBuilder {
         return this;
     }
 
+    /**
+     * 当添加了要处理的module后 才能生成注入对象
+     * @param modules
+     * @return
+     */
     InjectorBuilder addModules(Iterable<? extends Module> modules) {
         shellBuilder.addModules(modules);
         return this;
     }
 
+    /**
+     * 构建 injector对象
+     * @return
+     */
     Injector build() {
         if (shellBuilder == null) {
             throw new AssertionError("Already built, builders are not reusable.");
@@ -85,6 +106,7 @@ class InjectorBuilder {
 
         // Synchronize while we're building up the bindings and other injector state. This ensures that
         // the JIT bindings in the parent injector don't change while we're being built
+        // 避免并发调用build 需要加锁
         synchronized (shellBuilder.lock()) {
             shells = shellBuilder.build(initializer, bindingProcesor, stopwatch, errors);
             stopwatch.resetAndLog("Injector construction");

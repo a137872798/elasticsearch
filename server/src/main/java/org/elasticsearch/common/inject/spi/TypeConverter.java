@@ -23,11 +23,13 @@ import org.elasticsearch.common.inject.TypeLiteral;
  *
  * @author crazybob@google.com (Bob Lee)
  * @since 2.0
+ * 代表类型转换器
  */
 public interface TypeConverter {
 
     /**
      * Converts a string value. Throws an exception if a conversion error occurs.
+     * @param value 待转换的值  string类型的字面量
      */
     Object convert(String value, TypeLiteral<?> toType);
 }
