@@ -50,6 +50,7 @@ class Initializer {
 
     /**
      * Maps instances that need injection to a source that registered them
+     * 代表一组待处理的增强点
      */
     private final Map<Object, InjectableReference<?>> pendingInjection = new IdentityHashMap<>();
 

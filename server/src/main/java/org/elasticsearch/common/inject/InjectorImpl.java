@@ -62,6 +62,10 @@ import static org.elasticsearch.common.inject.internal.Annotations.findScopeAnno
  * 注入实现类
  */
 class InjectorImpl implements Injector, Lookups {
+
+    /**
+     * 存储在增强时需要的各种信息
+     */
     final State state;
     boolean readOnly;
     BindingsMultimap bindingsMultimap = new BindingsMultimap();
@@ -78,7 +82,7 @@ class InjectorImpl implements Injector, Lookups {
     /**
      * 使用 状态对象和 initializer 进行初始化
      * @param state
-     * @param initializer
+     * @param initializer   该对象负责管理待处理的增强点
      */
     InjectorImpl(State state, Initializer initializer) {
         this.state = state;
@@ -636,7 +640,14 @@ class InjectorImpl implements Injector, Lookups {
         return getBindingOrThrow(key, errors).getInternalFactory();
     }
 
+    /**
+     * 绑定关系的多重映射容器
+     */
     private static class BindingsMultimap {
+
+        /**
+         * 每个待增强类 可能会绑定一组增强对象
+         */
         final Map<TypeLiteral<?>, List<Binding<?>>> multimap = new HashMap<>();
 
         <T> void put(TypeLiteral<T> type, Binding<T> binding) {

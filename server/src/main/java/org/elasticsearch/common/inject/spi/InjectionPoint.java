@@ -57,7 +57,15 @@ import static org.elasticsearch.common.inject.internal.MoreTypes.getRawType;
 public final class InjectionPoint {
 
     private final boolean optional;
+    /**
+     * Member 在 jdk的默认实现包含 method 和 field (还有constructor) 应该就是代表这个增强点是通过 field 还是 method进行增强的
+     */
     private final Member member;
+
+    /**
+     * 当增强点是构造函数 或者方法时  这组依赖对象就是参数列表的参数
+     * TODO 这些依赖的作用到底是什么
+     */
     private final List<Dependency<?>> dependencies;
 
     private InjectionPoint(Member member,
@@ -67,24 +75,42 @@ public final class InjectionPoint {
         this.optional = optional;
     }
 
+    /**
+     * 通过一个方法对象初始化增强点
+     * @param type
+     * @param method
+     */
     InjectionPoint(TypeLiteral<?> type, Method method) {
         this.member = method;
 
+        // 找到该方法上携带的  @Inject注解
         Inject inject = method.getAnnotation(Inject.class);
         this.optional = inject.optional();
 
+        // 参数列表中每个参数对应一个 dependencies
         this.dependencies = forMember(method, type, method.getParameterAnnotations());
     }
 
+    /**
+     *
+     * @param type   本次增强点对应的类型
+     * @param constructor    携带@Inject注解的构造函数 或者说被增强的目标点
+     */
     InjectionPoint(TypeLiteral<?> type, Constructor<?> constructor) {
         this.member = constructor;
         this.optional = false;
         this.dependencies = forMember(constructor, type, constructor.getParameterAnnotations());
     }
 
+    /**
+     * 以某个field作为增强点
+     * @param type
+     * @param field
+     */
     InjectionPoint(TypeLiteral<?> type, Field field) {
         this.member = field;
 
+        // 找到携带 @Inject注解的属性
         Inject inject = field.getAnnotation(Inject.class);
         this.optional = inject.optional();
 
@@ -93,6 +119,7 @@ public final class InjectionPoint {
         Errors errors = new Errors(field);
         Key<?> key = null;
         try {
+            // 找到该字段上 某个内置了@BindingAnnotation注解的注解  并包装成key对象
             key = Annotations.getKey(type.getFieldType(field), field, annotations, errors);
         } catch (ErrorsException e) {
             errors.merge(e.getErrors());
@@ -103,18 +130,31 @@ public final class InjectionPoint {
             newDependency(key, Nullability.allowsNull(annotations), -1));
     }
 
+    /**
+     *
+     * @param member   被增强的方法 或构造函数
+     * @param type     被增强的目标类
+     * @param parameterAnnotations   方法或构造函数上 每个参数携带的注解
+     * @return
+     */
     private List<Dependency<?>> forMember(Member member, TypeLiteral<?> type,
                                                    Annotation[][] parameterAnnotations) {
         Errors errors = new Errors(member);
+        // 当某个参数不包含注解时 会返回一个空数组 而不会被忽略
         Iterator<Annotation[]> annotationsIterator = Arrays.asList(parameterAnnotations).iterator();
 
         List<Dependency<?>> dependencies = new ArrayList<>();
         int index = 0;
 
+        // 被修饰方法的每个参数都会被包装成依赖对象
         for (TypeLiteral<?> parameterType : type.getParameterTypes(member)) {
             try {
+                // 迭代每个参数上对应的一系列注解
+                // 如果某个参数不包含任何注解 这里就返回一个空数组
                 Annotation[] paramAnnotations = annotationsIterator.next();
+                // 找到这么多注解中包含 @BindingAnnotation的那个 并包装成key 后返回
                 Key<?> key = Annotations.getKey(parameterType, member, paramAnnotations, errors);
+                // 将相关信息生成 依赖对象
                 dependencies.add(newDependency(key, Nullability.allowsNull(paramAnnotations), index));
                 index++;
             } catch (ErrorsException e) {
@@ -127,12 +167,14 @@ public final class InjectionPoint {
     }
 
     // This method is necessary to create a Dependency<T> with proper generic type information
+    // 生成依赖对象
     private <T> Dependency<T> newDependency(Key<T> key, boolean allowsNull, int parameterIndex) {
         return new Dependency<>(this, key, allowsNull, parameterIndex);
     }
 
     /**
      * Returns the injected constructor, field, or method.
+     * 获取该注入点针对的 构造函数/field/method
      */
     public Member getMember() {
         return member;
@@ -144,6 +186,7 @@ public final class InjectionPoint {
      * points always have a single dependency for the field itself.
      *
      * @return a possibly-empty list
+     * 返回当前注入点的所有依赖
      */
     public List<Dependency<?>> getDependencies() {
         return dependencies;
@@ -183,39 +226,52 @@ public final class InjectionPoint {
      * @throws ConfigurationException if there is no injectable constructor, more than one injectable
      *                                constructor, or if parameters of the injectable constructor are malformed, such as a
      *                                parameter with multiple binding annotations.
+     *                                为TypeLiteral内部的类创建一个基于构造函数的增强点
      */
     public static InjectionPoint forConstructorOf(TypeLiteral<?> type) {
+        // type.getType() 为描述目标类型的方法 如果涉及到泛型 也能正确返回泛型信息   getRawType 针对普通的class不进行处理 而针对泛型类型 返回Object
         Class<?> rawType = getRawType(type.getType());
+        // 生成该对象专用的 异常信息对象
         Errors errors = new Errors(rawType);
 
         Constructor<?> injectableConstructor = null;
+        // 遍历目标对象的所有构造函数
         for (Constructor<?> constructor : rawType.getConstructors()) {
+            // 当发现某个构造函数使用了 Inject注解时
             Inject inject = constructor.getAnnotation(Inject.class);
             if (inject != null) {
+                // 构造函数该属性不应该为true 增加一条错误信息
                 if (inject.optional()) {
                     errors.optionalConstructor(constructor);
                 }
 
+                // 一个待增强类 应该只存在一个包含 @Inject注解的构造函数
                 if (injectableConstructor != null) {
                     errors.tooManyConstructors(rawType);
                 }
 
                 injectableConstructor = constructor;
+                // TODO 先不管这里在校验啥
                 checkForMisplacedBindingAnnotations(injectableConstructor, errors);
             }
         }
 
+        // 此时如果 errors中已经存在异常信息了 选择抛出异常
         errors.throwConfigurationExceptionIfErrorsExist();
 
+        // 生成基于 携带了@Inject注解的 构造函数的增强点对象
         if (injectableConstructor != null) {
             return new InjectionPoint(type, injectableConstructor);
         }
 
         // If no annotated constructor is found, look for a no-arg constructor instead.
+        // 没有找到携带@Inject注解的 构造函数
         try {
+            // 寻找无参构造函数
             Constructor<?> noArgConstructor = rawType.getConstructor();
 
             // Disallow private constructors on non-private classes (unless they have @Inject)
+            // 如果该无参构造函数是private的 抛出异常 TODO 为啥 ???
             if (Modifier.isPrivate(noArgConstructor.getModifiers())
                     && !Modifier.isPrivate(rawType.getModifiers())) {
                 errors.missingConstructor(rawType);
@@ -223,6 +279,7 @@ public final class InjectionPoint {
             }
 
             checkForMisplacedBindingAnnotations(noArgConstructor, errors);
+            // 无参构造函数 对应的增强点的 依赖对象为空
             return new InjectionPoint(type, noArgConstructor);
         } catch (NoSuchMethodException e) {
             errors.missingConstructor(rawType);
@@ -253,6 +310,7 @@ public final class InjectionPoint {
      *                                a field with multiple binding annotations. The exception's {@link
      *                                ConfigurationException#getPartialValue() partial value} is a {@code Set<InjectionPoint>}
      *                                of the valid injection points.
+     *                                找到type的所有静态方法 以及field 并找到所有的增强点
      */
     public static Set<InjectionPoint> forStaticMethodsAndFields(TypeLiteral type) {
         Set<InjectionPoint> result = new HashSet<>();
@@ -293,6 +351,7 @@ public final class InjectionPoint {
      *                                a field with multiple binding annotations. The exception's {@link
      *                                ConfigurationException#getPartialValue() partial value} is a {@code Set<InjectionPoint>}
      *                                of the valid injection points.
+     *                                将该实例所有方法和 field上的增强点找出来 并返回
      */
     public static Set<InjectionPoint> forInstanceMethodsAndFields(TypeLiteral<?> type) {
         Set<InjectionPoint> result = new HashSet<>();
@@ -324,7 +383,13 @@ public final class InjectionPoint {
         return forInstanceMethodsAndFields(TypeLiteral.get(type));
     }
 
+    /**
+     *
+     * @param member  待增强的 field/constructor/method
+     * @param errors
+     */
     private static void checkForMisplacedBindingAnnotations(Member member, Errors errors) {
+        // 找到包含BindingAnnotation 的注解
         Annotation misplacedBindingAnnotation = Annotations.findBindingAnnotation(
                 errors, member, ((AnnotatedElement) member).getAnnotations());
         if (misplacedBindingAnnotation == null) {
@@ -335,6 +400,7 @@ public final class InjectionPoint {
         // name. In Scala, fields always get accessor methods (that we need to ignore). See bug 242.
         if (member instanceof Method) {
             try {
+                // 啥子 存在与方法同名的字段???
                 if (member.getDeclaringClass().getField(member.getName()) != null) {
                     return;
                 }
@@ -345,6 +411,15 @@ public final class InjectionPoint {
         errors.misplacedBindingAnnotation(member, misplacedBindingAnnotation);
     }
 
+    /**
+     *
+     * @param type   待解析的目标类
+     * @param factory  本次生成增强点的类型
+     * @param statics  是否是静态属性/方法
+     * @param injectionPoints  收集解析出来的所有增强点
+     * @param errors
+     * @param <M>
+     */
     private static <M extends Member & AnnotatedElement> void addInjectionPoints(TypeLiteral<?> type,
                                                                                  Factory<M> factory, boolean statics,
                                                                                  Collection<InjectionPoint> injectionPoints,
@@ -354,21 +429,34 @@ public final class InjectionPoint {
         }
 
         // Add injectors for superclass first.
+        // 从父类开始寻找
         TypeLiteral<?> superType = type.getSupertype(type.getRawType().getSuperclass());
         addInjectionPoints(superType, factory, statics, injectionPoints, errors);
 
         // Add injectors for all members next
+        // 真正干活的是这个方法
         addInjectorsForMembers(type, factory, statics, injectionPoints, errors);
     }
 
+    /**
+     *
+     * @param typeLiteral  当前待解析的类型
+     * @param factory    标明本次解析的类型
+     * @param statics   是否是静态属性/方法
+     * @param injectionPoints   存储解析出来的增强点
+     * @param errors
+     * @param <M>
+     */
     private static <M extends Member & AnnotatedElement> void addInjectorsForMembers(
             TypeLiteral<?> typeLiteral, Factory<M> factory, boolean statics,
             Collection<InjectionPoint> injectionPoints, Errors errors) {
         for (M member : factory.getMembers(getRawType(typeLiteral.getType()))) {
+            // 根据是否只处理静态方法/字段 进行过滤
             if (isStatic(member) != statics) {
                 continue;
             }
 
+            // 套路都是一样的 关键就是检测是否包含@Inject注解
             Inject inject = member.getAnnotation(Inject.class);
             if (inject == null) {
                 continue;
@@ -388,13 +476,28 @@ public final class InjectionPoint {
         return Modifier.isStatic(member.getModifiers());
     }
 
+    /**
+     * 代表解析的类型
+     * @param <M>
+     */
     private interface Factory<M extends Member & AnnotatedElement> {
+
+        /**
+         * 找到所有允许增强的field
+         */
         Factory<Field> FIELDS = new Factory<Field>() {
             @Override
             public Field[] getMembers(Class<?> type) {
                 return type.getFields();
             }
 
+            /**
+             * 将每个field都包装成一个注入点对象
+             * @param typeLiteral
+             * @param member
+             * @param errors
+             * @return
+             */
             @Override
             public InjectionPoint create(TypeLiteral<?> typeLiteral, Field member, Errors errors) {
                 return new InjectionPoint(typeLiteral, member);

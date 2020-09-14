@@ -33,13 +33,28 @@ import static java.util.Collections.unmodifiableSet;
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 代表一个依赖对象
  */
 public final class Dependency<T> {
+
+    /**
+     * 依赖于哪个注入点对象
+     */
     private final InjectionPoint injectionPoint;
     private final Key<T> key;
     private final boolean nullable;
+    /**
+     * 当前注入点如果是参数的话 应该是对应参数的下标
+     */
     private final int parameterIndex;
 
+    /**
+     * 初始化时 只是进行简单的赋值操作
+     * @param injectionPoint   该对象是基于哪个注入点生成的
+     * @param key   如果某个参数上不包含@BindingAnnonation注解的注解 那么该key 为null
+     * @param nullable   参数注解上是否包含 @Nullable注解
+     * @param parameterIndex   该参数在参数列表中的下标
+     */
     Dependency(InjectionPoint injectionPoint, Key<T> key,
                boolean nullable, int parameterIndex) {
         this.injectionPoint = injectionPoint;
@@ -51,6 +66,7 @@ public final class Dependency<T> {
     /**
      * Returns a new dependency that is not attached to an injection point. The returned dependency is
      * nullable.
+     * 这样会返回一个没有连接到任何注入点的 依赖对象
      */
     public static <T> Dependency<T> get(Key<T> key) {
         return new Dependency<>(null, key, true, -1);
@@ -58,6 +74,7 @@ public final class Dependency<T> {
 
     /**
      * Returns the dependencies from the given injection points.
+     * 将一组注入点相关的依赖返回
      */
     public static Set<Dependency<?>> forInjectionPoints(Set<InjectionPoint> injectionPoints) {
         Set<Dependency<?>> dependencies = new HashSet<>();

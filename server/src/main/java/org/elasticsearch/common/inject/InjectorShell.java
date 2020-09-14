@@ -159,10 +159,12 @@ class InjectorShell {
                 new TypeConverterBindingProcessor(errors).prepareBuiltInConverters(injector);
             }
 
-            // 将之前的module 包装成element
+            // elements中最后存放的是 InstanceBindingImpl
             elements.addAll(Elements.getElements(stage, modules));
+            // 输出耗时时长
             stopwatch.resetAndLog("Module execution");
 
+            // 生成异常消息处理器
             new MessageProcessor(errors).process(injector, elements);
 
             new TypeListenerBindingProcessor(errors).process(injector, elements);

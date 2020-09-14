@@ -32,10 +32,17 @@ import java.util.Objects;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 描述绑定的范围
  */
 public final class ScopeBinding implements Element {
     private final Object source;
+    /**
+     * 代表该注解的绑定范围???
+     */
     private final Class<? extends Annotation> annotationType;
+    /**
+     * 范围信息
+     */
     private final Scope scope;
 
     ScopeBinding(Object source, Class<? extends Annotation> annotationType, Scope scope) {

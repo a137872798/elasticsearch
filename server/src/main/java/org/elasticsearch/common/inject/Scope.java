@@ -28,6 +28,8 @@ package org.elasticsearch.common.inject;
  * An example of a scope is {@link Scopes#SINGLETON}.
  *
  * @author crazybob@google.com (Bob Lee)
+ *
+ * 描述范围的对象
  */
 public interface Scope {
 

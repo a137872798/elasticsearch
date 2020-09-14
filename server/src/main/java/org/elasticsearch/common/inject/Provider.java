@@ -36,6 +36,7 @@ package org.elasticsearch.common.inject;
  *
  * @param <T> the type of object this provides
  * @author crazybob@google.com (Bob Lee)
+ * 一个基础的提供者接口
  */
 public interface Provider<T> {
 

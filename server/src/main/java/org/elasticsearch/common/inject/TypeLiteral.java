@@ -181,6 +181,7 @@ public class TypeLiteral<T> {
 
     /**
      * Returns an immutable list of the resolved types.
+     * 将每个单独处理后的type 整合后返回
      */
     private List<TypeLiteral<?>> resolveAll(Type[] types) {
         TypeLiteral<?>[] result = new TypeLiteral<?>[types.length];
@@ -294,6 +295,7 @@ public class TypeLiteral<T> {
      *
      * @param methodOrConstructor a method or constructor defined by this or any supertype.
      * @since 2.0
+     * 返回目标类上某个方法或者构造函数的 所有参数类型信息  遇到泛型类型要做处理
      */
     public List<TypeLiteral<?>> getParameterTypes(Member methodOrConstructor) {
         Type[] genericParameterTypes;
@@ -317,6 +319,7 @@ public class TypeLiteral<T> {
             throw new IllegalArgumentException("Not a method or a constructor: " + methodOrConstructor);
         }
 
+        // 尝试检测泛型参数 并处理
         return resolveAll(genericParameterTypes);
     }
 

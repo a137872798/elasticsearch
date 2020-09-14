@@ -24,6 +24,7 @@ import java.lang.annotation.Annotation;
  * See the EDSL examples at {@link org.elasticsearch.common.inject.Binder}.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 会创建携带范围信息的bind builder对象
  */
 public interface ScopedBindingBuilder {
 

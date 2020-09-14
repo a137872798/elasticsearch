@@ -80,6 +80,7 @@ public final class Errors {
 
     /**
      * The leaf source for errors added here.
+     * 当前错误信息是从哪里采集过来的
      */
     private final Object source;
 

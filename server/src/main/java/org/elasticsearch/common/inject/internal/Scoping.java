@@ -30,6 +30,7 @@ import java.lang.annotation.Annotation;
  * The scope's eager or laziness is also exposed.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 代表一个引用的范围
  */
 public abstract class Scoping {
 
@@ -59,6 +60,9 @@ public abstract class Scoping {
         }
     };
 
+    /**
+     * 代表针对单例范围
+     */
     public static final Scoping SINGLETON_ANNOTATION = new Scoping() {
         @Override
         public <V> V acceptVisitor(BindingScopingVisitor<V> visitor) {
@@ -125,6 +129,11 @@ public abstract class Scoping {
         }
     };
 
+    /**
+     * 代表从注解上获取scoping信息
+     * @param scopingAnnotation
+     * @return
+     */
     public static Scoping forAnnotation(final Class<? extends Annotation> scopingAnnotation) {
         if (scopingAnnotation == Singleton.class) {
             return SINGLETON_ANNOTATION;
@@ -153,6 +162,11 @@ public abstract class Scoping {
         };
     }
 
+    /**
+     * 基于实例scope对象进行转换
+     * @param scope
+     * @return
+     */
     public static Scoping forInstance(final Scope scope) {
         if (scope == Scopes.SINGLETON) {
             return SINGLETON_INSTANCE;

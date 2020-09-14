@@ -25,7 +25,14 @@ import org.elasticsearch.common.inject.spi.UntargettedBinding;
 
 public class UntargettedBindingImpl<T> extends BindingImpl<T> implements UntargettedBinding<T> {
 
+    /**
+     * 从binding的骨架类来看 初始化该对象需要3个参数  一个是注入器 一个是key  还有一个是source
+     * @param injector
+     * @param key
+     * @param source
+     */
     public UntargettedBindingImpl(Injector injector, Key<T> key, Object source) {
+        // 该对象传入了一个无法调用get()的工厂
         super(injector, key, source, new InternalFactory<T>() {
             @Override
             public T get(Errors errors, InternalContext context, Dependency<?> dependency) {

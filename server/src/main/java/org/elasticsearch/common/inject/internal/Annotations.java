@@ -91,10 +91,14 @@ public class Annotations {
 
     /**
      * Gets a key for the given type, member and annotations.
+     * @param type 本次待增强的某个类的某个方法参数 抽取泛型信息后对应的对象
+     * @param member 增强的方法/构造函数
+     * @param annotations  type上携带的所有注解
      */
     public static Key<?> getKey(TypeLiteral<?> type, Member member, Annotation[] annotations,
                                 Errors errors) throws ErrorsException {
         int numErrorsBefore = errors.size();
+        // 找到内部携带@BindingAnnotation 注解 的注解
         Annotation found = findBindingAnnotation(errors, member, annotations);
         errors.throwIfNewErrors(numErrorsBefore);
         return found == null ? Key.get(type) : Key.get(type, found);
@@ -102,14 +106,19 @@ public class Annotations {
 
     /**
      * Returns the binding annotation on {@code member}, or null if there isn't one.
+     * @param errors 记录错误信息
+     * @param member 待增强的字段或方法/构造函数
+     * @param annotations 对应member上抽取的所有注解
      */
     public static Annotation findBindingAnnotation(
             Errors errors, Member member, Annotation[] annotations) {
         Annotation found = null;
 
         for (Annotation annotation : annotations) {
+            // 代表member上的注解内部包含了BindingAnnotation
             if (annotation.annotationType().getAnnotation(BindingAnnotation.class) != null) {
                 if (found != null) {
+                    // 当待增强点上的有个注解中 有不止一个包含了 BindingAnnotation 则增加异常信息
                     errors.duplicateBindingAnnotations(member,
                             found.annotationType(), annotation.annotationType());
                 } else {

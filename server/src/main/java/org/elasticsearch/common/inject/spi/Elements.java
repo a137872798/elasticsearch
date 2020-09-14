@@ -84,6 +84,7 @@ public final class Elements {
         for (Module module : modules) {
             binder.install(module);
         }
+        // 在处理完所有module后  返回 elements
         return Collections.unmodifiableList(binder.elements);
     }
 
@@ -217,13 +218,16 @@ public final class Elements {
          */
         @Override
         public void install(Module module) {
+            // 重复添加则不处理
             if (modules.add(module)) {
                 Binder binder = this;
+                // TODO 先忽略私有模块
                 if (module instanceof PrivateModule) {
                     binder = binder.newPrivateBinder();
                 }
 
                 try {
+                    // 装配 binder对象  实际上就是调用binder.bind
                     module.configure(binder);
                 } catch (IllegalArgumentException e) {
                     // NOTE: This is not in the original guice. We rethrow here to expose any explicit errors in configure()
@@ -236,6 +240,7 @@ public final class Elements {
                         addError(e);
                     }
                 }
+                // 将module包装后 重新调用了一遍该方法
                 binder.install(ProviderMethodsModule.forModule(module));
             }
         }
@@ -269,6 +274,7 @@ public final class Elements {
          */
         @Override
         public <T> AnnotatedBindingBuilder<T> bind(Key<T> key) {
+            // getSource() 默认情况下是返回异常栈轨迹信息
             return new BindingBuilder<>(this, elements, getSource(), key);
         }
 

@@ -30,6 +30,7 @@ import java.util.Objects;
  * Bind a value or constant.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 将每个模块都包装成一个bindingBuilder
  */
 public abstract class AbstractBindingBuilder<T> {
 
@@ -45,8 +46,17 @@ public abstract class AbstractBindingBuilder<T> {
 
     protected static final Key<?> NULL_KEY = Key.get(Void.class);
 
+    /**
+     * 每个builder对象都会将 key 包装成一个 bindingImpl 并设置到 elements中
+     */
     protected List<Element> elements;
+    /**
+     * 在数组的下标位置
+     */
     protected int position;
+    /**
+     * 代表该对象是由哪个 binder生成的
+     */
     protected final Binder binder;
     private BindingImpl<T> binding;
 
@@ -60,8 +70,11 @@ public abstract class AbstractBindingBuilder<T> {
     public AbstractBindingBuilder(Binder binder, List<Element> elements, Object source, Key<T> key) {
         this.binder = binder;
         this.elements = elements;
+        // 因为在集中处理binder对象时  每当处理一个对象 就会被加入到 elements中 size会随着bind的调用  不断地增大 这样刚好就对应了下标值
         this.position = elements.size();
+        // 默认情况下 没有绑定范围  创建的是一个 Untarget对象
         this.binding = new UntargettedBindingImpl<>(source, key, Scoping.UNSCOPED);
+        // 将对象追加到elements 中
         elements.add(position, this.binding);
     }
 
@@ -69,6 +82,11 @@ public abstract class AbstractBindingBuilder<T> {
         return binding;
     }
 
+    /**
+     * 更新内部的binding对象
+     * @param binding
+     * @return
+     */
     protected BindingImpl<T> setBinding(BindingImpl<T> binding) {
         this.binding = binding;
         elements.set(position, binding);
@@ -77,6 +95,7 @@ public abstract class AbstractBindingBuilder<T> {
 
     /**
      * Sets the binding to a copy with the specified annotation on the bound key
+     * 更新了binding对象 仅将满足某个注解的地方作为增强点
      */
     protected BindingImpl<T> annotatedWithInternal(Class<? extends Annotation> annotationType) {
         Objects.requireNonNull(annotationType, "annotationType");
@@ -95,6 +114,10 @@ public abstract class AbstractBindingBuilder<T> {
                 Key.get(this.binding.getKey().getTypeLiteral(), annotation)));
     }
 
+    /**
+     * 将注解转换成scope信息  并设置到binding上
+     * @param scopeAnnotation
+     */
     public void in(final Class<? extends Annotation> scopeAnnotation) {
         Objects.requireNonNull(scopeAnnotation, "scopeAnnotation");
         checkNotScoped();

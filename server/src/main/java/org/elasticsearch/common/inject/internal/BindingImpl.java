@@ -26,13 +26,24 @@ import org.elasticsearch.common.inject.spi.InstanceBinding;
 
 /**
  * @author crazybob@google.com (Bob Lee)
+ * 一个绑定对象实现类
  */
 public abstract class BindingImpl<T> implements Binding<T> {
 
+    /**
+     * 实施注入动作的主对象
+     */
     private final Injector injector;
     private final Key<T> key;
     private final Object source;
+    /**
+     * 默认情况下不指定范围
+     */
     private final Scoping scoping;
+
+    /**
+     * 用于返回实例的工厂
+     */
     private final InternalFactory<? extends T> internalFactory;
 
     public BindingImpl(Injector injector, Key<T> key, Object source,
@@ -44,6 +55,12 @@ public abstract class BindingImpl<T> implements Binding<T> {
         this.scoping = scoping;
     }
 
+    /**
+     * 当以这种方式完成初始化时  factory为null
+     * @param source
+     * @param key
+     * @param scoping
+     */
     protected BindingImpl(Object source, Key<T> key, Scoping scoping) {
         this.internalFactory = null;
         this.injector = null;
@@ -71,6 +88,7 @@ public abstract class BindingImpl<T> implements Binding<T> {
                 throw new UnsupportedOperationException("getProvider() not supported for module bindings");
             }
 
+            // 将目标对象通过injector处理后返回一个 provider对象通过它应该就能获取增强对象了
             provider = injector.getProvider(key);
         }
         return provider;

@@ -46,7 +46,7 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
      *
      * @param binder   该对象是由哪个builder创建的
      * @param elements  当生成有效信息时 会回填到这个list中
-     * @param source
+     * @param source  默认情况下就是 栈轨迹信息
      * @param key   代表绑定的是哪个类 以及使用的注解策略
      */
     public BindingBuilder(Binder binder, List<Element> elements, Object source, Key<T> key) {
@@ -85,15 +85,20 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
         return this;
     }
 
+    /**
+     * 找到实例上的增强点 并进行增强
+     * @param instance
+     */
     @Override
     public void toInstance(T instance) {
+        // 该对象要求 binding必须是UntargettedBindingImpl 类型
         checkNotTargetted();
 
         // lookup the injection points, adding any errors to the binder's errors list
         Set<InjectionPoint> injectionPoints;
         if (instance != null) {
             try {
-                // 找到实例上所有的增强点
+                // 找到实例上所有的增强点   也就是携带@Inject的方法  或者属性
                 injectionPoints = InjectionPoint.forInstanceMethodsAndFields(instance.getClass());
             } catch (ConfigurationException e) {
                 for (Message message : e.getErrorMessages()) {
@@ -106,7 +111,9 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
             injectionPoints = emptySet();
         }
 
+        // 以 UntargettedBindingImpl 为基础 创建实例binding对象
         BindingImpl<T> base = getBinding();
+        // 默认情况下 base.getSource() 就是栈轨迹信息   当转换成InstanceBindingImpl后 重新设置到elements中
         setBinding(new InstanceBindingImpl<>(
                 base.getSource(), base.getKey(), base.getScoping(), injectionPoints, instance));
     }

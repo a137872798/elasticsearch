@@ -27,6 +27,7 @@ import java.util.Locale;
  * Built-in scope implementations.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 包含了 Scope的实现类
  */
 public class Scopes {
 
@@ -87,6 +88,7 @@ public class Scopes {
      * this to "no scope" in your binding.
      *
      * @since 2.0
+     * 代表没有指定范围
      */
     public static final Scope NO_SCOPE = new Scope() {
         @Override

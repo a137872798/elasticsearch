@@ -36,9 +36,13 @@ import java.util.Objects;
  *     }</pre>
  *
  * @author crazybob@google.com (Bob Lee)
+ * 调用 addError使用的参数  代表一种异常信息
  */
 public final class Message implements Element {
     private final String message;
+    /**
+     * 异常对象
+     */
     private final Throwable cause;
     private final List<Object> sources;
 

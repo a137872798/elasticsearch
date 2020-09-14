@@ -35,6 +35,15 @@ public class InstanceBindingImpl<T> extends BindingImpl<T> implements InstanceBi
     final Provider<T> provider;
     final Set<InjectionPoint> injectionPoints;
 
+    /**
+     *
+     * @param injector
+     * @param key
+     * @param source
+     * @param internalFactory
+     * @param injectionPoints
+     * @param instance
+     */
     public InstanceBindingImpl(Injector injector, Key<T> key, Object source,
                                InternalFactory<? extends T> internalFactory, Set<InjectionPoint> injectionPoints,
                                T instance) {
@@ -44,6 +53,14 @@ public class InstanceBindingImpl<T> extends BindingImpl<T> implements InstanceBi
         this.provider = Providers.of(instance);
     }
 
+    /**
+     *
+     * @param source  栈轨迹信息
+     * @param key
+     * @param scoping
+     * @param injectionPoints   从该实例上发现的各种增强点
+     * @param instance    本次待处理的实例对象
+     */
     public InstanceBindingImpl(Object source, Key<T> key, Scoping scoping,
                                Set<InjectionPoint> injectionPoints, T instance) {
         super(source, key, scoping);

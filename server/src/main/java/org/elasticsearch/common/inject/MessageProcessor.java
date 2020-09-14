@@ -24,6 +24,7 @@ import org.elasticsearch.common.inject.spi.Message;
  *
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
+ * 消息处理器  处理 addError命令
  */
 class MessageProcessor extends AbstractProcessor {
 
@@ -32,6 +33,8 @@ class MessageProcessor extends AbstractProcessor {
     MessageProcessor(Errors errors) {
         super(errors);
     }
+
+    // 实际上就是该对象内嵌了 Errors对象 而visit方法就是将消息直接追加到errors上
 
     @Override
     public Boolean visit(Message message) {

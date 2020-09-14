@@ -22,6 +22,7 @@ import org.elasticsearch.common.inject.spi.Dependency;
  * Creates objects which will be injected.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 创建已经被增强过的实例对象
  */
 public interface InternalFactory<T> {
 

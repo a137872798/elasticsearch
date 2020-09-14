@@ -40,6 +40,7 @@ import java.util.List;
  * handled element.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 处理器实现了visitor接口
  */
 abstract class AbstractProcessor implements ElementVisitor<Boolean> {
 

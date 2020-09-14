@@ -281,6 +281,7 @@ public class Key<T> {
 
     /**
      * Gets a key for an injection type and an annotation.
+     * @param annotation 该注解内部 必然携带了BindingAnnotation注解
      */
     public static <T> Key<T> get(TypeLiteral<T> typeLiteral,
                                  Annotation annotation) {
@@ -348,6 +349,7 @@ public class Key<T> {
 
     /**
      * Gets the strategy for an annotation.
+     * 从注解上找到 策略信息
      */
     static AnnotationStrategy strategyFor(Annotation annotation) {
         Objects.requireNonNull(annotation, "annotation");
@@ -355,10 +357,12 @@ public class Key<T> {
         ensureRetainedAtRuntime(annotationType);
         ensureIsBindingAnnotation(annotationType);
 
+        // 如果该注解本身不包含任何方法 也就是一个空注解
         if (annotationType.getMethods().length == 0) {
             return new AnnotationTypeStrategy(annotationType, annotation);
         }
 
+        // 针对包含方法的注解 使用的是这个对象
         return new AnnotationInstanceStrategy(annotation);
     }
 
@@ -424,12 +428,11 @@ public class Key<T> {
 
     /**
      * this class not test-covered
-     * 代表以某个注解作为切入点 进行增强
      */
     static class AnnotationInstanceStrategy implements AnnotationStrategy {
 
         /**
-         * 切入的注解
+         * 该注解会包含一些方法  同样该注解必然被@BindingAnnotation修饰
          */
         final Annotation annotation;
 
@@ -480,9 +483,15 @@ public class Key<T> {
 
     static class AnnotationTypeStrategy implements AnnotationStrategy {
 
+        /**
+         * 标识注解的类型
+         */
         final Class<? extends Annotation> annotationType;
 
         // Keep the instance around if we have it so the client can request it.
+        /**
+         * 注解实例本身    该注解本身满足2个条件 一个是该注解没有任何方法  第二个是该注解内置了 @BindingAnnotation注解
+         */
         final Annotation annotation;
 
         AnnotationTypeStrategy(Class<? extends Annotation> annotationType,

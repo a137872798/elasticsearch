@@ -184,11 +184,13 @@ import java.lang.annotation.Annotation;
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
  * @author kevinb@google.com (Kevin Bourrillion)
+ * 具备绑定能力的对象   一般就是 RecordingBinder
  */
 public interface Binder {
 
     /**
      * Binds a scope to an annotation.
+     * 增加一个描述绑定范围的东西
      */
     void bindScope(Class<? extends Annotation> annotationType, Scope scope);
 

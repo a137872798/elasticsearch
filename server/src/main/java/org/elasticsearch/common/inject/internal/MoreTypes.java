@@ -171,7 +171,7 @@ public class MoreTypes {
             // I'm not exactly sure why getRawType() returns Type instead of Class.
             // Neal isn't either but suspects some pathological case related
             // to nested classes exists.
-            // 好吧 那我也不知道为啥就一定是class了
+            // 这里不允许出现 T<V> 这种情况么
             Type rawType = parameterizedType.getRawType();
             if (!(rawType instanceof Class)) {
                 throw new IllegalArgumentException(
@@ -426,7 +426,15 @@ public class MoreTypes {
         return toResolve;
     }
 
+    /**
+     * 处理 TypeVariable
+     * @param type
+     * @param rawType
+     * @param unknown
+     * @return
+     */
     public static Type resolveTypeVariable(Type type, Class<?> rawType, TypeVariable unknown) {
+        // 将T类型转换成实际类型
         Class<?> declaredByRaw = declaringClassOf(unknown);
 
         // we can't reduce this further
@@ -457,6 +465,7 @@ public class MoreTypes {
      * a class.
      */
     private static Class<?> declaringClassOf(TypeVariable typeVariable) {
+        // 返回实际类型
         GenericDeclaration genericDeclaration = typeVariable.getGenericDeclaration();
         return genericDeclaration instanceof Class
                 ? (Class<?>) genericDeclaration

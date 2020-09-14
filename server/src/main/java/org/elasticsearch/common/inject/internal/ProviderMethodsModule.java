@@ -46,8 +46,15 @@ import static java.util.Collections.unmodifiableSet;
  */
 public final class ProviderMethodsModule implements Module {
     private final Object delegate;
+    /**
+     * module 类对应的 泛型解析器
+     */
     private final TypeLiteral<?> typeLiteral;
 
+    /**
+     *
+     * @param delegate   module对象
+     */
     private ProviderMethodsModule(Object delegate) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
         this.typeLiteral = TypeLiteral.get(this.delegate.getClass());

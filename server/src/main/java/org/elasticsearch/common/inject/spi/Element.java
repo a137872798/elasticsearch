@@ -29,6 +29,7 @@ import org.elasticsearch.common.inject.Binder;
  * @author jessewilson@google.com (Jesse Wilson)
  * @author crazybob@google.com (Bob Lee)
  * @since 2.0
+ * 代表一个核心组件 可能是一个模块 也可能是一个注入点
  */
 public interface Element {
 
@@ -39,6 +40,7 @@ public interface Element {
      * Tools might specially handle types they know about; {@code StackTraceElement} is a good
      * example. Tools should simply call {@code toString()} on the source object if the type is
      * unfamiliar.
+     * 该组件的来源
      */
     Object getSource();
 
@@ -46,6 +48,7 @@ public interface Element {
      * Accepts an element visitor. Invokes the visitor method specific to this element's type.
      *
      * @param visitor to call back on
+     *                visitor对象仅仅是定义了一系列处理的函数
      */
     <T> T acceptVisitor(ElementVisitor<T> visitor);
 
@@ -55,6 +58,7 @@ public interface Element {
      * @param binder to apply configuration element to
      * @throws UnsupportedOperationException if the {@code applyTo} method is not supported by this
      *                                       element.
+     *                                       代表这个模块会怎么处理绑定对象
      */
     void applyTo(Binder binder);
 
