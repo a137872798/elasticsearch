@@ -33,6 +33,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
 
+/**
+ * 网络层服务对象
+ */
 public final class NetworkService {
 
     /** By default, we bind to loopback interfaces */
@@ -46,6 +49,7 @@ public final class NetworkService {
     public static final Setting<List<String>> GLOBAL_NETWORK_PUBLISH_HOST_SETTING =
         Setting.listSetting("network.publish_host", GLOBAL_NETWORK_HOST_SETTING, Function.identity(), Property.NodeScope);
 
+    // 这些都是TCP 相关的参数
     public static final Setting<Boolean> TCP_NO_DELAY =
         Setting.boolSetting("network.tcp.no_delay", true, Property.NodeScope);
     public static final Setting<Boolean> TCP_KEEP_ALIVE =
@@ -66,19 +70,25 @@ public final class NetworkService {
     /**
      * A custom name resolver can support custom lookup keys (my_net_key:ipv4) and also change
      * the default inet address used in case no settings is provided.
+     * 自定义的 name解析器
      */
     public interface CustomNameResolver {
         /**
          * Resolves the default value if possible. If not, return {@code null}.
+         * 生成默认地址
          */
         InetAddress[] resolveDefault();
 
         /**
          * Resolves a custom value handling, return {@code null} if can't handle it.
+         * 尝试将字符串解析成一组地址
          */
         InetAddress[] resolveIfPossible(String value) throws IOException;
     }
 
+    /**
+     * 携带一组自定义 name解析器
+     */
     private final List<CustomNameResolver> customNameResolvers;
 
     public NetworkService(List<CustomNameResolver> customNameResolvers) {
@@ -93,10 +103,12 @@ public final class NetworkService {
      *                  such as _local_ (see the documentation). if it is null, it will fall back to _local_
      *
      * @return unique set of internet addresses
+     * 将一组地址进行解析后返回
      */
     public InetAddress[] resolveBindHostAddresses(String bindHosts[]) throws IOException {
         if (bindHosts == null || bindHosts.length == 0) {
             for (CustomNameResolver customNameResolver : customNameResolvers) {
+                // 首先尝试获取默认地址 如果存在直接返回
                 InetAddress addresses[] = customNameResolver.resolveDefault();
                 if (addresses != null) {
                     return addresses;

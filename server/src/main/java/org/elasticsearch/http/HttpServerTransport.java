@@ -26,10 +26,17 @@ import org.elasticsearch.node.ReportingService;
 import org.elasticsearch.rest.RestChannel;
 import org.elasticsearch.rest.RestRequest;
 
+/**
+ * http传输层
+ */
 public interface HttpServerTransport extends LifecycleComponent, ReportingService<HttpInfo> {
 
     String HTTP_SERVER_WORKER_THREAD_NAME_PREFIX = "http_server_worker";
 
+    /**
+     * 该对象下存在2种维度的地址
+     * @return
+     */
     BoundTransportAddress boundAddress();
 
     @Override

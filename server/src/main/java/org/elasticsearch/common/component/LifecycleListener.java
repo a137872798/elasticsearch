@@ -19,6 +19,9 @@
 
 package org.elasticsearch.common.component;
 
+/**
+ * 用于感知组件生命周期变化的监听器
+ */
 public abstract class LifecycleListener {
 
     public void beforeStart() {

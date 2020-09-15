@@ -24,6 +24,7 @@ import org.elasticsearch.common.inject.TypeLiteral;
  * See the EDSL examples at {@link org.elasticsearch.common.inject.Binder}.
  *
  * @author crazybob@google.com (Bob Lee)
+ *
  */
 public interface LinkedBindingBuilder<T> extends ScopedBindingBuilder {
 
