@@ -45,6 +45,8 @@ public final class Types {
      * Returns a new parameterized type, applying {@code typeArguments} to
      * {@code rawType}. The returned type does not have an owner type.
      *
+     * @param rawType 此时作为主类型    比如Map
+     * @param typeArguments  定义的泛型参数类型   比如 K V
      * @return a parameterized type.
      */
     public static ParameterizedType newParameterizedType(Type rawType, Type... typeArguments) {
@@ -116,6 +118,7 @@ public final class Types {
      * {@code keyType} and whose values are of type {@code valueType}.
      *
      * @return a parameterized type.
+     * 将2个泛型类型 K， V 合并成 Map<K,V>
      */
     public static ParameterizedType mapOf(Type keyType, Type valueType) {
         return newParameterizedType(Map.class, keyType, valueType);

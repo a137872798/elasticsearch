@@ -40,6 +40,7 @@ import java.util.List;
  *
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
+ * 从api观察可以感觉出这个类内部已经包含了一整套增强逻辑需要的全部组件了
  */
 public interface Injector {
 
@@ -54,6 +55,7 @@ public interface Injector {
      * @param instance to inject members on
      * @see Binder#getMembersInjector(Class) for a preferred alternative that supports checks before
      *      run time
+     *      为当前实例的方法 以及 field 进行增强
      */
     void injectMembers(Object instance);
 
@@ -65,6 +67,7 @@ public interface Injector {
      * @see Binder#getMembersInjector(TypeLiteral) for an alternative that offers up front error
      *      detection
      * @since 2.0
+     * 获取 能够为实例的field/method进行增强的对象
      */
     <T> MembersInjector<T> getMembersInjector(TypeLiteral<T> typeLiteral);
 
@@ -84,6 +87,7 @@ public interface Injector {
      * Returns all explicit bindings for {@code type}.
      * <p>
      * This method is part of the Guice SPI and is intended for use by tools and extensions.
+     * 找到针对目标类型的所有绑定对象
      */
     <T> List<Binding<T>> findBindingsByType(TypeLiteral<T> type);
 
@@ -93,6 +97,7 @@ public interface Injector {
      *
      * @throws ConfigurationException if this injector cannot find or create the provider.
      * @see Binder#getProvider(Key) for an alternative that offers up front error detection
+     * 这个提供者应该是能直接获取增强后实例的
      */
     <T> Provider<T> getProvider(Key<T> key);
 

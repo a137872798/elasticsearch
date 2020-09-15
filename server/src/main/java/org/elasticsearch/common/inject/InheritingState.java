@@ -57,6 +57,11 @@ class InheritingState implements State {
      */
     private final List<MatcherAndConverter> converters = new ArrayList<>();
     private final List<TypeListenerBinding> listenerBindings = new ArrayList<>();
+
+    /**
+     * 黑名单中的key 是不能构建增强对象的
+     * WeakKeySet 的意思是不直接将key存储在容器中 以形成强引用 而是存储一个key的字面量 这样一样可以判断某个key是否在黑名单中 同时不会强引用
+     */
     private WeakKeySet blacklistedKeys = new WeakKeySet();
     private final Object lock;
 
@@ -75,6 +80,12 @@ class InheritingState implements State {
         return parent;
     }
 
+    /**
+     * 通过key 来找到绑定类对象
+     * @param key
+     * @param <T>
+     * @return
+     */
     @Override
     @SuppressWarnings("unchecked") // we only put in BindingImpls that match their key types
     public <T> BindingImpl<T> getExplicitBinding(Key<T> key) {
@@ -149,6 +160,10 @@ class InheritingState implements State {
         return result;
     }
 
+    /**
+     * 将某个key 添加到黑名单中  一般的场景是这样  每当为某个key生成了binding对象后 会将key存储到黑名单中 这样就可以避免重复创建了
+     * @param key
+     */
     @Override
     public void blacklist(Key<?> key) {
         parent.blacklist(key);

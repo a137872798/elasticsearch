@@ -28,12 +28,26 @@ import org.elasticsearch.common.inject.spi.ProviderInstanceBinding;
 
 import java.util.Set;
 
+/**
+ * BindingBuilder 通过toProvider() 方法返回 ProviderInstanceBindingImpl
+ * @param <T>
+ */
 public final class ProviderInstanceBindingImpl<T> extends BindingImpl<T>
         implements ProviderInstanceBinding<T> {
 
     final Provider<? extends T> providerInstance;
     final Set<InjectionPoint> injectionPoints;
 
+    /**
+     *
+     * @param injector
+     * @param key
+     * @param source
+     * @param internalFactory
+     * @param scoping
+     * @param providerInstance
+     * @param injectionPoints
+     */
     public ProviderInstanceBindingImpl(Injector injector, Key<T> key,
                                        Object source, InternalFactory<? extends T> internalFactory, Scoping scoping,
                                        Provider<? extends T> providerInstance,
@@ -43,6 +57,15 @@ public final class ProviderInstanceBindingImpl<T> extends BindingImpl<T>
         this.injectionPoints = injectionPoints;
     }
 
+
+    /**
+     *
+     * @param source
+     * @param key  原来要处理的类型
+     * @param scoping
+     * @param injectionPoints   本次要处理的注入点
+     * @param providerInstance     Provider实现类
+     */
     public ProviderInstanceBindingImpl(Object source, Key<T> key, Scoping scoping,
                                        Set<InjectionPoint> injectionPoints, Provider<? extends T> providerInstance) {
         super(source, key, scoping);

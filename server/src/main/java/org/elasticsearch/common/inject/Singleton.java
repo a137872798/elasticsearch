@@ -27,6 +27,7 @@ import static java.lang.annotation.RetentionPolicy.RUNTIME;
  * (per {@link Injector}) to be reused for all injections for that binding.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 这些注解实际上都是 Guice中的 (Guice是一个IOC框架)  被这个注解修饰的类会实现全局单例
  */
 @Target({ElementType.TYPE, ElementType.METHOD})
 @Retention(RUNTIME)

@@ -80,6 +80,10 @@ public final class ProviderMethodsModule implements Module {
         return new ProviderMethodsModule(object);
     }
 
+    /**
+     * 每个模块类被加工过后 会被包装成该对象 并再次触发一次configure
+     * @param binder
+     */
     @Override
     public synchronized void configure(Binder binder) {
         for (ProviderMethod<?> providerMethod : getProviderMethods(binder)) {
@@ -87,6 +91,11 @@ public final class ProviderMethodsModule implements Module {
         }
     }
 
+    /**
+     * 获取找到 delegate内部所有包含@Provider注解的方法 进行包装后返回
+     * @param binder
+     * @return
+     */
     public List<ProviderMethod<?>> getProviderMethods(Binder binder) {
         List<ProviderMethod<?>> result = new ArrayList<>();
         for (Class<?> c = delegate.getClass(); c != Object.class; c = c.getSuperclass()) {
@@ -99,16 +108,27 @@ public final class ProviderMethodsModule implements Module {
         return result;
     }
 
+    /**
+     *
+     * @param binder  可以简单理解为 RecordingBinder
+     * @param method   携带@Provider注解的方法
+     * @param <T>
+     * @return
+     */
     <T> ProviderMethod<T> createProviderMethod(Binder binder, final Method method) {
+        // 创建一个 source 为  method的 RecordingBuilder
         binder = binder.withSource(method);
+        // 生成描述错误信息的对象
         Errors errors = new Errors(method);
 
         // prepare the parameter providers
         Set<Dependency<?>> dependencies = new HashSet<>();
         List<Provider<?>> parameterProviders = new ArrayList<>();
         List<TypeLiteral<?>> parameterTypes = typeLiteral.getParameterTypes(method);
+        // 找到每个参数携带的注解
         Annotation[][] parameterAnnotations = method.getParameterAnnotations();
         for (int i = 0; i < parameterTypes.size(); i++) {
+            // 尝试解析参数上是否存在内置@BindingAnnotation的注解  并生成依赖对象
             Key<?> key = getKey(errors, parameterTypes.get(i), method, parameterAnnotations[i]);
             dependencies.add(Dependency.get(key));
             parameterProviders.add(binder.getProvider(key));
@@ -129,6 +149,15 @@ public final class ProviderMethodsModule implements Module {
                 parameterProviders, scopeAnnotation);
     }
 
+    /**
+     * 找到包含 @BindingAnnotation的注解 并包装成key 后返回
+     * @param errors
+     * @param type
+     * @param member
+     * @param annotations
+     * @param <T>
+     * @return
+     */
     <T> Key<T> getKey(Errors errors, TypeLiteral<T> type, Member member, Annotation[] annotations) {
         Annotation bindingAnnotation = Annotations.findBindingAnnotation(errors, member, annotations);
         return bindingAnnotation == null ? Key.get(type) : Key.get(type, bindingAnnotation);

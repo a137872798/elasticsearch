@@ -20,6 +20,7 @@ package org.elasticsearch.common.inject;
  * The stage we're running in.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 在ioc容器启动时 会根据stage执行不同的启动模式
  */
 public enum Stage {
 
@@ -34,11 +35,14 @@ public enum Stage {
     /**
      * We want fast startup times at the expense of runtime performance and some up front error
      * checking.
+     * 代表快速启动 不进行校验 (比如ioc容器中某实例不存在的情况)
+     * 同时也是默认模式
      */
     DEVELOPMENT,
 
     /**
      * We want to catch errors as early as possible and take performance hits up front.
+     * 会进行检查 当某些bean不存在时 提前抛出异常
      */
     PRODUCTION
 }

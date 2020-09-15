@@ -24,6 +24,7 @@ import java.util.Set;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 标识某个对象需要返回一组依赖对象
  */
 public interface HasDependencies {
 

@@ -24,6 +24,7 @@ package org.elasticsearch.common.inject;
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 通过操作该对象 完成功能增强
  */
 public interface MembersInjector<T> {
 

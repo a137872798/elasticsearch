@@ -129,6 +129,7 @@ public class MoreTypes {
 
         } else if (type instanceof ParameterizedType) {
             ParameterizedType p = (ParameterizedType) type;
+            // getActualTypeArguments 在 List<String> 这种情况下返回的是String  在 List<T> 这种情况下返回的是T
             return new ParameterizedTypeImpl(p.getOwnerType(),
                     p.getRawType(), p.getActualTypeArguments());
 
@@ -171,8 +172,8 @@ public class MoreTypes {
             // I'm not exactly sure why getRawType() returns Type instead of Class.
             // Neal isn't either but suspects some pathological case related
             // to nested classes exists.
-            // 这里不允许出现 T<V> 这种情况么
             Type rawType = parameterizedType.getRawType();
+            // 好像不可能存在 T<V> 这样的类型 T好像无法表示需要泛型参数的类型
             if (!(rawType instanceof Class)) {
                 throw new IllegalArgumentException(
                         "Expected a Class, but <" + type +"> is of type " + type.getClass().getName()
@@ -428,13 +429,13 @@ public class MoreTypes {
 
     /**
      * 处理 TypeVariable
-     * @param type
-     * @param rawType
-     * @param unknown
+     * @param type  此时已经解析完原对象后获取的类型信息 内部包含了解析的各种泛型信息
+     * @param rawType   当前对象的原始类型 比如 List<T> 就是List  如果是 T类型 则返回Object
+     * @param unknown  需要解析的类型
      * @return
      */
     public static Type resolveTypeVariable(Type type, Class<?> rawType, TypeVariable unknown) {
-        // 将T类型转换成实际类型
+        // 获取声明该泛型的类
         Class<?> declaredByRaw = declaringClassOf(unknown);
 
         // we can't reduce this further
@@ -465,7 +466,7 @@ public class MoreTypes {
      * a class.
      */
     private static Class<?> declaringClassOf(TypeVariable typeVariable) {
-        // 返回实际类型
+        // 代表这个泛型是由哪个类声明的
         GenericDeclaration genericDeclaration = typeVariable.getGenericDeclaration();
         return genericDeclaration instanceof Class
                 ? (Class<?>) genericDeclaration

@@ -34,6 +34,7 @@ import java.util.Set;
  * A provider that invokes a method and returns its result.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * ProviderWithDependencies 是一个复合接口 代表同时具备Provider 和 HasDependencies的功能
  */
 public class ProviderMethod<T> implements ProviderWithDependencies<T> {
     private final Key<T> key;

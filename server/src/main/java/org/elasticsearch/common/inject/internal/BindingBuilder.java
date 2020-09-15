@@ -118,14 +118,21 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
                 base.getSource(), base.getKey(), base.getScoping(), injectionPoints, instance));
     }
 
+    /**
+     * 设置数据提供者
+     * @param provider
+     * @return
+     */
     @Override
     public BindingBuilder<T> toProvider(Provider<? extends T> provider) {
         Objects.requireNonNull(provider, "provider");
+        // 确保此时 binding对象还没有被处理
         checkNotTargetted();
 
         // lookup the injection points, adding any errors to the binder's errors list
         Set<InjectionPoint> injectionPoints;
         try {
+            // 针对 RealMultibinder 会找到一个 initialize() 方法  该方法上携带了 @Inject 注解
             injectionPoints = InjectionPoint.forInstanceMethodsAndFields(provider.getClass());
         } catch (ConfigurationException e) {
             for (Message message : e.getErrorMessages()) {
@@ -135,6 +142,7 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
         }
 
         BindingImpl<T> base = getBinding();
+        // 将UntargettedBindingImpl 改造成 ProviderInstanceBindingImpl
         setBinding(new ProviderInstanceBindingImpl<>(
                 base.getSource(), base.getKey(), base.getScoping(), injectionPoints, provider));
         return this;

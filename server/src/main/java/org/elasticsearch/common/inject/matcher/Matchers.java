@@ -29,6 +29,7 @@ import java.util.Objects;
  * Matcher implementations. Supports matching classes and methods.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 静态工厂
  */
 public class Matchers {
     private Matchers() {
@@ -43,6 +44,9 @@ public class Matchers {
 
     private static final Matcher<Object> ANY = new Any();
 
+    /**
+     * 代表匹配任何对象都会成功
+     */
     private static class Any extends AbstractMatcher<Object> {
         @Override
         public boolean matches(Object o) {
@@ -66,6 +70,10 @@ public class Matchers {
         return new Not<>(p);
     }
 
+    /**
+     * 生成一个与内部匹配对象相关的结果
+     * @param <T>
+     */
     private static class Not<T> extends AbstractMatcher<T> {
         final Matcher<? super T> delegate;
 
@@ -95,8 +103,13 @@ public class Matchers {
         }
     }
 
+    /**
+     * 检测某个注解是否保留到运行期
+     * @param annotationType
+     */
     private static void checkForRuntimeRetention(
             Class<? extends Annotation> annotationType) {
+        // @Retention 是注解的注解 分别有 Source  Class Runtime 对应着 源文件 class文件 字节码文件  代表注解的存活时期
         Retention retention = annotationType.getAnnotation(Retention.class);
         if (retention == null || retention.value() != RetentionPolicy.RUNTIME) {
             throw new IllegalArgumentException("Annotation " + annotationType.getSimpleName() + " is missing RUNTIME retention");
@@ -112,14 +125,24 @@ public class Matchers {
         return new AnnotatedWithType(annotationType);
     }
 
+    /**
+     * 生成一个基于注解进行匹配的对象
+     * AnnotatedElement  代表某个携带注解的元素 可以是class field method constructor 等
+     */
     private static class AnnotatedWithType extends AbstractMatcher<AnnotatedElement> {
         private final Class<? extends Annotation> annotationType;
 
         AnnotatedWithType(Class<? extends Annotation> annotationType) {
             this.annotationType = Objects.requireNonNull(annotationType, "annotation type");
+            // 要创建基于注解进行匹配的对象 首先就要要求注解在运行期还保留 否则抛出异常
             checkForRuntimeRetention(annotationType);
         }
 
+        /**
+         * 待匹配的元素 必须包含该注解才能匹配成功
+         * @param element
+         * @return
+         */
         @Override
         public boolean matches(AnnotatedElement element) {
             return element.getAnnotation(annotationType) != null;
@@ -145,6 +168,7 @@ public class Matchers {
     /**
      * Returns a matcher which matches elements (methods, classes, etc.)
      * with a given annotation.
+     * 该对象与上面的区别是 必须确保目标对象上挂载的注解 equals相等  注解可以通过实现类来覆盖equals方法
      */
     public static Matcher<AnnotatedElement> annotatedWith(
             final Annotation annotation) {
@@ -185,7 +209,7 @@ public class Matchers {
     /**
      * Returns a matcher which matches subclasses of the given type (as well as
      * the given type).
-     * 主要传入的值是目标值的子类 就认为匹配成功
+     * 只要目标值是 该匹配器内部 superclass的子类就满足条件
      */
     public static Matcher<Class> subclassesOf(final Class<?> superclass) {
         return new SubclassesOf(superclass);
@@ -222,6 +246,7 @@ public class Matchers {
 
     /**
      * Returns a matcher which matches objects equal to the given object.
+     * 只有当目标值与内部的value equals一致时才匹配成功
      */
     public static Matcher<Object> only(Object value) {
         return new Only(value);
@@ -303,6 +328,9 @@ public class Matchers {
         return new InPackage(targetPackage);
     }
 
+    /**
+     * 只要同一个包下就能匹配成功
+     */
     private static class InPackage extends AbstractMatcher<Class> {
         private final transient Package targetPackage;
         private final String packageName;
@@ -389,6 +417,9 @@ public class Matchers {
         return new Returns(returnType);
     }
 
+    /**
+     * 以 Matcher<? super Class<?>> 的类型作为返回值的类型 进行匹配
+     */
     private static class Returns extends AbstractMatcher<Method> {
         private final Matcher<? super Class<?>> returnType;
 

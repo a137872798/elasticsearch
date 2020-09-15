@@ -28,24 +28,40 @@ import java.lang.reflect.Modifier;
 
 /**
  * Invokes an injectable method.
+ * 基于单个方法对应的增强点 进行增强
  */
 class SingleMethodInjector implements SingleMemberInjector {
+
+    /**
+     * 定义了一个调用方法的接口
+     */
     final MethodInvoker methodInvoker;
     final SingleParameterInjector<?>[] parameterInjectors;
+
+    /**
+     * 方法的增强点
+     */
     final InjectionPoint injectionPoint;
 
     SingleMethodInjector(InjectorImpl injector, InjectionPoint injectionPoint, Errors errors)
             throws ErrorsException {
         this.injectionPoint = injectionPoint;
         final Method method = (Method) injectionPoint.getMember();
+        // 根据method对象  创建句柄对象
         methodInvoker = createMethodInvoker(method);
         parameterInjectors = injector.getParametersInjectors(injectionPoint.getDependencies(), errors);
     }
 
+    /**
+     * 创建句柄对象 实际上就是调用method
+     * @param method
+     * @return
+     */
     private MethodInvoker createMethodInvoker(final Method method) {
 
         // We can't use FastMethod if the method is private.
         int modifiers = method.getModifiers();
+        // 啥也没干啊
         if (!Modifier.isPrivate(modifiers) && !Modifier.isProtected(modifiers)) {
         }
 

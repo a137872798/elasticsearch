@@ -23,22 +23,36 @@ import java.util.concurrent.ConcurrentHashMap;
  * exception is thrown on retrieval.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 缓存对象
  */
 public abstract class FailableCache<K, V> {
 
+    /**
+     * 实际上缓存功能是委托给该类
+     */
     private final ConcurrentHashMap<K, Object> cache = new ConcurrentHashMap<>();
 
+    /**
+     * 生成缓存数据的方法
+     * @param key
+     * @param errors
+     * @return
+     * @throws ErrorsException
+     */
     protected abstract V create(K key, Errors errors) throws ErrorsException;
 
     public V get(K key, Errors errors) throws ErrorsException {
+        // 先从缓存中获取
         Object resultOrError = cache.get(key);
         if (resultOrError == null) {
             synchronized (this) {
                 resultOrError = load(key);
                 // we can't use cache.computeIfAbsent since this might be recursively call this API
+                // 将结果存储到cache中
                 cache.putIfAbsent(key, resultOrError);
             }
         }
+        // 当检测到生成的是 errors对象 代表创建数据失败 选择抛出异常
         if (resultOrError instanceof Errors) {
             errors.merge((Errors) resultOrError);
             throw errors.toException();

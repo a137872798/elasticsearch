@@ -18,6 +18,7 @@ package org.elasticsearch.common.inject.binder;
 
 /**
  * Binds to a constant value.
+ * 绑定在常量上
  */
 public interface ConstantBindingBuilder {
 

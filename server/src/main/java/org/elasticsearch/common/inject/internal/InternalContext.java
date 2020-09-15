@@ -26,12 +26,22 @@ import java.util.Map;
  * dependencies.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 维护一些增强时需要的信息
  */
 public final class InternalContext {
 
     private Map<Object, ConstructionContext<?>> constructionContexts = new HashMap<>();
+    /**
+     * 增强点依赖的数据
+     */
     private Dependency dependency;
 
+    /**
+     * 为某个待增强对象生成构造器上下文
+     * @param key
+     * @param <T>
+     * @return
+     */
     @SuppressWarnings("unchecked")
     public <T> ConstructionContext<T> getConstructionContext(Object key) {
         ConstructionContext<T> constructionContext

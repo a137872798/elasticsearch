@@ -25,6 +25,7 @@ import java.util.Set;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 该接口明确定义了返回实例对象的api
  */
 public interface InstanceBinding<T> extends Binding<T>, HasDependencies {
 

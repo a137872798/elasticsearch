@@ -361,6 +361,7 @@ public interface Binder {
      *                      their clients.
      * @return a binder that shares its configuration with this binder.
      * @since 2.0
+     * 这个api的意思应该是在原有的基础上进行跳过某些类  这些类不会参与增强
      */
     Binder skipSources(Class<?>... classesToSkip);
 

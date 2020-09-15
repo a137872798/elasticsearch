@@ -102,6 +102,7 @@ public abstract class Multibinder<T> {
         binder = binder.skipSources(RealMultibinder.class, Multibinder.class);
         RealMultibinder<T> result = new RealMultibinder<>(binder, type, "",
                 Key.get(Multibinder.<T>setOf(type)));
+        // 使用原binder对象处理 生成的新对象
         binder.install(result);
         return result;
     }
@@ -158,7 +159,11 @@ public abstract class Multibinder<T> {
         return newSetBinder(binder, TypeLiteral.get(type), annotationType);
     }
 
-    @SuppressWarnings("unchecked") // wrapping a T in a Set safely returns a Set<T>
+    @SuppressWarnings("unchecked")
+    /**
+     * wrapping a T in a Set safely returns a Set<T>
+     *     将T 类型转换成 Set<T>
+      */
     private static <T> TypeLiteral<Set<T>> setOf(TypeLiteral<T> elementType) {
         Type type = Types.setOf(elementType.getType());
         return (TypeLiteral<Set<T>>) TypeLiteral.get(type);
@@ -211,6 +216,13 @@ public abstract class Multibinder<T> {
         private List<Provider<T>> providers;
         private Set<Dependency<?>> dependencies;
 
+        /**
+         *
+         * @param binder  就是 RecordingBinder
+         * @param elementType   代表元素类型
+         * @param setName  该属性可忽略 默认为""
+         * @param setKey   将元素类型以Set进行包装
+         */
         private RealMultibinder(Binder binder, TypeLiteral<T> elementType,
                                 String setName, Key<Set<T>> setKey) {
             this.binder = Objects.requireNonNull(binder, "binder");
@@ -219,6 +231,10 @@ public abstract class Multibinder<T> {
             this.setKey = Objects.requireNonNull(setKey, "setKey");
         }
 
+        /**
+         * 当使用 RecordingBinder处理该对象时 先触发该方法
+         * @param binder
+         */
         @Override
         public void configure(Binder binder) {
             checkConfiguration(!isInitialized(), "Multibinder was already initialized");

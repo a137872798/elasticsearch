@@ -31,6 +31,10 @@ import java.util.List;
  * @author jessewilson@google.com (Jesse Wilson)
  */
 class DeferredLookups implements Lookups {
+
+    /**
+     * 与该查询对象关联的 注入器对象
+     */
     private final InjectorImpl injector;
     private final List<Element> lookups = new ArrayList<>();
 

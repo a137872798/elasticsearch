@@ -142,6 +142,7 @@ public final class Elements {
 
         /**
          * Creates a recording binder that's backed by {@code prototype}.
+         * 大部分数据从 旧对象从拷贝 但是本次指定了source
          */
         private RecordingBinder(
                 RecordingBinder prototype, Object source, SourceProvider sourceProvider) {
@@ -267,7 +268,7 @@ public final class Elements {
         }
 
         /**
-         * 在当前对象上绑定一个 key
+         * 每当为该binder对象增加一个要处理的module时 会生成一个新的builder对象
          * @param key
          * @param <T>
          * @return
@@ -317,18 +318,32 @@ public final class Elements {
             elements.add(new TypeConverterBinding(getSource(), typeMatcher, converter));
         }
 
+        /**
+         * 每当指定 source时 会返回一个新的  RecordingBinder 对象
+         * @param source any object representing the source location and has a
+         *               concise {@link Object#toString() toString()} value
+         * @return
+         */
         @Override
         public RecordingBinder withSource(final Object source) {
             return new RecordingBinder(this, source, null);
         }
 
+        /**
+         * 记录需要跳过的 class
+         * @param classesToSkip library classes that create bindings on behalf of
+         *                      their clients.
+         * @return
+         */
         @Override
         public RecordingBinder skipSources(Class... classesToSkip) {
             // if a source is specified explicitly, we don't need to skip sources
+            // 如果明确的声明了 source 那么就不需要考虑skip了 skip是针对那种在全范围的基础上跳过某些类
             if (source != null) {
                 return this;
             }
 
+            // 这个sourceProvider 仅提供栈轨迹信息   在调用plusSkippedClasses 后某些类的栈轨迹信息就不会被获取
             SourceProvider newSourceProvider = sourceProvider.plusSkippedClasses(classesToSkip);
             return new RecordingBinder(this, null, newSourceProvider);
         }
@@ -377,6 +392,10 @@ public final class Elements {
 
         private static Logger logger = LogManager.getLogger(Elements.class);
 
+        /**
+         * 获取要处理的数据源   可能该对象在初始化时 就指定了source 也可能需要借助 sourceProvider来获取 同时sourceProvider内部会指定哪些class需要被跳过
+         * @return
+         */
         protected Object getSource() {
             Object ret;
             if (logger.isDebugEnabled()) {

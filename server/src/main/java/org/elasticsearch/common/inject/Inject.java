@@ -61,6 +61,7 @@ public @interface Inject {
      * field). When applied to a method, the method will only be invoked if
      * bindings for <i>all</i> parameters are found. When applied to a
      * constructor, an error will result upon Injector creation.
+     * 当该属性为true时 代表忽略待注入bean不存在的情况 如果为false 当发现待注入bean不存在 则立即抛出异常
      */
     boolean optional() default false;
 }

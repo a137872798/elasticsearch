@@ -23,6 +23,7 @@ import java.util.Set;
  * Minimal set that doesn't hold strong references to the contained keys.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 这个有点意思 不是将key本身进行强引用 而是使用它的字面量作为匹配的标准
  */
 final class WeakKeySet {
 

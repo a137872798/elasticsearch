@@ -27,12 +27,22 @@ import java.util.List;
  * Context of a dependency construction. Used to manage circular references.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 构造器相关的上下文
  */
 public class ConstructionContext<T> {
 
+    /**
+     * 代表当前正在处理的对象
+     */
     T currentReference;
+    /**
+     * 当前是否还处在构造阶段
+     */
     boolean constructing;
 
+    /**
+     * 代表一组通过代理对象处理的 jdk动态代理对象
+     */
     List<DelegatingInvocationHandler<T>> invocationHandlers;
 
     public T getCurrentReference() {
@@ -60,11 +70,19 @@ public class ConstructionContext<T> {
         invocationHandlers = null;
     }
 
+    /**
+     * 创建代理对象
+     * @param errors
+     * @param expectedType  需要创建代理对象的类型
+     * @return
+     * @throws ErrorsException
+     */
     public Object createProxy(Errors errors, Class<?> expectedType) throws ErrorsException {
         // TODO: if I create a proxy which implements all the interfaces of
         // the implementation type, I'll be able to get away with one proxy
         // instance (as opposed to one per caller).
 
+        // 只支持处理接口类型
         if (!expectedType.isInterface()) {
             throw errors.cannotSatisfyCircularDependency(expectedType).toException();
         }
@@ -81,10 +99,16 @@ public class ConstructionContext<T> {
         //ClassLoader classLoader = BytecodeGen.getClassLoader(expectedType);
         ClassLoader classLoader = expectedType.getClassLoader() == null ?
             ClassLoader.getSystemClassLoader() : expectedType.getClassLoader();
+
+        // 生成代理对象后返回
         return expectedType.cast(Proxy.newProxyInstance(classLoader,
                 new Class[]{expectedType}, invocationHandler));
     }
 
+    /**
+     * 为所有DelegatingInvocationHandler设置代理对象
+     * @param delegate
+     */
     public void setProxyDelegates(T delegate) {
         if (invocationHandlers != null) {
             for (DelegatingInvocationHandler<T> handler : invocationHandlers) {
@@ -93,10 +117,22 @@ public class ConstructionContext<T> {
         }
     }
 
+    /**
+     * 动态代理接口
+     * @param <T>
+     */
     static class DelegatingInvocationHandler<T> implements InvocationHandler {
 
         T delegate;
 
+        /**
+         * 将 调用方法转发给delegate处理
+         * @param proxy
+         * @param method
+         * @param args
+         * @return
+         * @throws Throwable
+         */
         @Override
         public Object invoke(Object proxy, Method method, Object[] args)
                 throws Throwable {

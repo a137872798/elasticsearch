@@ -37,11 +37,14 @@ class MembersInjectorStore {
     private final InjectorImpl injector;
     private final List<TypeListenerBinding> typeListenerBindings;
 
+    /**
+     * 缓存 待增强类 与绑定的增强对象
+     */
     private final FailableCache<TypeLiteral<?>, MembersInjectorImpl<?>> cache
-            = new FailableCache<TypeLiteral<?>, MembersInjectorImpl<?>>() {
+        = new FailableCache<TypeLiteral<?>, MembersInjectorImpl<?>>() {
         @Override
         protected MembersInjectorImpl<?> create(TypeLiteral<?> type, Errors errors)
-                throws ErrorsException {
+            throws ErrorsException {
             return createWithListeners(type, errors);
         }
     };
@@ -70,18 +73,23 @@ class MembersInjectorStore {
 
     /**
      * Creates a new members injector and attaches both injection listeners and method aspects.
+     *
+     * @param type 待增强的对象
+     * @return 生成针对 method/field进行增强的对象
      */
     private <T> MembersInjectorImpl<T> createWithListeners(TypeLiteral<T> type, Errors errors)
-            throws ErrorsException {
+        throws ErrorsException {
         int numErrorsBefore = errors.size();
 
         Set<InjectionPoint> injectionPoints;
         try {
+            // 从目标类上 找到所有支持增强的method/field
             injectionPoints = InjectionPoint.forInstanceMethodsAndFields(type);
         } catch (ConfigurationException e) {
             errors.merge(e.getErrorMessages());
             injectionPoints = e.getPartialValue();
         }
+
         List<SingleMemberInjector> injectors = getInjectors(injectionPoints, errors);
         errors.throwIfNewErrors(numErrorsBefore);
 
@@ -105,16 +113,18 @@ class MembersInjectorStore {
      * Returns the injectors for the specified injection points.
      */
     List<SingleMemberInjector> getInjectors(
-            Set<InjectionPoint> injectionPoints, Errors errors) {
+        Set<InjectionPoint> injectionPoints, Errors errors) {
         List<SingleMemberInjector> injectors = new ArrayList<>();
         for (InjectionPoint injectionPoint : injectionPoints) {
             try {
                 Errors errorsForMember = injectionPoint.isOptional()
-                        ? new Errors(injectionPoint)
-                        : errors.withSource(injectionPoint);
+                    ? new Errors(injectionPoint)
+                    : errors.withSource(injectionPoint);
                 SingleMemberInjector injector = injectionPoint.getMember() instanceof Field
-                        ? new SingleFieldInjector(this.injector, injectionPoint, errorsForMember)
-                        : new SingleMethodInjector(this.injector, injectionPoint, errorsForMember);
+                    // 代表基于field的增强对象
+                    ? new SingleFieldInjector(this.injector, injectionPoint, errorsForMember)
+                    // 基于method的增强对象
+                    : new SingleMethodInjector(this.injector, injectionPoint, errorsForMember);
                 injectors.add(injector);
             } catch (ErrorsException ignoredForNow) {
                 // ignored for now

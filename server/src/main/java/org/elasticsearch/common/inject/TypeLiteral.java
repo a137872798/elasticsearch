@@ -96,7 +96,7 @@ public class TypeLiteral<T> {
     TypeLiteral(Type type) {
         // 发现泛型类型时 将信息抽取出来 并生成impl
         this.type = canonicalize(Objects.requireNonNull(type, "type"));
-        // 获取原始类型 一般就是 针对泛型一般就是 Object 如果是class类型 就是直接返回
+        // 获取原始类型 针对泛型一般就是 Object 如果是class类型 就是直接返回
         this.rawType = (Class<? super T>) MoreTypes.getRawType(this.type);
         // 计算hash值
         this.hashCode = MoreTypes.hashCode(this.type);
@@ -198,11 +198,17 @@ public class TypeLiteral<T> {
         return TypeLiteral.get(resolveType(toResolve));
     }
 
+    /**
+     * 将某个类型进行解析  可能是泛型类型
+     * @param toResolve
+     * @return
+     */
     Type resolveType(Type toResolve) {
         // this implementation is made a little more complicated in an attempt to avoid object-creation
         while (true) {
             if (toResolve instanceof TypeVariable) {
                 TypeVariable original = (TypeVariable) toResolve;
+                // 解析泛型参数 T
                 toResolve = MoreTypes.resolveTypeVariable(type, rawType, original);
                 if (toResolve == original) {
                     return toResolve;
@@ -302,6 +308,7 @@ public class TypeLiteral<T> {
 
         if (methodOrConstructor instanceof Method) {
             Method method = (Method) methodOrConstructor;
+            // 待处理的方法必须是属于该对象本身的
             if (!method.getDeclaringClass().isAssignableFrom(rawType)) {
                 throw new IllegalArgumentException(method + " is not defined by a supertype of " + type);
             }

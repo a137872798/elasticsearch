@@ -22,9 +22,16 @@ import org.elasticsearch.common.inject.spi.InjectionPoint;
 
 /**
  * Injects a field or method of a given object.
+ * memberInjector  代表针对某个实例下所有可增强的 method/field 进行增强
+ * 而SingleMemberInjector 则代表仅针对单个 field/method 进行增强
  */
 interface SingleMemberInjector {
+
     void inject(Errors errors, InternalContext context, Object o);
 
+    /**
+     * 获取该对象针对的注入点
+     * @return
+     */
     InjectionPoint getInjectionPoint();
 }

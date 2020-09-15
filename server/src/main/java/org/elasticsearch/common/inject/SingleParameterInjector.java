@@ -24,10 +24,14 @@ import org.elasticsearch.common.inject.spi.Dependency;
 
 /**
  * Resolves a single parameter, to be used in a constructor or method invocation.
+ * 代表某个待增强方法中某个参数的的相关信息
  */
 class SingleParameterInjector<T> {
     private static final Object[] NO_ARGUMENTS = {};
 
+    /**
+     * 代表这个参数上 内置@BindingAnnotation的注解
+     */
     private final Dependency<T> dependency;
     private final InternalFactory<? extends T> factory;
 

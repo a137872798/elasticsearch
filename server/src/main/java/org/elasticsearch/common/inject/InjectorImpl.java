@@ -59,7 +59,7 @@ import static org.elasticsearch.common.inject.internal.Annotations.findScopeAnno
  *
  * @author crazybob@google.com (Bob Lee)
  * @see InjectorBuilder
- * 注入实现类
+ * Injector 接口本身只有这一个实现类  它内部封装了为实例/type对象增强的必要条件 相当于一个中枢类
  */
 class InjectorImpl implements Injector, Lookups {
 
@@ -68,11 +68,16 @@ class InjectorImpl implements Injector, Lookups {
      */
     final State state;
     boolean readOnly;
+
+    /**
+     * 一对多的map
+     */
     BindingsMultimap bindingsMultimap = new BindingsMultimap();
     final Initializer initializer;
 
     /**
      * Just-in-time binding cache. Guarded by state.lock()
+     * value 对应的是基于jit的增强对象
      */
     Map<Key<?>, BindingImpl<?>> jitBindings = new HashMap<>();
 
@@ -92,6 +97,7 @@ class InjectorImpl implements Injector, Lookups {
 
     /**
      * Indexes bindings by type.
+     * 遍历此时存储在state中的所有映射关系 并存储到 bindingsMultimap
      */
     void index() {
         for (Binding<?> binding : state.getExplicitBindingsThisLevel().values()) {
@@ -103,6 +109,12 @@ class InjectorImpl implements Injector, Lookups {
         bindingsMultimap.put(binding.getKey().getTypeLiteral(), binding);
     }
 
+    /**
+     * 返回会对该type进行增强的所有绑定对象
+     * @param type
+     * @param <T>
+     * @return
+     */
     @Override
     public <T> List<Binding<T>> findBindingsByType(TypeLiteral<T> type) {
         return bindingsMultimap.getAll(type);
@@ -113,6 +125,7 @@ class InjectorImpl implements Injector, Lookups {
      * parent has a binding and the binding is scoped, it will use that binding.  Otherwise, this
      * checks for an explicit binding. If no explicit binding is found, it looks for a just-in-time
      * binding.
+     * 通过key 找到对应的绑定类
      */
     public <T> BindingImpl<T> getBindingOrThrow(Key<T> key, Errors errors)
             throws ErrorsException {
@@ -123,6 +136,7 @@ class InjectorImpl implements Injector, Lookups {
         }
 
         // Look for an on-demand binding.
+        // 在state中存储的是jit绑定对象  现在进行创建
         return getJustInTimeBinding(key, errors);
     }
 
@@ -130,6 +144,8 @@ class InjectorImpl implements Injector, Lookups {
      * Returns a just-in-time binding for {@code key}, creating it if necessary.
      *
      * @throws ErrorsException if the binding could not be created.
+     *
+     * 生成一个 jit增强类
      */
     private <T> BindingImpl<T> getJustInTimeBinding(Key<T> key, Errors errors)
             throws ErrorsException {
@@ -161,14 +177,23 @@ class InjectorImpl implements Injector, Lookups {
                 && !key.hasAnnotationType();
     }
 
+    /**
+     * 创建 MembersInjector 的绑定对象
+     * @param key
+     * @param errors
+     * @param <T>
+     * @return
+     * @throws ErrorsException
+     */
     private <T> BindingImpl<MembersInjector<T>> createMembersInjectorBinding(
             Key<MembersInjector<T>> key, Errors errors) throws ErrorsException {
         Type membersInjectorType = key.getTypeLiteral().getType();
+        // 必须是 MembersInjector<T> 而不是 MembersInjector
         if (!(membersInjectorType instanceof ParameterizedType)) {
             throw errors.cannotInjectRawMembersInjector().toException();
         }
 
-        @SuppressWarnings("unchecked") // safe because T came from Key<MembersInjector<T>>
+        @SuppressWarnings("unchecked") // safe because T came from Key<MembersInjector<T>>   获取T类型 并生成TypeLiteral
                 TypeLiteral<T> instanceType = (TypeLiteral<T>) TypeLiteral.get(
                 ((ParameterizedType) membersInjectorType).getActualTypeArguments()[0]);
         MembersInjector<T> membersInjector = membersInjectorStore.get(instanceType, errors);
@@ -184,21 +209,25 @@ class InjectorImpl implements Injector, Lookups {
     /**
      * Creates a synthetic binding to {@code Provider<T>}, i.e. a binding to the provider from
      * {@code Binding<T>}.
+     *
      */
     private <T> BindingImpl<Provider<T>> createProviderBinding(Key<Provider<T>> key, Errors errors)
             throws ErrorsException {
         Type providerType = key.getTypeLiteral().getType();
 
         // If the Provider has no type parameter (raw Provider)...
+        // 必须是 Provider<T>  而不是 provider
         if (!(providerType instanceof ParameterizedType)) {
             throw errors.cannotInjectRawProvider().toException();
         }
 
+        // 获取T的类型
         Type entryType = ((ParameterizedType) providerType).getActualTypeArguments()[0];
 
         @SuppressWarnings("unchecked") // safe because T came from Key<Provider<T>>
                 Key<T> providedKey = (Key<T>) key.ofType(entryType);
 
+        // 生成binding对象
         BindingImpl<T> delegate = getBindingOrThrow(providedKey, errors);
         return new ProviderBindingImpl<>(this, key, delegate);
     }
@@ -263,11 +292,13 @@ class InjectorImpl implements Injector, Lookups {
             return null;
         }
 
+        // 因为之前是根据 String 生成key的 这里就是返回string
         String stringValue = stringBinding.getProvider().get();
         Object source = stringBinding.getSource();
 
         // Find a matching type converter.
         TypeLiteral<T> type = key.getTypeLiteral();
+        // 将string 转换成需要的类型
         MatcherAndConverter matchingConverter = state.getConverter(stringValue, type, errors, source);
 
         if (matchingConverter == null) {
@@ -285,6 +316,7 @@ class InjectorImpl implements Injector, Lookups {
                         .toException();
             }
 
+            // 转换的类型不匹配 则抛出异常
             if (!type.getRawType().isInstance(converted)) {
                 throw errors.conversionTypeError(stringValue, source, type, matchingConverter, converted)
                         .toException();
@@ -299,12 +331,24 @@ class InjectorImpl implements Injector, Lookups {
         }
     }
 
+    /**
+     * 该对象代表是将一个string常量值转换过来的
+     * @param <T>
+     */
     private static class ConvertedConstantBindingImpl<T>
             extends BindingImpl<T> implements ConvertedConstantBinding<T> {
         final T value;
         final Provider<T> provider;
         final Binding<String> originalBinding;
 
+
+        /**
+         *
+         * @param injector  注入器对象
+         * @param key
+         * @param value  将字面量转换后的结果
+         * @param originalBinding  字面量对应的绑定对象
+         */
         ConvertedConstantBindingImpl(
                 Injector injector, Key<T> key, T value, Binding<String> originalBinding) {
             super(injector, key, originalBinding.getSource(),
@@ -559,6 +603,7 @@ class InjectorImpl implements Injector, Lookups {
     /**
      * Attempts to create a just-in-time binding for {@code key} in the root injector, falling back to
      * other ancestor injectors until this injector is tried.
+     * 尝试创建一个 jit的增强对象
      */
     private <T> BindingImpl<T> createJustInTimeBindingRecursive(Key<T> key, Errors errors)
             throws ErrorsException {
@@ -567,7 +612,9 @@ class InjectorImpl implements Injector, Lookups {
         }
 
         BindingImpl<T> binding = createJustInTimeBinding(key, errors);
+        // 将key存储到黑名单中 避免重复创建
         state.parent().blacklist(key);
+        // 将关联关系存储到 jitBindings中
         jitBindings.put(key, binding);
         return binding;
     }
@@ -585,6 +632,7 @@ class InjectorImpl implements Injector, Lookups {
      *
      * @throws org.elasticsearch.common.inject.internal.ErrorsException
      *          if the binding cannot be created.
+     *          创建 jit的增强对象
      */
     <T> BindingImpl<T> createJustInTimeBinding(Key<T> key, Errors errors) throws ErrorsException {
         if (state.isBlacklisted(key)) {
@@ -592,6 +640,7 @@ class InjectorImpl implements Injector, Lookups {
         }
 
         // Handle cases where T is a Provider<?>.
+        // 如果key的类型是 Provider
         if (isProvider(key)) {
             // These casts are safe. We know T extends Provider<X> and that given Key<Provider<X>>,
             // createProviderBinding() will return BindingImpl<Provider<X>>.
@@ -601,6 +650,7 @@ class InjectorImpl implements Injector, Lookups {
         }
 
         // Handle cases where T is a MembersInjector<?>
+        // 如果key类型为 MembersInjector
         if (isMembersInjector(key)) {
             // These casts are safe. T extends MembersInjector<X> and that given Key<MembersInjector<X>>,
             // createMembersInjectorBinding() will return BindingImpl<MembersInjector<X>>.
@@ -610,6 +660,7 @@ class InjectorImpl implements Injector, Lookups {
         }
 
         // Try to convert a constant string binding to the requested type.
+        // 代表如何为其他情况的 key 构建增强对象
         BindingImpl<T> convertedBinding = convertConstantStringBinding(key, errors);
         if (convertedBinding != null) {
             return convertedBinding;
@@ -635,6 +686,14 @@ class InjectorImpl implements Injector, Lookups {
         return binding;
     }
 
+    /**
+     * 基于某个key 生成工厂对象
+     * @param key
+     * @param errors
+     * @param <T>
+     * @return
+     * @throws ErrorsException
+     */
     <T> InternalFactory<? extends T> getInternalFactory(Key<T> key, Errors errors)
             throws ErrorsException {
         return getBindingOrThrow(key, errors).getInternalFactory();
@@ -646,10 +705,16 @@ class InjectorImpl implements Injector, Lookups {
     private static class BindingsMultimap {
 
         /**
-         * 每个待增强类 可能会绑定一组增强对象
+         * 每个待增强类 可能会绑定一组增强对象   这个意思应该就是说增强可以多层嵌套
          */
         final Map<TypeLiteral<?>, List<Binding<?>>> multimap = new HashMap<>();
 
+        /**
+         * 添加一组 待增强对象 与 增强类的绑定关系
+         * @param type
+         * @param binding
+         * @param <T>
+         */
         <T> void put(TypeLiteral<T> type, Binding<T> binding) {
             List<Binding<?>> bindingsForType = multimap.get(type);
             if (bindingsForType == null) {
@@ -672,6 +737,7 @@ class InjectorImpl implements Injector, Lookups {
 
     /**
      * Returns parameter injectors, or {@code null} if there are no parameters.
+     * @param parameters   方法级注入点 本身会包含一个参数列表
      */
     SingleParameterInjector<?>[] getParametersInjectors(
             List<Dependency<?>> parameters, Errors errors) throws ErrorsException {
@@ -680,6 +746,7 @@ class InjectorImpl implements Injector, Lookups {
         }
 
         int numErrorsBefore = errors.size();
+        // 针对方法级的注入点 每个参数都会对应一个 dependency对象
         SingleParameterInjector<?>[] result = new SingleParameterInjector<?>[parameters.size()];
         int i = 0;
         for (Dependency<?> parameter : parameters) {
@@ -694,6 +761,14 @@ class InjectorImpl implements Injector, Lookups {
         return result;
     }
 
+    /**
+     * 使用当前依赖对象 创建参数注入点
+     * @param dependency   这个依赖点一般key是内置了 @BindingAnnotation的注解
+     * @param errors
+     * @param <T>
+     * @return
+     * @throws ErrorsException
+     */
     <T> SingleParameterInjector<T> createParameterInjector(final Dependency<T> dependency,
                                                            final Errors errors) throws ErrorsException {
         InternalFactory<? extends T> factory = getInternalFactory(dependency.getKey(), errors);
