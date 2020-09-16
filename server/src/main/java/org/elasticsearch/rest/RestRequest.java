@@ -54,15 +54,27 @@ import java.util.stream.Collectors;
 import static org.elasticsearch.common.unit.ByteSizeValue.parseBytesSizeValue;
 import static org.elasticsearch.common.unit.TimeValue.parseTimeValue;
 
+/**
+ * 代表基于rest风格进行交互的请求体
+ */
 public class RestRequest implements ToXContent.Params {
 
     // tchar pattern as defined by RFC7230 section 3.2.6
     private static final Pattern TCHAR_PATTERN = Pattern.compile("[a-zA-z0-9!#$%&'*+\\-.\\^_`|~]+");
 
+    /**
+     * 每个请求会携带一个 id   通过 原子类进行递增
+     */
     private static final AtomicLong requestIdGenerator = new AtomicLong();
 
     private final NamedXContentRegistry xContentRegistry;
+    /**
+     * 本次请求体携带的参数
+     */
     private final Map<String, String> params;
+    /**
+     * 请求头
+     */
     private final Map<String, List<String>> headers;
     private final String rawPath;
     private final Set<String> consumedParams = new HashSet<>();
@@ -173,6 +185,9 @@ public class RestRequest implements ToXContent.Params {
             requestIdGenerator.incrementAndGet());
     }
 
+    /**
+     * 标识请求方式
+     */
     public enum Method {
         GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH, TRACE, CONNECT
     }

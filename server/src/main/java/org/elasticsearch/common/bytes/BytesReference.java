@@ -36,6 +36,7 @@ import java.util.ArrayList;
 
 /**
  * A reference to bytes.
+ * bytes的包装类  有点像lucene的 BytesRef
  */
 public interface BytesReference extends Comparable<BytesReference>, ToXContentFragment {
 
@@ -105,6 +106,7 @@ public interface BytesReference extends Comparable<BytesReference>, ToXContentFr
 
     /**
      * Returns BytesReference composed of the provided ByteBuffer.
+     * 将byteBuffer对象 包装成BytesReference
      */
     static BytesReference fromByteBuffer(ByteBuffer buffer) {
         return new ByteBufferReference(buffer);
@@ -112,11 +114,13 @@ public interface BytesReference extends Comparable<BytesReference>, ToXContentFr
 
     /**
      * Returns the byte at the specified index. Need to be between 0 and length.
+     * 返回下标对应的byte
      */
     byte get(int index);
 
     /**
      * Returns the integer read from the 4 bytes (BE) starting at the given index.
+     * 将对应下标的byte 以int形式返回
      */
     int getInt(int index);
 
@@ -125,16 +129,19 @@ public interface BytesReference extends Comparable<BytesReference>, ToXContentFr
      * @param marker marker byte to search
      * @param from lower bound for the index to check (inclusive)
      * @return first index of the marker or {@code -1} if not found
+     * 从目标位置开始找到marker第一次出现的位置
      */
     int indexOf(byte marker, int from);
 
     /**
      * The length.
+     * 数据体长度
      */
     int length();
 
     /**
      * Slice the bytes from the {@code from} index up to {@code length}.
+     * 创建分片对象
      */
     BytesReference slice(int from, int length);
 
@@ -145,11 +152,13 @@ public interface BytesReference extends Comparable<BytesReference>, ToXContentFr
 
     /**
      * A stream input of the bytes.
+     * 将当前数据流 以 input形式返回
      */
     StreamInput streamInput() throws IOException;
 
     /**
      * Writes the bytes directly to the output stream.
+     * 通过 outputStream内部的数据来初始化 bytesReference
      */
     void writeTo(OutputStream os) throws IOException;
 
@@ -160,6 +169,7 @@ public interface BytesReference extends Comparable<BytesReference>, ToXContentFr
 
     /**
      * Converts to Lucene BytesRef.
+     * 转换成lucene的 bytesRef
      */
     BytesRef toBytesRef();
 
@@ -167,6 +177,7 @@ public interface BytesReference extends Comparable<BytesReference>, ToXContentFr
      * Returns a BytesRefIterator for this BytesReference. This method allows
      * access to the internal pages of this reference without copying them. Use with care!
      * @see BytesRefIterator
+     * 获取能够遍历 BytesRef 的对象
      */
     BytesRefIterator iterator();
 }

@@ -33,6 +33,8 @@ import java.io.IOException;
  */
 public class BoundTransportAddress implements Writeable {
 
+    // 这里存在2种维度的地址
+
     /**
      * TransportAddress 代表一个传输层的  ip + port
      */

@@ -30,6 +30,9 @@ import org.elasticsearch.node.ReportingService;
 
 import java.io.IOException;
 
+/**
+ * 具备将当前信息输出到 outputStream的能力
+ */
 public class HttpInfo implements ReportingService.Info {
 
     private final BoundTransportAddress address;

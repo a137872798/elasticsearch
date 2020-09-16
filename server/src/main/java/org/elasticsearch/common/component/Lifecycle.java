@@ -62,10 +62,25 @@ package org.elasticsearch.common.component;
  */
 public class Lifecycle {
 
+    /**
+     * 描述生命周期的枚举
+     */
     public enum State {
+        /**
+         * 代表组件初始化完成
+         */
         INITIALIZED,
+        /**
+         * 组件此时处于暂停状态
+         */
         STOPPED,
+        /**
+         * 组件开始运行
+         */
         STARTED,
+        /**
+         * 组件已关闭
+         */
         CLOSED
     }
 
@@ -103,11 +118,20 @@ public class Lifecycle {
         return state == State.CLOSED;
     }
 
+    /**
+     * 表示此时状态是否已经停止或关闭
+     * @return
+     */
     public boolean stoppedOrClosed() {
         Lifecycle.State state = this.state;
         return state == State.STOPPED || state == State.CLOSED;
     }
 
+    /**
+     * 当前状态是否允许转换成 started 状态
+     * @return
+     * @throws IllegalStateException
+     */
     public boolean canMoveToStarted() throws IllegalStateException {
         State localState = this.state;
         if (localState == State.INITIALIZED || localState == State.STOPPED) {

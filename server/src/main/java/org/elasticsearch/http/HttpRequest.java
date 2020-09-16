@@ -29,9 +29,13 @@ import java.util.Map;
 /**
  * A basic http request abstraction. Http modules needs to implement this interface to integrate with the
  * server package's rest handling.
+ * 代表一种请求体
  */
 public interface HttpRequest {
 
+    /**
+     * 使用的协议版本号
+     */
     enum HttpVersion {
         HTTP_1_0,
         HTTP_1_1
@@ -42,14 +46,20 @@ public interface HttpRequest {
      *
      * @return the {@link RestRequest.Method} used in the REST request
      * @throws IllegalArgumentException if the HTTP method is invalid
+     * 获取请求方式
      */
     RestRequest.Method method();
 
     /**
      * The uri of the rest request, with the query string.
+     * 获取请求路径 包含 "?" 后面的东西
      */
     String uri();
 
+    /**
+     * 代表数据内容
+     * @return
+     */
     BytesReference content();
 
     /**

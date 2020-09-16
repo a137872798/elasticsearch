@@ -29,10 +29,18 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.function.ToIntBiFunction;
 
+/**
+ * 定义了一些实现骨架
+ */
 public abstract class AbstractBytesReference implements BytesReference {
 
     private Integer hash = null; // we cache the hash of this reference since it can be quite costly to re-calculated it
 
+    /**
+     * 从目标位置开始连续读取4个byte 结合成int后返回
+     * @param index
+     * @return
+     */
     @Override
     public int getInt(int index) {
         return (get(index) & 0xFF) << 24 | (get(index + 1) & 0xFF) << 16 | (get(index + 2) & 0xFF) << 8 | get(index + 3) & 0xFF;
@@ -68,8 +76,14 @@ public abstract class AbstractBytesReference implements BytesReference {
         return toBytesRef().utf8ToString();
     }
 
+    /**
+     * 将当前对象转换成  BytesRef的迭代器对象
+     * @return
+     */
     @Override
     public BytesRefIterator iterator() {
+
+        // 该迭代器内只包含一个 bytesRef
         return new BytesRefIterator() {
             BytesRef ref = length() == 0 ? null : toBytesRef();
             @Override
@@ -126,6 +140,7 @@ public abstract class AbstractBytesReference implements BytesReference {
 
     /**
      * Compares the two references using the given int function.
+     * 使用传入的函数 比较2个 bytesReference对象
      */
     private static int compareIterators(final BytesReference a, final BytesReference b, final ToIntBiFunction<BytesRef, BytesRef> f) {
         try {
@@ -173,6 +188,11 @@ public abstract class AbstractBytesReference implements BytesReference {
         }
     }
 
+    /**
+     * 将ref内的指针向前推进 length的距离
+     * @param ref
+     * @param length
+     */
     private static void advance(final BytesRef ref, final int length) {
         assert ref.length >= length : " ref.length: " + ref.length + " length: " + length;
         assert ref.offset+length < ref.bytes.length || (ref.offset+length == ref.bytes.length && ref.length-length == 0)

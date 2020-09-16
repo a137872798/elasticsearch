@@ -21,8 +21,15 @@ package org.elasticsearch.common.component;
 
 import org.elasticsearch.common.lease.Releasable;
 
+/**
+ * 代表组件的生命周期
+ */
 public interface LifecycleComponent extends Releasable {
 
+    /**
+     * 返回当前组件所处的生命周期状态
+     * @return
+     */
     Lifecycle.State lifecycleState();
 
     void addLifecycleListener(LifecycleListener listener);
