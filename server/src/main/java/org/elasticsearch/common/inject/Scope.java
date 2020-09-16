@@ -48,6 +48,7 @@ public interface Scope {
      * @return a new provider which only delegates to the given unscoped provider
      *         when an instance of the requested object doesn't already exist in this
      *         scope
+     *         将一个普通的provider 对象通过scope包装后 返回一个提供单例 or 原型模式的对象
      */
     <T> Provider<T> scope(Key<T> key, Provider<T> unscoped);
 

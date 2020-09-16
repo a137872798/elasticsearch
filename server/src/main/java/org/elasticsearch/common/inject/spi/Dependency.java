@@ -50,9 +50,9 @@ public final class Dependency<T> {
 
     /**
      * 初始化时 只是进行简单的赋值操作
-     * @param injectionPoint   该对象是基于哪个注入点生成的
-     * @param key   如果某个参数上不包含@BindingAnnonation注解的注解 那么该key 为null
-     * @param nullable   参数注解上是否包含 @Nullable注解
+     * @param injectionPoint
+     * @param key  如果该参数上有内置@BindingAnnotation 的注解 则key是绑定参数与 注解后的 key对象 否则只是将参数包装成key
+     * @param nullable  该参数是否是必要的
      * @param parameterIndex   该参数在参数列表中的下标
      */
     Dependency(InjectionPoint injectionPoint, Key<T> key,
@@ -66,7 +66,7 @@ public final class Dependency<T> {
     /**
      * Returns a new dependency that is not attached to an injection point. The returned dependency is
      * nullable.
-     * 这样会返回一个没有连接到任何注入点的 依赖对象
+     * 生成一个依赖对象
      */
     public static <T> Dependency<T> get(Key<T> key) {
         return new Dependency<>(null, key, true, -1);

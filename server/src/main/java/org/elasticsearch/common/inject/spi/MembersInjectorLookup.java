@@ -31,6 +31,7 @@ import java.util.Objects;
  *
  * @author crazybob@google.com (Bob Lee)
  * @since 2.0
+ * 通过相关信息寻找属性注入器对象
  */
 public final class MembersInjectorLookup<T> implements Element {
 
@@ -64,6 +65,7 @@ public final class MembersInjectorLookup<T> implements Element {
      * Sets the actual members injector.
      *
      * @throws IllegalStateException if the delegate is already set
+     * 从外部设置代理对象
      */
     public void initializeDelegate(MembersInjector<T> delegate) {
         if (this.delegate != null) {
@@ -72,6 +74,10 @@ public final class MembersInjectorLookup<T> implements Element {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
     }
 
+    /**
+     * 这里是将传入的binder对象生成的注入器作为内部的代理对象
+     * @param binder to apply configuration element to
+     */
     @Override
     public void applyTo(Binder binder) {
         initializeDelegate(binder.withSource(getSource()).getMembersInjector(type));
@@ -90,6 +96,7 @@ public final class MembersInjectorLookup<T> implements Element {
      * Returns the looked up members injector. The result is not valid until this lookup has been
      * initialized, which usually happens when the injector is created. The members injector will
      * throw an {@code IllegalStateException} if you try to use it beforehand.
+     * 返回的注入器功能就是由代理对象实现的 在使用该对象前肯定要确保delegate对象已经被设置
      */
     public MembersInjector<T> getMembersInjector() {
         return new MembersInjector<T>() {

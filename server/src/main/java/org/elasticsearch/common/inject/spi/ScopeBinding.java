@@ -32,16 +32,20 @@ import java.util.Objects;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
- * 描述绑定的范围
+ * 描述当遇到某个注解时  ioc容器注入的对象采用指定的scope (单例or原型)
  */
 public final class ScopeBinding implements Element {
+
+    /**
+     * 调用 Builder.bindScope() 的对象
+     */
     private final Object source;
     /**
-     * 代表该注解的绑定范围???
+     * 被标记的注解
      */
     private final Class<? extends Annotation> annotationType;
     /**
-     * 范围信息
+     * 使用的范围
      */
     private final Scope scope;
 
@@ -69,6 +73,10 @@ public final class ScopeBinding implements Element {
         return visitor.visit(this);
     }
 
+    /**
+     * 将该对象的 范围信息应用到另一个binder对象
+     * @param binder to apply configuration element to
+     */
     @Override
     public void applyTo(Binder binder) {
         binder.withSource(getSource()).bindScope(annotationType, scope);

@@ -36,7 +36,7 @@ import java.util.Objects;
  *     }</pre>
  *
  * @author crazybob@google.com (Bob Lee)
- * 调用 addError使用的参数  代表一种异常信息
+ * 代表一种异常信息 在guice的架构中作为一个element 具备被visitor处理 以及被 binder维护的职能
  */
 public final class Message implements Element {
     private final String message;
@@ -47,6 +47,8 @@ public final class Message implements Element {
     private final List<Object> sources;
 
     /**
+     * @param  sources  调用 builder.addError 的对象
+     * @param message  代表异常信息
      * @since 2.0
      */
     public Message(List<Object> sources, String message, Throwable cause) {

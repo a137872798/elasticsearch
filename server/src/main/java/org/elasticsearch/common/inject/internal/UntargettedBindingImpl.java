@@ -23,6 +23,10 @@ import org.elasticsearch.common.inject.spi.BindingTargetVisitor;
 import org.elasticsearch.common.inject.spi.Dependency;
 import org.elasticsearch.common.inject.spi.UntargettedBinding;
 
+/**
+ * 代表一个未完成的binding对象
+ * @param <T>
+ */
 public class UntargettedBindingImpl<T> extends BindingImpl<T> implements UntargettedBinding<T> {
 
     /**

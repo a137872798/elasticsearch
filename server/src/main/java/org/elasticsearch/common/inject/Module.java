@@ -29,6 +29,7 @@ package org.elasticsearch.common.inject;
  * will be created for all methods annotated with {@literal @}{@link Provides}.
  * Use scope and binding annotations on these methods to configure the
  * bindings.
+ * module是定义绑定逻辑的模板  而binder维护绑定关系
  */
 public interface Module {
 

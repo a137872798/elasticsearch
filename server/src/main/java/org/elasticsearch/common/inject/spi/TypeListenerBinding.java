@@ -28,6 +28,7 @@ import org.elasticsearch.common.inject.matcher.Matcher;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 为满足 matches的对象设置监听器
  */
 public final class TypeListenerBinding implements Element {
 
@@ -66,6 +67,10 @@ public final class TypeListenerBinding implements Element {
         return visitor.visit(this);
     }
 
+    /**
+     * 将相同数据作用到另一个binder对象上
+     * @param binder to apply configuration element to
+     */
     @Override
     public void applyTo(Binder binder) {
         binder.withSource(getSource()).bindListener(typeMatcher, listener);

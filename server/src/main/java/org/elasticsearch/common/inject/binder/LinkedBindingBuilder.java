@@ -24,7 +24,7 @@ import org.elasticsearch.common.inject.TypeLiteral;
  * See the EDSL examples at {@link org.elasticsearch.common.inject.Binder}.
  *
  * @author crazybob@google.com (Bob Lee)
- *
+ * 这个接口就 代表绑定关系  也就是将 A 关联到 A1impl  并且处理这种最直接的绑定关系外 还可以将复杂的绑定关系串起来
  */
 public interface LinkedBindingBuilder<T> extends ScopedBindingBuilder {
 
@@ -54,6 +54,7 @@ public interface LinkedBindingBuilder<T> extends ScopedBindingBuilder {
      * See the EDSL examples at {@link org.elasticsearch.common.inject.Binder}.
      *
      * @see org.elasticsearch.common.inject.Injector#injectMembers
+     * 指定某接口绑定的 实例提供者
      */
     ScopedBindingBuilder toProvider(Provider<? extends T> provider);
 

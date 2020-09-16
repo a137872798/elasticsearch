@@ -36,12 +36,14 @@ public class Scopes {
 
     /**
      * One instance per {@link Injector}. Also see {@code @}{@link Singleton}.
+     * 将provider 包装成单例模式
      */
     public static final Scope SINGLETON = new Scope() {
         @Override
         public <T> Provider<T> scope(Key<T> key, final Provider<T> creator) {
             return new Provider<T>() {
 
+                // 可以发现在返回的provider中 维护了一个实例对象 这样就不用重复创建了
                 private volatile T instance;
 
                 // DCL on a volatile is safe as of Java 5, which we obviously require.
@@ -57,6 +59,7 @@ public class Scopes {
                         */
                         synchronized (InjectorImpl.class) {
                             if (instance == null) {
+                                // 原来的provider 仅提供创建对象的能力
                                 instance = creator.get();
                             }
                         }
@@ -88,7 +91,7 @@ public class Scopes {
      * this to "no scope" in your binding.
      *
      * @since 2.0
-     * 代表没有指定范围
+     * 原型模式 也就是不对provider做处理 provider本身实现就是每次返回一个新对象
      */
     public static final Scope NO_SCOPE = new Scope() {
         @Override

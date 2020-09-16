@@ -36,7 +36,7 @@ package org.elasticsearch.common.inject;
  *
  * @param <T> the type of object this provides
  * @author crazybob@google.com (Bob Lee)
- * 一个基础的提供者接口
+ * 代表ioc容器中 用于获取实例的对象 通常要和某个接口绑定起来 代表着当检测到某个携带 @Inject的接口时 需要使用provider生成对象 以及进行注入
  */
 public interface Provider<T> {
 

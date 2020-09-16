@@ -31,6 +31,7 @@ import java.util.Set;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 为class注入静态属性的请求对象
  */
 public final class StaticInjectionRequest implements Element {
     private final Object source;
@@ -61,6 +62,7 @@ public final class StaticInjectionRequest implements Element {
      *                                a field with multiple binding annotations. The exception's {@link
      *                                ConfigurationException#getPartialValue() partial value} is a {@code Set<InjectionPoint>}
      *                                of the valid injection points.
+     *                                获取class的所有注入点
      */
     public Set<InjectionPoint> getInjectionPoints() throws ConfigurationException {
         return InjectionPoint.forStaticMethodsAndFields(type);

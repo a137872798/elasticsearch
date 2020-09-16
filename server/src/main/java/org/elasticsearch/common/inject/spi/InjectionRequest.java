@@ -32,11 +32,21 @@ import java.util.Set;
  *
  * @author mikeward@google.com (Mike Ward)
  * @since 2.0
+ * 代表一个注入的请求
  */
 public final class InjectionRequest<T> implements Element {
 
+    /**
+     * 发起注入请求的对象
+     */
     private final Object source;
+    /**
+     * 为实例对象解析class后生成的类型信息
+     */
     private final TypeLiteral<T> type;
+    /**
+     * 待注入的实例对象
+     */
     private final T instance;
 
     public InjectionRequest(Object source, TypeLiteral<T> type, T instance) {
@@ -69,11 +79,18 @@ public final class InjectionRequest<T> implements Element {
      *                                instance}, such as a field with multiple binding annotations. The exception's {@link
      *                                ConfigurationException#getPartialValue() partial value} is a {@code Set<InjectionPoint>}
      *                                of the valid injection points.
+     *                                获取目标类上的所有注入点 为之后的注入做准备
      */
     public Set<InjectionPoint> getInjectionPoints() throws ConfigurationException {
         return InjectionPoint.forInstanceMethodsAndFields(instance.getClass());
     }
 
+    /**
+     * 这些方法的套路都是一样的  委托给visitor处理
+     * @param visitor to call back on
+     * @param <R>
+     * @return
+     */
     @Override
     public <R> R acceptVisitor(ElementVisitor<R> visitor) {
         return visitor.visit(this);

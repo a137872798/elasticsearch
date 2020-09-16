@@ -104,20 +104,38 @@ public final class Elements {
 
     /**
      * Binder 内置实现只有该类
+     * 从 Binder 的api观察 它的核心功能就是维护注入点与实际注入类的绑定关系 还可以通过传入注入点 返回一个提供实例的provider
      */
     private static class RecordingBinder implements Binder, PrivateBinder {
+
+        /**
+         * 代表当前ioc容器的模式  是否提前进行检查 还是不检查 etc
+         */
         private final Stage stage;
+
+        /**
+         * 代表该对象处理过那些module中定义的绑定逻辑
+         */
         private final Set<Module> modules;
 
         /**
          * 推测绑定的 对象会存储到这个列表中
+         * TODO element是什么 ???
          */
         private final List<Element> elements;
+
+        /**
+         * 表示该binder对象是否在一开始就指定了是针对那个实例而言的
+         */
         private final Object source;
+        /**
+         * source 或者 sourceProvider 仅能存在一个  sourceProvider 负责返回栈轨迹中最先弹出的类 也可以理解为当前类
+         */
         private final SourceProvider sourceProvider;
 
         /**
          * The binder where exposed bindings will be created
+         * 看来binder对象本身是具有层级关系的
          */
         private final RecordingBinder parent;
         private final PrivateElementsImpl privateElements;
@@ -132,7 +150,7 @@ public final class Elements {
             this.modules = new HashSet<>();
             this.elements = new ArrayList<>();
             this.source = null;
-            // 标记某些 provider 需要被跳过
+            // 默认情况下 source为null  选择初始化 sourceProvider
             this.sourceProvider = new SourceProvider().plusSkippedClasses(
                     Elements.class, RecordingBinder.class, AbstractModule.class,
                     ConstantBindingBuilderImpl.class, AbstractBindingBuilder.class, BindingBuilder.class);
@@ -172,22 +190,45 @@ public final class Elements {
             this.privateElements = privateElements;
         }
 
+        /**
+         * 代表被某个注解修饰的属性 在被ioc容器注入实例时的方式 (单例 or 原型模式)
+         * @param annotationType
+         * @param scope  该对象包含一个接口 在加工普通的provider后 使之具备单例模式的能力
+         */
         @Override
         public void bindScope(Class<? extends Annotation> annotationType, Scope scope) {
             elements.add(new ScopeBinding(getSource(), annotationType, scope));
         }
 
+        /**
+         * 为传入的实例对象完成属性注入
+         * @param instance for which members will be injected
+         */
         @Override
         @SuppressWarnings("unchecked") // it is safe to use the type literal for the raw type
         public void requestInjection(Object instance) {
+            // 获取实例对应的class的信息 之后为实例注入需要的属性
             requestInjection((TypeLiteral) TypeLiteral.get(instance.getClass()), instance);
         }
 
+        /**
+         * 为实例注入需要的属性
+         * @param type     of instance
+         * @param instance for which members will be injected
+         * @param <T>
+         */
         @Override
         public <T> void requestInjection(TypeLiteral<T> type, T instance) {
+            // 发现每个请求都被包装成了 elements对象 并维护在elements中 推测会有一个对象在之后按照这个elements链处理 最终返回注入后的对象
             elements.add(new InjectionRequest<>(getSource(), type, instance));
         }
 
+        /**
+         * 为指定的类型返回一个 成员注入器   requestInjection 代表一种被动的注入 将实例交由binder处理 而该方法则是使用者主动获取注入器 注入时机由使用者决定
+         * @param typeLiteral type to get members injector for
+         * @param <T>
+         * @return
+         */
         @Override
         public <T> MembersInjector<T> getMembersInjector(final TypeLiteral<T> typeLiteral) {
             final MembersInjectorLookup<T> element
@@ -201,11 +242,20 @@ public final class Elements {
             return getMembersInjector(TypeLiteral.get(type));
         }
 
+        /**
+         * 为匹配matches的对象设置监听器
+         * @param typeMatcher that matches injectable types the listener should be notified of
+         * @param listener    for injectable types matched by typeMatcher
+         */
         @Override
         public void bindListener(Matcher<? super TypeLiteral<?>> typeMatcher, TypeListener listener) {
             elements.add(new TypeListenerBinding(getSource(), listener, typeMatcher));
         }
 
+        /**
+         * 以class 为单位 就是注入静态属性
+         * @param types for which static members will be injected
+         */
         @Override
         public void requestStaticInjection(Class<?>... types) {
             for (Class<?> type : types) {
@@ -214,7 +264,7 @@ public final class Elements {
         }
 
         /**
-         * 添加这些module对象 在添加过程中 还会进行配置
+         * 实际上就是使用module内部定义的configure 逻辑为本对象绑定更多的映射关系  因为用户在module中就是重写了各种绑定逻辑
          * @param module
          */
         @Override
@@ -241,7 +291,7 @@ public final class Elements {
                         addError(e);
                     }
                 }
-                // 将module包装后 重新调用了一遍该方法
+                // 是这样子  如果在module对象中 写了包含@Provider的方法 它会被抽取出来 作为某种接口的提供类
                 binder.install(ProviderMethodsModule.forModule(module));
             }
         }
@@ -251,6 +301,11 @@ public final class Elements {
             return stage;
         }
 
+        /**
+         * 异常信息被包装后也会作为element 并设置到elements中
+         * @param message
+         * @param arguments
+         */
         @Override
         public void addError(String message, Object... arguments) {
             elements.add(new Message(getSource(), Errors.format(message, arguments)));
@@ -268,14 +323,13 @@ public final class Elements {
         }
 
         /**
-         * 每当为该binder对象增加一个要处理的module时 会生成一个新的builder对象
+         * 当绑定一个key时 返回一个基于注解的 bindingBuilder对象 可以通过to() 方法指定注入的实现类
          * @param key
          * @param <T>
          * @return
          */
         @Override
         public <T> AnnotatedBindingBuilder<T> bind(Key<T> key) {
-            // getSource() 默认情况下是返回异常栈轨迹信息
             return new BindingBuilder<>(this, elements, getSource(), key);
         }
 

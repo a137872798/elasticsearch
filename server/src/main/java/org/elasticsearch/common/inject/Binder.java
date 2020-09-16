@@ -184,20 +184,23 @@ import java.lang.annotation.Annotation;
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
  * @author kevinb@google.com (Kevin Bourrillion)
- * 具备绑定能力的对象   一般就是 RecordingBinder
+ * 该对象将接口 与 实现类进行绑定 在Guice中作为为ioc容器管理映射关系的对象
  */
 public interface Binder {
 
     /**
      * Binds a scope to an annotation.
-     * 增加一个描述绑定范围的东西
+     * 为携带某个注解的待注入属性标记注入范围  比如标记范围为单例 则从IOC容器中返回单例  又或者每次返回一个新实例
      */
     void bindScope(Class<? extends Annotation> annotationType, Scope scope);
 
     /**
      * See the EDSL examples at {@link Binder}.
+     * 当绑定一个 Key 后就返回一个用于构建整个映射链的builder对象
      */
     <T> LinkedBindingBuilder<T> bind(Key<T> key);
+
+    // 以下套路类似 通过绑定某个东西后 返回一个相关的builder 用于构建整个映射链
 
     /**
      * See the EDSL examples at {@link Binder}.
@@ -221,6 +224,7 @@ public interface Binder {
      * @param type     of instance
      * @param instance for which members will be injected
      * @since 2.0
+     * 为传入的 instance进行注入
      */
     <T> void requestInjection(TypeLiteral<T> type, T instance);
 
@@ -230,6 +234,7 @@ public interface Binder {
      *
      * @param instance for which members will be injected
      * @since 2.0
+     * 为instance 进行属性注入
      */
     void requestInjection(Object instance);
 
@@ -238,16 +243,19 @@ public interface Binder {
      * and methods in the given classes.
      *
      * @param types for which static members will be injected
+     *              为类注入静态属性
      */
     void requestStaticInjection(Class<?>... types);
 
     /**
      * Uses the given module to configure more bindings.
+     * module对象相当于是定义了 装配的模板  通过install 使用module的逻辑 为当前的binder对象 增加更多的映射关系
      */
     void install(Module module);
 
     /**
      * Gets the current stage.
+     * 代表IOC容器的启用模式  (提前校验 or 不校验)
      */
     Stage currentStage();
 
@@ -282,6 +290,7 @@ public interface Binder {
      * try to use it beforehand.
      *
      * @since 2.0
+     * 之前在绑定关系时 某个key 会绑定一个提供实例的对象 这里是通过key 反查provider
      */
     <T> Provider<T> getProvider(Key<T> key);
 
@@ -292,6 +301,7 @@ public interface Binder {
      * try to use it beforehand.
      *
      * @since 2.0
+     * 通过class 返回之前注册的 提供实例的 provider
      */
     <T> Provider<T> getProvider(Class<T> type);
 
@@ -303,6 +313,7 @@ public interface Binder {
      *
      * @param typeLiteral type to get members injector for
      * @since 2.0
+     * 通过传入 TypeLiteral 返回一个注入器对象 该对象具备注入 某个field 的能力
      */
     <T> MembersInjector<T> getMembersInjector(TypeLiteral<T> typeLiteral);
 
@@ -324,6 +335,7 @@ public interface Binder {
      * @param typeMatcher matches types the converter can handle
      * @param converter   converts values
      * @since 2.0
+     * 感觉像是将满足 matches匹配的对象 通过TypeConverter处理
      */
     void convertToTypes(Matcher<? super TypeLiteral<?>> typeMatcher,
                         TypeConverter converter);
@@ -335,6 +347,7 @@ public interface Binder {
      * @param typeMatcher that matches injectable types the listener should be notified of
      * @param listener    for injectable types matched by typeMatcher
      * @since 2.0
+     * 为符合matches条件的对象 绑定监听器
      */
     void bindListener(Matcher<? super TypeLiteral<?>> typeMatcher,
                       TypeListener listener);
@@ -349,6 +362,7 @@ public interface Binder {
      *               concise {@link Object#toString() toString()} value
      * @return a binder that shares its configuration with this binder
      * @since 2.0
+     * 通过指定源 使得返回的binder对象维护仅针对source的映射关系
      */
     Binder withSource(Object source);
 
@@ -361,7 +375,7 @@ public interface Binder {
      *                      their clients.
      * @return a binder that shares its configuration with this binder.
      * @since 2.0
-     * 这个api的意思应该是在原有的基础上进行跳过某些类  这些类不会参与增强
+     * 代表某些类 不会被考虑注入
      */
     Binder skipSources(Class<?>... classesToSkip);
 
@@ -373,6 +387,7 @@ public interface Binder {
      * @return a binder that inherits configuration from this binder. Only exposed configuration on
      *         the returned binder will be visible to this binder.
      * @since 2.0
+     * 返回一个私有的 binder对象
      */
     PrivateBinder newPrivateBinder();
 }

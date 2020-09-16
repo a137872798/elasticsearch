@@ -73,7 +73,7 @@ public class SourceProvider {
     /**
      * Returns the calling line of code. The selected line is the nearest to the top of the stack that
      * is not skipped.
-     * 获取当前栈轨迹信息
+     * 相当于是返回除了被排开外的当前类
      */
     public StackTraceElement get() {
         for (final StackTraceElement element : new Throwable().getStackTrace()) {

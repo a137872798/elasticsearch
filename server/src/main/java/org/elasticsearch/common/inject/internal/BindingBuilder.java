@@ -37,7 +37,7 @@ import static java.util.Collections.emptySet;
  * Bind a non-constant key.
  *
  * @author jessewilson@google.com (Jesse Wilson)
- * 代表将某个组件绑定到某个东西上
+ * 在实现了AnnotatedBindingBuilder 后已经具备了绑定 接口与实现类的功能了  (相关的api在父级接口实现)
  */
 public class BindingBuilder<T> extends AbstractBindingBuilder<T>
         implements AnnotatedBindingBuilder<T> {

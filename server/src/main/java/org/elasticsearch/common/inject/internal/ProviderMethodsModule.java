@@ -43,8 +43,13 @@ import static java.util.Collections.unmodifiableSet;
  *
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
+ * 该对象是将用户定义的module的 携带@Provider注解的方法抽取出来 作为实例的提供者  同时将这种绑定关系设置到binder中
  */
 public final class ProviderMethodsModule implements Module {
+
+    /**
+     * 原始的module对象 在被builder.install 处理后 会被包装成该对象 再处理一次
+     */
     private final Object delegate;
     /**
      * module 类对应的 泛型解析器
@@ -86,6 +91,7 @@ public final class ProviderMethodsModule implements Module {
      */
     @Override
     public synchronized void configure(Binder binder) {
+        // 找到所有携带@Provider的方法
         for (ProviderMethod<?> providerMethod : getProviderMethods(binder)) {
             providerMethod.configure(binder);
         }
@@ -110,27 +116,32 @@ public final class ProviderMethodsModule implements Module {
 
     /**
      *
-     * @param binder  可以简单理解为 RecordingBinder
+     * @param binder  负责存储绑定关系的对象
      * @param method   携带@Provider注解的方法
      * @param <T>
      * @return
      */
     <T> ProviderMethod<T> createProviderMethod(Binder binder, final Method method) {
-        // 创建一个 source 为  method的 RecordingBuilder
+        // 创建一个 source 为  method的 RecordingBuilder  同时该builder仅维护了该method的绑定关系
         binder = binder.withSource(method);
         // 生成描述错误信息的对象
         Errors errors = new Errors(method);
 
         // prepare the parameter providers
         Set<Dependency<?>> dependencies = new HashSet<>();
+        // 每个携带@Provider注解的方法会被包装成 Provider
         List<Provider<?>> parameterProviders = new ArrayList<>();
+        // 获取该方法所有参数 (包含泛型信息)
         List<TypeLiteral<?>> parameterTypes = typeLiteral.getParameterTypes(method);
         // 找到每个参数携带的注解
         Annotation[][] parameterAnnotations = method.getParameterAnnotations();
         for (int i = 0; i < parameterTypes.size(); i++) {
-            // 尝试解析参数上是否存在内置@BindingAnnotation的注解  并生成依赖对象
+            // 尝试解析参数上是否存在内置@BindingAnnotation的注解  并生成依赖对象    每个内置@BindAnnotation的注解对应的属性 代表需要通过ioc容器进行注入
+            // 比如guice的 @Named注解 代表着需要从ioc容器中找到@Named对应名字的bean 并进行注入   当没有找到时 方法参数type会被解析成key
             Key<?> key = getKey(errors, parameterTypes.get(i), method, parameterAnnotations[i]);
+            // 将key包装成依赖对象
             dependencies.add(Dependency.get(key));
+            // 从binder中获取参数提供者对象  注意此时的binder source虽然改变 但是elements 和 modules是会传递过去的
             parameterProviders.add(binder.getProvider(key));
         }
 

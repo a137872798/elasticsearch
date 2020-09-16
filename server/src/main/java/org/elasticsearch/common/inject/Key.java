@@ -281,6 +281,7 @@ public class Key<T> {
 
     /**
      * Gets a key for an injection type and an annotation.
+     * 代表本次绑定的属性 还包含了 注解信息
      * @param annotation 该注解内部 必然携带了BindingAnnotation注解
      */
     public static <T> Key<T> get(TypeLiteral<T> typeLiteral,
@@ -327,8 +328,9 @@ public class Key<T> {
         return new Key<>(typeLiteral, annotationStrategy.withoutAttributes());
     }
 
+
     /**
-     * 代表绑定的数据是借助哪个注解进行增强的
+     * 本次待注入的参数是否包含注解信息 如果包含特定注解要做不同的处理
      */
     interface AnnotationStrategy {
         Annotation getAnnotation();
@@ -349,11 +351,12 @@ public class Key<T> {
 
     /**
      * Gets the strategy for an annotation.
-     * 从注解上找到 策略信息
+     * 通过解析注解信息 获取注解包含的策略信息
      */
     static AnnotationStrategy strategyFor(Annotation annotation) {
         Objects.requireNonNull(annotation, "annotation");
         Class<? extends Annotation> annotationType = annotation.annotationType();
+        // 一些检验  先忽略
         ensureRetainedAtRuntime(annotationType);
         ensureIsBindingAnnotation(annotationType);
 
@@ -440,11 +443,19 @@ public class Key<T> {
             this.annotation = Objects.requireNonNull(annotation, "annotation");
         }
 
+        /**
+         * 因为该注解包含一些方法 所以认为它是有属性的
+         * @return
+         */
         @Override
         public boolean hasAttributes() {
             return true;
         }
 
+        /**
+         * 包装并返回一个 没有attr的对象
+         * @return
+         */
         @Override
         public AnnotationStrategy withoutAttributes() {
             return new AnnotationTypeStrategy(getAnnotationType(), annotation);
@@ -500,6 +511,10 @@ public class Key<T> {
             this.annotation = annotation;
         }
 
+        /**
+         * 因为没有任何方法 所有没有attr信息
+         * @return
+         */
         @Override
         public boolean hasAttributes() {
             return false;

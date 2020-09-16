@@ -24,6 +24,7 @@ import org.elasticsearch.common.inject.binder.AnnotatedElementBuilder;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 代表一个私有的绑定对象
  */
 public interface PrivateBinder extends Binder {
 

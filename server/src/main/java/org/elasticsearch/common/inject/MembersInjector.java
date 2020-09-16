@@ -24,7 +24,7 @@ package org.elasticsearch.common.inject;
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
- * 通过操作该对象 完成功能增强
+ * 为实例指定的field注入
  */
 public interface MembersInjector<T> {
 
@@ -37,6 +37,7 @@ public interface MembersInjector<T> {
      * you, you'll never need to use this method.
      *
      * @param instance to inject members on. May be {@code null}.
+     *                 传入实例 并对实例上符合条件的字段进行注入
      */
     void injectMembers(T instance);
 }

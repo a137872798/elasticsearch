@@ -22,6 +22,7 @@ import java.lang.annotation.Annotation;
  * See the EDSL examples at {@link org.elasticsearch.common.inject.Binder}.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 代表该binderBuilder对象具备指定注解的功能  这样就可以将一些绑定关系定义在注解上 比如 携带@X 注解的A接口 必须使用 A2impl注入
  */
 public interface AnnotatedBindingBuilder<T> extends LinkedBindingBuilder<T> {
 

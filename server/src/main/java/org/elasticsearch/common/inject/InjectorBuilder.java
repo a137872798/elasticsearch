@@ -43,7 +43,7 @@ import java.util.List;
  *
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
- * 该对象负责构建注入点对象
+ * 该对象负责生成 注入器对象  该对象内部需要维护映射关系
  */
 class InjectorBuilder {
 

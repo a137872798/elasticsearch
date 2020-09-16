@@ -30,7 +30,7 @@ import java.util.Objects;
  * Bind a value or constant.
  *
  * @author jessewilson@google.com (Jesse Wilson)
- * 将每个模块都包装成一个bindingBuilder
+ * bindingBuilder的骨架类
  */
 public abstract class AbstractBindingBuilder<T> {
 
@@ -47,7 +47,8 @@ public abstract class AbstractBindingBuilder<T> {
     protected static final Key<?> NULL_KEY = Key.get(Void.class);
 
     /**
-     * 每个builder对象都会将 key 包装成一个 bindingImpl 并设置到 elements中
+     * 该列表是由某个  binder传递过来的
+     * binding在设置完毕后 会追加到列表中
      */
     protected List<Element> elements;
     /**
@@ -72,9 +73,8 @@ public abstract class AbstractBindingBuilder<T> {
         this.elements = elements;
         // 因为在集中处理binder对象时  每当处理一个对象 就会被加入到 elements中 size会随着bind的调用  不断地增大 这样刚好就对应了下标值
         this.position = elements.size();
-        // 默认情况下 没有绑定范围  创建的是一个 Untarget对象
+        // 在builder刚创建时 可以理解为 在elements中设置了一个占位符  在之后设置完builder 会更改binding 并替换elements中的值
         this.binding = new UntargettedBindingImpl<>(source, key, Scoping.UNSCOPED);
-        // 将对象追加到elements 中
         elements.add(position, this.binding);
     }
 
@@ -95,7 +95,7 @@ public abstract class AbstractBindingBuilder<T> {
 
     /**
      * Sets the binding to a copy with the specified annotation on the bound key
-     * 更新了binding对象 仅将满足某个注解的地方作为增强点
+     * 更新了binding对象 代表本次绑定关系还限定必须携带XXX注解
      */
     protected BindingImpl<T> annotatedWithInternal(Class<? extends Annotation> annotationType) {
         Objects.requireNonNull(annotationType, "annotationType");
@@ -106,6 +106,7 @@ public abstract class AbstractBindingBuilder<T> {
 
     /**
      * Sets the binding to a copy with the specified annotation on the bound key
+     * 在binding原有的基础上 追加了必须满足某个注解的条件
      */
     protected BindingImpl<T> annotatedWithInternal(Annotation annotation) {
         Objects.requireNonNull(annotation, "annotation");
@@ -115,7 +116,7 @@ public abstract class AbstractBindingBuilder<T> {
     }
 
     /**
-     * 将注解转换成scope信息  并设置到binding上
+     * 使用描述范围的注解 比如 @Singleton  代表注入的为单例 
      * @param scopeAnnotation
      */
     public void in(final Class<? extends Annotation> scopeAnnotation) {

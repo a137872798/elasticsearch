@@ -24,7 +24,6 @@ import java.lang.annotation.Annotation;
  * See the EDSL examples at {@link org.elasticsearch.common.inject.Binder}.
  *
  * @author crazybob@google.com (Bob Lee)
- * 会创建携带范围信息的bind builder对象
  */
 public interface ScopedBindingBuilder {
 
@@ -35,6 +34,7 @@ public interface ScopedBindingBuilder {
 
     /**
      * See the EDSL examples at {@link org.elasticsearch.common.inject.Binder}.
+     * 为某组绑定关系定义范围  比如 A 接口绑定 A1impl 实现 同时采用单例模式
      */
     void in(Scope scope);
 

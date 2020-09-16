@@ -44,11 +44,22 @@ import java.util.Objects;
  * </pre>
  *
  * @author crazybob@google.com (Bob Lee)
+ * 绑定逻辑模板的 骨架类
+ *
+ * 可以看出这个类的套路是 在调用configure时 在内部设置binder对象 之后用户在重写configure时 可以调用各种bind方法 其核心都是委托给binder对象
+ * 之后binder对象被置空  全流程结束
  */
 public abstract class AbstractModule implements Module {
 
+    /**
+     * 该对象维护所有的绑定关系
+     */
     Binder binder;
 
+    /**
+     * 通过外部设置绑定对象 ， 绑定关系以绑定对象为单位进行隔离
+     * @param builder
+     */
     @Override
     public final synchronized void configure(Binder builder) {
         if (this.binder != null) {
@@ -56,14 +67,18 @@ public abstract class AbstractModule implements Module {
         }
         this.binder = Objects.requireNonNull(builder, "builder");
         try {
+            // 一旦设置了 binder对象后 就会触发 configure方法
             configure();
         } finally {
+            // 可以看到 一旦绑定关系通过binder对象处理后 该属性就被滞空了  推测是在某个地方将一个 binder对象交由所有的module 进行处理
+            // 这样会从每个module上采集信息
             this.binder = null;
         }
     }
 
     /**
      * Configures a {@link Binder} via the exposed methods.
+     * 用户通过重写该方法来完成 绑定关系的建立
      */
     protected abstract void configure();
 
@@ -76,11 +91,14 @@ public abstract class AbstractModule implements Module {
 
     /**
      * @see Binder#bindScope(Class, Scope)
+     * 范围主要是用来描述 ioc容器注入对象时采用单例模式 还是原型模式   这里应该是代表标注了某个注解的 类 会以指定的scope进行注入
      */
     protected void bindScope(Class<? extends Annotation> scopeAnnotation,
                              Scope scope) {
         binder.bindScope(scopeAnnotation, scope);
     }
+
+    // 从以下几个api来看 可以指定绑定在key/TypeLiteral/Class 上    在调用完bind后一般要调用to 来指定实例
 
     /**
      * @see Binder#bind(Key)
@@ -105,6 +123,7 @@ public abstract class AbstractModule implements Module {
 
     /**
      * @see Binder#bindConstant()
+     * 代表申请一个常量绑定的builder 之后 通过比如withAnnonation + to 方法 将携带某一注解的属性始终注入某个常量值
      */
     protected AnnotatedConstantBindingBuilder bindConstant() {
         return binder.bindConstant();

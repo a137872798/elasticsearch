@@ -58,8 +58,17 @@ import static org.elasticsearch.common.util.set.Sets.newHashSet;
  */
 class BindingProcessor extends AbstractProcessor {
 
+    /**
+     * 内部维护一组监听器
+     */
     private final List<CreationListener> creationListeners = new ArrayList<>();
+    /**
+     * 该处理器相关的初始化对象
+     */
     private final Initializer initializer;
+    /**
+     * 代表一组未初始化的 bind对象
+     */
     private final List<Runnable> uninitializedBindings = new ArrayList<>();
 
     BindingProcessor(Errors errors, Initializer initializer) {
@@ -67,6 +76,12 @@ class BindingProcessor extends AbstractProcessor {
         this.initializer = initializer;
     }
 
+    /**
+     * 处理某个绑定任务
+     * @param command
+     * @param <T>
+     * @return
+     */
     @Override
     public <T> Boolean visit(Binding<T> command) {
         final Object source = command.getSource();
