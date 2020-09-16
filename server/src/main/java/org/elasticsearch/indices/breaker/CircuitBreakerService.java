@@ -25,6 +25,7 @@ import org.elasticsearch.common.component.AbstractLifecycleComponent;
 /**
  * Interface for Circuit Breaker services, which provide breakers to classes
  * that load field data.
+ * 该对象本身继承自 生命周期组件对象
  */
 public abstract class CircuitBreakerService extends AbstractLifecycleComponent {
 

@@ -24,14 +24,24 @@ import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+/**
+ * 生命周期骨架对象
+ */
 public abstract class AbstractLifecycleComponent implements LifecycleComponent {
 
+    /**
+     * 该对象控制生命周期状态的变化
+     */
     protected final Lifecycle lifecycle = new Lifecycle();
 
     private final List<LifecycleListener> listeners = new CopyOnWriteArrayList<>();
 
     protected AbstractLifecycleComponent() {}
 
+    /**
+     * 返回当前状态
+     * @return
+     */
     @Override
     public Lifecycle.State lifecycleState() {
         return this.lifecycle.state();
@@ -50,13 +60,17 @@ public abstract class AbstractLifecycleComponent implements LifecycleComponent {
     @Override
     public void start() {
         synchronized (lifecycle) {
+            // 检测当前状态是否支持切换成start
             if (!lifecycle.canMoveToStarted()) {
                 return;
             }
+            // 触发所有钩子函数
             for (LifecycleListener listener : listeners) {
                 listener.beforeStart();
             }
+            // 由子类实现
             doStart();
+            // 修改状态
             lifecycle.moveToStarted();
             for (LifecycleListener listener : listeners) {
                 listener.afterStart();
