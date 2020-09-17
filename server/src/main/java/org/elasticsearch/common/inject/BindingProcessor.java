@@ -63,7 +63,7 @@ class BindingProcessor extends AbstractProcessor {
      */
     private final List<CreationListener> creationListeners = new ArrayList<>();
     /**
-     * 该处理器相关的初始化对象
+     * Initializer 相当于注入的开关
      */
     private final Initializer initializer;
     /**
@@ -77,7 +77,6 @@ class BindingProcessor extends AbstractProcessor {
     }
 
     /**
-     * 处理某个绑定任务
      * @param command
      * @param <T>
      * @return

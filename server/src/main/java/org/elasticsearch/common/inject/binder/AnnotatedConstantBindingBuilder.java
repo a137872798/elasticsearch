@@ -22,6 +22,7 @@ import java.lang.annotation.Annotation;
  * See the EDSL examples at {@link org.elasticsearch.common.inject.Binder}.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 通过指定注解 绑定常量
  */
 public interface AnnotatedConstantBindingBuilder {
 

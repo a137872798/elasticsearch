@@ -38,6 +38,7 @@ public final class Providers {
      * @param instance the instance that should always be provided.  This is also
      *                 permitted to be null, to enable aggressive testing, although in real
      *                 life a Guice-supplied Provider will never return null.
+     *                 一个最简单的实例提供者 总是返回同一个实例 也就是自带单例特性
      */
     public static <T> Provider<T> of(final T instance) {
         return new Provider<T>() {

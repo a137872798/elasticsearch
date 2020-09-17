@@ -24,6 +24,7 @@ import org.elasticsearch.common.inject.Key;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 代表该绑定关系将上游的key 绑定到下游的key 上 形成链式结构
  */
 public interface LinkedKeyBinding<T> extends Binding<T> {
 

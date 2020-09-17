@@ -26,6 +26,9 @@ import org.elasticsearch.common.inject.spi.ProviderKeyBinding;
 public final class LinkedProviderBindingImpl<T>
         extends BindingImpl<T> implements ProviderKeyBinding<T> {
 
+    /**
+     * 提供者对应的key
+     */
     final Key<? extends Provider<? extends T>> providerKey;
 
     public LinkedProviderBindingImpl(Injector injector, Key<T> key, Object source,

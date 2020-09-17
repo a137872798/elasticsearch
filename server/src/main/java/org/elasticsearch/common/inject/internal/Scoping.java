@@ -37,6 +37,7 @@ public abstract class Scoping {
     /**
      * No scoping annotation has been applied. Note that this is different from {@code
      * in(Scopes.NO_SCOPE)}, where the 'NO_SCOPE' has been explicitly applied.
+     * 当使用visitor处理没有任何范围的对象时 不做处理
      */
     public static final Scoping UNSCOPED = new Scoping() {
         @Override
@@ -61,7 +62,7 @@ public abstract class Scoping {
     };
 
     /**
-     * 代表针对单例范围
+     * 寻找单例注解
      */
     public static final Scoping SINGLETON_ANNOTATION = new Scoping() {
         @Override
@@ -130,7 +131,7 @@ public abstract class Scoping {
     };
 
     /**
-     * 代表从注解上获取scoping信息
+     * 根据注解信息 生成合适的 Scoping 对象
      * @param scopingAnnotation
      * @return
      */

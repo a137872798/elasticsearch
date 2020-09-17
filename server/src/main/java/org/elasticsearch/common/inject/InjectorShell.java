@@ -45,6 +45,7 @@ import static org.elasticsearch.common.inject.Scopes.SINGLETON;
  * of injectors in batch.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 每个 shell对象 按照隔离级别将 binder接收到的动作抽象出来的 elements 与 匹配的注入器对象关联起来
  */
 class InjectorShell {
 
@@ -64,6 +65,10 @@ class InjectorShell {
         return elements;
     }
 
+
+    /**
+     * 该对象负责
+     */
     static class Builder {
         private final List<Element> elements = new ArrayList<>();
 
@@ -92,7 +97,7 @@ class InjectorShell {
         }
 
         /**
-         * 更新builder的 stage信息
+         * 该对象应该是反复使用的 每次处理一个新的binder对象前 先更新成对应的 stage
          * @param stage
          * @return
          */
@@ -108,7 +113,7 @@ class InjectorShell {
         }
 
         /**
-         * 设置 module
+         * 设置 module  之后会使用一个 binder对象 执行这些module对象 并存储绑定关系
          * @param modules
          */
         void addModules(Iterable<? extends Module> modules) {
@@ -128,7 +133,7 @@ class InjectorShell {
          * Creates and returns the injector shells for the current modules. Multiple shells will be
          * returned if any modules contain {@link Binder#newPrivateBinder private environments}. The
          * primary injector will be first in the returned list.
-         * @param initializer  该对象所属的初始器
+         * @param initializer  该对象负责管理下面待注入的实例 并进行统一注入
          * @param bindingProcessor  绑定请求相关的处理器
          */
         List<InjectorShell> build(Initializer initializer, BindingProcessor bindingProcessor,
@@ -136,7 +141,7 @@ class InjectorShell {
             if (stage == null) {
                 throw new IllegalStateException("Stage not initialized");
             }
-            // 默认情况下 privateElements 为null
+            // TODO 先忽略 privateElements
             if (privateElements != null && parent == null) {
                 throw new IllegalStateException("PrivateElements with no parent");
             }
@@ -144,16 +149,16 @@ class InjectorShell {
                 throw new IllegalStateException("no state. Did you remember to lock() ?");
             }
 
-            // 生成注入实现类
+            // 创建实际执行注入的 impl对象
             InjectorImpl injector = new InjectorImpl(state, initializer);
+            // TODO 忽略
             if (privateElements != null) {
                 privateElements.initInjector(injector);
             }
 
             // bind Stage and Singleton if this is a top-level injector
-            // 默认情况下 parent也是null
             if (parent == null) {
-                // 此时在现有module下 追加一个rootModule
+                // 在用户设置的各种module之前 添加一个rootModule
                 modules.add(0, new RootModule(stage));
                 // 往 injector.state 中注入各种转换器/匹配器
                 new TypeConverterBindingProcessor(errors).prepareBuiltInConverters(injector);
@@ -277,7 +282,7 @@ class InjectorShell {
 
 
     /**
-     * 代表一个根模块
+     * 代表一个根模块  该module会放置在 modules的第一个位置
      */
     private static class RootModule implements Module {
         final Stage stage;

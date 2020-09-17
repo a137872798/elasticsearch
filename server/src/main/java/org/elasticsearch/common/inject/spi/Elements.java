@@ -278,7 +278,7 @@ public final class Elements {
                 }
 
                 try {
-                    // 装配 binder对象  实际上就是调用binder.bind
+                    // 装配 binder对象  实际上就是调用binder.bind  以及 binder.to
                     module.configure(binder);
                 } catch (IllegalArgumentException e) {
                     // NOTE: This is not in the original guice. We rethrow here to expose any explicit errors in configure()
@@ -349,11 +349,21 @@ public final class Elements {
             return bind(Key.get(type));
         }
 
+        /**
+         * 返回一个常量binder对象 同样也是将elements传入 应该是在 某个地方使用一个visitor统一处理这些elements
+         * @return
+         */
         @Override
         public AnnotatedConstantBindingBuilder bindConstant() {
             return new ConstantBindingBuilderImpl<Void>(this, elements, getSource());
         }
 
+        /**
+         * 传入某个key 获取对应的 实例提供者  在ProviderLookup内部的delegate被填充前不能使用provider 会抛出异常
+         * @param key
+         * @param <T>
+         * @return
+         */
         @Override
         public <T> Provider<T> getProvider(final Key<T> key) {
             final ProviderLookup<T> element = new ProviderLookup<>(getSource(), key);
@@ -366,6 +376,11 @@ public final class Elements {
             return getProvider(Key.get(type));
         }
 
+        /**
+         * 在elements中增加一个类型转换器 (仅针对匹配matches成功的类型)
+         * @param typeMatcher matches types the converter can handle
+         * @param converter   converts values
+         */
         @Override
         public void convertToTypes(Matcher<? super TypeLiteral<?>> typeMatcher,
                                    TypeConverter converter) {
@@ -402,12 +417,18 @@ public final class Elements {
             return new RecordingBinder(this, null, newSourceProvider);
         }
 
+        /**
+         * TODO 先忽略 privateBinder
+         * @return
+         */
         @Override
         public PrivateBinder newPrivateBinder() {
             PrivateElementsImpl privateElements = new PrivateElementsImpl(getSource());
             elements.add(privateElements);
             return new RecordingBinder(this, privateElements);
         }
+
+        // 下面的方法都是与 privateBinder相关的
 
         @Override
         public void expose(Key<?> key) {

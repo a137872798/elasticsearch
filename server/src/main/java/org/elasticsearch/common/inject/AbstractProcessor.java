@@ -40,7 +40,7 @@ import java.util.List;
  * handled element.
  *
  * @author jessewilson@google.com (Jesse Wilson)
- * 处理器实现了visitor接口
+ * visitor代表对各种element进行处理 所以实现类称为 Processor
  */
 abstract class AbstractProcessor implements ElementVisitor<Boolean> {
 
@@ -77,6 +77,8 @@ abstract class AbstractProcessor implements ElementVisitor<Boolean> {
             this.injector = null;
         }
     }
+
+    // 默认情况下不做任何操作 子类根据自己的功能重写对应的方法
 
     @Override
     public Boolean visit(Message message) {

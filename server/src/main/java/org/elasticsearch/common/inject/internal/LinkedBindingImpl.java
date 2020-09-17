@@ -24,6 +24,9 @@ import org.elasticsearch.common.inject.spi.LinkedKeyBinding;
 
 public final class LinkedBindingImpl<T> extends BindingImpl<T> implements LinkedKeyBinding<T> {
 
+    /**
+     * 代表下游没有直接处理 provider 而是先连接到key 而key的下游有provider
+     */
     final Key<? extends T> targetKey;
 
     public LinkedBindingImpl(Injector injector, Key<T> key, Object source,

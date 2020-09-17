@@ -24,6 +24,10 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 
+/**
+ * 收集用户生成的各种模块对象  这些module中定义了接口与实现类的绑定关系 通过使用他们配置binder对象（也就是将绑定关系存储到binder中） 完成injector对象的创建
+ * 之后injector对象相当于就是ioc容器的入口 当需要获取某个实例时只要传入需要的类型/接口 就可以获取到对应的实例了
+ */
 public class ModulesBuilder implements Iterable<Module> {
 
     private final List<Module> modules = new ArrayList<>();

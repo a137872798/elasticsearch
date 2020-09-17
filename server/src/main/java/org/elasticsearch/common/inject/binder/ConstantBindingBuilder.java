@@ -18,7 +18,7 @@ package org.elasticsearch.common.inject.binder;
 
 /**
  * Binds to a constant value.
- * 绑定在常量上
+ * 将某个接口 的实现绑定在常量上
  */
 public interface ConstantBindingBuilder {
 

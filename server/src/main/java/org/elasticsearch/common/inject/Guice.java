@@ -65,6 +65,7 @@ public final class Guice {
      *
      * @throws CreationException if one or more errors occur during Injector
      *                           creation
+     *                           通过当前传入的module 生成injector对象
      */
     public static Injector createInjector(Iterable<? extends Module> modules) {
         return createInjector(Stage.DEVELOPMENT, modules);

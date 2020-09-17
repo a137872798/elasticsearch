@@ -62,9 +62,9 @@ public final class ProviderInstanceBindingImpl<T> extends BindingImpl<T>
      *
      * @param source
      * @param key  原来要处理的类型
-     * @param scoping
-     * @param injectionPoints   本次要处理的注入点
-     * @param providerInstance     Provider实现类
+     * @param scoping  scoping 与scopes 的区别是 后者更加明确的指定了范围  而前者暴露了一个 visit api 便于使用visitor处理
+     * @param injectionPoints   该provider类的注入点
+     * @param providerInstance     Provider实现类  在绑定关系上游的key 会通过该对象获取注入的实例
      */
     public ProviderInstanceBindingImpl(Object source, Key<T> key, Scoping scoping,
                                        Set<InjectionPoint> injectionPoints, Provider<? extends T> providerInstance) {

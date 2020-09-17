@@ -56,7 +56,7 @@ public abstract class BindingImpl<T> implements Binding<T> {
     }
 
     /**
-     * 当以这种方式完成初始化时  factory为null
+     * 此时仅指定了被绑定的key 以及范围信息 还没有指定该key对应的实例提供者
      * @param source
      * @param key
      * @param scoping
@@ -79,6 +79,9 @@ public abstract class BindingImpl<T> implements Binding<T> {
         return source;
     }
 
+    /**
+     * 针对该key的实例提供者
+     */
     private volatile Provider<T> provider;
 
     @Override
@@ -88,7 +91,7 @@ public abstract class BindingImpl<T> implements Binding<T> {
                 throw new UnsupportedOperationException("getProvider() not supported for module bindings");
             }
 
-            // 将目标对象通过injector处理后返回一个 provider对象通过它应该就能获取增强对象了
+            // 此时才根据 key 生成对应的实例提供者
             provider = injector.getProvider(key);
         }
         return provider;
@@ -98,6 +101,10 @@ public abstract class BindingImpl<T> implements Binding<T> {
         return internalFactory;
     }
 
+    /**
+     * 获取描述实例信息的对象
+     * @return
+     */
     public Scoping getScoping() {
         return scoping;
     }
@@ -105,6 +112,7 @@ public abstract class BindingImpl<T> implements Binding<T> {
     /**
      * Is this a constant binding? This returns true for constant bindings as
      * well as toInstance() bindings.
+     * 当前对象是否绑定在一个实例上
      */
     public boolean isConstant() {
         return this instanceof InstanceBinding;

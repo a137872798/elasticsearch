@@ -31,6 +31,7 @@ import java.util.Objects;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 该对象负责将key 在ioc容器中的实例提供者拿出来
  */
 public final class ProviderLookup<T> implements Element {
 
@@ -42,6 +43,10 @@ public final class ProviderLookup<T> implements Element {
             this.lookup = lookup;
         }
 
+        /**
+         * 在使用该对象前必须确保delegate已经被设置
+         * @return
+         */
         @Override
         public T get() {
             if (lookup.delegate == null) {
@@ -59,7 +64,15 @@ public final class ProviderLookup<T> implements Element {
             return lookup.getKey();
         }
     }
+
+    /**
+     * 该对象是由谁申请而创建的
+     */
     private final Object source;
+
+    /**
+     * 对应一个唯一的 注入类 (以及注解信息)
+     */
     private final Key<T> key;
     private Provider<T> delegate;
 
@@ -77,6 +90,12 @@ public final class ProviderLookup<T> implements Element {
         return key;
     }
 
+    /**
+     * 在处理该对象时 就是委托给visitor
+     * @param visitor to call back on
+     * @param <T>
+     * @return
+     */
     @Override
     public <T> T acceptVisitor(ElementVisitor<T> visitor) {
         return visitor.visit(this);
@@ -94,6 +113,10 @@ public final class ProviderLookup<T> implements Element {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
     }
 
+    /**
+     * 使用另一个binder对象的 providerLookup 来设置内部的delegate
+     * @param binder to apply configuration element to
+     */
     @Override
     public void applyTo(Binder binder) {
         initializeDelegate(binder.withSource(getSource()).getProvider(key));

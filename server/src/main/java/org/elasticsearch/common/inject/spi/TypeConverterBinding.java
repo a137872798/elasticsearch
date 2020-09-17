@@ -31,6 +31,7 @@ import java.util.Objects;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 为符合matches的类 使用TypeConverter进行转换
  */
 public final class TypeConverterBinding implements Element {
     private final Object source;
@@ -62,6 +63,10 @@ public final class TypeConverterBinding implements Element {
         return visitor.visit(this);
     }
 
+    /**
+     * 将相同信息作用到另一个binder上
+     * @param binder to apply configuration element to
+     */
     @Override
     public void applyTo(Binder binder) {
         binder.withSource(getSource()).convertToTypes(typeMatcher, typeConverter);

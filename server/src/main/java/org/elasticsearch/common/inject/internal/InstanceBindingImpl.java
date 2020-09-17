@@ -29,9 +29,19 @@ import org.elasticsearch.common.inject.util.Providers;
 
 import java.util.Set;
 
+/**
+ * 代表这组绑定关系是基于实例的 也就是无关上游信息 下游总是返回一个实例
+ * @param <T>
+ */
 public class InstanceBindingImpl<T> extends BindingImpl<T> implements InstanceBinding<T> {
 
+    /**
+     * 返回的实例对象信息
+     */
     final T instance;
+    /**
+     * 返回该实例的提供者
+     */
     final Provider<T> provider;
     final Set<InjectionPoint> injectionPoints;
 
@@ -56,10 +66,10 @@ public class InstanceBindingImpl<T> extends BindingImpl<T> implements InstanceBi
     /**
      *
      * @param source  栈轨迹信息
-     * @param key
+     * @param key   绑定关系上游的key
      * @param scoping
-     * @param injectionPoints   从该实例上发现的各种增强点
-     * @param instance    本次待处理的实例对象
+     * @param injectionPoints  代表实例中需要的依赖信息对应的注入点
+     * @param instance    针对该绑定关系的key 始终使用该实例对象进行注入
      */
     public InstanceBindingImpl(Object source, Key<T> key, Scoping scoping,
                                Set<InjectionPoint> injectionPoints, T instance) {
@@ -106,6 +116,10 @@ public class InstanceBindingImpl<T> extends BindingImpl<T> implements InstanceBi
         return new InstanceBindingImpl<>(getSource(), key, getScoping(), injectionPoints, instance);
     }
 
+    /**
+     * 这个是绑定实例 而 ConstantBindingBuilderImpl 强制指定绑定的是一个常量
+     * @param binder to apply configuration element to
+     */
     @Override
     public void applyTo(Binder binder) {
         // instance bindings aren't scoped

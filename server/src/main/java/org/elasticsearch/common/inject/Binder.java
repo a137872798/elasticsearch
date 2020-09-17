@@ -362,7 +362,6 @@ public interface Binder {
      *               concise {@link Object#toString() toString()} value
      * @return a binder that shares its configuration with this binder
      * @since 2.0
-     * 通过指定源 使得返回的binder对象维护仅针对source的映射关系
      */
     Binder withSource(Object source);
 

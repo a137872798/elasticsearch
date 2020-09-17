@@ -24,7 +24,7 @@ import org.elasticsearch.common.inject.Binding;
  * @param <V> any type to be returned by the visit method. Use {@link Void} with
  *            {@code return null} if no return type is needed.
  * @since 2.0
- * 定义了处理 各种对象的接口
+ * visitor 就是用来处理binder中维护的所有element的
  */
 public interface ElementVisitor<V> {
 

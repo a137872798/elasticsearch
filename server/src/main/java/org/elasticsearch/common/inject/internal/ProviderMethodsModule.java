@@ -16,6 +16,8 @@
 
 package org.elasticsearch.common.inject.internal;
 
+import static java.util.Collections.unmodifiableSet;
+
 import org.elasticsearch.common.inject.Binder;
 import org.elasticsearch.common.inject.Key;
 import org.elasticsearch.common.inject.Module;
@@ -34,8 +36,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-
-import static java.util.Collections.unmodifiableSet;
 
 /**
  * Creates bindings to methods annotated with {@literal @}{@link Provides}. Use the scope and
@@ -57,8 +57,7 @@ public final class ProviderMethodsModule implements Module {
     private final TypeLiteral<?> typeLiteral;
 
     /**
-     *
-     * @param delegate   module对象
+     * @param delegate module对象
      */
     private ProviderMethodsModule(Object delegate) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
@@ -87,18 +86,21 @@ public final class ProviderMethodsModule implements Module {
 
     /**
      * 每个模块类被加工过后 会被包装成该对象 并再次触发一次configure
+     *
      * @param binder
      */
     @Override
     public synchronized void configure(Binder binder) {
         // 找到所有携带@Provider的方法
         for (ProviderMethod<?> providerMethod : getProviderMethods(binder)) {
+            // 将所有返回的 ProviderMethod 的绑定关系配置到 binder中
             providerMethod.configure(binder);
         }
     }
 
     /**
      * 获取找到 delegate内部所有包含@Provider注解的方法 进行包装后返回
+     *
      * @param binder
      * @return
      */
@@ -115,9 +117,8 @@ public final class ProviderMethodsModule implements Module {
     }
 
     /**
-     *
-     * @param binder  负责存储绑定关系的对象
-     * @param method   携带@Provider注解的方法
+     * @param binder 负责存储绑定关系的对象
+     * @param method 携带@Provider注解的方法
      * @param <T>
      * @return
      */
@@ -141,27 +142,33 @@ public final class ProviderMethodsModule implements Module {
             Key<?> key = getKey(errors, parameterTypes.get(i), method, parameterAnnotations[i]);
             // 将key包装成依赖对象
             dependencies.add(Dependency.get(key));
-            // 从binder中获取参数提供者对象  注意此时的binder source虽然改变 但是elements 和 modules是会传递过去的
+            // 从binder中获取参数提供者对象  此时实际上返回的是一个查询provider的对象 被包装成了provider 并且此时还不能进行查询 这里是提前预设这个属性 实际工作是委托给 ProviderLookup 完成的
+            // 注意此时的binder source虽然改变 但是elements 和 modules是会传递过去的
             parameterProviders.add(binder.getProvider(key));
         }
 
-        @SuppressWarnings("unchecked") // Define T as the method's return type.
-                TypeLiteral<T> returnType = (TypeLiteral<T>) typeLiteral.getReturnType(method);
+        @SuppressWarnings("unchecked")
+        // Define T as the method's return type.
+        // 找到该方法对应的返回值类型
+        TypeLiteral<T> returnType = (TypeLiteral<T>) typeLiteral.getReturnType(method);
 
+        // 获取方法级别的注解 与返回值合成 key
         Key<T> key = getKey(errors, returnType, method, method.getAnnotations());
+        // 从方法上找到包含描述范围的注解  比如 @Singleton 这样 该方法总是返回同一个实例 (单例)
         Class<? extends Annotation> scopeAnnotation
-                = Annotations.findScopeAnnotation(errors, method.getAnnotations());
+            = Annotations.findScopeAnnotation(errors, method.getAnnotations());
 
         for (Message message : errors.getMessages()) {
             binder.addError(message);
         }
 
         return new ProviderMethod<>(key, method, delegate, unmodifiableSet(dependencies),
-                parameterProviders, scopeAnnotation);
+            parameterProviders, scopeAnnotation);
     }
 
     /**
      * 找到包含 @BindingAnnotation的注解 并包装成key 后返回
+     *
      * @param errors
      * @param type
      * @param member
@@ -177,7 +184,7 @@ public final class ProviderMethodsModule implements Module {
     @Override
     public boolean equals(Object o) {
         return o instanceof ProviderMethodsModule
-                && ((ProviderMethodsModule) o).delegate == delegate;
+            && ((ProviderMethodsModule) o).delegate == delegate;
     }
 
     @Override

@@ -52,6 +52,7 @@ public class Annotations {
 
     /**
      * Returns the scoping annotation, or null if there isn't one.
+     * 找到代表范围信息的注解 也就是注解内部包含了 @ScopeAnnotation
      */
     public static Class<? extends Annotation> findScopeAnnotation(Errors errors, Annotation[] annotations) {
         Class<? extends Annotation> found = null;

@@ -21,7 +21,7 @@ package org.elasticsearch.common.inject;
  * the injector has been created.
  *
  * @author jessewilson@google.com (Jesse Wilson)
- * 具备查找注入点的能力
+ * 通过key 或者 type 能找到对应的注入对象
  */
 interface Lookups {
 

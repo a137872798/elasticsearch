@@ -100,7 +100,9 @@ public abstract class AbstractBindingBuilder<T> {
     protected BindingImpl<T> annotatedWithInternal(Class<? extends Annotation> annotationType) {
         Objects.requireNonNull(annotationType, "annotationType");
         checkNotAnnotated();
+        // 将binding内部的key更改后 重新设置
         return setBinding(binding.withKey(
+            // 包装成一个新的key
                 Key.get(this.binding.getKey().getTypeLiteral(), annotationType)));
     }
 

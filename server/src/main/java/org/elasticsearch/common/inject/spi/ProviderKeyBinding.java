@@ -26,6 +26,7 @@ import org.elasticsearch.common.inject.Provider;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 代表绑定的是提供者对应的key
  */
 public interface ProviderKeyBinding<T> extends Binding<T> {
 

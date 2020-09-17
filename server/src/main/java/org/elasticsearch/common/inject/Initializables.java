@@ -21,6 +21,7 @@ import org.elasticsearch.common.inject.internal.ErrorsException;
 
 /**
  * @author jessewilson@google.com (Jesse Wilson)
+ * Initializable 本身是为对象进行注入的 通过调用get() 方法 完成注入 而of() 返回的是一个普通实例 代表该实例本身不需要注入 直接返回就好
  */
 class Initializables {
 

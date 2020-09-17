@@ -24,6 +24,8 @@ import org.elasticsearch.common.inject.Binding;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * Binder对象维护了所有的绑定关系 并且支持继续添加新的绑定关系
+ * bind则是代表某一个绑定关系  可以获取被绑定的key 以及对应的实例提供者 provider
  */
 public interface UntargettedBinding<T> extends Binding<T> {
 }

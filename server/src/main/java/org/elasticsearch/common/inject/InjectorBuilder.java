@@ -43,7 +43,7 @@ import java.util.List;
  *
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
- * 该对象负责生成 注入器对象  该对象内部需要维护映射关系
+ * 该对象负责生成 注入器对象  它定义了设置注入器的模板代码
  */
 class InjectorBuilder {
 
@@ -58,17 +58,32 @@ class InjectorBuilder {
     private final Errors errors = new Errors();
 
     /**
-     * 描述当前的运行环境
+     * 描述当前的运行模式  比如是否开启检测
      */
     private Stage stage;
 
+    /**
+     * 初始化对象  该对象负责触发 注入动作
+     */
     private final Initializer initializer = new Initializer();
+    /**
+     * 专门处理绑定请求的 processor
+     */
     private final BindingProcessor bindingProcesor;
+    /**
+     * 处理注入请求的processor
+     */
     private final InjectionRequestProcessor injectionRequestProcessor;
 
+    /**
+     * 该对象负责构建 InjectorShell 对象
+     */
     private final InjectorShell.Builder shellBuilder = new InjectorShell.Builder();
     private List<InjectorShell> shells;
 
+    /**
+     * 在初始化阶段 通过负责触发注入动作的 initializer 生成2个处理器对象
+     */
     InjectorBuilder() {
         injectionRequestProcessor = new InjectionRequestProcessor(errors, initializer);
         bindingProcesor = new BindingProcessor(errors, initializer);

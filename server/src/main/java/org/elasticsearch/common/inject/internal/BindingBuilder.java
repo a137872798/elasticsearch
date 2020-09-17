@@ -46,7 +46,7 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
      *
      * @param binder   该对象是由哪个builder创建的
      * @param elements  当生成有效信息时 会回填到这个list中
-     * @param source  默认情况下就是 栈轨迹信息
+     * @param source  返回轨迹栈最上层的类 也就是当前类
      * @param key   代表绑定的是哪个类 以及使用的注解策略
      */
     public BindingBuilder(Binder binder, List<Element> elements, Object source, Key<T> key) {
@@ -75,23 +75,29 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
         return to(Key.get(implementation));
     }
 
+    /**
+     * 设置绑定关系的下游 也就是注入的信息
+     * @param linkedKey
+     * @return
+     */
     @Override
     public BindingBuilder<T> to(Key<? extends T> linkedKey) {
         Objects.requireNonNull(linkedKey, "linkedKey");
         checkNotTargetted();
         BindingImpl<T> base = getBinding();
+        // 生成 linkedBindingImpl 对象
         setBinding(new LinkedBindingImpl<>(
                 base.getSource(), base.getKey(), base.getScoping(), linkedKey));
         return this;
     }
 
     /**
-     * 找到实例上的增强点 并进行增强
+     * 代表当前key的下游会绑定一个实例对象
      * @param instance
      */
     @Override
     public void toInstance(T instance) {
-        // 该对象要求 binding必须是UntargettedBindingImpl 类型
+        // 该对象要求 binding必须是UntargettedBindingImpl 类型  也就是还未处理的占位符
         checkNotTargetted();
 
         // lookup the injection points, adding any errors to the binder's errors list
@@ -132,7 +138,7 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
         // lookup the injection points, adding any errors to the binder's errors list
         Set<InjectionPoint> injectionPoints;
         try {
-            // 针对 RealMultibinder 会找到一个 initialize() 方法  该方法上携带了 @Inject 注解
+            // 找到提供类上携带的所有注入点  并生成对应的 bindingImpl 对象
             injectionPoints = InjectionPoint.forInstanceMethodsAndFields(provider.getClass());
         } catch (ConfigurationException e) {
             for (Message message : e.getErrorMessages()) {
@@ -147,6 +153,8 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
                 base.getSource(), base.getKey(), base.getScoping(), injectionPoints, provider));
         return this;
     }
+
+    // 指定下游提供者
 
     @Override
     public BindingBuilder<T> toProvider(Class<? extends Provider<? extends T>> providerType) {

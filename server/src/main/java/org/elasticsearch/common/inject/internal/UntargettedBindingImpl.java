@@ -30,7 +30,6 @@ import org.elasticsearch.common.inject.spi.UntargettedBinding;
 public class UntargettedBindingImpl<T> extends BindingImpl<T> implements UntargettedBinding<T> {
 
     /**
-     * 从binding的骨架类来看 初始化该对象需要3个参数  一个是注入器 一个是key  还有一个是source
      * @param injector
      * @param key
      * @param source
@@ -45,9 +44,17 @@ public class UntargettedBindingImpl<T> extends BindingImpl<T> implements Untarge
         }, Scoping.UNSCOPED);
     }
 
+    /**
+     * 某个binder为某个key 建立绑定关系对象时 就会生成一个 BindingBuilder (Binding 就代表一个完整的绑定链) 此时还没有指定注入器 injector
+     * @param source
+     * @param key
+     * @param scoping
+     */
     public UntargettedBindingImpl(Object source, Key<T> key, Scoping scoping) {
         super(source, key, scoping);
     }
+
+    // 这里也仅仅是定义一个模板
 
     @Override
     public <V> V acceptTargetVisitor(BindingTargetVisitor<? super T, V> visitor) {
@@ -59,6 +66,11 @@ public class UntargettedBindingImpl<T> extends BindingImpl<T> implements Untarge
         return new UntargettedBindingImpl<>(getSource(), getKey(), scoping);
     }
 
+    /**
+     * 返回一个新的实例 并更新key
+     * @param key
+     * @return
+     */
     @Override
     public BindingImpl<T> withKey(Key<T> key) {
         return new UntargettedBindingImpl<>(getSource(), key, getScoping());

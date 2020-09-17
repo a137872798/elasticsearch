@@ -29,13 +29,17 @@ import java.util.List;
  * creation it's necessary to {@link #initialize initialize} these lookups.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 延迟查找对象
  */
 class DeferredLookups implements Lookups {
 
     /**
-     * 与该查询对象关联的 注入器对象
+     * 该对象负责将整个注入流程串起来
      */
     private final InjectorImpl injector;
+    /**
+     * 带查询的数据
+     */
     private final List<Element> lookups = new ArrayList<>();
 
     DeferredLookups(InjectorImpl injector) {

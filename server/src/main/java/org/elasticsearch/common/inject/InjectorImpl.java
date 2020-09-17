@@ -59,12 +59,12 @@ import static org.elasticsearch.common.inject.internal.Annotations.findScopeAnno
  *
  * @author crazybob@google.com (Bob Lee)
  * @see InjectorBuilder
- * Injector 接口本身只有这一个实现类  它内部封装了为实例/type对象增强的必要条件 相当于一个中枢类
+ * 该对象负责完成整个注入工作
  */
 class InjectorImpl implements Injector, Lookups {
 
     /**
-     * 存储在增强时需要的各种信息
+     * 维护需要的各种信息
      */
     final State state;
     boolean readOnly;
@@ -85,9 +85,8 @@ class InjectorImpl implements Injector, Lookups {
 
 
     /**
-     * 使用 状态对象和 initializer 进行初始化
-     * @param state
-     * @param initializer   该对象负责管理待处理的增强点
+     * @param state  包含调用过程中需要的各种参数
+     * @param initializer   该对象负责维护所有的待注入的实例
      */
     InjectorImpl(State state, Initializer initializer) {
         this.state = state;
@@ -700,17 +699,17 @@ class InjectorImpl implements Injector, Lookups {
     }
 
     /**
-     * 绑定关系的多重映射容器
+     * 因为每个表示接口的 key 或者 TypeLiteral 都可以有多个实现类 所以容器内是一对多的关系
      */
     private static class BindingsMultimap {
 
         /**
-         * 每个待增强类 可能会绑定一组增强对象   这个意思应该就是说增强可以多层嵌套
+         * 每个 待注入的类型 可能会有多个实现类
          */
         final Map<TypeLiteral<?>, List<Binding<?>>> multimap = new HashMap<>();
 
         /**
-         * 添加一组 待增强对象 与 增强类的绑定关系
+         * 添加一组 映射关系
          * @param type
          * @param binding
          * @param <T>
@@ -725,8 +724,14 @@ class InjectorImpl implements Injector, Lookups {
         }
 
 
+        /**
+         * safe because we only put matching entries into the map
+         * 获取某个类型下所有的绑定关系
+         * @param type
+         * @param <T>
+         * @return
+         */
         @SuppressWarnings("unchecked")
-            // safe because we only put matching entries into the map
         <T> List<Binding<T>> getAll(TypeLiteral<T> type) {
             List<Binding<?>> bindings = multimap.get(type);
             return bindings != null

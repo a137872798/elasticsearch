@@ -27,6 +27,7 @@ import java.util.Set;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 代表该binding 对象的下游是一个 provider对象  同时provider.class本身可能还有一组注入点
  */
 public interface ProviderInstanceBinding<T> extends Binding<T>, HasDependencies {
 
