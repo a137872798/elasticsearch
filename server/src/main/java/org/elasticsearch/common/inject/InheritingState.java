@@ -48,6 +48,10 @@ class InheritingState implements State {
 
     // Must be a linked hashmap in order to preserve order of bindings in Modules.
     private final Map<Key<?>, Binding<?>> explicitBindingsMutable = new LinkedHashMap<>();
+
+    /**
+     * 此时 key 精确匹配的binding对象 原本一个key支持绑定多个binding
+     */
     private final Map<Key<?>, Binding<?>> explicitBindings
             = Collections.unmodifiableMap(explicitBindingsMutable);
     private final Map<Class<? extends Annotation>, Scope> scopes = new HashMap<>();
@@ -59,8 +63,9 @@ class InheritingState implements State {
     private final List<TypeListenerBinding> listenerBindings = new ArrayList<>();
 
     /**
-     * 黑名单中的key 是不能构建增强对象的
-     * WeakKeySet 的意思是不直接将key存储在容器中 以形成强引用 而是存储一个key的字面量 这样一样可以判断某个key是否在黑名单中 同时不会强引用
+     * 某些被设置在黑名单中的key 是不支持属性注入的 在尝试注入时会抛出异常
+     * 使用场景是这样 当子级state为某个key生成绑定对象时 子级对应的 injectorImpl这层会存在缓存 这样就能确保子级的injectorImpl 不会创建重复对象
+     * 同时往父级state中 设置黑名单 就可以避免在父级state对应的injectorImpl中创建 相同key对应的binding对象了 也就是子类的创建 优先级更高
      */
     private WeakKeySet blacklistedKeys = new WeakKeySet();
     private final Object lock;

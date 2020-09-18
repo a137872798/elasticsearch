@@ -128,6 +128,7 @@ interface State {
 
     /**
      * Returns the explicit bindings at this level only.
+     * 按照级别返回绑定关系   注意这里返回的是精确的绑定关系  原本一个key 可以对应多个绑定结果
      */
     Map<Key<?>, Binding<?>> getExplicitBindingsThisLevel();
 

@@ -32,6 +32,8 @@ import java.util.Set;
  * Members injectors by type.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 本身 MembersInjectors 是 MembersInjector<T> 这样的
+ * 这里将 T生成的Key 作为查询条件 获取MembersInjector
  */
 class MembersInjectorStore {
     private final InjectorImpl injector;
@@ -49,6 +51,11 @@ class MembersInjectorStore {
         }
     };
 
+    /**
+     *
+     * @param injector  该存储对象关联的注入器
+     * @param typeListenerBindings
+     */
     MembersInjectorStore(InjectorImpl injector,
                          List<TypeListenerBinding> typeListenerBindings) {
         this.injector = injector;
@@ -65,8 +72,9 @@ class MembersInjectorStore {
 
     /**
      * Returns a new complete members injector with injection listeners registered.
+     * the MembersInjector type always agrees with the passed type
      */
-    @SuppressWarnings("unchecked") // the MembersInjector type always agrees with the passed type
+    @SuppressWarnings("unchecked")
     public <T> MembersInjectorImpl<T> get(TypeLiteral<T> key, Errors errors) throws ErrorsException {
         return (MembersInjectorImpl<T>) cache.get(key, errors);
     }
