@@ -52,7 +52,7 @@ public abstract class FailableCache<K, V> {
                 cache.putIfAbsent(key, resultOrError);
             }
         }
-        // 当检测到生成的是 errors对象 代表创建数据失败 选择抛出异常
+        // 代表在创建过程中 产生了异常信息
         if (resultOrError instanceof Errors) {
             errors.merge((Errors) resultOrError);
             throw errors.toException();

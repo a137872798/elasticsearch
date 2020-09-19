@@ -48,9 +48,6 @@ import java.util.Objects;
  */
 public class Key<T> {
 
-    /**
-     * 代表一个基于注解的增强点  内部指定了注解属性
-     */
     private final AnnotationStrategy annotationStrategy;
 
     private final TypeLiteral<T> typeLiteral;

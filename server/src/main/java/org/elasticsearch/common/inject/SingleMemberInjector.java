@@ -27,6 +27,12 @@ import org.elasticsearch.common.inject.spi.InjectionPoint;
  */
 interface SingleMemberInjector {
 
+    /**
+     * 为某个实例进行增强
+     * @param errors
+     * @param context
+     * @param o
+     */
     void inject(Errors errors, InternalContext context, Object o);
 
     /**

@@ -23,6 +23,7 @@ package org.elasticsearch.common.inject.spi;
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
+ * 当实例注入属性完成后的 后置钩子
  */
 public interface InjectionListener<I> {
 

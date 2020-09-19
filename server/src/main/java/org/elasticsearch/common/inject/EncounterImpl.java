@@ -27,11 +27,18 @@ import java.util.List;
 
 /**
  * @author jessewilson@google.com (Jesse Wilson)
+ * 该对象支持往调用链中设置 监听器 方法拦截器
  */
 final class EncounterImpl<T> implements TypeEncounter<T> {
 
     private final Errors errors;
+    /**
+     * 该对象具备通过key寻找provider的能力
+     * 或者 通过type查找MemberInjector的能力
+     */
     private final Lookups lookups;
+
+
     private List<MembersInjector<? super T>> membersInjectors; // lazy
     private List<InjectionListener<? super T>> injectionListeners; // lazy
     private boolean valid = true;

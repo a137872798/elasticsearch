@@ -29,6 +29,7 @@ import org.elasticsearch.common.inject.TypeLiteral;
  *
  * @param <I> the injectable type encountered
  * @since 2.0
+ * 该对象支持注册 监听器 方法拦截器等能力
  */
 @SuppressWarnings("overloads")
 public interface TypeEncounter<I> {

@@ -27,21 +27,23 @@ import java.lang.reflect.Field;
 
 /**
  * Sets an injectable field.
- * 针对某个field进行增强的对象
+ * 该对象已经具备为某个field进行注入的基本能力了
  */
 class SingleFieldInjector implements SingleMemberInjector {
 
     /**
-     * 待增强的字段
+     * 待注入的字段
      */
     final Field field;
     /**
-     * 对应的增强点对象
+     * 有关注入的描述信息  比如该注入点的依赖   比如@Injector注解标记在方法层上 那么实际上要注入的是它的所有参数 (推测)
+     * 而针对 field级别的注入点信息就是描述了注入的实现类  比如@Named 注解  因为一个field可能有多种实现类 通过@Named 可以定位到精确的实现类
      */
     final InjectionPoint injectionPoint;
 
     /**
-     * 在携带了@Inject注解的field上寻找是否有某个包含 @BindingAnnotation注解的 注解 它将作为依赖项  同时field最多仅支持存在一个依赖项
+     * 针对field 仅存在一个 dependency  而针对 method级别 每个参数对应一个 dependency
+     * 每个field / method 仅对应一个 注入点
      */
     final Dependency<?> dependency;
     final InternalFactory<?> factory;
@@ -49,7 +51,7 @@ class SingleFieldInjector implements SingleMemberInjector {
 
     /**
      *
-     * @param injector  整个增强逻辑的中枢对象
+     * @param injector  维护了各种binding对象  binding对象就是维护了 key 以及provider的关系
      * @param injectionPoint   指定被增强的切入点
      * @param errors
      * @throws ErrorsException
@@ -58,8 +60,10 @@ class SingleFieldInjector implements SingleMemberInjector {
             throws ErrorsException {
         this.injectionPoint = injectionPoint;
         this.field = (Field) injectionPoint.getMember();
+        // 因为 field 最多仅存在一个依赖对象
         this.dependency = injectionPoint.getDependencies().get(0);
-        // dependency.getKey() 返回的是携带 @BindingAnnotation的注解
+        // 找到提供依赖项实例对象的工厂
+        // 因为针对field的 dependency 的key 就是当前field的type 所以可以直接通过该工厂获取注入实例  如果是method对应的InjectorPoint 是不能这样操作的
         factory = injector.getInternalFactory(dependency.getKey(), errors);
     }
 
@@ -73,19 +77,20 @@ class SingleFieldInjector implements SingleMemberInjector {
     }
 
     /**
-     * 进行增强操作
+     * 为某个实例的 该field属性 进行注入
      * @param errors
      * @param context
      * @param o
      */
     @Override
     public void inject(Errors errors, InternalContext context, Object o) {
+        // 更新error的源信息 这样可以弹出正确的异常信息
         errors = errors.withSource(dependency);
 
-        // 在进行增强前设置依赖  并在注入完成后 移除依赖
+        // 在进行增强前设置依赖  并在注入完成后 移除依赖  因为在注入时 依赖信息会作为选择实现类的重要参考
         context.setDependency(dependency);
         try {
-            // 将生成的结果注入到字段中
+            // 通过工厂返回需要的实例对象 并通过反射 将属性设置到实例上
             Object value = factory.get(errors, context, dependency);
             field.set(o, value);
         } catch (ErrorsException e) {
@@ -93,6 +98,7 @@ class SingleFieldInjector implements SingleMemberInjector {
         } catch (IllegalAccessException e) {
             throw new AssertionError(e); // a security manager is blocking us, we're hosed
         } finally {
+            // 在使用完毕后从上下文中移除依赖信息  便于为下一个对象进行注入  为所有实例进行注入在整个ioc容器中是一种链式操作
             context.setDependency(null);
         }
     }

@@ -119,6 +119,10 @@ class InheritingState implements State {
         scopes.put(annotationType, scope);
     }
 
+    /**
+     * 返回当前state下所有的转换器
+     * @return
+     */
     @Override
     public Iterable<MatcherAndConverter> getConvertersThisLevel() {
         return converters;
@@ -133,6 +137,14 @@ class InheritingState implements State {
         converters.add(matcherAndConverter);
     }
 
+    /**
+     * 根据对应的类型 找到匹配器
+     * @param stringValue
+     * @param type
+     * @param errors
+     * @param source
+     * @return
+     */
     @Override
     public MatcherAndConverter getConverter(
             String stringValue, TypeLiteral<?> type, Errors errors, Object source) {

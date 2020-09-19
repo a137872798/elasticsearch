@@ -26,13 +26,13 @@ import java.util.Map;
  * dependencies.
  *
  * @author crazybob@google.com (Bob Lee)
- * 维护一些增强时需要的信息
+ * 在进行属性注入时 需要的上下文信息
  */
 public final class InternalContext {
 
     private Map<Object, ConstructionContext<?>> constructionContexts = new HashMap<>();
     /**
-     * 增强点依赖的数据
+     * 在进行注入时   该依赖信息提供了 选择的具体实现  比如针对field 可能有多种实现类 通过 @Named 注解 可以知道应该选用哪个实现类
      */
     private Dependency dependency;
 

@@ -28,7 +28,8 @@ import java.lang.reflect.Modifier;
 
 /**
  * Invokes an injectable method.
- * 基于单个方法对应的增强点 进行增强
+ * 针对方法 找到注入点并进行注入
+ * 可以理解为  spring的 set方法注入
  */
 class SingleMethodInjector implements SingleMemberInjector {
 
@@ -36,10 +37,13 @@ class SingleMethodInjector implements SingleMemberInjector {
      * 定义了一个调用方法的接口
      */
     final MethodInvoker methodInvoker;
+    /**
+     * 从这里可以看出 针对携带@Inject注解的 方法  实际上并不是为方法进行注入  而是基于参数进行注入
+     */
     final SingleParameterInjector<?>[] parameterInjectors;
 
     /**
-     * 方法的增强点
+     * 描述方法级别注入点信息
      */
     final InjectionPoint injectionPoint;
 
@@ -47,8 +51,9 @@ class SingleMethodInjector implements SingleMemberInjector {
             throws ErrorsException {
         this.injectionPoint = injectionPoint;
         final Method method = (Method) injectionPoint.getMember();
-        // 根据method对象  创建句柄对象
+        // 创建反射调用方法的对象 等同于 method.invoke(target, parameters)
         methodInvoker = createMethodInvoker(method);
+        // 每个 dependency 就对应一个参数   也就对应一个参数注入器
         parameterInjectors = injector.getParametersInjectors(injectionPoint.getDependencies(), errors);
     }
 
@@ -61,7 +66,7 @@ class SingleMethodInjector implements SingleMemberInjector {
 
         // We can't use FastMethod if the method is private.
         int modifiers = method.getModifiers();
-        // 啥也没干啊
+        // TODO 忽略这个 NOOP 操作
         if (!Modifier.isPrivate(modifiers) && !Modifier.isProtected(modifiers)) {
         }
 
@@ -79,10 +84,17 @@ class SingleMethodInjector implements SingleMemberInjector {
         return injectionPoint;
     }
 
+    /**
+     * 调用某个实例的 方法  (参数从ioc容器中获取)
+     * @param errors
+     * @param context
+     * @param o
+     */
     @Override
     public void inject(Errors errors, InternalContext context, Object o) {
         Object[] parameters;
         try {
+            // 通过parameterInjector 获取参数 之后调用方法
             parameters = SingleParameterInjector.getAll(errors, context, parameterInjectors);
         } catch (ErrorsException e) {
             errors.merge(e.getErrors());

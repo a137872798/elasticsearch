@@ -47,8 +47,8 @@ public class InstanceBindingImpl<T> extends BindingImpl<T> implements InstanceBi
 
     /**
      *
-     * @param injector
-     * @param key
+     * @param injector  该对象是由哪个 注入器生成的  注入器负责发起整个调用流程
+     * @param key  实例的类型信息被抽取出来后对应的key
      * @param source
      * @param internalFactory
      * @param injectionPoints

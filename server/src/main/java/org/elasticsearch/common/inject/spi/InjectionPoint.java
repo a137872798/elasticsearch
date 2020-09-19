@@ -152,7 +152,7 @@ public final class InjectionPoint {
                 // 迭代每个参数上对应的一系列注解
                 // 如果某个参数不包含任何注解 这里就返回一个空数组
                 Annotation[] paramAnnotations = annotationsIterator.next();
-                // 找到这么多注解中包含 @BindingAnnotation的那个 并包装成key 后返回
+                // 找到这么多注解中包含 @BindingAnnotation的那个 并包装成key 后返回   当未找到时 就仅仅将参数本身包装成key 不携带注解信息
                 Key<?> key = Annotations.getKey(parameterType, member, paramAnnotations, errors);
                 // 将相关信息生成 依赖对象
                 dependencies.add(newDependency(key, Nullability.allowsNull(paramAnnotations), index));
@@ -400,7 +400,7 @@ public final class InjectionPoint {
         // name. In Scala, fields always get accessor methods (that we need to ignore). See bug 242.
         if (member instanceof Method) {
             try {
-                // 啥子 存在与方法同名的字段???
+                // 当存在与方法名同名的属性时 代表有效
                 if (member.getDeclaringClass().getField(member.getName()) != null) {
                     return;
                 }
@@ -408,6 +408,7 @@ public final class InjectionPoint {
             }
         }
 
+        // 代表错误
         errors.misplacedBindingAnnotation(member, misplacedBindingAnnotation);
     }
 
@@ -456,7 +457,7 @@ public final class InjectionPoint {
                 continue;
             }
 
-            // 套路都是一样的 关键就是检测是否包含@Inject注解
+            // 套路都是一样的 关键就是检测是否包含@Inject注解  TODO  方法上携带 @Injector 意味着什么 ???
             Inject inject = member.getAnnotation(Inject.class);
             if (inject == null) {
                 continue;

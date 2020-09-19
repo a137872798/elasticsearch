@@ -40,12 +40,21 @@ class MembersInjectorImpl<T> implements MembersInjector<T> {
     private final List<MembersInjector<? super T>> userMembersInjectors;
     private final List<InjectionListener<? super T>> injectionListeners;
 
+    /**
+     *
+     * @param injector  注入器
+     * @param typeLiteral  待注入实例的类型
+     * @param encounter  该对象对外暴露一个获取 MembersInjectors的api  看来所有MembersInjectorImpl 都会交由它管理
+     * @param memberInjectors  该列表中存储了一组对实例待注入字段进行注入的逻辑
+     */
     MembersInjectorImpl(InjectorImpl injector, TypeLiteral<T> typeLiteral,
                         EncounterImpl<T> encounter, List<SingleMemberInjector> memberInjectors) {
         this.injector = injector;
         this.typeLiteral = typeLiteral;
         this.memberInjectors = memberInjectors;
+        // 获取当前已经存在的 MembersInjector
         this.userMembersInjectors = encounter.getMembersInjectors();
+        // 获取相关监听器
         this.injectionListeners = encounter.getInjectionListeners();
     }
 
@@ -53,6 +62,10 @@ class MembersInjectorImpl<T> implements MembersInjector<T> {
         return memberInjectors;
     }
 
+    /**
+     * 为某个实例进行注入 同时触发相关监听器
+     * @param instance to inject members on. May be {@code null}.
+     */
     @Override
     public void injectMembers(T instance) {
         Errors errors = new Errors(typeLiteral);
@@ -70,6 +83,7 @@ class MembersInjectorImpl<T> implements MembersInjector<T> {
             return;
         }
 
+        // 以回调方式触发注入 由injector执行  看来当以构造器创建对象时 进行的注入是通过 injector完成的
         injector.callInContext(new ContextualCallable<Void>() {
             @Override
             public Void call(InternalContext context) throws ErrorsException {
@@ -78,9 +92,16 @@ class MembersInjectorImpl<T> implements MembersInjector<T> {
             }
         });
 
+        // 将处理完的实例触发监听器
         notifyListeners(instance, errors);
     }
 
+    /**
+     * 触发监听器
+     * @param instance
+     * @param errors
+     * @throws ErrorsException
+     */
     void notifyListeners(T instance, Errors errors) throws ErrorsException {
         int numErrorsBefore = errors.size();
         for (InjectionListener<? super T> injectionListener : injectionListeners) {
@@ -93,8 +114,15 @@ class MembersInjectorImpl<T> implements MembersInjector<T> {
         errors.throwIfNewErrors(numErrorsBefore);
     }
 
+    /**
+     * 为实例进行注入工作
+     * @param t
+     * @param errors
+     * @param context
+     */
     void injectMembers(T t, Errors errors, InternalContext context) {
         // optimization: use manual for/each to save allocating an iterator here
+        // 注入各种需要的属性
         for (int i = 0, size = memberInjectors.size(); i < size; i++) {
             memberInjectors.get(i).inject(errors, context, t);
         }
@@ -103,6 +131,7 @@ class MembersInjectorImpl<T> implements MembersInjector<T> {
         for (int i = 0, size = userMembersInjectors.size(); i < size; i++) {
             MembersInjector<? super T> userMembersInjector = userMembersInjectors.get(i);
             try {
+                // TODO 这个是什么时候设置的 以及 对象的所有待注入属性应该都应该包装成对应的memberInjectors了  应该不需要重复注入了
                 userMembersInjector.injectMembers(t);
             } catch (RuntimeException e) {
                 errors.errorInUserInjector(userMembersInjector, typeLiteral, e);
