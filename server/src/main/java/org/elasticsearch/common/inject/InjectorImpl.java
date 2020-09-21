@@ -1003,6 +1003,7 @@ class InjectorImpl implements Injector, Lookups {
     }
 
     // ES_GUICE: clear caches
+    // 重置内部属性
     public void clearCache() {
         state.clearBlacklisted();
         constructors = new ConstructorInjectorStore(this);
@@ -1014,6 +1015,7 @@ class InjectorImpl implements Injector, Lookups {
     public void readOnlyAllSingletons() {
         readOnly = true;
         state.makeAllBindingsToEagerSingletons(this);
+        // 更新binding信息后重新设置
         bindingsMultimap = new BindingsMultimap();
         // reindex the bindings
         index();

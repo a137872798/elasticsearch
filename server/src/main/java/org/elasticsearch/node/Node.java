@@ -265,10 +265,13 @@ public class Node implements Closeable {
     /**
      * Constructs a node
      *
-     * @param initialEnvironment         the initial environment for this node, which will be added to by plugins  包含各种需要的配置
-     * @param classpathPlugins           the plugins to be loaded from the classpath     默认情况加载的插件为空
+     * @param initialEnvironment         the initial environment for this node, which will be added to by plugins
+     *                                   包含各种需要的配置
+     * @param classpathPlugins           the plugins to be loaded from the classpath
+     *                                   默认情况加载的插件为空
      * @param forbidPrivateIndexSettings whether or not private index settings are forbidden when creating an index; this is used in the
-     *                                   test framework for tests that rely on being able to set private settings    创建索引时是否禁止私有索引配置 默认为true
+     *                                   test framework for tests that rely on being able to set private settings
+     *                                   创建索引时是否禁止私有索引配置 默认为true
      */
     protected Node(final Environment initialEnvironment,
                    Collection<Class<? extends Plugin>> classpathPlugins, boolean forbidPrivateIndexSettings) {
@@ -277,7 +280,7 @@ public class Node implements Closeable {
         final List<Closeable> resourcesToClose = new ArrayList<>(); // register everything we need to release in the case of an error
         boolean success = false;
         try {
-            // 设置客户端类型 因为每个node 既可以作为服务器 也可以作为 client
+            // 设置客户端类型为  node
             Settings tmpSettings = Settings.builder().put(initialEnvironment.settings())
                 .put(Client.CLIENT_TYPE_SETTING_S.getKey(), CLIENT_TYPE).build();
 
@@ -689,7 +692,7 @@ public class Node implements Closeable {
                     b.bind(RerouteService.class).toInstance(rerouteService);
                 }
             );
-            // 最后将所有绑定的对象包装成一个注入对象
+            // injector相当于一个ioc容器 可以随时获取自己想要的实例 在ES中这些注入到容器中的对象最后都是单例模式
             injector = modules.createInjector();
 
             // We allocate copies of existing shards by looking for a viable copy of the shard in the cluster and assigning the shard there.

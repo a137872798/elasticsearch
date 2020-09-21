@@ -88,6 +88,7 @@ public final class Guice {
      *
      * @throws CreationException if one or more errors occur during Injector
      *                           construction
+     * @return 返回的是最上级的 injector对象
      */
     public static Injector createInjector(Stage stage,
                                           Iterable<? extends Module> modules) {

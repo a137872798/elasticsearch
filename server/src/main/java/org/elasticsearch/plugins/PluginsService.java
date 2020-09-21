@@ -67,6 +67,7 @@ import static org.elasticsearch.common.io.FileSystemUtils.isAccessibleDirectory;
 
 /**
  * 管理插件的对象
+ * PluginsAndModules 可以将自身信息输出到一个 output对象中
  */
 public class PluginsService implements ReportingService<PluginsAndModules> {
 
@@ -137,11 +138,13 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
 
         Set<Bundle> seenBundles = new LinkedHashSet<>();
         List<PluginInfo> modulesList = new ArrayList<>();
-        // load modules   将module目录下所有的jar包加入到set中
+        // load modules
+        // 将.module 目录下 所有module目录 下对应的jar包包装成 bundle对象 并转入到modules中
         if (modulesDirectory != null) {
             try {
                 Set<Bundle> modules = getModuleBundles(modulesDirectory);
                 for (Bundle bundle : modules) {
+                    // 插件描述信息要存储到list中
                     modulesList.add(bundle.plugin);
                 }
                 seenBundles.addAll(modules);
@@ -151,12 +154,15 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         }
 
         // now, find all the ones that are in plugins/
-        // 将 .plugins 目录下的jar包抽取出来
+        // 这里处理  plugins下所有插件目录下的数据
         if (pluginsDirectory != null) {
             try {
                 // TODO: remove this leniency, but tests bogusly rely on it
+                // 检验目录是否可用
                 if (isAccessibleDirectory(pluginsDirectory, logger)) {
+                    // 如果有文件名包含 -removing  抛出异常
                     checkForFailedPluginRemovals(pluginsDirectory);
+                    // 加载.plugin 下所有的文件
                     Set<Bundle> plugins = getPluginBundles(pluginsDirectory);
                     for (final Bundle bundle : plugins) {
                         pluginsList.add(bundle.plugin);
@@ -268,8 +274,17 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
      */
     static class Bundle {
         final PluginInfo plugin;
+        /**
+         * 存储插件目录下所有的 jar包路径
+         */
         final Set<URL> urls;
 
+        /**
+         *
+         * @param plugin   描述插件的信息对象
+         * @param dir   插件所在目录
+         * @throws IOException
+         */
         Bundle(PluginInfo plugin, Path dir) throws IOException {
             this.plugin = Objects.requireNonNull(plugin);
             Set<URL> urls = new LinkedHashSet<>();
@@ -306,7 +321,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
      * @param rootPath the path where the plugins are installed
      * @return a list of all plugin paths installed in the {@code rootPath}
      * @throws IOException if an I/O exception occurred reading the directories
-     * 从根目录下找到所有插件目录
+     * 从插件根目录下找到所有插件目录   插件目录可能是按照插件名称命名的
      */
     public static List<Path> findPluginDirs(final Path rootPath) throws IOException {
         final List<Path> plugins = new ArrayList<>();
@@ -384,7 +399,9 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
      */
     private static Set<Bundle> findBundles(final Path directory, String type) throws IOException {
         final Set<Bundle> bundles = new HashSet<>();
+        // findPluginDirs 读取.module/.plugin 目录下所有的目录
         for (final Path plugin : findPluginDirs(directory)) {
+            // 读取每个插件目录下信息并生成bundle对象
             final Bundle bundle = readPluginBundle(bundles, plugin, type);
             bundles.add(bundle);
         }
@@ -395,8 +412,8 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
     /**
      * get a bundle for a single plugin dir
      * @param bundles  主要是用来检测是否冲突的
-     * @param plugin  某个 plugin/module的路径
-     * @param type
+     * @param plugin  某种插件的路径  该路径在总插件路径下
+     * @param type  代表module/plugin
      * @return
      * @throws IOException
      */
@@ -410,7 +427,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
             throw new IllegalStateException("Could not load plugin descriptor for " + type +
                                             " directory [" + plugin.getFileName() + "]", e);
         }
-        // 将目录路径与 插件信息合成一个bundle对象
+        // 将某个插件的目录 与 描述该插件的信息对象合并成一个 bundle 对象
         final Bundle bundle = new Bundle(info, plugin);
         if (bundles.add(bundle) == false) {
             throw new IllegalStateException("duplicate " + type + ": " + info);
@@ -425,7 +442,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
      * their relative order from iteration of the provided set will not change.
      *
      * @throws IllegalStateException if a dependency cycle is found
-     * 处理后 bundle会按照被依赖顺序排序
+     * 因为某些插件可能依赖于其他插件 所以插件的加载有一个顺序
      */
     static List<Bundle> sortBundles(Set<Bundle> bundles) {
         Map<String, Bundle> namedBundles = bundles.stream().collect(Collectors.toMap(b -> b.plugin.getName(), Function.identity()));
@@ -440,8 +457,8 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
     /**
      * add the given bundle to the sorted bundles, first adding dependencies
      * @param bundle 当前正在处理的bundle
-     * @param bundles  存放所有待处理的 bundle
-     * @param sortedBundles  存储排序后的结果
+     * @param bundles  存放所有待处理的 bundle   key是插件的名称 value是描述插件信息 以及jar包位置的对象
+     * @param sortedBundles
      * @param dependencyStack
      */
     private static void addSortedBundle(Bundle bundle, Map<String, Bundle> bundles, LinkedHashSet<Bundle> sortedBundles,
@@ -458,19 +475,22 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
             msg.append(name);
             throw new IllegalStateException(msg.toString());
         }
+        // 代表当前插件已经完成排序了
         if (sortedBundles.contains(bundle)) {
             // already added this plugin, via a dependency
             return;
         }
 
-        // 加入到用于检测循环依赖的容器1
+        // 加入到用于检测循环依赖的容器
         dependencyStack.add(name);
         // 遍历所有依赖的插件    每个插件可能会依托于其他插件才能使用
         for (String dependency : bundle.plugin.getExtendedPlugins()) {
+            // 确保这个插件确实存在
             Bundle depBundle = bundles.get(dependency);
             if (depBundle == null) {
                 throw new IllegalArgumentException("Missing plugin [" + dependency + "], dependency of [" + name + "]");
             }
+            // 尝试进行递归插入
             addSortedBundle(depBundle, bundles, sortedBundles, dependencyStack);
             assert sortedBundles.contains(depBundle);
         }
@@ -479,16 +499,23 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         sortedBundles.add(bundle);
     }
 
+    /**
+     * 加载所有插件对象
+     * @param bundles   从 module/plugin 下抽取出来的插件描述信息
+     * @return
+     */
     private List<Tuple<PluginInfo,Plugin>> loadBundles(Set<Bundle> bundles) {
         List<Tuple<PluginInfo, Plugin>> plugins = new ArrayList<>();
         Map<String, Plugin> loaded = new HashMap<>();
         Map<String, Set<URL>> transitiveUrls = new HashMap<>();
-        // 按照加载顺序为插件排序
+        // 因为某些插件可能依赖于其他插件 所以这里按照将被依赖的bundle放到 前面
         List<Bundle> sortedBundles = sortBundles(bundles);
 
         for (Bundle bundle : sortedBundles) {
+            // TODO 检验性代码先忽略
             checkBundleJarHell(JarHell.parseClassPath(), bundle, transitiveUrls);
 
+            // 开始根据 bundle信息加载插件对象  loaded存储已经加载好的插件  用于生成那些有依赖的插件
             final Plugin plugin = loadBundle(bundle, loaded);
             // 将实例化后的插件对象 与插件的描述信息包装成一个对象后设置到列表中
             plugins.add(new Tuple<>(bundle.plugin, plugin));
@@ -560,11 +587,13 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         verifyCompatibility(bundle.plugin);
 
         // collect loaders of extended plugins
+        // 存储当前待加载插件依赖的其他所有插件对应的类加载器
         List<ClassLoader> extendedLoaders = new ArrayList<>();
         for (String extendedPluginName : bundle.plugin.getExtendedPlugins()) {
+            // 因为当前插件依赖于其他插件 所以先获取其他插件
             Plugin extendedPlugin = loaded.get(extendedPluginName);
             assert extendedPlugin != null;
-            // 子插件实现类 必须实现 ExtensiblePlugin 接口
+            // 作为被依赖的插件 必须实现 ExtensiblePlugin 接口
             if (ExtensiblePlugin.class.isInstance(extendedPlugin) == false) {
                 throw new IllegalStateException("Plugin [" + name + "] cannot extend non-extensible plugin [" + extendedPluginName + "]");
             }
@@ -575,10 +604,10 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         // 每个插件都定义了唯一的路径 在该路径下有自己的 SPI拓展类
 
         // create a child to load the plugin in this bundle
-        // 按照排序顺序 应该是先加载不需要依赖其他插件的插件
+        // 将当前类加载器 以及依赖的所有插件类的 类加载器合并成一个 类加载器对象
         ClassLoader parentLoader = PluginLoaderIndirection.createLoader(getClass().getClassLoader(), extendedLoaders);
-        // URLClassLoader 支持从一个额外的范围查找class 默认类加载器应该是只支持从classpath下查找类
-        // 该loader还是遵循双亲委派的加载顺序 优先尝试从parentLoader 查找
+        // URLClassLoader 支持从一个额外的范围查找class
+        // 这里是尝试加载插件目录下的jar包
         ClassLoader loader = URLClassLoader.newInstance(bundle.urls.toArray(new URL[0]), parentLoader);
 
         // reload SPI with any new services from the plugin

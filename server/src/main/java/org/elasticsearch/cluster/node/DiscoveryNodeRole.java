@@ -29,9 +29,13 @@ import java.util.SortedSet;
 
 /**
  * Represents a node role.
+ * 代表当前节点的角色
  */
 public abstract class DiscoveryNodeRole implements Comparable<DiscoveryNodeRole> {
 
+    /**
+     * 当前角色名
+     */
     private final String roleName;
 
     /**
@@ -43,6 +47,9 @@ public abstract class DiscoveryNodeRole implements Comparable<DiscoveryNodeRole>
         return roleName;
     }
 
+    /**
+     * 代表名字的缩写
+     */
     private final String roleNameAbbreviation;
 
     /**

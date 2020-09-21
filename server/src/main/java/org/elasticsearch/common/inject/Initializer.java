@@ -98,7 +98,7 @@ class Initializer {
      * Performs creation-time injections on all objects that require it. Whenever fulfilling an
      * injection depends on another object that requires injection, we inject it first. If the two
      * instances are codependent (directly or transitively), ordering of injection is arbitrary.
-     * 调用get() 方法会触发注入  这里就是为所有待注入的对象进行注入
+     * 为所有待注入任务进行注入
      */
     void injectAll(final Errors errors) {
         // loop over a defensive copy since ensureInjected() mutates the set. Unfortunately, that copy
@@ -120,7 +120,7 @@ class Initializer {
     }
 
     /**
-     * 代表一个 可注入对象的引用  当注入完成时 允许返回对象
+     * 代表一个 可注入对象的引用  当注入完成时 允许返回对象 默认采用单例模式
      * @param <T>
      */
     private class InjectableReference<T> implements Initializable<T> {
@@ -137,7 +137,7 @@ class Initializer {
         private final Object source;
 
         /**
-         * 从injector获取的 专门针对field注入的对象
+         * 从injector获取的 专门针对field/method注入的对象
          */
         private MembersInjectorImpl<T> membersInjector;
 

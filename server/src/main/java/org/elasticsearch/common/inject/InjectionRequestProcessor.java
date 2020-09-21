@@ -85,6 +85,9 @@ class InjectionRequestProcessor extends AbstractProcessor {
         }
     }
 
+    /**
+     * 开始为实例注入属性 或调用注入方法
+     */
     public void injectMembers() {
         for (StaticInjection staticInjection : staticInjections) {
             staticInjection.injectMembers();
@@ -118,6 +121,7 @@ class InjectionRequestProcessor extends AbstractProcessor {
             Errors errorsForMember = errors.withSource(source);
             Set<InjectionPoint> injectionPoints;
             try {
+                // 找到所有注入点
                 injectionPoints = request.getInjectionPoints();
             } catch (ConfigurationException e) {
                 errors.merge(e.getErrorMessages());

@@ -134,12 +134,14 @@ class InjectorBuilder {
 
             // 以上已经将所有binding插入到容器中了
 
-            // 开始初始化ioc容器内部的对象
+            // 做一些准备工作
             initializeStatically();
         }
 
+        // 为待注入对象进行属性注入
         injectDynamically();
 
+        // 返回顶层injector
         return primaryInjector();
     }
 
@@ -157,27 +159,31 @@ class InjectorBuilder {
         }
         stopwatch.resetAndLog("Binding indexing");
 
-        // 处理所有为实例/class 注入属性的请求
+        // 处理所有为实例/class 注入属性的请求  这里还没有进行注入 只是设置了一些 pending任务
         injectionRequestProcessor.process(shells);
         stopwatch.resetAndLog("Collecting injection requests");
 
-        // 触发监听器 也就是针对 provider是 Key的 (某个key的bean提供者与另一个key的提供者一样)
+        // 触发监听器 也就是针对 provider是 Key的 (某个key的bean提供者与另一个key的提供者一样)   (还会处理expose数据)
         bindingProcesor.runCreationListeners();
         stopwatch.resetAndLog("Binding validation");
 
-        // 以上已经完成了所有binding的设置了
+        // 以上已经完成了所有binding的设置了  这里对之前的静态属性/方法 生成从ioc容器中获取相关数据的对象
         injectionRequestProcessor.validate();
         stopwatch.resetAndLog("Static validation");
 
+        // 生成具备读取需要注入的field/method的对象
         initializer.validateOustandingInjections(errors);
         stopwatch.resetAndLog("Instance member validation");
 
+        // 回填查询需要的代理对象
         new LookupProcessor(errors).process(shells);
+        // 如果在ioc注入时间接调用了多次查询api 此时回填代理对象
         for (InjectorShell shell : shells) {
             ((DeferredLookups) shell.getInjector().lookups).initialize(errors);
         }
         stopwatch.resetAndLog("Provider verification");
 
+        // 确保所有element都已经处理完
         for (InjectorShell shell : shells) {
             if (!shell.getElements().isEmpty()) {
                 throw new AssertionError("Failed to execute " + shell.getElements());
@@ -200,13 +206,16 @@ class InjectorBuilder {
      * code build a just-in-time binding from another thread.
      */
     private void injectDynamically() {
+        // 注入静态属性/调用静态方法
         injectionRequestProcessor.injectMembers();
         stopwatch.resetAndLog("Static member injection");
 
+        // 注入成员变量/调用set方法
         initializer.injectAll(errors);
         stopwatch.resetAndLog("Instance injection");
         errors.throwCreationExceptionIfErrorsExist();
 
+        // 深度遍历的顺序 初始化需要提前创建的对象   TODO 什么场景下使用???
         for (InjectorShell shell : shells) {
             loadEagerSingletons(shell.getInjector(), stage, errors);
         }
@@ -217,6 +226,7 @@ class InjectorBuilder {
     /**
      * Loads eager singletons, or all singletons if we're in Stage.PRODUCTION. Bindings discovered
      * while we're binding these singletons are not be eager.
+     * 加载提早暴露的对象
      */
     public void loadEagerSingletons(InjectorImpl injector, Stage stage, Errors errors) {
         for (final Binding<?> binding : injector.state.getExplicitBindingsThisLevel().values()) {
@@ -227,6 +237,13 @@ class InjectorBuilder {
         }
     }
 
+    /**
+     * 加载提早暴露的对象
+     * @param injector
+     * @param stage
+     * @param errors
+     * @param binding
+     */
     private void loadEagerSingletons(InjectorImpl injector, Stage stage, final Errors errors, BindingImpl<?> binding) {
         if (binding.getScoping().isEagerSingleton(stage)) {
             try {
@@ -238,6 +255,7 @@ class InjectorBuilder {
                         context.setDependency(dependency);
                         Errors errorsForBinding = errors.withSource(dependency);
                         try {
+                            // 这种工厂都是包装过的 会记录创建的实例 之后总是返回同一个实例
                             binding.getInternalFactory().get(errorsForBinding, context, dependency);
                         } catch (ErrorsException e) {
                             errorsForBinding.merge(e.getErrors());

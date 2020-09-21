@@ -220,6 +220,7 @@ class InheritingState implements State {
             Key key = entry.getKey();
             BindingImpl<?> binding = (BindingImpl<?>) entry.getValue();
             Object value = binding.getProvider().get();
+            // 将所有binding 都转换成实例binding对象
             x.put(key, new InstanceBindingImpl<Object>(injector, key, SourceProvider.UNKNOWN_SOURCE, new InternalFactory.Instance(value),
                     emptySet(), value));
         }

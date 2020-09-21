@@ -28,6 +28,10 @@ import java.util.Set;
 
 import static java.util.Collections.singleton;
 
+/**
+ * 代表一个被标记成暴露的binding 定义在父级  如果在子级没有找到新的binding 会抛出异常
+ * @param <T>
+ */
 public class ExposedBindingImpl<T> extends BindingImpl<T> implements ExposedBinding<T> {
 
     private final PrivateElements privateElements;

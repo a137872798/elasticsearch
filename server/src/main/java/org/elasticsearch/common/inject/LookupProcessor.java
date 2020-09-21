@@ -26,6 +26,7 @@ import org.elasticsearch.common.inject.spi.ProviderLookup;
  *
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
+ * 查询处理器
  */
 class LookupProcessor extends AbstractProcessor {
 
@@ -36,6 +37,7 @@ class LookupProcessor extends AbstractProcessor {
     @Override
     public <T> Boolean visit(MembersInjectorLookup<T> lookup) {
         try {
+            // 将查询的属性注入器回填到 lookup中
             MembersInjector<T> membersInjector
                     = injector.membersInjectorStore.get(lookup.getType(), errors);
             lookup.initializeDelegate(membersInjector);

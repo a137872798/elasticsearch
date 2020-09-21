@@ -31,7 +31,7 @@ class PluginLoaderIndirection {
     /**
      *
      * @param parent  当前类加载器
-     * @param extendedLoaders   加载插件所使用的类加载器
+     * @param extendedLoaders   当前插件所依赖的其他插件的类加载器
      * @return
      */
     static ClassLoader createLoader(ClassLoader parent, List<ClassLoader> extendedLoaders) {

@@ -131,7 +131,6 @@ class MembersInjectorImpl<T> implements MembersInjector<T> {
         for (int i = 0, size = userMembersInjectors.size(); i < size; i++) {
             MembersInjector<? super T> userMembersInjector = userMembersInjectors.get(i);
             try {
-                // TODO 这个是什么时候设置的 以及 对象的所有待注入属性应该都应该包装成对应的memberInjectors了  应该不需要重复注入了
                 userMembersInjector.injectMembers(t);
             } catch (RuntimeException e) {
                 errors.errorInUserInjector(userMembersInjector, typeLiteral, e);

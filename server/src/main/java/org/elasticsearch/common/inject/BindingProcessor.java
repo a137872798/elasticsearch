@@ -281,12 +281,14 @@ class BindingProcessor extends AbstractProcessor {
     }
 
     /**
+     * 与privateElementProcessor之前处理 privateElement
      * 该对象也可以处理 privateElements
      * @param privateElements
      * @return
      */
     @Override
     public Boolean visit(PrivateElements privateElements) {
+        // 找到之前被用户定义的module中设置成需要 expose的key
         for (Key<?> key : privateElements.getExposedKeys()) {
             bindExposed(privateElements, key);
         }
@@ -296,6 +298,7 @@ class BindingProcessor extends AbstractProcessor {
     private <T> void bindExposed(PrivateElements privateElements, Key<T> key) {
         ExposedKeyFactory<T> exposedKeyFactory = new ExposedKeyFactory<>(key, privateElements);
         creationListeners.add(exposedKeyFactory);
+        // 先插入一个占位符 如果子级没有新的binding覆盖它 就会出现错误
         putBinding(new ExposedBindingImpl<>(
                 injector, privateElements.getExposedSource(key), key, exposedKeyFactory, privateElements));
     }

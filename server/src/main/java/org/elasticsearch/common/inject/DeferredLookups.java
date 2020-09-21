@@ -38,7 +38,7 @@ class DeferredLookups implements Lookups {
      */
     private final InjectorImpl injector;
     /**
-     * 带查询的数据
+     * 待查询的数据
      */
     private final List<Element> lookups = new ArrayList<>();
 
@@ -53,6 +53,9 @@ class DeferredLookups implements Lookups {
         injector.lookups = injector;
         new LookupProcessor(errors).process(injector, lookups);
     }
+
+
+    // 在之前可能已经调用过很多次getProvider/getMembersInjector 了 那时候只是返回一个代理对象 在initialize中才开始填充
 
     @Override
     public <T> Provider<T> getProvider(Key<T> key) {

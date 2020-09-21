@@ -31,7 +31,7 @@ import java.util.Objects;
  *
  * @author jessewilson@google.com (Jesse Wilson)
  * @since 2.0
- * 该对象负责将key 在ioc容器中的实例提供者拿出来
+ * 套路和 MembersInjectorLookup 一致
  */
 public final class ProviderLookup<T> implements Element {
 

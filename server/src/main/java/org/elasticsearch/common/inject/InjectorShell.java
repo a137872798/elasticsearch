@@ -203,7 +203,7 @@ class InjectorShell {
             bindInjector(injector);
             // 将Logger以及binding 设置到ioc容器
             bindLogger(injector);
-            // 该对象是核心对象  处理binding对象 并存入到 state中
+            // 该对象是核心对象  处理binding对象 并存入到 state中   他也支持处理 PrivateElement
             bindingProcessor.process(injector, elements);
             stopwatch.resetAndLog("Binding creation");
 

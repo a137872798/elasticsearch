@@ -96,7 +96,7 @@ public final class MembersInjectorLookup<T> implements Element {
      * Returns the looked up members injector. The result is not valid until this lookup has been
      * initialized, which usually happens when the injector is created. The members injector will
      * throw an {@code IllegalStateException} if you try to use it beforehand.
-     * 返回的注入器功能就是由代理对象实现的 在使用该对象前肯定要确保delegate对象已经被设置
+     * 使得对象提前暴露给用户  当整个guice初始化完毕后 会回填代理对象 确保功能正确性
      */
     public MembersInjector<T> getMembersInjector() {
         return new MembersInjector<T>() {

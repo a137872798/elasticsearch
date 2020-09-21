@@ -457,7 +457,7 @@ public final class InjectionPoint {
                 continue;
             }
 
-            // 套路都是一样的 关键就是检测是否包含@Inject注解  TODO  方法上携带 @Injector 意味着什么 ???
+            // 套路都是一样的 关键就是检测是否包含@Inject注解
             Inject inject = member.getAnnotation(Inject.class);
             if (inject == null) {
                 continue;
