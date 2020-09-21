@@ -64,7 +64,6 @@ public final class InjectionPoint {
 
     /**
      * 当增强点是构造函数 或者方法时  这组依赖对象就是参数列表的参数
-     * TODO 这些依赖的作用到底是什么
      */
     private final List<Dependency<?>> dependencies;
 
@@ -251,7 +250,7 @@ public final class InjectionPoint {
                 }
 
                 injectableConstructor = constructor;
-                // TODO 先不管这里在校验啥
+                // 代表在构造器上不应该存在 内置@BindingAnnotate的注解  这种注解只应该存在于参数上
                 checkForMisplacedBindingAnnotations(injectableConstructor, errors);
             }
         }
@@ -271,7 +270,7 @@ public final class InjectionPoint {
             Constructor<?> noArgConstructor = rawType.getConstructor();
 
             // Disallow private constructors on non-private classes (unless they have @Inject)
-            // 如果该无参构造函数是private的 抛出异常 TODO 为啥 ???
+            // 如果该类型本身不是 private 的 那么不允许携带私有构造器
             if (Modifier.isPrivate(noArgConstructor.getModifiers())
                     && !Modifier.isPrivate(rawType.getModifiers())) {
                 errors.missingConstructor(rawType);
@@ -281,6 +280,7 @@ public final class InjectionPoint {
             checkForMisplacedBindingAnnotations(noArgConstructor, errors);
             // 无参构造函数 对应的增强点的 依赖对象为空
             return new InjectionPoint(type, noArgConstructor);
+            // 当传入的key是接口类型是 会抛出 无该方法的异常
         } catch (NoSuchMethodException e) {
             errors.missingConstructor(rawType);
             throw new ConfigurationException(errors.getMessages());
@@ -400,7 +400,7 @@ public final class InjectionPoint {
         // name. In Scala, fields always get accessor methods (that we need to ignore). See bug 242.
         if (member instanceof Method) {
             try {
-                // 当存在与方法名同名的属性时 代表有效
+                // 当存在与方法名同名的属性时 代表有效  因为这种相当于是 spring的 set方法注入 由方法本身决定了注入属性的逻辑 一般方法内部就是调用了 xxx = param1
                 if (member.getDeclaringClass().getField(member.getName()) != null) {
                     return;
                 }

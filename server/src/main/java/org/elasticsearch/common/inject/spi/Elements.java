@@ -118,10 +118,6 @@ public final class Elements {
          */
         private final Set<Module> modules;
 
-        /**
-         * 推测绑定的 对象会存储到这个列表中
-         * TODO element是什么 ???
-         */
         private final List<Element> elements;
 
         /**
@@ -179,10 +175,12 @@ public final class Elements {
 
         /**
          * Creates a private recording binder.
+         * @param privateElements 当该属性不为空时 代表当前binder是某个binder的子对象
          */
         private RecordingBinder(RecordingBinder parent, PrivateElementsImpl privateElements) {
             this.stage = parent.stage;
             this.modules = new HashSet<>();
+            // 这样当往element 插入新数据时 会影响到privateElements
             this.elements = privateElements.getElementsMutable();
             this.source = parent.source;
             this.sourceProvider = parent.sourceProvider;
@@ -212,7 +210,7 @@ public final class Elements {
         }
 
         /**
-         * 为实例注入需要的属性
+         * 在ioc内部创建的实例会自动注入属性 而由用户创建的实例可以通过该方法 将需要注入的属性通过ioc容器进行注入
          * @param type     of instance
          * @param instance for which members will be injected
          * @param <T>
@@ -272,13 +270,13 @@ public final class Elements {
             // 重复添加则不处理
             if (modules.add(module)) {
                 Binder binder = this;
-                // TODO 先忽略私有模块
+                // 如果module实现了 PrivateModule 接口 会自动调用newPrivateBinder 切换成一个新的 binder对象
                 if (module instanceof PrivateModule) {
                     binder = binder.newPrivateBinder();
                 }
 
                 try {
-                    // 装配 binder对象  实际上就是调用binder.bind  以及 binder.to
+                    // 装配 binder对象  实际上就是调用binder.bind  以及 binder.to 等方法往elements中追加元素
                     module.configure(binder);
                 } catch (IllegalArgumentException e) {
                     // NOTE: This is not in the original guice. We rethrow here to expose any explicit errors in configure()
@@ -418,7 +416,7 @@ public final class Elements {
         }
 
         /**
-         * TODO 先忽略 privateBinder
+         * 开启一组私有element 同时将之前的 binder作为当前对象的父对象 相当于是一个链表结构
          * @return
          */
         @Override
@@ -427,8 +425,6 @@ public final class Elements {
             elements.add(privateElements);
             return new RecordingBinder(this, privateElements);
         }
-
-        // 下面的方法都是与 privateBinder相关的
 
         @Override
         public void expose(Key<?> key) {
@@ -445,6 +441,12 @@ public final class Elements {
             return exposeInternal(Key.get(type));
         }
 
+        /**
+         * 必须确保此时binder存在一个 privateElements
+         * @param key
+         * @param <T>
+         * @return
+         */
         private <T> AnnotatedElementBuilder exposeInternal(Key<T> key) {
             if (privateElements == null) {
                 addError("Cannot expose %s on a standard binder. "

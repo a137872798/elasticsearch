@@ -31,10 +31,23 @@ import org.elasticsearch.common.inject.spi.InjectionPoint;
 import java.util.HashSet;
 import java.util.Set;
 
+/**
+ * 基于构造函数生成某个 binding 对象
+ * @param <T>
+ */
 class ConstructorBindingImpl<T> extends BindingImpl<T> implements ConstructorBinding<T> {
 
     private final Factory<T> factory;
 
+    /**
+     *
+     * @param injector  对应的注入器
+     * @param key  描述待注入的信息 (通常是接口需要注入实例)
+     * @param source
+     * @param scopedFactory
+     * @param scoping
+     * @param factory
+     */
     private ConstructorBindingImpl(Injector injector, Key<T> key, Object source,
                                    InternalFactory<? extends T> scopedFactory, Scoping scoping, Factory<T> factory) {
         super(injector, key, source, scopedFactory, scoping);
@@ -43,6 +56,7 @@ class ConstructorBindingImpl<T> extends BindingImpl<T> implements ConstructorBin
 
     static <T> ConstructorBindingImpl<T> create(
             InjectorImpl injector, Key<T> key, Object source, Scoping scoping) {
+        // 该工厂的作用就是通过 constructorInjector 调用构造函数 生成key需要的实例  一般key是接口
         Factory<T> factoryFactory = new Factory<>();
         InternalFactory<? extends T> scopedFactory
                 = Scopes.scope(key, injector, factoryFactory, scoping);
@@ -50,6 +64,12 @@ class ConstructorBindingImpl<T> extends BindingImpl<T> implements ConstructorBin
                 injector, key, source, scopedFactory, scoping, factoryFactory);
     }
 
+    /**
+     * 因为构造器中需要的参数可能也是注入进来的 这里从专门存放构造器的仓库中获取专门的注入器   待调用get() 时 惰性生成实例
+     * @param injector
+     * @param errors
+     * @throws ErrorsException
+     */
     public void initialize(InjectorImpl injector, Errors errors) throws ErrorsException {
         factory.constructorInjector = injector.constructors.get(getKey().getTypeLiteral(), errors);
     }

@@ -107,6 +107,7 @@ public class Scopes {
 
     /**
      * Scopes an internal factory.
+     * 尝试基于scoping 包装工厂
      */
     static <T> InternalFactory<? extends T> scope(Key<T> key, InjectorImpl injector,
                                                   InternalFactory<? extends T> creator, Scoping scoping) {
@@ -135,6 +136,7 @@ public class Scopes {
             return scoping;
         }
 
+        // 通过注解找到绑定的scope对象
         Scope scope = injector.state.getScope(scopeAnnotation);
         if (scope != null) {
             return Scoping.forInstance(scope);

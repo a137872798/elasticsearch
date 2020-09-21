@@ -71,7 +71,7 @@ public class ConstructionContext<T> {
     }
 
     /**
-     * 创建代理对象
+     * 为解决循环依赖 会创建空对象 该对象的作用仅仅是委托给内部真正工作的delegate对象  可以在处理完所有循环依赖后 将实例再设置回该代理对象中 此时才允许使用代理对象  提前使用将会抛出异常
      * @param errors
      * @param expectedType  需要创建代理对象的类型
      * @return

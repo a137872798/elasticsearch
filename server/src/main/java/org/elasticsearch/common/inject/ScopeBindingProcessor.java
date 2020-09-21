@@ -28,6 +28,7 @@ import java.util.Objects;
  *
  * @author crazybob@google.com (Bob Lee)
  * @author jessewilson@google.com (Jesse Wilson)
+ * 代表针对携带某些注解的binding 在使用ioc容器时 应该采用的注入范围 (单例 or 原型)
  */
 class ScopeBindingProcessor extends AbstractProcessor {
 
@@ -40,6 +41,7 @@ class ScopeBindingProcessor extends AbstractProcessor {
         Scope scope = command.getScope();
         Class<? extends Annotation> annotationType = command.getAnnotationType();
 
+        // 该注解本身必须内置 @ScopeAnnotation
         if (!Annotations.isScopeAnnotation(annotationType)) {
             errors.withSource(annotationType).missingScopeAnnotation();
             // Go ahead and bind anyway so we don't get collateral errors.
@@ -51,6 +53,7 @@ class ScopeBindingProcessor extends AbstractProcessor {
             // Go ahead and bind anyway so we don't get collateral errors.
         }
 
+        // 将特殊注解对应的scope信息 设置到state中
         Scope existing = injector.state.getScope(Objects.requireNonNull(annotationType, "annotation type"));
         if (existing != null) {
             errors.duplicateScopes(existing, annotationType, scope);

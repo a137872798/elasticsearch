@@ -60,6 +60,11 @@ abstract class AbstractProcessor implements ElementVisitor<Boolean> {
         }
     }
 
+    /**
+     * 使用当前对象处理所有elements
+     * @param injector
+     * @param elements
+     */
     public void process(InjectorImpl injector, List<Element> elements) {
         Errors errorsAnyElement = this.errors;
         this.injector = injector;

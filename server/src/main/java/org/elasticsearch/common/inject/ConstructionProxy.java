@@ -26,6 +26,7 @@ import java.lang.reflect.InvocationTargetException;
  * {@code T}.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 一个模拟的构造器  包含通过参数生成实例 以及获取描述构造器信息的 InjectorPoint 也可以直接获取构造器本身
  */
 interface ConstructionProxy<T> {
 

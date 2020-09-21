@@ -37,8 +37,14 @@ class PrivateElementProcessor extends AbstractProcessor {
         this.stage = stage;
     }
 
+    /**
+     * 检测到elements中存在子级 binder  （一个父级binder下可能有多个子级的binder 也就是调用了多次 newPrivateBinder）
+     * @param privateElements
+     * @return
+     */
     @Override
     public Boolean visit(PrivateElements privateElements) {
+        // 创建一个新的 shell.builder 对象 并以当前injector作为父对象 单独处理子elements中定义的element对象(包括binding)
         InjectorShell.Builder builder = new InjectorShell.Builder()
                 .parent(injector)
                 .stage(stage)

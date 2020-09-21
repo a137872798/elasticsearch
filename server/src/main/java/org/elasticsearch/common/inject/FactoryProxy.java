@@ -26,6 +26,7 @@ import org.elasticsearch.common.inject.spi.Dependency;
 
 /**
  * A placeholder which enables us to swap in the real factory once the injector is created.
+ * 监听targetKey 在ioc容器中初始化完成后 以它提供的对象作为当前key需要的实例对象   跟 BoundProviderFactory 同一个套路
  */
 class FactoryProxy<T> implements InternalFactory<T>, BindingProcessor.CreationListener {
 

@@ -136,6 +136,7 @@ public abstract class Scoping {
      * @return
      */
     public static Scoping forAnnotation(final Class<? extends Annotation> scopingAnnotation) {
+        // 如果是 guice内置的范围注解类 直接使用提前生成的对象 否则使用visitor处理注解
         if (scopingAnnotation == Singleton.class) {
             return SINGLETON_ANNOTATION;
         }

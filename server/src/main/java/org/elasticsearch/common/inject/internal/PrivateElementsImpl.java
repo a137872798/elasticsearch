@@ -36,6 +36,8 @@ import static java.util.Collections.unmodifiableMap;
 
 /**
  * @author jessewilson@google.com (Jesse Wilson)
+ * 在调用该方法后 会获取一个以之前binder作为父对象的 子级binder
+ * 当该对象相关的RecordingBinder 以elementsMutable 作为elements
  */
 public final class PrivateElementsImpl implements PrivateElements {
 
@@ -48,6 +50,10 @@ public final class PrivateElementsImpl implements PrivateElements {
     private final Object source;
 
     private List<Element> elementsMutable = new ArrayList<>();
+
+    /**
+     * 当调用了 expose时 对应的key会被包装成 ExposureBuilder 对象
+     */
     private List<ExposureBuilder<?>> exposureBuilders = new ArrayList<>();
 
     /**
@@ -92,6 +98,10 @@ public final class PrivateElementsImpl implements PrivateElements {
         this.injector = Objects.requireNonNull(injector, "injector");
     }
 
+    /**
+     * 将之前的builder 取出key后并返回
+     * @return
+     */
     @Override
     public Set<Key<?>> getExposedKeys() {
         if (exposedKeysToSources == null) {

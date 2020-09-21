@@ -80,10 +80,12 @@ public class Annotations {
      */
     public static void checkForMisplacedScopeAnnotations(
             Class<?> type, Object source, Errors errors) {
+        // 如果不是接口或者抽象类 直接返回
         if (Classes.isConcrete(type)) {
             return;
         }
 
+        // 寻找描述范围的注解  如果存在 追加错误信息
         Class<? extends Annotation> scopeAnnotation = findScopeAnnotation(errors, type);
         if (scopeAnnotation != null) {
             errors.withSource(type).scopeAnnotationOnAbstractType(scopeAnnotation, type, source);

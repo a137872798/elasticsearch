@@ -79,6 +79,12 @@ class InjectorBuilder {
      * 该对象负责构建 InjectorShell 对象
      */
     private final InjectorShell.Builder shellBuilder = new InjectorShell.Builder();
+
+    /**
+     * InjectorShell:
+     *     在生成该shell时,对应处理的elements
+     *     在处理这些elements时,生成的injector对象
+     */
     private List<InjectorShell> shells;
 
     /**
@@ -126,6 +132,9 @@ class InjectorBuilder {
             shells = shellBuilder.build(initializer, bindingProcesor, stopwatch, errors);
             stopwatch.resetAndLog("Injector construction");
 
+            // 以上已经将所有binding插入到容器中了
+
+            // 开始初始化ioc容器内部的对象
             initializeStatically();
         }
 
@@ -138,20 +147,25 @@ class InjectorBuilder {
      * Initialize and validate everything.
      */
     private void initializeStatically() {
+        // 此时将之前基于构造器创建的binding初始化   生成下游的instance/provider 是第一优先级 之后才考虑进行属性注入
         bindingProcesor.initializeBindings();
         stopwatch.resetAndLog("Binding initialization");
 
         for (InjectorShell shell : shells) {
+            // 将 state中的binding转移到 injector中
             shell.getInjector().index();
         }
         stopwatch.resetAndLog("Binding indexing");
 
+        // 处理所有为实例/class 注入属性的请求
         injectionRequestProcessor.process(shells);
         stopwatch.resetAndLog("Collecting injection requests");
 
+        // 触发监听器 也就是针对 provider是 Key的 (某个key的bean提供者与另一个key的提供者一样)
         bindingProcesor.runCreationListeners();
         stopwatch.resetAndLog("Binding validation");
 
+        // 以上已经完成了所有binding的设置了
         injectionRequestProcessor.validate();
         stopwatch.resetAndLog("Static validation");
 

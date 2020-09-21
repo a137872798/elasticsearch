@@ -34,6 +34,7 @@ import java.util.Set;
  * @author jessewilson@google.com (Jesse Wilson)
  * @author mikeward@google.com (Mike Ward)
  * 该处理器用于处理 requestInjection/requestStaticInjection
+ * 在ioc容器内部的类 在实例化时会自动进行注入  而用户手动创建的类 也可以通过ioc容器进行加工
  */
 class InjectionRequestProcessor extends AbstractProcessor {
 
@@ -57,10 +58,16 @@ class InjectionRequestProcessor extends AbstractProcessor {
         return true;
     }
 
+    /**
+     * 处理属性注入请求
+     * @param request
+     * @return
+     */
     @Override
     public Boolean visit(InjectionRequest request) {
         Set<InjectionPoint> injectionPoints;
         try {
+            // 寻找所有注入点
             injectionPoints = request.getInjectionPoints();
         } catch (ConfigurationException e) {
             errors.merge(e.getErrorMessages());
@@ -86,10 +93,18 @@ class InjectionRequestProcessor extends AbstractProcessor {
 
     /**
      * A requested static injection.
+     * 如果是针对静态属性的注入请求  会包装一个 StaticInjection 对象
      */
     private class StaticInjection {
+
+        /**
+         * 代表从哪一层开始寻找bean (包括父级 但不包括子级)
+         */
         final InjectorImpl injector;
         final Object source;
+        /**
+         * 注入请求
+         */
         final StaticInjectionRequest request;
         List<SingleMemberInjector> memberInjectors;
 

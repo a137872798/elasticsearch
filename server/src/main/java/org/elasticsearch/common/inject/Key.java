@@ -48,6 +48,10 @@ import java.util.Objects;
  */
 public class Key<T> {
 
+    /**
+     * 对应 annotatedWith T类上本身携带的注解不算
+     * 代表T类型如果携带某个注解时将会使用哪个provider
+     */
     private final AnnotationStrategy annotationStrategy;
 
     private final TypeLiteral<T> typeLiteral;

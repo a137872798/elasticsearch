@@ -154,7 +154,7 @@ public class BindingBuilder<T> extends AbstractBindingBuilder<T>
         return this;
     }
 
-    // 指定下游提供者
+    // 代表当前提供者与 某个key对应的provider一致
 
     @Override
     public BindingBuilder<T> toProvider(Class<? extends Provider<? extends T>> providerType) {

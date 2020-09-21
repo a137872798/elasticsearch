@@ -89,6 +89,15 @@ class InjectorImpl implements Injector, Lookups {
 
     private final ThreadLocal<Object[]> localContext;
 
+    /**
+     * Cached constructor injectors for each type
+     */
+    ConstructorInjectorStore constructors = new ConstructorInjectorStore(this);
+
+    /**
+     * Cached field and method injectors for each type.
+     */
+    MembersInjectorStore membersInjectorStore;
 
     /**
      * @param state       包含调用过程中需要的各种参数
@@ -112,6 +121,7 @@ class InjectorImpl implements Injector, Lookups {
 
     /**
      * 将精确的绑定关系追加到 多绑定关系容器中
+     * 在state中 binding的存储是以key 作为 map.key 的 也就是typeLiteral + annotationStrategy 所以在这层以 typeLiteral 为key 就可能会存在很多value
      *
      * @param binding
      * @param <T>
@@ -211,7 +221,6 @@ class InjectorImpl implements Injector, Lookups {
         @SuppressWarnings("unchecked") // safe because T came from Key<MembersInjector<T>>   获取T类型 并生成TypeLiteral
             TypeLiteral<T> instanceType = (TypeLiteral<T>) TypeLiteral.get(
             ((ParameterizedType) membersInjectorType).getActualTypeArguments()[0]);
-        // 实际类型 会从store对象中查询
         MembersInjector<T> membersInjector = membersInjectorStore.get(instanceType, errors);
 
         // 他跟 Key<Provider<T>> 的逻辑不一样   这里将直接根据membersInjector 生成BindingImpl
@@ -426,6 +435,13 @@ class InjectorImpl implements Injector, Lookups {
         }
     }
 
+    /**
+     * 为binding 做初始化工作
+     * @param binding
+     * @param errors
+     * @param <T>
+     * @throws ErrorsException
+     */
     <T> void initializeBinding(BindingImpl<T> binding, Errors errors) throws ErrorsException {
         // Put the partially constructed binding in the map a little early. This enables us to handle
         // circular dependencies. Example: FooImpl -> BarImpl -> FooImpl.
@@ -436,6 +452,7 @@ class InjectorImpl implements Injector, Lookups {
             jitBindings.put(key, binding);
             boolean successful = false;
             try {
+                // 如果是基于构造器的类型  初始化constructorInjector
                 ((ConstructorBindingImpl) binding).initialize(this, errors);
                 successful = true;
             } finally {
@@ -449,7 +466,8 @@ class InjectorImpl implements Injector, Lookups {
     /**
      * Creates a binding for an injectable type with the given scope. Looks for a scope on the type if
      * none is specified.
-     * 尝试为source 生成bingding 对象
+     * @param scoping 默认没有范围信息
+     * 尝试为source 生成binding 对象
      */
     <T> BindingImpl<T> createUnitializedBinding(Key<T> key, Scoping scoping, Object source,
                                                 Errors errors) throws ErrorsException {
@@ -462,7 +480,7 @@ class InjectorImpl implements Injector, Lookups {
         }
 
         // Handle TypeLiteral<T> by binding the inner type
-        // 如果待注入的类型时 TypeLiteral<T> 生成对应的binding对象
+        // 如果待注入的类型时 TypeLiteral<T> 生成对应的binding对象  这种算是特殊情况 先忽略
         if (rawType == TypeLiteral.class) {
             @SuppressWarnings("unchecked") // we have to fudge the inner type as Object
                 BindingImpl<T> binding = (BindingImpl<T>) createTypeLiteralBinding(
@@ -471,13 +489,16 @@ class InjectorImpl implements Injector, Lookups {
         }
 
         // Handle @ImplementedBy
+        // 检查目标类型是否被 @ImplementedBy 注解修饰 是的话 默认使用该实现类来注入
         ImplementedBy implementedBy = rawType.getAnnotation(ImplementedBy.class);
         if (implementedBy != null) {
+            // 使用@ImplementedBy 注解的场景   代表认为该rawType有多个实现类 此时不能使用被ScopeAnnotation标记的注解
             Annotations.checkForMisplacedScopeAnnotations(rawType, source, errors);
             return createImplementedByBinding(key, scoping, implementedBy, errors);
         }
 
         // Handle @ProvidedBy.
+        // 处理 providedBy
         ProvidedBy providedBy = rawType.getAnnotation(ProvidedBy.class);
         if (providedBy != null) {
             Annotations.checkForMisplacedScopeAnnotations(rawType, source, errors);
@@ -487,30 +508,36 @@ class InjectorImpl implements Injector, Lookups {
         // We can't inject abstract classes.
         // TODO: Method interceptors could actually enable us to implement
         // abstract types. Should we remove this restriction?
+        // 无法为抽象类进行注入
         if (Modifier.isAbstract(rawType.getModifiers())) {
             throw errors.missingImplementation(key).toException();
         }
 
         // Error: Inner class.
+        // 无法为内部类进行注入
         if (Classes.isInnerClass(rawType)) {
             throw errors.cannotInjectInnerClass(rawType).toException();
         }
 
+        // 如果包含范围信息
         if (!scoping.isExplicitlyScoped()) {
+            // 寻找被 @ScopeAnnotation 修饰的注解类
             Class<? extends Annotation> scopeAnnotation = findScopeAnnotation(errors, rawType);
             if (scopeAnnotation != null) {
+                // Scoping 定义了一个可以被visitor处理的范围信息
                 scoping = Scopes.makeInjectable(Scoping.forAnnotation(scopeAnnotation),
                     this, errors.withSource(rawType));
             }
         }
 
+        // key 照理说一定是实例类型啊 否则没有构造函数 再获取有关构造器的注入点时 会提示 NoSuchMethodException
         return ConstructorBindingImpl.create(this, key, source, scoping);
     }
 
     /**
      * Converts a binding for a {@code Key<TypeLiteral<T>>} to the value {@code TypeLiteral<T>}. It's
      * a bit awkward because we have to pull out the inner type in the type literal.
-     * 当 key内部的类型是TypeLiteral 时 创建对应的 BindingImpl 对象
+     * 当 key内部的类型是TypeLiteral 时 创建对应的 BindingImpl 对象   该banding对象仅返回一个TypeLiteral  这算是特殊情况 所以先忽略
      */
     private <T> BindingImpl<TypeLiteral<T>> createTypeLiteralBinding(
         Key<TypeLiteral<T>> key, Errors errors) throws ErrorsException {
@@ -542,6 +569,7 @@ class InjectorImpl implements Injector, Lookups {
 
     /**
      * Creates a binding for a type annotated with @ProvidedBy.
+     * 生成基于 @ProvidedBy 注解的binding实现类
      */
     <T> BindingImpl<T> createProvidedByBinding(Key<T> key, Scoping scoping,
                                                ProvidedBy providedBy, Errors errors) throws ErrorsException {
@@ -556,6 +584,7 @@ class InjectorImpl implements Injector, Lookups {
         // Assume the provider provides an appropriate type. We double check at runtime.
         @SuppressWarnings("unchecked") final Key<? extends Provider<T>> providerKey
             = (Key<? extends Provider<T>>) Key.get(providerType);
+        // 先根据实现类类型找到 提供实例对象的binding
         final BindingImpl<? extends Provider<?>> providerBinding
             = getBindingOrThrow(providerKey, errors);
 
@@ -580,6 +609,7 @@ class InjectorImpl implements Injector, Lookups {
             }
         };
 
+        // 生成基于代理模式的binding
         return new LinkedProviderBindingImpl<>(
             this,
             key,
@@ -591,6 +621,7 @@ class InjectorImpl implements Injector, Lookups {
 
     /**
      * Creates a binding for a type annotated with @ImplementedBy.
+     * 根据指定的注入类 生成 binding对象
      */
     <T> BindingImpl<T> createImplementedByBinding(Key<T> key, Scoping scoping,
                                                   ImplementedBy implementedBy, Errors errors)
@@ -604,6 +635,7 @@ class InjectorImpl implements Injector, Lookups {
         }
 
         // Make sure implementationType extends type.
+        // 确保 ImplementedBy 对应的类型确实是 key的实现类
         if (!rawType.isAssignableFrom(implementationType)) {
             throw errors.notASubtype(implementationType, rawType).toException();
         }
@@ -613,8 +645,10 @@ class InjectorImpl implements Injector, Lookups {
 
         // Look up the target binding.
         final Key<? extends T> targetKey = Key.get(subclass);
+        // 将当前类包装成key 去ioc容器中查找 并封装成binding 对象
         final BindingImpl<? extends T> targetBinding = getBindingOrThrow(targetKey, errors);
 
+        // 通过代理模式 生成实例
         InternalFactory<T> internalFactory = new InternalFactory<T>() {
             @Override
             public T get(Errors errors, InternalContext context, Dependency<?> dependency)
@@ -837,15 +871,7 @@ class InjectorImpl implements Injector, Lookups {
             throws IllegalAccessException, InvocationTargetException;
     }
 
-    /**
-     * Cached constructor injectors for each type
-     */
-    ConstructorInjectorStore constructors = new ConstructorInjectorStore(this);
 
-    /**
-     * Cached field and method injectors for each type.
-     */
-    MembersInjectorStore membersInjectorStore;
 
     @Override
     @SuppressWarnings("unchecked") // the members injector type is consistent with instance's type

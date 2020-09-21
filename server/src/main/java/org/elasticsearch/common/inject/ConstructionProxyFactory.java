@@ -20,6 +20,7 @@ package org.elasticsearch.common.inject;
  * Creates {@link ConstructionProxy} instances.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 该工厂专门用于创建 ConstructionProxy
  */
 interface ConstructionProxyFactory<T> {
 

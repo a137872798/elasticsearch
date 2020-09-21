@@ -25,6 +25,7 @@ import java.lang.reflect.InvocationTargetException;
  * Produces construction proxies that invoke the class constructor.
  *
  * @author crazybob@google.com (Bob Lee)
+ * 默认的 构造器代理对象工厂
  */
 class DefaultConstructionProxyFactory<T> implements ConstructionProxyFactory<T> {
 
@@ -32,11 +33,16 @@ class DefaultConstructionProxyFactory<T> implements ConstructionProxyFactory<T> 
 
     /**
      * @param injectionPoint an injection point whose member is a constructor of {@code T}.
+     *                       通过一个注入点进行初始化
      */
     DefaultConstructionProxyFactory(InjectionPoint injectionPoint) {
         this.injectionPoint = injectionPoint;
     }
 
+    /**
+     * 相关调用就是返回 注入点描述的构造器对象
+     * @return
+     */
     @Override
     public ConstructionProxy<T> create() {
         @SuppressWarnings("unchecked") // the injection point is for a constructor of T

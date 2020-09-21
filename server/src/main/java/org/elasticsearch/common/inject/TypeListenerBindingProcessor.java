@@ -23,6 +23,7 @@ import org.elasticsearch.common.inject.spi.TypeListenerBinding;
  * Handles {@link Binder#bindListener} commands.
  *
  * @author jessewilson@google.com (Jesse Wilson)
+ * 这个处理器专门用于处理 监听器对象  只是将处理器转移到state中
  */
 class TypeListenerBindingProcessor extends AbstractProcessor {
 

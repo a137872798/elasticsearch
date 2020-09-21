@@ -103,6 +103,13 @@ class InheritingState implements State {
         return explicitBindings;
     }
 
+    /**
+     * 当用户通过module 将binding关系设置到element中后 在 shell.builder中 会使用 bindProcessor处理这些binding 最终结果就是将binding设置到explicitBindingsMutable中
+     * 这里同时基于 key 和  key.annotationStrategy 来去重 所以在只声明了key类型的情况下 binding只允许存在一种
+     * 在spring中 bean是通过name来区分的 而在guice中是依托于用户的module.configure() 方法定义依赖关系 所以当用户没有通过注解区分范围时 选择覆盖也是种合理的做法
+     * @param key
+     * @param binding
+     */
     @Override
     public void putBinding(Key<?> key, BindingImpl<?> binding) {
         explicitBindingsMutable.put(key, binding);
@@ -114,6 +121,11 @@ class InheritingState implements State {
         return scope != null ? scope : parent.getScope(annotationType);
     }
 
+    /**
+     * 大多数 processor 只是做一个转移工作 一开始的各种element是由用户通过module设置进去的  现在通过processor对象将这些元素转移到在进行真正注入动作时需要的state中
+     * @param annotationType
+     * @param scope
+     */
     @Override
     public void putAnnotation(Class<? extends Annotation> annotationType, Scope scope) {
         scopes.put(annotationType, scope);
@@ -162,6 +174,10 @@ class InheritingState implements State {
         return matchingConverter;
     }
 
+    /**
+     * 在 TypeListenerBindingProcessor中 会将从elements中检测到的 TypeListenerBinding 对象转移到state中
+     * @param listenerBinding
+     */
     @Override
     public void addTypeListener(TypeListenerBinding listenerBinding) {
         listenerBindings.add(listenerBinding);

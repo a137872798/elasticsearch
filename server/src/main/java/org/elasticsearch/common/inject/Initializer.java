@@ -73,6 +73,7 @@ class Initializer {
             return Initializables.of(instance);
         }
 
+        // 因为在进行注入前 会重新获取一次注入点信息 所以这里 reference属性不需要携带注入点
         InjectableReference<T> initializable = new InjectableReference<>(injector, instance, source);
         pendingInjection.put(instance, initializable);
         return initializable;
@@ -189,7 +190,7 @@ class Initializer {
             // toInject needs injection, do it right away. we only do this once, even if it fails
             // IdentityHashMap 的特性就是key的比较是通过 == 而不是 equals 这里当注入完成时 从待注入列表中移除
             if (pendingInjection.remove(instance) != null) {
-                // 注入完成时 触发监听器
+                // 执行注入动作 以及触发监听器
                 membersInjector.injectAndNotify(instance, errors.withSource(source));
             }
 

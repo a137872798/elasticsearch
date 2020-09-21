@@ -34,8 +34,12 @@ class MessageProcessor extends AbstractProcessor {
         super(errors);
     }
 
-    // 实际上就是该对象内嵌了 Errors对象 而visit方法就是将消息直接追加到errors上
-
+    /**
+     * 每个处理器对象继承自 AbstractProcessor 并根据需要实现相关方法
+     * 而该处理器仅仅是收集产生的各种异常信息
+     * @param message
+     * @return
+     */
     @Override
     public Boolean visit(Message message) {
         // ES_GUICE: don't log failures using jdk logging
