@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
 
 /**
  * A discovery node represents a node that is part of the cluster.
- * 描述当前节点在集群中的角色
+ * 描述某个集群中的节点
  */
 public class DiscoveryNode implements Writeable, ToXContentFragment {
 
@@ -67,6 +67,8 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
     public static boolean isRemoteClusterClient(final Settings settings) {
         return Node.NODE_REMOTE_CLUSTER_CLIENT.get(settings);
     }
+
+    // 目标节点的id 名称 地址信息 属性 以及角色等信息
 
     private final String nodeName;
     private final String nodeId;
@@ -176,6 +178,7 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
         }
         this.attributes = Collections.unmodifiableMap(attributes);
         //verify that no node roles are being provided as attributes
+        // 确保角色信息没有设置到 attr中
         Predicate<Map<String, String>> predicate =  (attrs) -> {
             boolean success = true;
             for (final DiscoveryNodeRole role : DiscoveryNode.roleNameToPossibleRoles.values()) {
@@ -211,6 +214,8 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
      * Creates a new {@link DiscoveryNode} by reading from the stream provided as argument
      * @param in the stream
      * @throws IOException if there is an error while reading from the stream
+     *
+     * 通过一个输入流的数据来还原该对象
      */
     public DiscoveryNode(StreamInput in) throws IOException {
         this.nodeName = in.readString().intern();
@@ -241,6 +246,7 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
                 }
             }
         } else {
+            // TODO 忽略兼容性代码
             // an old node will only send us legacy roles since pluggable roles is a new concept
             for (int i = 0; i < rolesSize; i++) {
                 final LegacyRole legacyRole = in.readEnum(LegacyRole.class);
@@ -263,6 +269,11 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
         this.version = Version.readVersion(in);
     }
 
+    /**
+     * 看多了lucene 这种都小case了
+     * @param out
+     * @throws IOException
+     */
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeString(nodeName);
@@ -282,6 +293,7 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
                 out.writeString(role.roleName());
                 out.writeString(role.roleNameAbbreviation());
             }
+            // TODO 忽略兼容性代码
         } else {
             // an old node will only understand legacy roles since pluggable roles is a new concept
             final List<DiscoveryNodeRole> rolesToWrite =
@@ -435,6 +447,13 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
         return sb.toString();
     }
 
+    /**
+     * 将当前对象以特殊格式输出 比如json
+     * @param builder
+     * @param params
+     * @return
+     * @throws IOException
+     */
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(getId());

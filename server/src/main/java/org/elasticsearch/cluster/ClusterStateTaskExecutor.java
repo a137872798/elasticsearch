@@ -28,11 +28,14 @@ public interface ClusterStateTaskExecutor<T> {
     /**
      * Update the cluster state based on the current state and the given tasks. Return the *same instance* if no state
      * should be changed.
+     * @param currentState 当前集群状态
+     * @param tasks 当前待处理的一组任务
      */
     ClusterTasksResult<T> execute(ClusterState currentState, List<T> tasks) throws Exception;
 
     /**
      * indicates whether this executor should only run if the current node is master
+     * 当前任务是否只能在主节点执行
      */
     default boolean runOnlyOnMaster() {
         return true;

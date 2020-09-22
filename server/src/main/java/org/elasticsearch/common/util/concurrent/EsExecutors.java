@@ -68,6 +68,14 @@ public class EsExecutors {
         return NODE_PROCESSORS_SETTING.get(settings);
     }
 
+    /**
+     * 生成一个包含优先级功能的线程池
+     * @param name
+     * @param threadFactory
+     * @param contextHolder
+     * @param timer
+     * @return
+     */
     public static PrioritizedEsThreadPoolExecutor newSinglePrioritizing(String name, ThreadFactory threadFactory,
                                                                         ThreadContext contextHolder, ScheduledExecutorService timer) {
         return new PrioritizedEsThreadPoolExecutor(name, 1, 1, 0L, TimeUnit.MILLISECONDS, threadFactory, contextHolder, timer);

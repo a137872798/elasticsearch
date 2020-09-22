@@ -39,6 +39,7 @@ import java.util.stream.Collectors;
 
 /**
  * An event received by the local node, signaling that the cluster state has changed.
+ * 代表集群发生了变化
  */
 public class ClusterChangedEvent {
 

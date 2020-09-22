@@ -24,6 +24,7 @@ import org.elasticsearch.common.util.concurrent.PrioritizedRunnable;
 
 /**
  * PrioritizedRunnable that also has a source string
+ * 在携带优先级的runnable 之外还包含一个 source属性
  */
 public abstract class SourcePrioritizedRunnable extends PrioritizedRunnable {
     protected final String source;

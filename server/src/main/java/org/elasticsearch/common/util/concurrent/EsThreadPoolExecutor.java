@@ -33,7 +33,14 @@ import java.util.stream.Stream;
  */
 public class EsThreadPoolExecutor extends ThreadPoolExecutor {
 
+    /**
+     * 在执行任务中 线程的上下文信息
+     */
     private final ThreadContext contextHolder;
+
+    /**
+     * 代表一个监听终止动作的监听器
+     */
     private volatile ShutdownListener listener;
 
     private final Object monitor = new Object();
@@ -61,7 +68,7 @@ public class EsThreadPoolExecutor extends ThreadPoolExecutor {
     }
 
     /**
-     * 在原来的基础上增加了  终止时的监听器
+     * 在原有的基础上 额外触发监听器
      */
     @Override
     protected synchronized void terminated() {
@@ -87,6 +94,7 @@ public class EsThreadPoolExecutor extends ThreadPoolExecutor {
      */
     @Override
     public void execute(Runnable command) {
+        // 在执行任务前  进行包装 确保threadContext 不会被影响
         command = wrapRunnable(command);
         try {
             super.execute(command);

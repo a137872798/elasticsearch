@@ -89,13 +89,26 @@ public class MasterService extends AbstractLifecycleComponent {
      */
     private final String nodeName;
 
+    /**
+     * 用于获取当前集群状态的对象
+     */
     private java.util.function.Supplier<ClusterState> clusterStateSupplier;
 
+    /**
+     * 代表每隔多少时间更新一次集群相关的配置
+     */
     private volatile TimeValue slowTaskLoggingThreshold;
 
     protected final ThreadPool threadPool;
 
+    /**
+     * 该线程池使用优先队列作为任务队列 所以可以为任务安排优先级
+     */
     private volatile PrioritizedEsThreadPoolExecutor threadPoolExecutor;
+
+    /**
+     * 提交批量任务的对象
+     */
     private volatile Batcher taskBatcher;
 
 
@@ -127,6 +140,9 @@ public class MasterService extends AbstractLifecycleComponent {
         this.clusterStateSupplier = clusterStateSupplier;
     }
 
+    /**
+     * 做初始化工作  也就是初始化优先级线程池 以及使用它来初始化 batcher对象
+     */
     @Override
     protected synchronized void doStart() {
         Objects.requireNonNull(clusterStatePublisher, "please set a cluster state publisher before starting");
@@ -135,6 +151,10 @@ public class MasterService extends AbstractLifecycleComponent {
         taskBatcher = new Batcher(logger, threadPoolExecutor);
     }
 
+    /**
+     * 创建 PrioritizedEsThreadPoolExecutor
+     * @return
+     */
     protected PrioritizedEsThreadPoolExecutor createThreadPoolExecutor() {
         return EsExecutors.newSinglePrioritizing(
                 nodeName + "/" + MASTER_UPDATE_THREAD_NAME,
@@ -143,6 +163,9 @@ public class MasterService extends AbstractLifecycleComponent {
                 threadPool.scheduler());
     }
 
+    /**
+     * 用于提交批任务
+     */
     @SuppressWarnings("unchecked")
     class Batcher extends TaskBatcher {
 
@@ -150,21 +173,37 @@ public class MasterService extends AbstractLifecycleComponent {
             super(logger, threadExecutor);
         }
 
+        /**
+         * 当任务超时时触发
+         * @param tasks   当前待处理的任务
+         * @param timeout
+         */
         @Override
         protected void onTimeout(List<? extends BatchedTask> tasks, TimeValue timeout) {
+            // 获取名为 GENERIC 的线程池
+            // 以失败方式触发监听器
             threadPool.generic().execute(
                 () -> tasks.forEach(
                     task -> ((UpdateTask) task).listener.onFailure(task.source,
                         new ProcessClusterEventTimeoutException(timeout, task.source))));
         }
 
+        /**
+         * 代表在线程池中轮到处理批任务了
+         * @param batchingKey 标识批任务的key
+         * @param tasks  本次所有任务对象
+         * @param tasksSummary 有关任务的描述信息
+         */
         @Override
         protected void run(Object batchingKey, List<? extends BatchedTask> tasks, String tasksSummary) {
+            // TODO 先看任务是怎么提交的
             ClusterStateTaskExecutor<Object> taskExecutor = (ClusterStateTaskExecutor<Object>) batchingKey;
             List<UpdateTask> updateTasks = (List<UpdateTask>) tasks;
             runTasks(new TaskInputs(taskExecutor, updateTasks, tasksSummary));
         }
 
+        /**
+         */
         class UpdateTask extends BatchedTask {
             final ClusterStateTaskListener listener;
 
@@ -182,6 +221,9 @@ public class MasterService extends AbstractLifecycleComponent {
         }
     }
 
+    /**
+     * 关闭线程池对象
+     */
     @Override
     protected synchronized void doStop() {
         ThreadPool.terminate(threadPoolExecutor, 10, TimeUnit.SECONDS);
@@ -193,11 +235,16 @@ public class MasterService extends AbstractLifecycleComponent {
 
     /**
      * The current cluster state exposed by the discovery layer. Package-visible for tests.
+     * 获取当前集群状态
      */
     ClusterState state() {
         return clusterStateSupplier.get();
     }
 
+    /**
+     * 检测当前线程是否线程池中的线程  因为使用的线程池线程数固定为1  且名称中携带了MASTER_UPDATE_THREAD_NAME
+     * @return
+     */
     private static boolean isMasterUpdateThread() {
         return Thread.currentThread().getName().contains(MASTER_UPDATE_THREAD_NAME);
     }
@@ -263,6 +310,12 @@ public class MasterService extends AbstractLifecycleComponent {
         }
     }
 
+    /**
+     * threadPool.relativeTimeInMillis() 相当于是一个近似的当前时间  这里返回的是2个时间差
+     * 为了避免频繁调用 System.current的开销  使用一个定时线程池更新当前时间
+     * @param startTimeMillis
+     * @return
+     */
     private TimeValue getTimeSince(long startTimeMillis) {
         return TimeValue.timeValueMillis(Math.max(0, threadPool.relativeTimeInMillis() - startTimeMillis));
     }

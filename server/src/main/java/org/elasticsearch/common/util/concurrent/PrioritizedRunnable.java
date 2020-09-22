@@ -23,10 +23,23 @@ import org.elasticsearch.common.Priority;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 
+/**
+ * 这些runnable 包含一个有关优先级的描述信息
+ */
 public abstract class PrioritizedRunnable implements Runnable, Comparable<PrioritizedRunnable> {
 
+    /**
+     * 描述优先级信息
+     */
     private final Priority priority;
+    /**
+     * 该任务的创建时间
+     */
     private final long creationDate;
+
+    /**
+     * 每次调用都会获得当前时间  通过 -creationDate 可以得到时间差
+     */
     private final LongSupplier relativeTimeProvider;
 
     public static WrappedRunnable wrap(Runnable runnable, Priority priority) {
@@ -69,6 +82,9 @@ public abstract class PrioritizedRunnable implements Runnable, Comparable<Priori
         return priority;
     }
 
+    /**
+     * 将任务对象与优先级包装在一起
+     */
     static class Wrapped extends PrioritizedRunnable implements WrappedRunnable {
 
         private final Runnable runnable;

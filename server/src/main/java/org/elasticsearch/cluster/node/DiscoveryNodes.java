@@ -49,7 +49,7 @@ import java.util.stream.StreamSupport;
 /**
  * This class holds all {@link DiscoveryNode} in the cluster and provides convenience methods to
  * access, modify merge / diff discovery nodes.
- * 当前集群中所有节点  一般集群下节点都是在初始化时手动设置的 (参考jraft)
+ * 当前集群中所有节点  一般集群下节点都是在初始化时手动设置的 (参考jraft)   这里要好好研究下 集群节点数发生变化 短时间内一致性还能否保证
  */
 public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements Iterable<DiscoveryNode> {
 
@@ -57,6 +57,9 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
 
     private final ImmutableOpenMap<String, DiscoveryNode> nodes;
     private final ImmutableOpenMap<String, DiscoveryNode> dataNodes;
+    /**
+     * master节点是多个的么  还是说它并不是指已经被选举出来的那个节点 而是具备参与选举能力的节点???
+     */
     private final ImmutableOpenMap<String, DiscoveryNode> masterNodes;
     private final ImmutableOpenMap<String, DiscoveryNode> ingestNodes;
 
@@ -67,6 +70,19 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
     private final Version maxNodeVersion;
     private final Version minNodeVersion;
 
+    /**
+     * 只是做了简单的赋值操作
+     * @param nodes 包含当前集群下所有的节点信息
+     * @param dataNodes  哪些节点是数据节点
+     * @param masterNodes  哪些节点是master节点
+     * @param ingestNodes  哪些是摄取节点
+     * @param masterNodeId
+     * @param localNodeId
+     * @param minNonClientNodeVersion
+     * @param maxNonClientNodeVersion
+     * @param maxNodeVersion
+     * @param minNodeVersion
+     */
     private DiscoveryNodes(ImmutableOpenMap<String, DiscoveryNode> nodes, ImmutableOpenMap<String, DiscoveryNode> dataNodes,
                            ImmutableOpenMap<String, DiscoveryNode> masterNodes, ImmutableOpenMap<String, DiscoveryNode> ingestNodes,
                            String masterNodeId, String localNodeId, Version minNonClientNodeVersion, Version maxNonClientNodeVersion,
@@ -90,6 +106,8 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
 
     /**
      * Returns {@code true} if the local node is the elected master node.
+     * 表示当前节点是否被选举为master节点
+     * 谁来通知该节点成为master节点呢  应该是基于欺负算法的选举吧
      */
     public boolean isLocalNodeElectedMaster() {
         if (localNodeId == null) {
@@ -146,6 +164,7 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
      * Get a {@link Map} of the discovered master and data nodes arranged by their ids
      *
      * @return {@link Map} of the discovered master and data nodes arranged by their ids
+     * 返回同时包含数据节点和master节点的容器
      */
     public ImmutableOpenMap<String, DiscoveryNode> getMasterAndDataNodes() {
         ImmutableOpenMap.Builder<String, DiscoveryNode> nodes = ImmutableOpenMap.builder(dataNodes);
@@ -248,6 +267,7 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
      *
      * @param address {@link TransportAddress} of the wanted node
      * @return node identified by the given address or <code>null</code> if no such node exists
+     * 找到目标地址对应的节点信息
      */
     public DiscoveryNode findByAddress(TransportAddress address) {
         for (ObjectCursor<DiscoveryNode> cursor : nodes.values()) {
@@ -332,6 +352,8 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
      * - role:false removes from the subset all nodes with a matching role.
      *
      * An empty sequence of node specifications returns all nodes, since the corresponding actions run on all nodes by default.
+     *
+     * @param nodes  读取特殊的字符串信息 并转换成nodeId
      */
     public String[] resolveNodes(String... nodes) {
         if (nodes == null || nodes.length == 0) {
@@ -349,9 +371,11 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
                     if (masterNodeId != null) {
                         resolvedNodesIds.add(masterNodeId);
                     }
+                    // 代表能以节点id查到记录时 直接存储
                 } else if (nodeExists(nodeId)) {
                     resolvedNodesIds.add(nodeId);
                 } else {
+                    // 如果携带了 _all  或者与某个节点的某个信息匹配成功了  也选择将当前节点id加入
                     for (DiscoveryNode node : this) {
                         if ("_all".equals(nodeId)
                                 || Regex.simpleMatch(nodeId, node.getName())
@@ -360,6 +384,7 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
                             resolvedNodesIds.add(node.getId());
                         }
                     }
+                    // 如果节点id 存在 ":"
                     int index = nodeId.indexOf(':');
                     if (index != -1) {
                         String matchAttrName = nodeId.substring(0, index);
@@ -459,8 +484,14 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
         return sb.toString();
     }
 
+    /**
+     * 代表集群内节点的变化
+     */
     public static class Delta {
 
+        /**
+         * 本地节点的id
+         */
         private final String localNodeId;
         @Nullable private final DiscoveryNode previousMasterNode;
         @Nullable private final DiscoveryNode newMasterNode;
@@ -594,8 +625,14 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
         return new Builder(nodes);
     }
 
+    /**
+     * 该对象是用来构建集群节点的
+     */
     public static class Builder {
 
+        /**
+         * builder对象在插入足够多的信息时 通过调用build 生成map对象
+         */
         private final ImmutableOpenMap.Builder<String, DiscoveryNode> nodes;
         private String masterNodeId;
         private String localNodeId;
@@ -613,18 +650,22 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
         /**
          * adds a disco node to the builder. Will throw an {@link IllegalArgumentException} if
          * the supplied node doesn't pass the pre-flight checks performed by {@link #validateAdd(DiscoveryNode)}
+         * 追加集群中某个node 的信息
          */
         public Builder add(DiscoveryNode node) {
             final String preflight = validateAdd(node);
+            // preflight 代表失败信息  此时就可以抛出异常了
             if (preflight != null) {
                 throw new IllegalArgumentException(preflight);
             }
+            // 插入node信息
             putUnsafe(node);
             return this;
         }
 
         /**
          * Get a node by its id
+         * 按照id 获取某个node信息
          *
          * @param nodeId id of the wanted node
          * @return wanted node if it exists. Otherwise <code>null</code>
@@ -667,6 +708,7 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
          *
          * Note: if this method returns a non-null value, calling {@link #add(DiscoveryNode)} will fail with an
          * exception
+         * 校验能否正常插入某个新node
          */
         private String validateAdd(DiscoveryNode node) {
             for (ObjectCursor<DiscoveryNode> cursor : nodes.values()) {
@@ -684,7 +726,12 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
             return null;
         }
 
+        /**
+         * 当内部属性都填充完毕后 构造nodes对象
+         * @return
+         */
         public DiscoveryNodes build() {
+            // 看来节点分为3种类型 分别是 数据节点 协调节点(master节点)  摄取节点   每个节点可以充当多个角色
             ImmutableOpenMap.Builder<String, DiscoveryNode> dataNodesBuilder = ImmutableOpenMap.builder();
             ImmutableOpenMap.Builder<String, DiscoveryNode> masterNodesBuilder = ImmutableOpenMap.builder();
             ImmutableOpenMap.Builder<String, DiscoveryNode> ingestNodesBuilder = ImmutableOpenMap.builder();
@@ -725,6 +772,10 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
             );
         }
 
+        /**
+         * 代表当前节点就是master节点
+         * @return
+         */
         public boolean isLocalNodeElectedMaster() {
             return masterNodeId != null && masterNodeId.equals(localNodeId);
         }
