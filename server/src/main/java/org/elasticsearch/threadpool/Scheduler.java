@@ -165,6 +165,8 @@ public interface Scheduler {
      * case of an exception, this class will log the exception and reschedule the runnable for its next execution. This differs from the
      * {@link ScheduledThreadPoolExecutor#scheduleWithFixedDelay(Runnable, long, long, TimeUnit)} semantics as an exception there would
      * terminate the rescheduling of the runnable.
+     *
+     * AbstractRunnable 在Runnable的基础上追加了一组钩子
      */
     final class ReschedulingRunnable extends AbstractRunnable implements Cancellable {
 
@@ -181,9 +183,9 @@ public interface Scheduler {
          * Creates a new rescheduling runnable and schedules the first execution to occur after the interval specified
          *
          * @param runnable the {@link Runnable} that should be executed periodically
-         * @param interval the time interval between executions
-         * @param executor the executor where this runnable should be scheduled to run
-         * @param scheduler the {@link Scheduler} instance to use for scheduling
+         * @param interval the time interval between executions      触发间隔
+         * @param executor the executor where this runnable should be scheduled to run    指定的线程池名字
+         * @param scheduler the {@link Scheduler} instance to use for scheduling    代表执行任务的定时器
          */
         ReschedulingRunnable(Runnable runnable, TimeValue interval, String executor, Scheduler scheduler,
                              Consumer<Exception> rejectionConsumer, Consumer<Exception> failureConsumer) {

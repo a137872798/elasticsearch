@@ -36,6 +36,7 @@ public class Task {
 
     /**
      * The request header to mark tasks with specific ids
+     * 类似链路追踪的id
      */
     public static final String X_OPAQUE_ID = "X-Opaque-Id";
 

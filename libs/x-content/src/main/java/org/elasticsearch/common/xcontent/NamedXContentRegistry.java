@@ -34,7 +34,7 @@ import static java.util.Collections.emptyMap;
 import static java.util.Collections.unmodifiableMap;
 
 /**
- * 该对象允许注册一些东西
+ * 数据体中并非所有token 都是需要解析的   需要先在这里注册需要解析的token (被称为ParseField， 同时该对象内部还定义了使用者如何处理解析后生成的数据)
  */
 public class NamedXContentRegistry {
     /**
@@ -43,6 +43,7 @@ public class NamedXContentRegistry {
      * every call to {@linkplain XContentParser#namedObject(Class, String, Object)}. Every non-test usage really should be checked
      * thoroughly and marked with a comment about how it was checked. That way anyone that sees code that uses it knows that it is
      * potentially dangerous.
+     * 该对象内部没有注册任何entry
      */
     public static final NamedXContentRegistry EMPTY = new NamedXContentRegistry(emptyList());
 
@@ -117,6 +118,7 @@ public class NamedXContentRegistry {
                 currentCategory = entry.categoryClass;
             }
 
+            // 这里所有待处理的 entry 他们的name以及 DeprecatedName都是不允许重复的
             for (String name : entry.name.getAllNamesIncludedDeprecated()) {
                 Object old = parsers.put(name, entry);
                 if (old != null) {

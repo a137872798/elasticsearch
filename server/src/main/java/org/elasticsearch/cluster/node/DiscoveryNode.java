@@ -124,12 +124,12 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
      * and updated.
      * </p>
      *
-     * @param nodeName         the nodes name
-     * @param nodeId           the nodes unique persistent id. An ephemeral id will be auto generated.
-     * @param address          the nodes transport address
-     * @param attributes       node attributes
-     * @param roles            node roles
-     * @param version          the version of the node
+     * @param nodeName         the nodes name  当前节点的名字
+     * @param nodeId           the nodes unique persistent id. An ephemeral id will be auto generated.   当前节点id
+     * @param address          the nodes transport address     对外暴露的地址
+     * @param attributes       node attributes        一些额外的属性 通过特殊的配置名从settings中获取
+     * @param roles            node roles            当前node包含的角色
+     * @param version          the version of the node     es的版本
      */
     public DiscoveryNode(String nodeName, String nodeId, TransportAddress address,
                          Map<String, String> attributes, Set<DiscoveryNodeRole> roles, Version version) {
@@ -148,12 +148,14 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
      *
      * @param nodeName         the nodes name
      * @param nodeId           the nodes unique persistent id
-     * @param ephemeralId      the nodes unique ephemeral id
-     * @param hostAddress      the nodes host address
+     * @param ephemeralId      the nodes unique ephemeral id     一个临时性的随机id
+     * @param hostAddress      the nodes host address           主机地址
      * @param address          the nodes transport address
      * @param attributes       node attributes
      * @param roles            node roles
      * @param version          the version of the node
+     *
+     *                         在初始化阶段只是做了一些简单的赋值操作
      */
     public DiscoveryNode(String nodeName, String nodeId, String ephemeralId, String hostName, String hostAddress,
                          TransportAddress address, Map<String, String> attributes, Set<DiscoveryNodeRole> roles, Version version) {
@@ -186,9 +188,16 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
         this.roles = roles.stream().collect(Sets.toUnmodifiableSortedSet());
     }
 
-    /** Creates a DiscoveryNode representing the local node. */
+    /**
+     * Creates a DiscoveryNode representing the local node.
+     * 创建一个能被集群发现的节点
+     * @param publishAddress  对外暴露的地址
+     */
     public static DiscoveryNode createLocal(Settings settings, TransportAddress publishAddress, String nodeId) {
+        // 获取描述节点的状态信息
         Map<String, String> attributes = Node.NODE_ATTRIBUTES.getAsMap(settings);
+
+        // 根据当下配置信息 检测这些角色对应的配置项是否为true
         Set<DiscoveryNodeRole> roles = getRolesFromSettings(settings);
         return new DiscoveryNode(Node.NODE_NAME_SETTING.get(settings), nodeId, publishAddress, attributes, roles, Version.CURRENT);
     }
@@ -444,18 +453,19 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
     }
 
     /**
-     * 当前node 可以作为的角色
+     * 存储当前节点可能成为的所有角色  处理系统内置的角色外 插件也可以为node指定角色
      */
     private static Map<String, DiscoveryNodeRole> roleNameToPossibleRoles;
 
     /**
-     *
+     * 设置当前节点所有可能的角色
      * @param possibleRoles
      */
     public static void setPossibleRoles(final Set<DiscoveryNodeRole> possibleRoles) {
         final Map<String, DiscoveryNodeRole> roleNameToPossibleRoles =
                 possibleRoles.stream().collect(Collectors.toUnmodifiableMap(DiscoveryNodeRole::roleName, Function.identity()));
         // collect the abbreviation names into a map to ensure that there are not any duplicate abbreviations
+
         // roleNameAbbreviation 是role的缩写
         final Map<String, DiscoveryNodeRole> roleNameAbbreviationToPossibleRoles = roleNameToPossibleRoles.values()
                 .stream()

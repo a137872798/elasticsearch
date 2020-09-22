@@ -39,6 +39,11 @@ public abstract class AbstractObjectParser<Value, Context> {
     /**
      * Declare some field. Usually it is easier to use {@link #declareString(BiConsumer, ParseField)} or
      * {@link #declareObject(BiConsumer, ContextParser, ParseField)} rather than call this directly.
+     * @param consumer 如何消费解析到的数值
+     * @param parser 当解析到目标token时 如何获取数值的方法
+     * @param parseField  声明本次目标token
+     * @param type  表示当前指定的数值类型
+     * 这里声明了 当解析出某个字段时 该如何处理
      */
     public abstract <T> void declareField(BiConsumer<Value, T> consumer, ContextParser<Context, T> parser, ParseField parseField,
             ValueType type);   // ValueType 代表结果的类型
@@ -158,6 +163,14 @@ public abstract class AbstractObjectParser<Value, Context> {
 
     public abstract String getName();
 
+    /**
+     *
+     * @param consumer  当解析出value时 使用该函数进行处理
+     * @param parser    代表如何从结构体数据中获取该数据
+     * @param parseField    执行要解析的数据对应的字段名  比如 index_name
+     * @param type  代表处理的类型
+     * @param <T>
+     */
     public <T> void declareField(BiConsumer<Value, T> consumer, CheckedFunction<XContentParser, T, IOException> parser,
             ParseField parseField, ValueType type) {
         if (parser == null) {
@@ -166,21 +179,35 @@ public abstract class AbstractObjectParser<Value, Context> {
         declareField(consumer, (p, c) -> parser.apply(p), parseField, type);
     }
 
+
+    // 可以看到所有 declareXXX 最终都会转换成 declareField   只是在调用时会传入一个准确的数值类型
+
+    /**
+     * 这里声明了一个对象
+     * @param consumer
+     * @param objectParser
+     * @param field
+     * @param <T>
+     */
     public <T> void declareObject(BiConsumer<Value, T> consumer, ContextParser<Context, T> objectParser, ParseField field) {
         declareField(consumer, (p, c) -> objectParser.parse(p, c), field, ValueType.OBJECT);
     }
 
     /**
      * Declare an object field that parses explicit {@code null}s in the json to a default value.
+     * 其余变种只是将 使用parser从token中获取值的逻辑增强了
      */
     public <T> void declareObjectOrNull(BiConsumer<Value, T> consumer, ContextParser<Context, T> objectParser, T nullValue,
             ParseField field) {
+        // (p, c) -> p.currentToken() == XContentParser.Token.VALUE_NULL ? nullValue : objectParser.parse(p, c)
+        // 可以看到 当此时解析到的token为null时  使用默认值 nullValue  否则使用parser从数据体中解析
         declareField(consumer, (p, c) -> p.currentToken() == XContentParser.Token.VALUE_NULL ? nullValue : objectParser.parse(p, c),
                 field, ValueType.OBJECT_OR_NULL);
     }
 
     public void declareFloat(BiConsumer<Value, Float> consumer, ParseField field) {
         // Using a method reference here angers some compilers
+        // 这里做了2层转换 第一层使用的函数 负责指定如何将token对应的值转换成需要的值 第二层指定如何从数据体中获取token的值
         declareField(consumer, p -> p.floatValue(), field, ValueType.FLOAT);
     }
 
@@ -202,6 +229,8 @@ public abstract class AbstractObjectParser<Value, Context> {
         declareField(consumer, p -> p.longValue(), field, ValueType.LONG);
     }
 
+    // 下面的套路都是一致的 最终都是转发到 declareField
+
     public void declareInt(BiConsumer<Value, Integer> consumer, ParseField field) {
         // Using a method reference here angers some compilers
         declareField(consumer, p -> p.intValue(), field, ValueType.INT);
@@ -216,6 +245,11 @@ public abstract class AbstractObjectParser<Value, Context> {
     }
 
 
+    /**
+     * 声明某个字符串如何处理
+     * @param consumer  当获取到该字符串时 使用consumer进行处理
+     * @param field   该字符串从解析哪个field获取  field内部包含了字段的名字 比如index_uuid
+     */
     public void declareString(BiConsumer<Value, String> consumer, ParseField field) {
         declareField(consumer, XContentParser::text, field, ValueType.STRING);
     }
@@ -229,6 +263,13 @@ public abstract class AbstractObjectParser<Value, Context> {
         declareField(consumer, XContentParser::booleanValue, field, ValueType.BOOLEAN);
     }
 
+    /**
+     * 代表处理数组类型
+     * @param consumer   代表如何处理最后获取的结果
+     * @param objectParser   使用该对象从token中获取数据
+     * @param field   本次指定的结构体token对应的key名
+     * @param <T>
+     */
     public <T> void declareObjectArray(BiConsumer<Value, List<T>> consumer, ContextParser<Context, T> objectParser, ParseField field) {
         declareFieldArray(consumer, (p, c) -> objectParser.parse(p, c), field, ValueType.OBJECT_ARRAY);
     }
@@ -258,6 +299,7 @@ public abstract class AbstractObjectParser<Value, Context> {
      */
     public <T> void declareFieldArray(BiConsumer<Value, List<T>> consumer, ContextParser<Context, T> itemParser,
                                       ParseField field, ValueType type) {
+        // 这里在处理函数上又包装了一层 就是将array拆开了 使用parser处理每个元素
         declareField(consumer, (p, c) -> parseArray(p, () -> itemParser.parse(p, c)), field, type);
     }
 
@@ -329,13 +371,23 @@ public abstract class AbstractObjectParser<Value, Context> {
         T get() throws IOException;
     }
 
+    /**
+     * 代表数据体解析到某个token时 对应的值是数组类型
+     * @param parser  此时parser正解析到数组token的位置
+     * @param supplier
+     * @param <T>
+     * @return
+     * @throws IOException
+     */
     private static <T> List<T> parseArray(XContentParser parser, IOSupplier<T> supplier) throws IOException {
         List<T> list = new ArrayList<>();
+        // 这里是兼容解析到的是单个数据体的情况 (非数组)
         if (parser.currentToken().isValue()
                 || parser.currentToken() == XContentParser.Token.VALUE_NULL
                 || parser.currentToken() == XContentParser.Token.START_OBJECT) {
             list.add(supplier.get()); // single value
         } else {
+            // 不断从数组中解析数据 并使用 supplier 处理数据 将结果存储到list中
             while (parser.nextToken() != XContentParser.Token.END_ARRAY) {
                 if (parser.currentToken().isValue()
                         || parser.currentToken() == XContentParser.Token.VALUE_NULL

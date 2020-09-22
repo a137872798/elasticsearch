@@ -111,6 +111,7 @@ import org.elasticsearch.common.Nullable;
  * Administrative actions/operations against indices.
  *
  * @see AdminClient#indices()
+ * 对外开放获取有关索引信息的api
  */
 public interface IndicesAdminClient extends ElasticsearchClient {
 

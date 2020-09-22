@@ -23,6 +23,7 @@ import org.elasticsearch.rest.RestStatus;
 /**
  * Objects that can both render themselves in as json/yaml/etc and can provide a {@link RestStatus} for their response. Usually should be
  * implemented by top level responses sent back to users from REST endpoints.
+ * 在原始的格式化数据基础上 增加了 http状态码
  */
 public interface StatusToXContentObject extends ToXContentObject {
 

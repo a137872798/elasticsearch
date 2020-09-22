@@ -39,25 +39,40 @@ import java.util.function.Supplier;
 
 /**
  * Client that executes actions on the local node.
+ * 该client会处理node内部所有的请求
  */
 public class NodeClient extends AbstractClient {
 
     @SuppressWarnings("rawtypes")
     private Map<ActionType, TransportAction> actions;
 
+    /**
+     * 该对象负责处理所有的任务
+     */
     private TaskManager taskManager;
 
     /**
      * The id of the local {@link DiscoveryNode}. Useful for generating task ids from tasks returned by
      * {@link #executeLocally(ActionType, ActionRequest, TaskListener)}.
+     * 获取本地nodeId
      */
     private Supplier<String> localNodeId;
+    /**
+     * 某些功能的实现可能需要读取集群中所有信息 而不能仅依靠当前节点 所以需要一个能与集群通信的服务
+     */
     private RemoteClusterService remoteClusterService;
 
     public NodeClient(Settings settings, ThreadPool threadPool) {
         super(settings, threadPool);
     }
 
+    /**
+     * 在初始化时 会将当前能接收的所有命令填充到内部
+     * @param actions
+     * @param taskManager
+     * @param localNodeId
+     * @param remoteClusterService
+     */
     @SuppressWarnings("rawtypes")
     public void initialize(Map<ActionType, TransportAction> actions, TaskManager taskManager, Supplier<String> localNodeId,
                            RemoteClusterService remoteClusterService) {
@@ -84,9 +99,8 @@ public class NodeClient extends AbstractClient {
      * Prefer this method if you don't need access to the task when listening for the response. This is the method used to
      * implement the {@link Client} interface.
      */
-    public <    Request extends ActionRequest,
-                Response extends ActionResponse
-            > Task executeLocally(ActionType<Response> action, Request request, ActionListener<Response> listener) {
+    public <Request extends ActionRequest, Response extends ActionResponse>
+    Task executeLocally(ActionType<Response> action, Request request, ActionListener<Response> listener) {
         return taskManager.registerAndExecute("transport", transportAction(action), request,
             (t, r) -> listener.onResponse(r), (t, e) -> listener.onFailure(e));
     }

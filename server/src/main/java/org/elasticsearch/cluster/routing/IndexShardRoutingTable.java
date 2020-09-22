@@ -48,9 +48,13 @@ import java.util.Set;
  * a disjoint set of the index data and each shard has one or more instances
  * referred to as replicas of a shard. Given that, this class encapsulates all
  * replicas (instances) for a single index shard.
+ * 索引分片路由表
  */
 public class IndexShardRoutingTable implements Iterable<ShardRouting> {
 
+    /**
+     * 分片路由打乱器
+     */
     final ShardShuffler shuffler;
     final ShardId shardId;
 

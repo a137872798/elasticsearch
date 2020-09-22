@@ -23,6 +23,9 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.transport.TransportAddress;
 
+/**
+ * 代表传输层消息基本的共性 (目标地址)
+ */
 public abstract class TransportMessage implements Writeable {
 
     private TransportAddress remoteAddress;

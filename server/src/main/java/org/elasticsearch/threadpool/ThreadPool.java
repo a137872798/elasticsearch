@@ -396,13 +396,18 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
      *         the task is canceled before it was added to its target thread pool. Once the task has been added to its target thread pool
      *         the ScheduledFuture will cannot interact with it.
      * @throws org.elasticsearch.common.util.concurrent.EsRejectedExecutionException if the task cannot be scheduled for execution
+     * 执行定时任务
      */
     @Override
     public ScheduledCancellable schedule(Runnable command, TimeValue delay, String executor) {
+
+        // 在预备执行某个任务时 对任务本身进行封装
         command = threadContext.preserveContext(command);
+        // SAME 代表使用当前线程 直接执行任务
         if (!Names.SAME.equals(executor)) {
             command = new ThreadedRunnable(command, executor(executor));
         }
+        // 使用 JDK 线程池执行任务 并基于适配器模式使得jdk对象 实现ES 拓展的接口
         return new ScheduledCancellableAdapter(scheduler.schedule(command, delay.millis(), TimeUnit.MILLISECONDS));
     }
 
@@ -419,6 +424,15 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         }
     }
 
+    /**
+     *
+     * @param command the action to take     指定的任务逻辑
+     * @param interval the delay interval   定时触发间隔
+     * @param executor the name of the executor that has to execute this task. Ignored in the default implementation but can be used
+     *                 by subclasses that support multiple executors.
+     *                 使用的线程池对应的name
+     * @return
+     */
     @Override
     public Cancellable scheduleWithFixedDelay(Runnable command, TimeValue interval, String executor) {
         return new ReschedulingRunnable(command, interval, executor, this,
@@ -502,6 +516,9 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         return ((allocatedProcessors * 3) / 2) + 1;
     }
 
+    /**
+     * 同时包含了待执行的runnable 以及线程池对象
+     */
     class ThreadedRunnable implements Runnable {
 
         private final Runnable runnable;

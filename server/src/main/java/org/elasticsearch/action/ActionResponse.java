@@ -26,6 +26,7 @@ import java.io.IOException;
 
 /**
  * Base class for responses to action requests.
+ * 代表针对api调用返回的响应结果
  */
 public abstract class ActionResponse extends TransportResponse {
 

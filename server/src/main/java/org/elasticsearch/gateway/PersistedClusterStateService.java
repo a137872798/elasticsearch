@@ -290,7 +290,7 @@ public class PersistedClusterStateService {
         if (nodeId == null) {
             return null;
         }
-        // 上面 这么多操作就是为了解析一个 nodeId 吗
+        // 上面的操作是校验nodeId一致 以及获取nodeId 和 lucene版本信息
         return new NodeMetadata(nodeId, version);
     }
 

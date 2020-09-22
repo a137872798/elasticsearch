@@ -29,6 +29,7 @@ import java.io.IOException;
 public interface ResourceWatcher {
     /**
      * Called once when the resource watcher is added to {@link ResourceWatcherService}
+     * 当首次添加到资源监控服务时 触发该方法
      */
     void init() throws IOException;
 

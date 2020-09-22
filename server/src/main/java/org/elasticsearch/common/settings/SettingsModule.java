@@ -61,9 +61,9 @@ public class SettingsModule implements Module {
 
     /**
      *
-     * @param settings   一组配置对象
+     * @param settings   从es环境/配置文件 中解析出来的配置
      * @param additionalSettings   插件需要的额外配置
-     * @param settingsFilter      配置过滤器
+     * @param settingsFilter      对应 pluginsService.getPluginSettingsFilter()
      * @param settingUpgraders    升级相关的配置
      */
     public SettingsModule(
@@ -85,8 +85,8 @@ public class SettingsModule implements Module {
      *
      * @param settings      从配置文件中获取的配置
      * @param additionalSettings     插件定义的额外配置
-     * @param settingsFilter        从插件上找到的配置过滤器
-     * @param settingUpgraders      插件配置升级器
+     * @param settingsFilter        对应 pluginsService.getPluginSettingsFilter()
+     * @param settingUpgraders      插件升级相关的配置
      * @param registeredClusterSettings   集群相关的配置
      * @param registeredIndexSettings    索引相关的配置
      */
@@ -182,6 +182,10 @@ public class SettingsModule implements Module {
         this.settingsFilter = new SettingsFilter(settingsFilterPattern);
     }
 
+    /**
+     * 在使用guice进行注入时 绑定了 Settings  SettingsFilter  ClusterSettings  IndexScopedSettings 的实例
+     * @param binder
+     */
     @Override
     public void configure(Binder binder) {
         binder.bind(Settings.class).toInstance(settings);
@@ -200,7 +204,7 @@ public class SettingsModule implements Module {
         if (setting.getKey().contains(".") == false) {
             throw new IllegalArgumentException("setting [" + setting.getKey() + "] is not in any namespace, its name must contain a dot");
         }
-        // 代表该配置包含了 Prop.Filter  意味着在使用时可能要先输入密码等
+        // 代表该配置需要被过滤一下
         if (setting.isFiltered()) {
             if (settingsFilterPattern.contains(setting.getKey()) == false) {
                 registerSettingsFilter(setting.getKey());
@@ -249,9 +253,9 @@ public class SettingsModule implements Module {
     /**
      * Registers a settings filter pattern that allows to filter out certain settings that for instance contain sensitive information
      * or if a setting is for internal purposes only. The given pattern must either be a valid settings key or a simple regexp pattern.
-     * 注册需要先输入密码/权限校验才能使用的配置
      */
     private void registerSettingsFilter(String filter) {
+        // 进行格式校验
         if (SettingsFilter.isValidPattern(filter) == false) {
             throw new IllegalArgumentException("filter [" + filter +"] is invalid must be either a key or a regex pattern");
         }

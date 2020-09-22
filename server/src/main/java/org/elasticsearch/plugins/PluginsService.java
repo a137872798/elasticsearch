@@ -179,11 +179,12 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         List<Tuple<PluginInfo, Plugin>> loaded = loadBundles(seenBundles);
         pluginsLoaded.addAll(loaded);
 
+        // 存储插件描述信息的对象
         this.info = new PluginsAndModules(pluginsList, modulesList);
         this.plugins = Collections.unmodifiableList(pluginsLoaded);
 
         // Checking expected plugins
-        // 检测强制性插件是否存在
+        // 检测强制性插件是否存在  如果没有这些插件 ES 将无法启动
         List<String> mandatoryPlugins = MANDATORY_SETTING.get(settings);
         if (mandatoryPlugins.isEmpty() == false) {
             Set<String> missingPlugins = new HashSet<>();
@@ -242,7 +243,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
     }
 
     /**
-     * 从 getExecutorBuilders default实现可以看到 并非每个plugin都包含生成线程池builder的代码
+     * 将每个插件依赖的线程池builder对象返回 这些插件可能就运行在专门的线程池中
      * @param settings
      * @return
      */
@@ -254,6 +255,11 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         return builders;
     }
 
+    /**
+     * TODO 先忽略该方法的作用
+     * 指定所有插件此时的 索引模块
+     * @param indexModule
+     */
     public void onIndexModule(IndexModule indexModule) {
         for (Tuple<PluginInfo, Plugin> plugin : plugins) {
             plugin.v2().onIndexModule(indexModule);
@@ -515,7 +521,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
             // TODO 检验性代码先忽略
             checkBundleJarHell(JarHell.parseClassPath(), bundle, transitiveUrls);
 
-            // 开始根据 bundle信息加载插件对象  loaded存储已经加载好的插件  用于生成那些有依赖的插件
+            // 找到插件对应的class 并进行实例化  因为插件类必须满足是Plugin的子类 所以可以以plugin的形式返回
             final Plugin plugin = loadBundle(bundle, loaded);
             // 将实例化后的插件对象 与插件的描述信息包装成一个对象后设置到列表中
             plugins.add(new Tuple<>(bundle.plugin, plugin));
@@ -613,13 +619,14 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
         // reload SPI with any new services from the plugin
         // 加载插件下自定义的分词器  token过滤器 等等
         reloadLuceneSPI(loader);
-        // 因为排序过的关系 所以子插件肯定先生成   如果父插件处理完 要对子插件进行重加载  TODO 这里的细节先不看
+
+        // TODO 这里是做什么
         for (String extendedPluginName : bundle.plugin.getExtendedPlugins()) {
             // note: already asserted above that extended plugins are loaded and extensible
             ExtensiblePlugin.class.cast(loaded.get(extendedPluginName)).reloadSPI(loader);
         }
 
-        // 获取 Plugin的class对象
+        // 获取 Plugin的class对象  要求插件类都必须是 Plugin的子类
         Class<? extends Plugin> pluginClass = loadPluginClass(bundle.plugin.getClassname(), loader);
         // 使用相关参数对 plugin进行实例化
         Plugin plugin = loadPlugin(pluginClass, settings, configPath);

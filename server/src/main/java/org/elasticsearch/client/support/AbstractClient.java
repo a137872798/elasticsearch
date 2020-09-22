@@ -335,18 +335,32 @@ import java.util.Map;
 
 /**
  * client 骨架对象
+ * client对外暴露了操作doc的api
  */
 public abstract class AbstractClient implements Client {
 
     protected final Logger logger;
 
     protected final Settings settings;
+
+    /**
+     * 不同的api 会通过专属的线程池去处理  在处理层面进行解耦
+     */
     private final ThreadPool threadPool;
+
+    /**
+     * 每个client 有一个admin对象 内部划分了不同的职能 处理不同的任务    可以看到最终都是委托给 client.execute
+     */
     private final Admin admin;
 
+    /**
+     * @param settings 从配置文件 命令行等地方解析的关于本es节点的配置项
+     * @param threadPool 指定处理不同api的线程池
+     */
     public AbstractClient(Settings settings, ThreadPool threadPool) {
         this.settings = settings;
         this.threadPool = threadPool;
+        // 生成该client相关的管理对象  管理对象本身也是一个client  用于读取当前节点在集群中的信息
         this.admin = new Admin(this);
         this.logger =LogManager.getLogger(this.getClass());
     }
@@ -369,6 +383,7 @@ public abstract class AbstractClient implements Client {
     @Override
     public final <Request extends ActionRequest, Response extends ActionResponse> ActionFuture<Response> execute(
         ActionType<Response> action, Request request) {
+        // 就是一个简单的适配器 在 doExecute的模型中 在任务完成时会触发监听器  而这里就是将触发监听器的逻辑改成往future中设置结果
         PlainActionFuture<Response> actionFuture = PlainActionFuture.newFuture();
         execute(action, request, actionFuture);
         return actionFuture;
@@ -626,6 +641,9 @@ public abstract class AbstractClient implements Client {
         return new FieldCapabilitiesRequestBuilder(this, FieldCapabilitiesAction.INSTANCE, indices);
     }
 
+    /**
+     *  client 相关的管理对象
+     */
     static class Admin implements AdminClient {
 
         /**
@@ -653,6 +671,9 @@ public abstract class AbstractClient implements Client {
         }
     }
 
+    /**
+     * 集群监控对象    无论下游的client定义了哪样的api 最终都是转发到 ElasticsearchClient.execute 上
+     */
     static class ClusterAdmin implements ClusterAdminClient {
 
         private final ElasticsearchClient client;
@@ -688,6 +709,11 @@ public abstract class AbstractClient implements Client {
             execute(ClusterHealthAction.INSTANCE, request, listener);
         }
 
+        /**
+         * 当请求体本身比较复杂的时候
+         * @param indices
+         * @return
+         */
         @Override
         public ClusterHealthRequestBuilder prepareHealth(String... indices) {
             return new ClusterHealthRequestBuilder(this, ClusterHealthAction.INSTANCE).setIndices(indices);
@@ -1199,6 +1225,10 @@ public abstract class AbstractClient implements Client {
         }
     }
 
+    /**
+     * 索引监控对象
+     * IndicesAdminClient 定义了具体的指令
+     */
     static class IndicesAdmin implements IndicesAdminClient {
 
         private final ElasticsearchClient client;

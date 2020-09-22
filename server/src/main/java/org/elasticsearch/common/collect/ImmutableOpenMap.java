@@ -39,6 +39,7 @@ import java.util.Map;
  * <p>
  * Can be constructed using a {@link #builder()}, or using {@link #builder(ImmutableOpenMap)} (which is an optimized
  * option to copy over existing content and modify it).
+ * 从api观察使用方式跟hashMap 应该是一样的
  */
 public final class ImmutableOpenMap<KType, VType> implements Iterable<ObjectObjectCursor<KType, VType>> {
 

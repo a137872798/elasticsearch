@@ -81,6 +81,10 @@ public abstract class DiscoveryNodeRole implements Comparable<DiscoveryNodeRole>
         this.roleNameAbbreviation = Objects.requireNonNull(roleNameAbbreviation);
     }
 
+    /**
+     * 代表根据什么settings来确定这个配置项存在
+     * @return
+     */
     protected abstract Setting<Boolean> roleSetting();
 
     @Override

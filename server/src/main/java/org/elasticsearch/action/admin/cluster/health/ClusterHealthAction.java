@@ -21,8 +21,14 @@ package org.elasticsearch.action.admin.cluster.health;
 
 import org.elasticsearch.action.ActionType;
 
+/**
+ * 每种api调用都会有一个匹配的 action对象 并且它继承自 ActionType  在TaskManager中会为不同的action分配不同的线程池 并处理请求
+ */
 public class ClusterHealthAction extends ActionType<ClusterHealthResponse> {
 
+    /**
+     * 指令本身都是单例模式
+     */
     public static final ClusterHealthAction INSTANCE = new ClusterHealthAction();
     public static final String NAME = "cluster:monitor/health";
 

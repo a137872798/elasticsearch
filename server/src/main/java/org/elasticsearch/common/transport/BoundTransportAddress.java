@@ -40,6 +40,9 @@ public class BoundTransportAddress implements Writeable {
      */
     private TransportAddress[] boundAddresses;
 
+    /**
+     * 在集群中对外暴露的地址
+     */
     private TransportAddress publishAddress;
 
     public BoundTransportAddress(StreamInput in) throws IOException {

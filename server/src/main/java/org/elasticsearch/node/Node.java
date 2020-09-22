@@ -315,13 +315,13 @@ public class Node implements Closeable {
                     initialEnvironment.logsFile(), initialEnvironment.pluginsFile());
             }
 
-            // 初始化插件服务
+            // 初始化插件服务  插件服务的主要作用就是将 .module/.plugin  下所有的插件信息加载出来
             this.pluginsService = new PluginsService(tmpSettings, initialEnvironment.configFile(), initialEnvironment.modulesFile(),
                 initialEnvironment.pluginsFile(), classpathPlugins);
             // 从插件中获取配置 并追加到settings中
             final Settings settings = pluginsService.updatedSettings();
 
-            // 从插件中判断当前node 可能出现的角色
+            // 从插件中判断当前node 可能出现的角色  除了系统内置的DATA_ROLE 等 插件可能会定义当前node 的角色
             final Set<DiscoveryNodeRole> possibleRoles = Stream.concat(
                     DiscoveryNodeRole.BUILT_IN_ROLES.stream(),
                     pluginsService.filterPlugins(Plugin.class)
@@ -337,15 +337,16 @@ public class Node implements Closeable {
              * 使用新的settings 重新设置一次环境
              */
             this.environment = new Environment(settings, initialEnvironment.configFile());
+            // 确保存储文件的路径没有被修改 (modulePath pluginPath etc..)
             Environment.assertEquivalent(initialEnvironment, this.environment);
 
-            // 生成一个node相关的环境
+            // 使用未追加插件配置的 旧配置信息初始化环境对象  其中涉及到segment_N 数据的加载
             nodeEnvironment = new NodeEnvironment(tmpSettings, environment);
             logger.info("node name [{}], node ID [{}], cluster name [{}]",
                 NODE_NAME_SETTING.get(tmpSettings), nodeEnvironment.nodeId(), ClusterName.CLUSTER_NAME_SETTING.get(tmpSettings).value());
             resourcesToClose.add(nodeEnvironment);
 
-            // 基于配置文件 和 nodeId 生成一个 节点工厂
+            // LocalNodeFactory负责设置 DiscoveryNode 信息
             localNodeFactory = new LocalNodeFactory(settings, nodeEnvironment.nodeId());
 
             // 这里的含义是 某些插件可能运行在自己定义的线程池中 这时 插件会通过getExecutorBuilders 返回它定制的线程池builder
@@ -360,19 +361,23 @@ public class Node implements Closeable {
             final ResourceWatcherService resourceWatcherService = new ResourceWatcherService(settings, threadPool);
             resourcesToClose.add(resourceWatcherService);
             // adds the context to the DeprecationLogger so that it does not need to be injected everywhere
+
+            // 将ThreadContext 设置到 logger中
             DeprecationLogger.setThreadContext(threadPool.getThreadContext());
             resourcesToClose.add(() -> DeprecationLogger.removeThreadContext(threadPool.getThreadContext()));
 
-            // 找到该插件需要的配置
+            // 存储获取到的额外配置
             final List<Setting<?>> additionalSettings = new ArrayList<>(pluginsService.getPluginSettings());
             final List<String> additionalSettingsFilter = new ArrayList<>(pluginsService.getPluginSettingsFilter());
+
+            // 每个插件自定义的线程池配置是有前缀名的
             for (final ExecutorBuilder<?> builder : threadPool.builders()) {
                 additionalSettings.addAll(builder.getRegisteredSettings());
             }
-            // 创建该节点发挥作为client能力的对象
+            // client 就是一个任务处理器 基于http接收的请求最终都会交由client处理
             client = new NodeClient(settings, threadPool);
 
-            // 解析脚本相关
+            // TODO 先忽略解析脚本
             final ScriptModule scriptModule = new ScriptModule(settings, pluginsService.filterPlugins(ScriptPlugin.class));
             final ScriptService scriptService = newScriptService(settings, scriptModule.engines, scriptModule.contexts);
             // TODO 先忽略
@@ -380,19 +385,19 @@ public class Node implements Closeable {
             // this is as early as we can validate settings at this point. we already pass them to ScriptModule as well as ThreadPool
             // so we might be late here already
 
-            // 获取插件升级相关的配置
+            // TODO 先忽略升级插件
             final Set<SettingUpgrader<?>> settingsUpgraders = pluginsService.filterPlugins(Plugin.class)
                     .stream()
                     .map(Plugin::getSettingUpgraders)
                     .flatMap(List::stream)
                     .collect(Collectors.toSet());
 
+            // 这里出现了实现 guice Module接口的类 将不同的配置实例绑定在不同的类上
             final SettingsModule settingsModule =
                     new SettingsModule(settings, additionalSettings, additionalSettingsFilter, settingsUpgraders);
-            // TODO 设置升级相关的东西  先忽略
             scriptModule.registerClusterSettingsListeners(scriptService, settingsModule.getClusterSettings());
 
-            // 找到地址发现服务
+            // 找到地址发现服务  在NetworkService内置了最基本的解析逻辑
             final NetworkService networkService = new NetworkService(
                 getCustomNameResolvers(pluginsService.filterPlugins(DiscoveryPlugin.class)));
 
@@ -1164,6 +1169,11 @@ public class Node implements Closeable {
         return networkModule.getHttpServerTransportSupplier().get();
     }
 
+
+    /**
+     * 本地node 工厂
+     * node应该是一个功能上的抽象 而DiscoveryNode 则是在集群层面的节点 能够被其他节点感知到
+     */
     private static class LocalNodeFactory implements Function<BoundTransportAddress, DiscoveryNode> {
         private final SetOnce<DiscoveryNode> localNode = new SetOnce<>();
         private final String persistentNodeId;
@@ -1172,13 +1182,18 @@ public class Node implements Closeable {
         /**
          *
          * @param settings  存储了配置信息
-         * @param persistentNodeId   上次从 segment_N  userData中获取的 nodeId
+         * @param persistentNodeId   当前nodeId
          */
         private LocalNodeFactory(Settings settings, String persistentNodeId) {
             this.persistentNodeId = persistentNodeId;
             this.settings = settings;
         }
 
+        /**
+         * 当指定对外暴露的地址时 就可以创建能被集群发现的node了
+         * @param boundTransportAddress
+         * @return
+         */
         @Override
         public DiscoveryNode apply(BoundTransportAddress boundTransportAddress) {
             localNode.set(DiscoveryNode.createLocal(settings, boundTransportAddress.publishAddress(), persistentNodeId));

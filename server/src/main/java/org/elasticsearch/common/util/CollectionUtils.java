@@ -183,6 +183,10 @@ public class CollectionUtils {
         }
     }
 
+    /**
+     * 该类的核心意义是为了实现均衡负载 所以需要特殊算法将对象打乱
+     * @param <T>
+     */
     private static class RotatedList<T> extends AbstractList<T> implements RandomAccess {
 
         private final List<T> in;

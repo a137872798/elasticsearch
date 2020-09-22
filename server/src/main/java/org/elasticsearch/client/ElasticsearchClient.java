@@ -28,7 +28,7 @@ import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.threadpool.ThreadPool;
 
 /**
- * es 客户端api
+ * 最基层 client接口 具备处理 request 并返回 response的能力
  */
 public interface ElasticsearchClient {
 

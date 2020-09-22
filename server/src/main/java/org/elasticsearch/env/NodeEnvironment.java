@@ -235,7 +235,7 @@ public final class NodeEnvironment  implements Closeable {
                     if (pathFunction.apply(dir) == false) {
                         continue;
                     }
-                    // 将目录和锁工厂包装成一个 lucene的 directory对象 该对象具备独占锁的api
+                    // 将目录和锁工厂包装成一个 lucene的 directory对象 该对象具备抢占锁的api
                     try (Directory luceneDir = FSDirectory.open(dir, NativeFSLockFactory.INSTANCE)) {
                         logger.trace("obtaining node lock on {} ...", dir.toAbsolutePath());
                         locks[dirIndex] = luceneDir.obtainLock(NODE_LOCK_FILENAME);
@@ -286,7 +286,7 @@ public final class NodeEnvironment  implements Closeable {
                 Files.createDirectories(path);
             }
 
-            // 为当前操作目录 添加文件锁
+            // 为当前操作目录 添加文件锁  确保在使用过程中数据文件不会被其他进程修改
             final NodeLock nodeLock;
             try {
                 nodeLock = new NodeLock(logger, environment, dir -> true);

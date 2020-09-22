@@ -87,7 +87,7 @@ public final class NetworkService {
     }
 
     /**
-     * 携带一组自定义 name解析器
+     * 将字符串解析成ip地址
      */
     private final List<CustomNameResolver> customNameResolvers;
 

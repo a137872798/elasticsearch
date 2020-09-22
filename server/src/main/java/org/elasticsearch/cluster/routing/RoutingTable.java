@@ -54,14 +54,21 @@ import static org.elasticsearch.cluster.metadata.MetadataIndexStateService.isInd
  * version of the current routing state.
  *
  * @see IndexRoutingTable
+ * 路由表对象
  */
 public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<RoutingTable> {
 
+    /**
+     * 这是一个空的路由表
+     */
     public static final RoutingTable EMPTY_ROUTING_TABLE = builder().build();
 
     private final long version;
 
-    // index to IndexRoutingTable map
+    /**
+     * index to IndexRoutingTable map
+     * 理解为一个简单的hashMap
+     */
     private final ImmutableOpenMap<String, IndexRoutingTable> indicesRouting;
 
     private RoutingTable(long version, ImmutableOpenMap<String, IndexRoutingTable> indicesRouting) {

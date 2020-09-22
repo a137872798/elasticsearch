@@ -111,6 +111,7 @@ public interface Client extends ElasticsearchClient, Releasable {
      * @param request The index request
      * @return The result future
      * @see Requests#indexRequest(String)
+     * 处理添加索引的请求
      */
     ActionFuture<IndexResponse> index(IndexRequest request);
 
@@ -122,6 +123,7 @@ public interface Client extends ElasticsearchClient, Releasable {
      * @param request  The index request
      * @param listener A listener to be notified with a result
      * @see Requests#indexRequest(String)
+     * 以回调方式实现异步添加索引
      */
     void index(IndexRequest request, ActionListener<IndexResponse> listener);
 
@@ -129,6 +131,7 @@ public interface Client extends ElasticsearchClient, Releasable {
      * Index a document associated with a given index.
      * <p>
      * The id is optional, if it is not provided, one will be generated automatically.
+     * 返回一个构建索引的builder对象
      */
     IndexRequestBuilder prepareIndex();
 
@@ -138,6 +141,7 @@ public interface Client extends ElasticsearchClient, Releasable {
      * The id is optional, if it is not provided, one will be generated automatically.
      *
      * @param index The index to index the document to
+     *              基于指定的索引生成 索引请求builder对象
      */
     IndexRequestBuilder prepareIndex(String index);
 
@@ -146,6 +150,7 @@ public interface Client extends ElasticsearchClient, Releasable {
      *
      * @param request The update request
      * @return The result future
+     * 更新某个doc
      */
     ActionFuture<UpdateResponse> update(UpdateRequest request);
 

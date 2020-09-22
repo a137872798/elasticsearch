@@ -19,6 +19,10 @@
 
 package org.elasticsearch.watcher;
 
+/**
+ * 代表某个监控处理器 以及绑定的 监控器上
+ * @param <W>
+ */
 public class WatcherHandle<W extends ResourceWatcher> {
 
     private final ResourceWatcherService.ResourceMonitor monitor;
@@ -33,6 +37,10 @@ public class WatcherHandle<W extends ResourceWatcher> {
         return watcher;
     }
 
+    /**
+     * 代表当前监控器的触发频率
+     * @return
+     */
     public ResourceWatcherService.Frequency frequency() {
         return monitor.frequency;
     }

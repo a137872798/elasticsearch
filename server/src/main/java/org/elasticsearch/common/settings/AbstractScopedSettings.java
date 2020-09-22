@@ -59,6 +59,9 @@ public abstract class AbstractScopedSettings {
     private final Logger logger;
 
     private final Settings settings;
+    /**
+     * 描述了一组会变化的配置 当接收到集群变化通知时 使用consumer处理变化
+     */
     private final List<SettingUpdater<?>> settingUpdaters = new CopyOnWriteArrayList<>();
     private final Map<String, Setting<?>> complexMatchers;
     private final Map<String, Setting<?>> keySettings;
@@ -213,6 +216,7 @@ public abstract class AbstractScopedSettings {
      * </p>
      * @param validator an additional validator that is only applied to updates of this setting.
      *                  This is useful to add additional validation to settings at runtime compared to at startup time.
+     *                  追加一组会监听集群状态变化的配置  当检测到配置发生变化时 使用 consumer处理
      */
     public synchronized <T> void addSettingsUpdateConsumer(Setting<T> setting, Consumer<T> consumer, Consumer<T> validator) {
         if (setting != get(setting.getKey())) {

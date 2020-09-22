@@ -40,7 +40,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
  * method. This service will call {@link org.elasticsearch.watcher.ResourceWatcher#checkAndNotify()} method of all
  * registered watcher periodically. The frequency of checks can be specified using {@code resource.reload.interval} setting, which
  * defaults to {@code 60s}. The service can be disabled by setting {@code resource.reload.enabled} setting to {@code false}.
- * 用于监控 es内部资源使用情况的服务
+ * 资源监控服务本身只是包含了 3个定时触发监听器的 monitor对象 而处理逻辑则是委托给handler   在es中默认实现为 FileWatcher 主要是监测指定文件/目录的创建/删除
  */
 public class ResourceWatcherService implements Closeable {
     private static final Logger logger = LogManager.getLogger(ResourceWatcherService.class);
@@ -102,12 +102,13 @@ public class ResourceWatcherService implements Closeable {
         // 重新检测资源的间隔时间
         TimeValue interval = RELOAD_INTERVAL_LOW.get(settings);
 
-        // 这里以3种不同的时间间隔 创建了3个资源管理器
+        // 这里以3种不同的时间间隔 创建了3个资源监视器
         lowMonitor = new ResourceMonitor(interval, Frequency.LOW);
         interval = RELOAD_INTERVAL_MEDIUM.get(settings);
         mediumMonitor = new ResourceMonitor(interval, Frequency.MEDIUM);
         interval = RELOAD_INTERVAL_HIGH.get(settings);
         highMonitor = new ResourceMonitor(interval, Frequency.HIGH);
+        // 使用指定的线程池 执行任务   注意他们使用的线程池name 都是 SAME 代表直接在当前线程执行任务 (scheduleWithFixedDelay 通过2层线程池实现 外层是基于JDK内置的线程池实现定时功能  内层执行任务逻辑时还有一层专门的线程池)
         if (enabled) {
             lowFuture = threadPool.scheduleWithFixedDelay(lowMonitor, lowMonitor.interval, Names.SAME);
             mediumFuture = threadPool.scheduleWithFixedDelay(mediumMonitor, mediumMonitor.interval, Names.SAME);
@@ -137,8 +138,10 @@ public class ResourceWatcherService implements Closeable {
 
     /**
      * Register new resource watcher that will be checked in the given frequency
+     * 将某个监控处理器 设置到监控对象上
      */
     public <W extends ResourceWatcher> WatcherHandle<W> add(W watcher, Frequency frequency) throws IOException {
+        // 先触发init方法
         watcher.init();
         switch (frequency) {
             case LOW:
@@ -168,6 +171,9 @@ public class ResourceWatcherService implements Closeable {
         }
     }
 
+    /**
+     * 资源监控器对象
+     */
     static class ResourceMonitor implements Runnable {
 
         /**

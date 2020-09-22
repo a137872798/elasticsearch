@@ -25,11 +25,21 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * Abstract resource watcher framework, which handles adding and removing listeners
  * and calling resource observer.
+ * 资源监控器的骨架类
  */
 public abstract class AbstractResourceWatcher<Listener> implements ResourceWatcher {
+
+    /**
+     * 该对象本身还内置了监听器
+     */
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
     private boolean initialized = false;
 
+
+    /**
+     * 代表此时 watcher对象已经设置到某个ResourceMonitor 上了
+     * @throws IOException
+     */
     @Override
     public void init() throws IOException {
         if (!initialized) {

@@ -39,6 +39,7 @@ import java.util.function.Supplier;
 
 /**
  * 结构体数据的解析器骨架类
+ * 将解析动作委托给实现类 (目前es通过内置第三方框架实现该功能)
  */
 public abstract class AbstractXContentParser implements XContentParser {
 
@@ -59,7 +60,7 @@ public abstract class AbstractXContentParser implements XContentParser {
     }
 
     /**
-     * 该对象内部注册了一些 描述解析后数据体的 entry信息
+     * 该对象内部注册了一些描述需要解析的数据体对应entry 以及他们解析后的类型
      */
     private final NamedXContentRegistry xContentRegistry;
     /**
@@ -76,6 +77,7 @@ public abstract class AbstractXContentParser implements XContentParser {
     //   http://fasterxml.github.io/jackson-core/javadoc/2.3.0/com/fasterxml/jackson/core/JsonParser.html#getShortValue()
     // If this behaviour is flagged as undesirable and any truncation occurs
     // then this method is called to trigger the"malformed" handling logic
+    // 默认情况下DEFAULT_NUMBER_COERCE_POLICY 为ture 不会触发下面的逻辑 所以先忽略
     void ensureNumberConversion(boolean coerce, long result, Class<? extends Number> clazz) throws IOException {
         if (!coerce) {
             double fullVal = doDoubleValue();
@@ -170,14 +172,15 @@ public abstract class AbstractXContentParser implements XContentParser {
 
     /** Return the long that {@code stringValue} stores or throws an exception if the
      *  stored value cannot be converted to a long that stores the exact same
-     *  value and {@code coerce} is false. */
+     *  value and {@code coerce} is false.
+     *
+     */
     private static long toLong(String stringValue, boolean coerce) {
         try {
             return Long.parseLong(stringValue);
         } catch (NumberFormatException e) {
             // we will try again with BigDecimal
         }
-
         final BigInteger bigIntegerValue;
         try {
             final BigDecimal bigDecimalValue = new BigDecimal(stringValue);
@@ -270,6 +273,8 @@ public abstract class AbstractXContentParser implements XContentParser {
         return charBuffer();
     }
 
+    // 以上都是数据的读取 实际上都是基于子类实现  所以先忽略
+
     @Override
     public Map<String, Object> map() throws IOException {
         return readMap(this);
@@ -307,6 +312,12 @@ public abstract class AbstractXContentParser implements XContentParser {
 
     static final Supplier<Map<String, String>> SIMPLE_MAP_STRINGS_FACTORY = HashMap::new;
 
+    /**
+     * 将parser内部的数据解析出来 并将结果存储到map中  map本身可能是一个嵌套结构 因为 field对应的token可能是一个 Obj/Array类型 这样要递归调用 也就产生了嵌套的map
+     * @param parser
+     * @return
+     * @throws IOException
+     */
     static Map<String, Object> readMap(XContentParser parser) throws IOException {
         return readMap(parser, SIMPLE_MAP_FACTORY);
     }
@@ -327,6 +338,13 @@ public abstract class AbstractXContentParser implements XContentParser {
         return readList(parser, ORDERED_MAP_FACTORY);
     }
 
+    /**
+     * 获取parser对应的map  如果不存在则使用工厂对象创建map
+     * @param parser
+     * @param mapFactory
+     * @return
+     * @throws IOException
+     */
     static Map<String, Object> readMap(XContentParser parser, Supplier<Map<String, Object>> mapFactory) throws IOException {
         return readGenericMap(parser, mapFactory, p -> readValue(p, mapFactory));
     }
@@ -335,6 +353,8 @@ public abstract class AbstractXContentParser implements XContentParser {
             XContentParser parser,
             Supplier<Map<String, T>> mapFactory,
             CheckedFunction<XContentParser, T, IOException> mapValueParser) throws IOException {
+
+        // 创建一个新的map对象
         Map<String, T> map = mapFactory.get();
         XContentParser.Token token = parser.currentToken();
         if (token == null) {
@@ -348,12 +368,20 @@ public abstract class AbstractXContentParser implements XContentParser {
             String fieldName = parser.currentName();
             // And then the value...
             parser.nextToken();
+            // 实际上是一个递归调用 如果需要解析出来的token是 Obj/array 就可以继续解析内部的数据 并生成map后返回
             T value = mapValueParser.apply(parser);
             map.put(fieldName, value);
         }
         return map;
     }
 
+    /**
+     * 针对数组类型 使用list存储
+     * @param parser
+     * @param mapFactory
+     * @return
+     * @throws IOException
+     */
     static List<Object> readList(XContentParser parser, Supplier<Map<String, Object>> mapFactory) throws IOException {
         XContentParser.Token token = parser.currentToken();
         if (token == null) {
@@ -376,11 +404,19 @@ public abstract class AbstractXContentParser implements XContentParser {
         return list;
     }
 
+    /**
+     * 处理parser内的数据
+     * @param parser
+     * @param mapFactory
+     * @return
+     * @throws IOException
+     */
     public static Object readValue(XContentParser parser, Supplier<Map<String, Object>> mapFactory) throws IOException {
         switch (parser.currentToken()) {
             case VALUE_STRING: return parser.text();
             case VALUE_NUMBER: return parser.numberValue();
             case VALUE_BOOLEAN: return parser.booleanValue();
+            // 如果是 obj / array类型 可以看到不断的创建嵌套的map
             case START_OBJECT: return readMap(parser, mapFactory);
             case START_ARRAY: return readList(parser, mapFactory);
             case VALUE_EMBEDDED_OBJECT: return parser.binaryValue();

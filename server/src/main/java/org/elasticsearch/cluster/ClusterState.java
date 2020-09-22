@@ -115,6 +115,9 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
 
     private final RoutingTable routingTable;
 
+    /**
+     * 记录当前集群内所有的节点
+     */
     private final DiscoveryNodes nodes;
 
     private final Metadata metadata;

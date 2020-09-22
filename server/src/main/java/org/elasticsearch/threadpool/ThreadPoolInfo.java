@@ -35,7 +35,7 @@ import java.util.List;
 public class ThreadPoolInfo implements ReportingService.Info, Iterable<ThreadPool.Info> {
 
     /**
-     * 信息内容
+     * 每个info对象都是对某个线程池的描述  而 ThreadPool 则维护了es单个节点下所有的线程池
      */
     private final List<ThreadPool.Info> infos;
 

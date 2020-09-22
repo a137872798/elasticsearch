@@ -25,6 +25,7 @@ import org.elasticsearch.transport.TransportRequestOptions;
 
 /**
  * A generic action. Should strive to make it a singleton.
+ * 代表api类型
  */
 public class ActionType<Response extends ActionResponse> {
 

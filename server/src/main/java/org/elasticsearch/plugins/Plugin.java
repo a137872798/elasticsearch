@@ -127,6 +127,7 @@ public abstract class Plugin implements Closeable {
     /**
      * Called before a new index is created on a node. The given module can be used to register index-level
      * extensions.
+     * 当某个索引被创建前使用   通知插件此时使用的索引模块信息
      */
     public void onIndexModule(IndexModule indexModule) {}
 
@@ -184,6 +185,10 @@ public abstract class Plugin implements Closeable {
      */
     public List<BootstrapCheck> getBootstrapChecks() { return Collections.emptyList(); }
 
+    /**
+     * 插件可能也会为当前节点指定角色
+     * @return
+     */
     public Set<DiscoveryNodeRole> getRoles() {
         return Set.of();
     }

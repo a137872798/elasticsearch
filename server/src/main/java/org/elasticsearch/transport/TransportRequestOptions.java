@@ -21,9 +21,18 @@ package org.elasticsearch.transport;
 
 import org.elasticsearch.common.unit.TimeValue;
 
+/**
+ * 传输层请求的选项信息
+ */
 public class TransportRequestOptions {
 
+    /**
+     * 表示该请求的超时时间
+     */
     private final TimeValue timeout;
+    /**
+     * 本次请求的类型   比如bluk 应该代表是批处理  ping类似于心跳请求
+     */
     private final Type type;
 
     private TransportRequestOptions(TimeValue timeout, Type type) {

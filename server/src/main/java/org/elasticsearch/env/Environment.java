@@ -90,7 +90,7 @@ public class Environment {
     private final Path modulesFile;
 
     /**
-     * 共享数据文件的路径
+     * 存储数据分片的路径
      */
     private final Path sharedDataFile;
 
@@ -157,7 +157,7 @@ public class Environment {
             // 当数据路径为空时  使用home.data路径作为数据路径
             dataFiles = new Path[]{homeFile.resolve("data")};
         }
-        // 尝试获取共享数据路径
+        // 尝试获取数据分片路径
         if (PATH_SHARED_DATA_SETTING.exists(settings)) {
             sharedDataFile = PathUtils.get(PATH_SHARED_DATA_SETTING.get(settings)).toAbsolutePath().normalize();
         } else {

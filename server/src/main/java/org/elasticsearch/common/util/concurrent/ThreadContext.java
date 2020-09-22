@@ -115,6 +115,7 @@ public final class ThreadContext implements Writeable {
     /**
      * Removes the current context and resets a default context. The removed context can be
      * restored by closing the returned {@link StoredContext}.
+     * 在执行任务前 先暂存当前线程上下文对象
      */
     public StoredContext stashContext() {
         final ThreadContextStruct context = threadLocal.get();
@@ -122,6 +123,7 @@ public final class ThreadContext implements Writeable {
          * X-Opaque-ID should be preserved in a threadContext in order to propagate this across threads.
          * This is needed so the DeprecationLogger in another thread can see the value of X-Opaque-ID provided by a user.
          * Otherwise when context is stash, it should be empty.
+         * X_OPAQUE_ID 应该要确保在同一个线程中传递  所以即使切换了context对象 这个值也不允许丢失
          */
         if (context.requestHeaders.containsKey(Task.X_OPAQUE_ID)) {
             ThreadContextStruct threadContextStruct =
@@ -130,6 +132,7 @@ public final class ThreadContext implements Writeable {
         } else {
             threadLocal.set(DEFAULT_CONTEXT);
         }
+        // 当某个任务执行完毕时 还原上下文对象
         return () -> {
             // If the node and thus the threadLocal get closed while this task
             // is still executing, we don't want this runnable to fail with an
@@ -179,9 +182,12 @@ public final class ThreadContext implements Writeable {
     /**
      * Just like {@link #stashContext()} but no default context is set.
      * @param preserveResponseHeaders if set to <code>true</code> the response headers of the restore thread will be preserved.
+     *                                这里根据当前线程创建一个上下文对象
      */
     public StoredContext newStoredContext(boolean preserveResponseHeaders) {
         final ThreadContextStruct context = threadLocal.get();
+
+        // 下面是 StoredContext.close()
         return ()  -> {
             if (preserveResponseHeaders && threadLocal.get() != context) {
                 threadLocal.set(context.putResponseHeaders(threadLocal.get().responseHeaders));
@@ -668,9 +674,14 @@ public final class ThreadContext implements Writeable {
 
     /**
      * Wraps an AbstractRunnable to preserve the thread context.
+     * 将AbstractRunnable包装   在运行前初始化context 而在运行完成时 重置context
      */
     private class ContextPreservingAbstractRunnable extends AbstractRunnable implements WrappedRunnable {
         private final AbstractRunnable in;
+
+        /**
+         * 该对象包含一个close的 api
+         */
         private final ThreadContext.StoredContext creatorsContext;
 
         private ThreadContext.StoredContext threadsOriginalContext = null;
@@ -708,6 +719,7 @@ public final class ThreadContext implements Writeable {
 
         @Override
         protected void doRun() throws Exception {
+            // 在开始执行任务前 暂存当前的线程上下文
             threadsOriginalContext = stashContext();
             creatorsContext.restore();
             in.doRun();

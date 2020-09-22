@@ -24,16 +24,19 @@ package org.elasticsearch.client;
  *
  *
  * @see org.elasticsearch.client.Client#admin()
+ * 管理端 也是以client的形式暴露在集群中的
  */
 public interface AdminClient {
 
     /**
      * A client allowing to perform actions/operations against the cluster.
+     * 返回归属的集群对象
      */
     ClusterAdminClient cluster();
 
     /**
      * A client allowing to perform actions/operations against the indices.
+     * 返回有关索引信息的管理对象
      */
     IndicesAdminClient indices();
 }

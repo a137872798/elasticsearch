@@ -33,10 +33,16 @@ import java.util.List;
 
 /**
  * Information about plugins and modules
- * module 和 plugin目录下的类 都被称为 plugin
  */
 public class PluginsAndModules implements ReportingService.Info {
+
+    /**
+     * 代表 .plugin 目录下所有存储插件的目录下描述的插件信息
+     */
     private final List<PluginInfo> plugins;
+    /**
+     * 代表 .module 目录下所有存储模块的目录下描述的插件信息
+     */
     private final List<PluginInfo> modules;
 
     public PluginsAndModules(List<PluginInfo> plugins, List<PluginInfo> modules) {
@@ -81,6 +87,13 @@ public class PluginsAndModules implements ReportingService.Info {
         modules.add(info);
     }
 
+    /**
+     * 以特殊格式写出 比如json yml 等
+     * @param builder
+     * @param params
+     * @return
+     * @throws IOException
+     */
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startArray("plugins");

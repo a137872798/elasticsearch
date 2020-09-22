@@ -66,7 +66,7 @@ import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_MAX_HEAD
 
 /**
  * Task Manager service for keeping track of currently running tasks on the nodes
- * 任务管理器
+ * 任务管理器  从client接收到的所有任务 最终都会交托给该对象  该对象负责维护任务以及处理
  */
 public class TaskManager implements ClusterStateApplier {
 
@@ -141,6 +141,17 @@ public class TaskManager implements ClusterStateApplier {
         return task;
     }
 
+    /**
+     * 注册某个任务 并执行
+     * @param type
+     * @param action
+     * @param request
+     * @param onResponse
+     * @param onFailure
+     * @param <Request>
+     * @param <Response>
+     * @return
+     */
     public <Request extends ActionRequest, Response extends ActionResponse>
     Task registerAndExecute(String type, TransportAction<Request, Response> action, Request request,
                             BiConsumer<Task, Response> onResponse, BiConsumer<Task, Exception> onFailure) {

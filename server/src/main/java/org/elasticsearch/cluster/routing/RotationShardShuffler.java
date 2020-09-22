@@ -26,9 +26,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Basic {@link ShardShuffler} implementation that uses an {@link AtomicInteger} to generate seeds and uses a rotation to permute shards.
+ * 这个实际上就是轮询啊  但是在 Shuffler层采用了更高的抽象 得到一个影响排序结果的seed 以及使用seed进行重排序的api
  */
 public class RotationShardShuffler extends ShardShuffler {
 
+    /**
+     * 内部使用一个单调递增的seed
+     */
     private final AtomicInteger seed;
 
     public RotationShardShuffler(int seed) {
@@ -42,6 +46,7 @@ public class RotationShardShuffler extends ShardShuffler {
 
     @Override
     public List<ShardRouting> shuffle(List<ShardRouting> shards, int seed) {
+        // 这里返回了一个 RotateList 实际上没有对元素做重排序 而是在基于index读取元素时增加了一个变量 (seed)
         return CollectionUtils.rotate(shards, seed);
     }
 

@@ -37,6 +37,9 @@ import java.nio.CharBuffer;
  */
 public class JsonXContentParser extends AbstractXContentParser {
 
+    /**
+     * parser内部应该已经设置了数据体
+     */
     final JsonParser parser;
 
     public JsonXContentParser(NamedXContentRegistry xContentRegistry,

@@ -38,6 +38,7 @@ import java.util.List;
 /**
  * {@link ShardRouting} immutably encapsulates information about shard
  * indexRoutings like id, state, version, etc.
+ * 代表集群中某一个数据分片
  */
 public final class ShardRouting implements Writeable, ToXContentObject {
 

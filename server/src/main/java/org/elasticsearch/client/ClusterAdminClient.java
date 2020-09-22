@@ -120,6 +120,7 @@ import org.elasticsearch.tasks.TaskId;
  * Administrative actions/operations against indices.
  *
  * @see AdminClient#cluster()
+ * 集群监控对象 包含的都是有关心跳检测处理
  */
 public interface ClusterAdminClient extends ElasticsearchClient {
 

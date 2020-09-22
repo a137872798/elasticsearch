@@ -24,6 +24,9 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 
 import java.io.IOException;
 
+/**
+ * 代表返回的响应结果
+ */
 public abstract class TransportResponse extends TransportMessage {
 
     /**

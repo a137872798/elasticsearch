@@ -32,16 +32,25 @@ import java.util.Arrays;
  * File resources watcher
  *
  * The file watcher checks directory and all its subdirectories for file changes and notifies its listeners accordingly
+ * 这里只是定义了监控触发时 执行的逻辑  实际上这是一个定期检测文件是否还存活的对象
  */
 public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
 
+    /**
+     * 整个文件系统是一个树结构 当前Observer代表顶层节点
+     */
     private FileObserver rootFileObserver;
+
+    /**
+     * 监控的文件/目录
+     */
     private Path file;
 
     private static final Logger logger = LogManager.getLogger(FileWatcher.class);
 
     /**
      * Creates new file watcher on the given directory
+     * 在初始化时 指定监控的目录
      */
     public FileWatcher(Path file) {
         this.file = file;
@@ -72,6 +81,9 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
 
     private static FileObserver[] EMPTY_DIRECTORY = new FileObserver[0];
 
+    /**
+     * 生成一个文件监控对象
+     */
     private class FileObserver {
         private Path file;
         private boolean exists;
@@ -84,6 +96,10 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
             this.file = file;
         }
 
+        /**
+         * 资源监控服务 每隔监控器会在一定的时期触发所有设置的监控对象的 checkAndNotify
+         * @throws IOException
+         */
         public void checkAndNotify() throws IOException {
             boolean prevExists = exists;
             boolean prevIsDirectory = isDirectory;
@@ -102,6 +118,7 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
                     length = attributes.size();
                     lastModified = attributes.lastModifiedTime().toMillis();
                 }
+            // 因为此时file 已经不存在了 重置相关参数
             } else {
                 isDirectory = false;
                 length = 0;
@@ -109,8 +126,10 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
             }
 
             // Perform notifications and update children for the current file
+            // 代表之前文件是存在的
             if (prevExists) {
                 if (exists) {
+                    // 代表此时文件/目录还是存在的 尝试更新信息
                     if (isDirectory) {
                         if (prevIsDirectory) {
                             // Remained a directory
@@ -132,6 +151,7 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
                             }
                         }
                     }
+                // 代表当前目录已经被删除了 触发相关钩子
                 } else {
                     // Deleted
                     if (prevIsDirectory) {
@@ -140,6 +160,7 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
                         onFileDeleted();
                     }
                 }
+            // 代表此时新建了文件/目录
             } else {
                 // Created
                 if (exists) {
@@ -153,14 +174,21 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
 
         }
 
+        /**
+         * 构建整个树结构
+         * @param initial
+         * @throws IOException
+         */
         private void init(boolean initial) throws IOException {
             exists = Files.exists(file);
             if (exists) {
                 BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class);
+                // 读取文件的相关属性并设置
                 isDirectory = attributes.isDirectory();
                 if (isDirectory) {
                     onDirectoryCreated(initial);
                 } else {
+                    // 代表file指代的是一个文件
                     length = attributes.size();
                     lastModified = attributes.lastModifiedTime().toMillis();
                     onFileCreated(initial);
@@ -180,6 +208,12 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
             return files;
         }
 
+        /**
+         * 生成子级对象 因为文件系统本身是一个树结构
+         * @param initial
+         * @return
+         * @throws IOException
+         */
         private FileObserver[] listChildren(boolean initial) throws IOException {
             Path[] files = listFiles();
             if (files != null && files.length > 0) {
@@ -193,6 +227,10 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
             }
         }
 
+        /**
+         * 更新文件树信息
+         * @throws IOException
+         */
         private void updateChildren() throws IOException {
             Path[] files = listFiles();
             if (files != null && files.length > 0) {
@@ -284,12 +322,18 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
             }
         }
 
+        /**
+         * 代表当前设置的file是一个目录 那么要还要对下级所有文件/目录做处理
+         * @param initial
+         * @throws IOException
+         */
         private void onDirectoryCreated(boolean initial) throws IOException {
             for (FileChangesListener listener : listeners()) {
                 try {
                     if (initial) {
                         listener.onDirectoryInit(file);
                     } else {
+                        // 代表文件才被创建
                         listener.onDirectoryCreated(file);
                     }
                 } catch (Exception e) {

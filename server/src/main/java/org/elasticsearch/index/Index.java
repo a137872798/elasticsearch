@@ -42,6 +42,7 @@ public class Index implements Writeable, ToXContentObject {
     private static final String INDEX_NAME_KEY = "index_name";
     private static final ObjectParser<Builder, Void> INDEX_PARSER = new ObjectParser<>("index", Builder::new);
     static {
+        // 往之前的解析器对象中 定义2个需要解析的字段 以及处理的函数
         INDEX_PARSER.declareString(Builder::name, new ParseField(INDEX_NAME_KEY));
         INDEX_PARSER.declareString(Builder::uuid, new ParseField(INDEX_UUID_KEY));
     }
@@ -107,6 +108,13 @@ public class Index implements Writeable, ToXContentObject {
         out.writeString(uuid);
     }
 
+    /**
+     * 将当前数据以 builder对应的格式写出 比如 json格式
+     * @param builder
+     * @param params
+     * @return
+     * @throws IOException
+     */
     @Override
     public XContentBuilder toXContent(final XContentBuilder builder, final Params params) throws IOException {
         builder.startObject();
@@ -115,6 +123,12 @@ public class Index implements Writeable, ToXContentObject {
         return builder.endObject();
     }
 
+    /**
+     * 使用 INDEX_PARSER 操纵解析对象 获取需要的属性并生成实体对象
+     * @param parser
+     * @return
+     * @throws IOException
+     */
     public static Index fromXContent(final XContentParser parser) throws IOException {
         return INDEX_PARSER.parse(parser, null).build();
     }

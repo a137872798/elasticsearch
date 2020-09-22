@@ -69,7 +69,8 @@ import static org.elasticsearch.common.xcontent.XContentParser.Token.VALUE_STRIN
  * }</pre>
  * It's highly recommended to use the high level declare methods like {@link #declareString(BiConsumer, ParseField)} instead of
  * {@link #declareField} which can be used to implement exceptional parsing operations not covered by the high level methods.
- * 骨架类负责定义一系列的模板方法
+ * 该对象负责处理结构体数据
+ * 虽然该对象具备解析数据体的能力 但是具体要解析哪些字段  已经要如何处理 需要提前设置  (通过 declareField进行定义)
  */
 public final class ObjectParser<Value, Context> extends AbstractObjectParser<Value, Context>
     implements BiFunction<XContentParser, Context, Value>, ContextParser<Context, Value>{
@@ -158,6 +159,9 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
         };
     }
 
+    /**
+     * 每个被处理的 parseField 会以name/deprecatedNames 作为key 存储在该容器中
+     */
     private final Map<String, FieldParser> fieldParserMap = new HashMap<>();
     private final String name;
     private final Function<Context, Value> valueBuilder;
@@ -172,6 +176,8 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
     }
 
     /**
+     * 在使用某个解析器前 需要为该解析器指定一个名字 以及一个提供数据的函数
+     *
      * Creates a new ObjectParser.
      * @param name the parsers name, used to reference the parser in exceptions and messages.
      * @param valueSupplier A supplier that creates a new Value instance. Used when the parser is used as an inner object parser.
@@ -231,8 +237,8 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
 
     /**
      * Creates a new ObjectParser instance with a name.
-     * @param name the parsers name, used to reference the parser in exceptions and messages.
-     * @param unknownFieldParser how to parse unknown fields
+     * @param name the parsers name, used to reference the parser in exceptions and messages.    指定解析器的名称
+     * @param unknownFieldParser how to parse unknown fields                           处理未指定的field
      * @param valueBuilder builds the value from the context. Used when the ObjectParser is not passed a value.
      */
     private ObjectParser(String name, UnknownFieldParser<Value, Context> unknownFieldParser,
@@ -244,8 +250,8 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
 
     /**
      * Parses a Value from the given {@link XContentParser}
-     * @param parser the parser to build a value from
-     * @param context context needed for parsing
+     * @param parser the parser to build a value from    解析器内部设置了数据体
+     * @param context context needed for parsing         解析时可能需要的上下文对象 非必填
      * @return a new value instance drawn from the provided value supplier on {@link #ObjectParser(String, Supplier)}
      * @throws IOException if an IOException occurs.
      */
@@ -254,19 +260,21 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
         if (valueBuilder == null) {
             throw new NullPointerException("valueBuilder is not set");
         }
+        // valueBuilder.apply(context) 用于生成实体对象 (此时只是一个空壳对象 属性需要通过解析结构化数据后才能填充)
         return parse(parser, valueBuilder.apply(context), context);
     }
 
     /**
      * Parses a Value from the given {@link XContentParser}
-     * @param parser the parser to build a value from
-     * @param value the value to fill from the parser
-     * @param context a context that is passed along to all declared field parsers
+     * @param parser the parser to build a value from      解析器对象内部已经设置了数据体  并且包含解析的api
+     * @param value the value to fill from the parser     属性将会通过parser填充
+     * @param context a context that is passed along to all declared field parsers    解析时可能会用到的上下文对象  可以为null
      * @return the parsed value
      * @throws IOException if an IOException occurs.
      */
     public Value parse(XContentParser parser, Value value, Context context) throws IOException {
         XContentParser.Token token;
+        // 在调用parse时 期待从 START_OBJECT 开始解析
         if (parser.currentToken() == XContentParser.Token.START_OBJECT) {
             token = parser.currentToken();
         } else {
@@ -278,6 +286,7 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
 
         FieldParser fieldParser = null;
         String currentFieldName = null;
+        // 代表此时解析到的位置 比如第几行/第几列
         XContentLocation currentPosition = null;
         List<String[]> requiredFields = new ArrayList<>(this.requiredFieldSets);
         List<List<String>> exclusiveFields = new ArrayList<>();
@@ -289,18 +298,22 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
                 currentPosition = parser.getTokenLocation();
+                // 代表针对该field设置了 处理器对象
                 fieldParser = fieldParserMap.get(currentFieldName);
             } else {
                 if (currentFieldName == null) {
                     throw new XContentParseException(parser.getTokenLocation(), "[" + name  + "] no field found");
                 }
+                // 当没有找到field对应的 FieldParser时  默认的 unknownFieldParser 会选择抛出异常
                 if (fieldParser == null) {
                     unknownFieldParser.acceptUnknownField(this, currentFieldName, currentPosition, parser, value, context);
                 } else {
+                    // 使用parser处理读取到的token
                     fieldParser.assertSupports(name, parser, currentFieldName);
 
                     // Check to see if this field is a required field, if it is we can
                     // remove the entry as the requirement is satisfied
+                    // 检测field 是否与某个requiredFields 匹配 存在的化将它去除
                     Iterator<String[]> iter = requiredFields.iterator();
                     while (iter.hasNext()) {
                         String[] requriedFields = iter.next();
@@ -314,6 +327,7 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
 
                     // Check if this field is in an exclusive set, if it is then mark
                     // it as seen.
+                    // 如果当前解析的field是 exclusiveField   那么将其存储到容器中  同时field有可能重复出现
                     for (int i = 0; i < this.exclusiveFieldSets.size(); i++) {
                         for (String field : this.exclusiveFieldSets.get(i)) {
                             if (field.equals(currentFieldName)) {
@@ -327,6 +341,8 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
                 fieldParser = null;
             }
         }
+
+        // 以下就是打印日志  先忽略
 
         // Check for a) multiple entries appearing in exclusive field sets and b) empty
         // required field entries
@@ -362,6 +378,15 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
     public interface Parser<Value, Context> {
         void parse(XContentParser parser, Value value, Context context) throws IOException;
     }
+
+    /**
+     * 所有的解析会转发到该方法  可以看到这里实际上并没有进行解析
+     * @param p     等同于(p, v, c) -> consumer.accept(v, parser.parse(p, c))
+     *              首先使用 parser.parse(p,c) 从数据体中获取需要的token值 以及转换为consumer可以处理的类型
+     *              之后使用 consumer.accept 处理获取到的值
+     * @param parseField   需要解析的token 对应field信息
+     * @param type      数据类型
+     */
     public void declareField(Parser<Value, Context> p, ParseField parseField, ValueType type) {
         if (parseField == null) {
             throw new IllegalArgumentException("[parseField] is required");
@@ -369,12 +394,24 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
         if (type == null) {
             throw new IllegalArgumentException("[type] is required");
         }
+
+        // FieldParser 只是一个简单的bean对象
         FieldParser fieldParser = new FieldParser(p, type.supportedTokens(), parseField, type);
+
+        // 遍历该 ParseField下所有的field name   因为一个ParseField 可以定义2种类型的名字 一种是普通的名字 还有一种是代表被丢弃的名字
         for (String fieldValue : parseField.getAllNamesIncludedDeprecated()) {
             fieldParserMap.putIfAbsent(fieldValue, fieldParser);
         }
     }
 
+    /**
+     *
+     * @param consumer 如何消费解析到的数值
+     * @param parser 当解析到目标token时 如何获取数值并转换成目标类型的函数
+     * @param parseField  声明本次目标token
+     * @param type  表示当前指定的数值类型
+     * @param <T>
+     */
     @Override
     public <T> void declareField(BiConsumer<Value, T> consumer, ContextParser<Context, T> parser, ParseField parseField,
             ValueType type) {
@@ -502,6 +539,8 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
         return name;
     }
 
+    // -- 声明需要被处理的field 以及被排除的 field -- //
+
     @Override
     public void declareRequiredFieldSet(String... requiredSet) {
         if (requiredSet.length == 0) {
@@ -518,15 +557,27 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
         this.exclusiveFieldSets.add(exclusiveSet);
     }
 
+    // -- //
+
     private void parseArray(XContentParser parser, FieldParser fieldParser, String currentFieldName, Value value, Context context)
             throws IOException {
         assert parser.currentToken() == XContentParser.Token.START_ARRAY : "Token was: " + parser.currentToken();
         parseValue(parser, fieldParser, currentFieldName, value, context);
     }
 
+    /**
+     * 处理某个解析出来的值
+     * @param parser
+     * @param fieldParser
+     * @param currentFieldName
+     * @param value
+     * @param context
+     * @throws IOException
+     */
     private void parseValue(XContentParser parser, FieldParser fieldParser, String currentFieldName, Value value, Context context)
             throws IOException {
         try {
+            // 使用 fieldParser内部的解析器处理读取到的值
             fieldParser.parser.parse(parser, value, context);
         } catch (Exception ex) {
             throw new XContentParseException(parser.getTokenLocation(),
@@ -534,6 +585,15 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
         }
     }
 
+    /**
+     * 使用 fieldParser 处理解析到的field
+     * @param parser  该对象包含了解析数据的逻辑
+     * @param fieldParser    该对象包含了处理目标数据的逻辑
+     * @param currentFieldName   当前处理的field名
+     * @param value   该对象需要通过parser解析数据体后 将数据填充进去
+     * @param context
+     * @throws IOException
+     */
     private void parseSub(XContentParser parser, FieldParser fieldParser, String currentFieldName, Value value, Context context)
             throws IOException {
         final XContentParser.Token token = parser.currentToken();
@@ -579,10 +639,26 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
         }
     }
 
+    /**
+     * 代表针对结构体中某个field 的解析器对象
+     */
     private class FieldParser {
+        /**
+         * 对应解析的逻辑  实际上这里可以采用更宽泛的理解  不一定是解析 也可能是一种处理  比如使用consumer处理解析出来的数值
+         */
         private final Parser<Value, Context> parser;
+        /**
+         * ValueType 对应支持的token类型
+         */
         private final EnumSet<XContentParser.Token> supportedTokens;
+
+        /**
+         * 本次针对的field
+         */
         private final ParseField parseField;
+        /**
+         * 本次处理的数值类型
+         */
         private final ValueType type;
 
         FieldParser(Parser<Value, Context> parser, EnumSet<XContentParser.Token> supportedTokens, ParseField parseField, ValueType type) {
@@ -621,6 +697,9 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
         }
     }
 
+    /**
+     * 结构体数据允许出现的value类型
+     */
     public enum ValueType {
         STRING(VALUE_STRING),
         STRING_OR_NULL(VALUE_STRING, VALUE_NULL),

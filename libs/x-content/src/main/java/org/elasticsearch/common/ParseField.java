@@ -30,12 +30,25 @@ import java.util.function.Supplier;
 /**
  * Holds a field that can be found in a request while parsing and its different
  * variants, which may be deprecated.
+ * 代表能从req中解析出来的某个字段
  */
 public class ParseField {
-    private final String name;  // 某个字段名
-    private final String[] deprecatedNames;   // 丢弃时字段名
+
+    /**
+     * field 对应的名字
+     */
+    private final String name;
+
+    /**
+     * 代表被丢弃的名字
+     */
+    private final String[] deprecatedNames;
     private String allReplacedWith = null;
-    private final String[] allNames;  // 这里同时包含了 name 和 deprecatedNames
+
+    /**
+     * 这里同时包含了 name 和 deprecatedNames
+     */
+    private final String[] allNames;
     private boolean fullyDeprecated = false;
 
     private static final String[] EMPTY = new String[0];
@@ -44,10 +57,12 @@ public class ParseField {
      * @param name
      *            the primary name for this field. This will be returned by
      *            {@link #getPreferredName()}
+     *
+     *            当前field在数据体中对应的名字  比如 index_name  等等
      * @param deprecatedNames
      *            names for this field which are deprecated and will not be
      *            accepted when strict matching is used.
-     *            该对象通过一组name 来初始化
+     *
      */
     public ParseField(String name, String... deprecatedNames) {
         this.name = name;
