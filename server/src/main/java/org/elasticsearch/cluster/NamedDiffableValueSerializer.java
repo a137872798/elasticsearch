@@ -26,6 +26,9 @@ import java.io.IOException;
 
 /**
  * Value Serializer for named diffables
+ * DiffableValueSerializer 定义了从input中读取 diff数据 或者将数据写入到diff中
+ * String 代表使用string类型作为参数 从input中读取想要的数据
+ * T 代表写入的数据类型
  */
 public class NamedDiffableValueSerializer<T extends NamedDiffable<T>> extends DiffableUtils.DiffableValueSerializer<String, T> {
 

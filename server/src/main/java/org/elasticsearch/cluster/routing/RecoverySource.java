@@ -41,9 +41,17 @@ import java.util.Objects;
  * - {@link PeerRecoverySource} recovery from a primary on another node
  * - {@link SnapshotRecoverySource} recovery from a snapshot
  * - {@link LocalShardsRecoverySource} recovery from other shards of another index on the same node
+ * 代表分片数据从哪里恢复
  */
 public abstract class RecoverySource implements Writeable, ToXContentObject {
 
+    /**
+     * 在父类只定义了最基础的 type信息  其他信息需要子类进行覆盖
+     * @param builder
+     * @param params
+     * @return
+     * @throws IOException
+     */
     @Override
     public final XContentBuilder toXContent(XContentBuilder builder, ToXContent.Params params) throws IOException {
         builder.startObject();
@@ -54,12 +62,19 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
 
     /**
      * to be overridden by subclasses
-     */
+、     */
     public void addAdditionalFields(XContentBuilder builder, ToXContent.Params params) throws IOException {
 
     }
 
+    /**
+     * 从某个输入流中还原 RecoverySource 对象
+     * @param in
+     * @return
+     * @throws IOException
+     */
     public static RecoverySource readFrom(StreamInput in) throws IOException {
+        // 第一个数据决定了 source类型
         Type type = Type.values()[in.readByte()];
         switch (type) {
             case EMPTY_STORE: return EmptyStoreRecoverySource.INSTANCE;
@@ -79,6 +94,7 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
 
     /**
      * to be overridden by subclasses
+     * 由子类进行覆盖 写入额外的field信息
      */
     protected void writeAdditionalFields(StreamOutput out) throws IOException {
 
@@ -119,6 +135,7 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
 
     /**
      * Recovery from a fresh copy
+     * 空对象没有额外的field信息写入
      */
     public static final class EmptyStoreRecoverySource extends RecoverySource {
         public static final EmptyStoreRecoverySource INSTANCE = new EmptyStoreRecoverySource();
@@ -136,6 +153,7 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
 
     /**
      * Recovery from an existing on-disk store
+     * 代表从磁盘恢复数据
      */
     public static final class ExistingStoreRecoverySource extends RecoverySource {
         /**
@@ -143,6 +161,9 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
          */
         public static final String FORCED_ALLOCATION_ID = "_forced_allocation_";
 
+        /**
+         * 单例模式
+         */
         public static final ExistingStoreRecoverySource INSTANCE = new ExistingStoreRecoverySource(false);
         public static final ExistingStoreRecoverySource FORCE_STALE_PRIMARY_INSTANCE = new ExistingStoreRecoverySource(true);
 
@@ -156,6 +177,12 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
             return in.readBoolean() ? FORCE_STALE_PRIMARY_INSTANCE : INSTANCE;
         }
 
+        /**
+         * 额外写入一个  bootstrap_new_history_uuid
+         * @param builder
+         * @param params
+         * @throws IOException
+         */
         @Override
         public void addAdditionalFields(XContentBuilder builder, Params params) throws IOException {
             builder.field("bootstrap_new_history_uuid", bootstrapNewHistoryUUID);
@@ -189,6 +216,7 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
 
     /**
      * recovery from other shards on same node (shrink index action)
+     * 应该是这样  当前机器起了2个节点  他们同时存在某个分片  当其中一个分片数据丢失时 通过另一个分片数据进行恢复
      */
     public static class LocalShardsRecoverySource extends RecoverySource {
 
@@ -211,9 +239,13 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
 
     /**
      * recovery from a snapshot
+     * 从快照中恢复数据  看来他跟redis这种类似  也是定期生成快照的
      */
     public static class SnapshotRecoverySource extends RecoverySource {
         private final String restoreUUID;
+        /**
+         * 快照对象主要就是存在一个仓库属性 以及一个 snapshotId 属性
+         */
         private final Snapshot snapshot;
         private final IndexId index;
         private final Version version;
@@ -312,6 +344,7 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
 
     /**
      * peer recovery from a primary shard
+     * 代表从其他节点的分片上恢复数据
      */
     public static class PeerRecoverySource extends RecoverySource {
 

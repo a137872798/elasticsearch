@@ -437,6 +437,15 @@ public final class ObjectParser<Value, Context> extends AbstractObjectParser<Val
         }, field, ValueType.OBJECT_OR_BOOLEAN);
     }
 
+    /**
+     * 这里使用的解析函数多了一个name参数 给与更强的灵活性
+     * @param consumer
+     *            sets the value once it has been parsed
+     * @param namedObjectParser
+     *            parses the named object
+     * @param field
+     * @param <T>
+     */
     @Override
     public <T> void declareNamedObject(BiConsumer<Value, T> consumer, NamedObjectParser<T, Context> namedObjectParser,
                                        ParseField field) {

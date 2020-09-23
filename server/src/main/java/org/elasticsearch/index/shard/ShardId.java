@@ -31,10 +31,17 @@ import java.io.IOException;
 
 /**
  * Allows for shard level components to be injected with the shard id.
+ * 每个数据分片有一个id信息   可以看出数据分片是以索引为单位的
  */
 public class ShardId implements Comparable<ShardId>, ToXContentFragment, Writeable {
 
+    /**
+     * 代表哪个索引的分片
+     */
     private final Index index;
+    /**
+     * 分片id
+     */
     private final int shardId;
     private final int hashCode;
 
@@ -86,6 +93,7 @@ public class ShardId implements Comparable<ShardId>, ToXContentFragment, Writeab
      * We lose index uuid information here, but since we use toString in
      * rest responses, this is the best we can do to reconstruct the object
      * on the client side.
+     * 从某种特殊的字符串还原ShardId 信息
      */
     public static ShardId fromString(String shardIdString) {
         int splitPosition = shardIdString.indexOf("][");
@@ -94,6 +102,7 @@ public class ShardId implements Comparable<ShardId>, ToXContentFragment, Writeab
         }
         String indexName = shardIdString.substring(1, splitPosition);
         int shardId = Integer.parseInt(shardIdString.substring(splitPosition + 2, shardIdString.length() - 1));
+        // 默认情况下 index的uuid 为 "_na_"
         return new ShardId(new Index(indexName, IndexMetadata.INDEX_UUID_NA_VALUE), shardId);
     }
 

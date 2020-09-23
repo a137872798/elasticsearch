@@ -48,7 +48,7 @@ import java.util.Set;
  * a disjoint set of the index data and each shard has one or more instances
  * referred to as replicas of a shard. Given that, this class encapsulates all
  * replicas (instances) for a single index shard.
- * 索引分片路由表
+ * 管理相同 shardId的分片  并根据分片状态划分到不同的容器中
  */
 public class IndexShardRoutingTable implements Iterable<ShardRouting> {
 
@@ -56,25 +56,60 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
      * 分片路由打乱器
      */
     final ShardShuffler shuffler;
+
+    /**
+     * 下面所有的分片id 应该都是一致的
+     */
     final ShardId shardId;
 
+    /**
+     * 难道只会有一个分片是节点私有的么  为什么要这样设计
+     */
     final ShardRouting primary;
     final List<ShardRouting> primaryAsList;
+
+    /**
+     * 在该容器中的所有分片都是在集群中存在副本的
+     */
     final List<ShardRouting> replicas;
     final List<ShardRouting> shards;
+    /**
+     * 该列表中的分片都是处于 STARTED/RELOCATING
+     */
     final List<ShardRouting> activeShards;
+
+    /**
+     * 存储所有 state 不是 UNASSIGNED 的shardRouting对象
+     */
     final List<ShardRouting> assignedShards;
+
+    /**
+     * 存储了所有 ShardRouting 的AllocationId
+     */
     final Set<String> allAllocationIds;
+
+    /**
+     * 代表是否当前所有分片都处在 started状态
+     */
     final boolean allShardsStarted;
 
     /**
      * The initializing list, including ones that are initializing on a target node because of relocation.
-     * If we can come up with a better variable name, it would be nice...
+     * If we can come up with a better variable name, it would be nice..
+     * 所有处于 INITIALIZING 的分片
      */
     final List<ShardRouting> allInitializingShards;
 
+
+    /**
+     * 每个  ShardRouting 代表一个最小粒度的数据分片
+     * @param shardId
+     * @param shards
+     */
     IndexShardRoutingTable(ShardId shardId, List<ShardRouting> shards) {
         this.shardId = shardId;
+
+        // 生成打乱器对象
         this.shuffler = new RotationShardShuffler(Randomness.get().nextInt());
         this.shards = Collections.unmodifiableList(shards);
 
@@ -85,7 +120,9 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         List<ShardRouting> allInitializingShards = new ArrayList<>();
         Set<String> allAllocationIds = new HashSet<>();
         boolean allShardsStarted = true;
+        // 开始遍历所有相关的分片对象
         for (ShardRouting shard : shards) {
+            // 代表在集群中仅存在该单一分片
             if (shard.primary()) {
                 primary = shard;
             } else {
@@ -99,6 +136,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
             }
             if (shard.relocating()) {
                 // create the target initializing shard routing on the node the shard is relocating to
+                // 如果当前分片处于重分配状态 它必然有一个对应的 处于初始状态的分片对象
                 allInitializingShards.add(shard.getTargetRelocatingShard());
                 allAllocationIds.add(shard.getTargetRelocatingShard().allocationId().getId());
 
@@ -106,6 +144,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
                 assert shard.getTargetRelocatingShard().assignedToNode() : "relocating to unassigned " + shard.getTargetRelocatingShard();
                 assignedShards.add(shard.getTargetRelocatingShard());
             }
+            // UNASSIGNED 是没有currentNodeId 的 也就是该数据分片还没有分配到集群中任何一个节点上
             if (shard.assignedToNode()) {
                 assignedShards.add(shard);
                 allAllocationIds.add(shard.allocationId().getId());

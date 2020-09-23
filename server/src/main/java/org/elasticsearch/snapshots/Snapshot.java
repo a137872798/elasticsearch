@@ -28,10 +28,17 @@ import java.util.Objects;
 
 /**
  * Basic information about a snapshot - a SnapshotId and the repository that the snapshot belongs to.
+ * 代表一个快照存储的位置
  */
 public final class Snapshot implements Writeable {
 
+    /**
+     * 指定存储位置
+     */
     private final String repository;
+    /**
+     * 记录快照id 便于去仓库中寻找快照
+     */
     private final SnapshotId snapshotId;
     private final int hashCode;
 

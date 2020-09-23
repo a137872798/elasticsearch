@@ -26,6 +26,7 @@ package org.elasticsearch.common.xcontent;
  * requires to start and end a new anonymous object externally, while the latter
  * guarantees that what gets printed out is fully valid syntax without any
  * external addition.
+ * 同样是格式化数据结构 但是它可能只是一个片段
  */
 public interface ToXContentFragment extends ToXContent {
 

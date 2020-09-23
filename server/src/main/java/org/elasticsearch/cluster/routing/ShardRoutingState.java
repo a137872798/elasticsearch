@@ -23,23 +23,28 @@ package org.elasticsearch.cluster.routing;
 /**
  * Represents the current state of a {@link ShardRouting} as defined by the
  * cluster.
+ * 分片路由状态
  */
 public enum ShardRoutingState {
     /**
      * The shard is not assigned to any node.
+     * 代表当前分片没有指派到任何节点   (分片需要先指定到哪个节点么  分片是由谁来创建的呢???  感觉像是有一个中控节点完成这些操作)
      */
     UNASSIGNED((byte) 1),
     /**
      * The shard is initializing (probably recovering from either a peer shard
      * or gateway).
+     * 正在进行分片的初始化工作
      */
     INITIALIZING((byte) 2),
     /**
      * The shard is started.
+     * 分片已启动
      */
     STARTED((byte) 3),
     /**
      * The shard is in the process being relocated.
+     * 分片在重新定位  看来可能是增加新的节点引发的数据迁移
      */
     RELOCATING((byte) 4);
 

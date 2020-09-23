@@ -83,16 +83,25 @@ import java.util.stream.StreamSupport;
  * throws the {@link IncompatibleClusterStateVersionException}, which causes the publishing mechanism to send
  * a full version of the cluster state to the node on which this exception was thrown.
  * 由于实现了 Diffable 接口 能反映当前状态与之前状态的变化
+ *
+ * 一般注册中心本身是不支持扩容/缩容的 并且他们的意义就是用少数服务器维护多台服务器应用之间的一致性
+ * 之后应用服务器 会注册到集群中 并确保能被集群中每个节点观测到  现在的推断就是master节点就是具备选举能力的节点
+ *
+ * 可以看到 ES中大部分实体 都实现了 ToXContent 接口 代表他们都支持直接与结构化形式进行输出
  */
 public class ClusterState implements ToXContentFragment, Diffable<ClusterState> {
 
     public static final ClusterState EMPTY_STATE = builder(ClusterName.CLUSTER_NAME_SETTING.getDefault(Settings.EMPTY)).build();
 
+    /**
+     * NamedDiffable支持一个 getWriteableName() 方法
+     */
     public interface Custom extends NamedDiffable<Custom>, ToXContentFragment {
 
         /**
          * Returns <code>true</code> iff this {@link Custom} is private to the cluster and should never be send to a client.
          * The default is <code>false</code>;
+         * 代表当前集群是一个单节点 不需要将信息发送到其他client
          */
         default boolean isPrivate() {
             return false;
@@ -100,6 +109,10 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
 
     }
 
+    /**
+     * 从api上粗略观察 可以得出该对象具备从input中读取数据 或者将数据写入到output的能力
+     * Custom 代表一个自定义接口 包含一个表明当前是否是私有的方法
+     */
     private static final NamedDiffableValueSerializer<Custom> CUSTOM_VALUE_SERIALIZER = new NamedDiffableValueSerializer<>(Custom.class);
 
     public static final String UNKNOWN_UUID = "_na_";
@@ -120,6 +133,9 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
      */
     private final DiscoveryNodes nodes;
 
+    /**
+     * 描述集群的元数据信息
+     */
     private final Metadata metadata;
 
     private final ClusterBlocks blocks;
@@ -128,16 +144,37 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
 
     private final ClusterName clusterName;
 
+    /**
+     * 代表当前 state信息是否是从 diff中获取的 (应该就是代表监听到了某次集群的变化 而修改了state信息吧)
+     */
     private final boolean wasReadFromDiff;
 
     // built on demand
     private volatile RoutingNodes routingNodes;
 
+    /**
+     * 使用其他state对象内的数据填充新对象
+     * @param version
+     * @param stateUUID
+     * @param state
+     */
     public ClusterState(long version, String stateUUID, ClusterState state) {
         this(state.clusterName, version, stateUUID, state.metadata(), state.routingTable(), state.nodes(), state.blocks(),
                 state.customs(), false);
     }
 
+    /**
+     *
+     * @param clusterName
+     * @param version
+     * @param stateUUID
+     * @param metadata
+     * @param routingTable
+     * @param nodes
+     * @param blocks
+     * @param customs
+     * @param wasReadFromDiff
+     */
     public ClusterState(ClusterName clusterName, long version, String stateUUID, Metadata metadata, RoutingTable routingTable,
                         DiscoveryNodes nodes, ClusterBlocks blocks, ImmutableOpenMap<String, Custom> customs,
                         boolean wasReadFromDiff) {

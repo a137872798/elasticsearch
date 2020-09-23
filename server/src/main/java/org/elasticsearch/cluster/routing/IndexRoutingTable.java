@@ -61,10 +61,17 @@ import java.util.Set;
  * reflected in the routing table or in related classes, replicas are
  * represented as {@link ShardRouting}.
  * </p>
+ * 描述某个索引所在的位置   因为每个索引对应多个数据分片
  */
 public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> implements Iterable<IndexShardRoutingTable> {
 
+    /**
+     * 每个索引在 es 中有一个 name 和 uuid 属性
+     */
     private final Index index;
+    /**
+     * 分片打乱器
+     */
     private final ShardShuffler shuffler;
 
     // note, we assume that when the index routing is created, ShardRoutings are created for all possible number of

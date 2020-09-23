@@ -325,6 +325,7 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
      * @param node id of the node to discover
      * @return discovered node matching the given id
      * @throws IllegalArgumentException if more than one node matches the request or no nodes have been resolved
+     * 根据特殊的字符串获取匹配的节点信息  node 不一定就是nodeId   也可能赋有其他含义
      */
     public DiscoveryNode resolveNode(String node) {
         String[] resolvedNodeIds = resolveNodes(node);
@@ -384,8 +385,8 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
                             resolvedNodesIds.add(node.getId());
                         }
                     }
-                    // 如果节点id 存在 ":"
                     int index = nodeId.indexOf(':');
+                    // 看来传入的字符串还可能是特殊格式的  比如 data:true 代表获取所有的数据节点
                     if (index != -1) {
                         String matchAttrName = nodeId.substring(0, index);
                         String matchAttrValue = nodeId.substring(index + 1);
@@ -415,6 +416,7 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
                             }
                         } else {
                             for (DiscoveryNode node : this) {
+                                // 找到一些自定义的节点角色  (比如使用插件设置的)
                                 for (DiscoveryNodeRole role : Sets.difference(node.getRoles(), DiscoveryNodeRole.BUILT_IN_ROLES)) {
                                     if (role.roleName().equals(matchAttrName)) {
                                         if (Booleans.parseBoolean(matchAttrValue, true)) {
@@ -425,6 +427,7 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
                                     }
                                 }
                             }
+                            // 如果解析后的字符串 可能不是指角色 那么尝试匹配attr 匹配成功的话 也将nodeId设置到容器中
                             for (DiscoveryNode node : this) {
                                 for (Map.Entry<String, String> entry : node.getAttributes().entrySet()) {
                                     String attrName = entry.getKey();
@@ -448,6 +451,7 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
 
     /**
      * Returns the changes comparing this nodes to the provided nodes.
+     * 将当前集群节点与另一个集群节点对象做比较 并叫不同处封装成 Delta 返回
      */
     public Delta delta(DiscoveryNodes other) {
         final List<DiscoveryNode> removed = new ArrayList<>();
@@ -493,11 +497,20 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
          * 本地节点的id
          */
         private final String localNodeId;
+
         @Nullable private final DiscoveryNode previousMasterNode;
         @Nullable private final DiscoveryNode newMasterNode;
         private final List<DiscoveryNode> removed;
         private final List<DiscoveryNode> added;
 
+        /**
+         *
+         * @param previousMasterNode  之前master节点
+         * @param newMasterNode   此时master节点
+         * @param localNodeId
+         * @param removed   代表哪些节点被移除了
+         * @param added    哪些节点是新加入的
+         */
         private Delta(@Nullable DiscoveryNode previousMasterNode, @Nullable DiscoveryNode newMasterNode, String localNodeId,
                      List<DiscoveryNode> removed, List<DiscoveryNode> added) {
             this.previousMasterNode = previousMasterNode;

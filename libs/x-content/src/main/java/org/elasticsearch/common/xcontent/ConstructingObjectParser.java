@@ -72,7 +72,7 @@ import java.util.function.Function;
  * <p>
  * Note: if optional constructor arguments aren't specified then the number of allocations is always the worst case.
  * </p>
- * 构造器解析器
+ * 他跟 ObjectParser的不同点在于  ObjectParser在初始化时要传入一个获取实例对象的函数  比如 Index::new   而该对象无法直接生成实例 因为生成实例需要的参数可能也是从结构体数据中获取的
  */
 public final class ConstructingObjectParser<Value, Context> extends AbstractObjectParser<Value, Context> implements
     BiFunction<XContentParser, Context, Value>, ContextParser<Context, Value>{
@@ -93,13 +93,19 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
 
     /**
      * List of constructor names used for generating the error message if not all arrive.
+     * 描述构建对象需要的构造函数参数
      */
     private final List<ConstructorArgInfo> constructorArgInfos = new ArrayList<>();
+
+    /**
+     * 该对象还内置了一个 ObjectParser
+     */
     private final ObjectParser<Target, Context> objectParser;
     private final BiFunction<Object[], Context, Value> builder;
     /**
      * The number of fields on the targetObject. This doesn't include any constructor arguments and is the size used for the array backing
      * the field queue.
+     * 记录在对应的 ObjectParser中已经定义了多少处理field的逻辑
      */
     private int numberOfFields = 0;
 
@@ -112,7 +118,7 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
      *        of the array to the arguments so they work with your favorite constructor. The objects in the array will be in the same order
      *        that you declared the {@link #constructorArg()}s and none will be null. If any of the constructor arguments aren't defined in
      *        the XContent then parsing will throw an error. We use an array here rather than a {@code Map<String, Object>} to save on
-     *        allocations.
+     *        allocations.    builder 实际上就是构造函数 不过它需要一组参数
      */
     public ConstructingObjectParser(String name, Function<Object[], Value> builder) {
         this(name, false, builder);
@@ -130,6 +136,7 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
      *        that you declared the {@link #constructorArg()}s and none will be null. If any of the constructor arguments aren't defined in
      *        the XContent then parsing will throw an error. We use an array here rather than a {@code Map<String, Object>} to save on
      *        allocations.
+     *                在处理时 增加了一个context参数
      */
     public ConstructingObjectParser(String name, boolean ignoreUnknownFields, Function<Object[], Value> builder) {
         this(name, ignoreUnknownFields, (args, context) -> builder.apply(args));
@@ -150,6 +157,7 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
      *        {@code Map<String, Object>} to save on allocations.
      */
     public ConstructingObjectParser(String name, boolean ignoreUnknownFields, BiFunction<Object[], Context, Value> builder) {
+        // 因为实例的创建由该对象完成 所以ObjectParser 就不需要传入实例构造器了
         objectParser = new ObjectParser<>(name, ignoreUnknownFields, null);
         this.builder = builder;
 
@@ -167,8 +175,16 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
         }
     }
 
+    /**
+     * 这里指定了解析的对象为 Target 在该对象内部应该封装了 构建真正需要的实例 以及注入属性的逻辑
+     * @param parser
+     * @param context
+     * @return
+     * @throws IOException
+     */
     @Override
     public Value parse(XContentParser parser, Context context) throws IOException {
+        // 还需要将要使用的 fieldParser 提前设置到 ObjectParser中
         return objectParser.parse(parser, new Target(parser, context), context).finish();
     }
 
@@ -194,6 +210,14 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
         return (BiConsumer<Value, FieldT>) OPTIONAL_CONSTRUCTOR_ARG_MARKER;
     }
 
+    /**
+     * 定义处理某个field的逻辑
+     * @param consumer 如何消费解析到的数值
+     * @param parser 当解析到目标token时 如何获取数值的方法
+     * @param parseField  声明本次目标token
+     * @param type  表示当前指定的数值类型
+     * @param <T>
+     */
     @Override
     public <T> void declareField(BiConsumer<Value, T> consumer, ContextParser<Context, T> parser, ParseField parseField, ValueType type) {
         if (consumer == null) {
@@ -209,6 +233,7 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
             throw new IllegalArgumentException("[type] is required");
         }
 
+        // 当传入的consumer是某种特殊的标识时 走这条逻辑
         if (isConstructorArg(consumer)) {
             /*
              * Build a new consumer directly against the object parser that
@@ -218,9 +243,12 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
              * or expensive lookups whenever the constructor args come in.
              */
             int position = addConstructorArg(consumer, parseField);
+            // 定义将参数先存储到 target的构造参数中， 在满足条件时 会在Target中生成对象
             objectParser.declareField((target, v) -> target.constructorArg(position, v), parser, parseField, type);
         } else {
+            // 其余情况按照 ObjectParser的逻辑进行处理
             numberOfFields += 1;
+            // 这里指定 普通field信息是存储到 target的 queueField中
             objectParser.declareField(queueingConsumer(consumer, parseField), parser, parseField, type);
         }
     }
@@ -335,6 +363,7 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
      * @param consumer Either {@link #REQUIRED_CONSTRUCTOR_ARG_MARKER} or {@link #REQUIRED_CONSTRUCTOR_ARG_MARKER}
      * @param parseField Parse field
      * @return The argument position
+     * 代表本次设置的是一个构造器参数
      */
     private int addConstructorArg(BiConsumer<?, ?> consumer, ParseField parseField) {
         int position = constructorArgInfos.size();
@@ -375,9 +404,13 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
     /**
      * Creates the consumer that does the "field just arrived" behavior. If the targetObject hasn't been built then it queues the value.
      * Otherwise it just applies the value just like {@linkplain ObjectParser} does.
+     * @param consumer 原消费对象
+     * @param parseField 代表本次注册的是哪个field
+     *                   定义如何处理 普通属性的注入(非构造参数)
      */
     private <T> BiConsumer<Target, T> queueingConsumer(BiConsumer<Value, T> consumer, ParseField parseField) {
         return (target, v) -> {
+            // 当targetObject 已经创建时 直接作用
             if (target.targetObject != null) {
                 // The target has already been built. Just apply the consumer now.
                 consumer.accept(target.targetObject, v);
@@ -390,6 +423,7 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
              * queued. Note that we don't do any of this if the target object has already been built.
              */
             XContentLocation location = target.parser.getTokenLocation();
+            // 当对象还未创建时  将解析逻辑存储到 target中
             target.queue(targetObject -> {
                 try {
                     consumer.accept(targetObject, v);
@@ -405,20 +439,24 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
      * The target of the {@linkplain ConstructingObjectParser}. One of these is built every time you call
      * {@linkplain ConstructingObjectParser#apply(XContentParser, Object)} Note that it is not static so it inherits
      * {@linkplain ConstructingObjectParser}'s type parameters.
+     * 该对象封装了 解析field作为构造参数 构造对象后并继续解析结构化数据 并注入属性的逻辑
      */
     private class Target {
         /**
          * Array of constructor args to be passed to the {@link ConstructingObjectParser#builder}.
+         * 构造实例需要的参数信息
          */
         private final Object[] constructorArgs = new Object[constructorArgInfos.size()];
         /**
          * The parser this class is working against. We store it here so we can fetch it conveniently when queueing fields to lookup the
          * location of each field so that we can give a useful error message when replaying the queue.
+         * 该对象包含了解析结构化数据的api
          */
         private final XContentParser parser;
 
         /**
          * The parse context that is used for this invocation. Stored here so that it can be passed to the {@link #builder}.
+         * 用户指定在解析过程中使用的上下文信息   只是为了增加拓展性 大多数情况下该属性为空
          */
         private Context context;
 
@@ -426,6 +464,7 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
          * How many of the constructor parameters have we collected? We keep track of this so we don't have to count the
          * {@link #constructorArgs} array looking for nulls when we receive another constructor parameter. When this is equal to the size of
          * {@link #constructorArgs} we build the target object.
+         * 此时已经获取了多少构造参数
          */
         private int constructorArgsCollected = 0;
         /**
@@ -435,14 +474,17 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
         /**
          * OrderedModeCallback to be called with the target object when we can
          * build it. This is only allocated if the callback has to be queued.
+         * 当对象创建时 触发的回调函数
          */
         private Consumer<Value> queuedOrderedModeCallback;
         /**
          * The count of fields already queued.
+         * 此时存储了多少用于填充生成后的数据的对象  因为属性可能先于构造参数被解析到 此时无法直接使用 所以需要先存起来
          */
         private int queuedFieldsCount = 0;
         /**
          * The target object. This will be instantiated with the constructor arguments are all parsed.
+         * 当构造参数足够时 就会创建该对象
          */
         private Value targetObject;
 
@@ -453,6 +495,7 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
 
         /**
          * Set a constructor argument and build the target object if all constructor arguments have arrived.
+         * 填充某个构造参数
          */
         private void constructorArg(int position, Object value) {
             constructorArgs[position] = value;
@@ -465,6 +508,7 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
         /**
          * Queue a consumer that we'll call once the targetObject is built. If targetObject has been built this will fail because the caller
          * should have just applied the consumer immediately.
+         * 此时解析出一个用于填充实例对象属性的field信息  选择存储起来
          */
         private void queue(Consumer<Value> queueMe) {
             assert targetObject == null: "Don't queue after the targetObject has been built! Just apply the consumer directly.";
@@ -479,6 +523,7 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
 
         /**
          * Finish parsing the object.
+         * 返回构造完并填充属性后的对象
          */
         private Value finish() {
             if (targetObject != null) {
@@ -517,12 +562,17 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
             return targetObject;
         }
 
+        /**
+         * 当构造参数足够时 创建对象
+         */
         private void buildTarget() {
             try {
                 targetObject = builder.apply(constructorArgs, context);
+                // 对象构造完成时  触发回调函数
                 if (queuedOrderedModeCallback != null) {
                     queuedOrderedModeCallback.accept(targetObject);
                 }
+                // 此时已经读取到部分填充用field信息了 设置到实例对象上
                 while (queuedFieldsCount > 0) {
                     queuedFieldsCount -= 1;
                     queuedFields[queuedFieldsCount].accept(targetObject);
@@ -538,9 +588,12 @@ public final class ConstructingObjectParser<Value, Context> extends AbstractObje
     }
 
     /**
-     * 对应构造器的某个参数
+     * 描述通过解析结构体内的数据并生成待处理对象时 有关构造函数参数的定义
      */
     private static class ConstructorArgInfo {
+        /**
+         * 某个构造参数是从哪个field上解析出来的
+         */
         final ParseField field;
         final boolean required; // 代表该参数是否是必备的
 

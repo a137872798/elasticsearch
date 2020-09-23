@@ -553,26 +553,31 @@ public final class DiffableUtils {
      *
      * @param <K> key type of map
      * @param <V> value type of map
+     *           模拟一个写入map的接口对象
      */
     public interface ValueSerializer<K, V> {
 
         /**
          * Writes value to stream
+         * 仅写入 value数据
          */
         void write(V value, StreamOutput out) throws IOException;
 
         /**
          * Reads value from stream. Reading operation can be made dependent on map key.
+         * 使用key从input中读取value数据
          */
         V read(StreamInput in, K key) throws IOException;
 
         /**
          * Whether this serializer supports diffable values
+         * 是否支持写入 Diff对象
          */
         boolean supportsDiffableValues();
 
         /**
          * Whether this serializer supports the version of the output stream
+         * 检测是否支持写入该版本
          */
         default boolean supportsVersion(Diff<V> value, Version version) {
             return true;
@@ -587,6 +592,7 @@ public final class DiffableUtils {
 
         /**
          * Computes diff if this serializer supports diffable values
+         * 避免2个值 并将偏差部分以diff表示
          */
         Diff<V> diff(V value, V beforePart);
 
@@ -607,6 +613,7 @@ public final class DiffableUtils {
      *
      * @param <K> type of map keys
      * @param <V> type of map values
+     *           该抽象类明确表示了有关diff的数据都可以写入
      */
     public abstract static class DiffableValueSerializer<K, V extends Diffable<V>> implements ValueSerializer<K, V> {
         @SuppressWarnings("rawtypes")
@@ -680,6 +687,7 @@ public final class DiffableUtils {
      * Implementation of the ValueSerializer that wraps value and diff readers.
      *
      * Note: this implementation is ignoring the key.
+     * 定义了从in中读取数据并生成对象的行为 交由reader实现
      */
     public static class DiffableValueReader<K, V extends Diffable<V>> extends DiffableValueSerializer<K, V> {
         private final Reader<V> reader;

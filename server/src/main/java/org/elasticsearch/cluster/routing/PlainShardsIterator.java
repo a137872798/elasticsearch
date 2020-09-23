@@ -25,6 +25,7 @@ import java.util.List;
 /**
  * A simple {@link ShardsIterator} that iterates a list or sub-list of
  * {@link ShardRouting shard indexRoutings}.
+ * 一个基于list的迭代器实现
  */
 public class PlainShardsIterator implements ShardsIterator {
 
@@ -33,6 +34,7 @@ public class PlainShardsIterator implements ShardsIterator {
     // Calls to nextOrNull might be performed on different threads in the transport actions so we need the volatile
     // keyword in order to ensure visibility. Note that it is fine to use `volatile` for a counter in that case given
     // that although nextOrNull might be called from different threads, it can never happen concurrently.
+    // 代表当前处理到第几个分片了
     private volatile int index;
 
     public PlainShardsIterator(List<ShardRouting> shards) {
@@ -80,6 +82,10 @@ public class PlainShardsIterator implements ShardsIterator {
         return Collections.unmodifiableList(shards);
     }
 
+    /**
+     * 返回迭代器对象
+     * @return
+     */
     @Override
     public Iterator<ShardRouting> iterator() {
         return shards.iterator();

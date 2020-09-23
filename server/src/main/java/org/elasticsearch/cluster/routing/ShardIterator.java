@@ -23,6 +23,7 @@ import org.elasticsearch.index.shard.ShardId;
 
 /**
  * Allows to iterate over a set of shard instances (routing) within a shard id group.
+ * 该迭代器在普通的分片迭代器基础上增加了 获取分片id的能力
  */
 public interface ShardIterator extends ShardsIterator, Comparable<ShardIterator>  {
 

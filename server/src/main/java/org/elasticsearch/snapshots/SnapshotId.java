@@ -30,6 +30,7 @@ import java.util.Objects;
 
 /**
  * SnapshotId - snapshot name + snapshot UUID
+ * 快照id   简单的bean对象 同样可以以结构化数据输出
  */
 public final class SnapshotId implements Comparable<SnapshotId>, Writeable, ToXContentObject {
 

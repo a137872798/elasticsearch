@@ -48,6 +48,7 @@ import java.util.Set;
 
 /**
  * Holds additional information as to why the shard is in unassigned state.
+ * 未分配信息
  */
 public final class UnassignedInfo implements ToXContentFragment, Writeable {
 
@@ -61,6 +62,7 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
      * <p>
      * Note, ordering of the enum is important, make sure to add new values
      * at the end and handle version serialization properly.
+     * 表示 分片未分配的原因
      */
     public enum Reason {
         /**
@@ -135,6 +137,7 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
      *
      * Note, ordering of the enum is important, make sure to add new values
      * at the end and handle version serialization properly.
+     * 代表整个分配流程中当前所处的状态
      */
     public enum AllocationStatus implements Writeable {
         /**
@@ -211,6 +214,9 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
         }
     }
 
+    /**
+     * 出于什么原因 未分配分片
+     */
     private final Reason reason;
     private final long unassignedTimeMillis; // used for display and log messages, in milliseconds
     private final long unassignedTimeNanos; // in nanoseconds, used to calculate delay for delayed shard allocation
@@ -219,6 +225,9 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
     private final Exception failure;
     private final int failedAllocations;
     private final Set<String> failedNodeIds;
+    /**
+     * 此时处于分配的哪个阶段
+     */
     private final AllocationStatus lastAllocationStatus; // result of the last allocation attempt for this shard
 
     /**

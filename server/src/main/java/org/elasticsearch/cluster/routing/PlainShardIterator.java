@@ -26,9 +26,13 @@ import java.util.List;
 /**
  * The {@link PlainShardIterator} is a {@link ShardsIterator} which iterates all
  * shards or a given {@link ShardId shard id}
+ * 在PlainShardsIterator 的基础上拓展了 获取shardId的 能力
  */
 public class PlainShardIterator extends PlainShardsIterator implements ShardIterator {
 
+    /**
+     * 看来属于同一组的分片  他们的shardId是一样的
+     */
     private final ShardId shardId;
 
     /**

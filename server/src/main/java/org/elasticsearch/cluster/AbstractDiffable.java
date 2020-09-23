@@ -67,6 +67,7 @@ public abstract class AbstractDiffable<T extends Diffable<T>> implements Diffabl
          * Read simple diff from the stream
          */
         CompleteDiff(Reader<T> reader, StreamInput in) throws IOException {
+            // 代表包含part数据 并进行读取  与下面的writeTo 是相反的
             if (in.readBoolean()) {
                 this.part = reader.read(in);
             } else {

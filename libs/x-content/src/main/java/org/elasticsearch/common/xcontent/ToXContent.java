@@ -33,7 +33,7 @@ import java.util.Map;
 public interface ToXContent {
 
     /**
-     * 有点像 config的概念
+     * Params 类似一个存储参数的容器 通过传入key 获取相应的value属性
      */
     interface Params {
         /**

@@ -22,11 +22,13 @@ import java.util.List;
 
 /**
  * Allows to iterate over unrelated shards.
+ * 分片迭代器
  */
 public interface ShardsIterator extends Iterable<ShardRouting> {
 
     /**
      * Resets the iterator to its initial state.
+     * 应该是回到迭代器的头部
      */
     void reset();
 
@@ -41,11 +43,13 @@ public interface ShardsIterator extends Iterable<ShardRouting> {
      * The number of active shard routing instances
      *
      * @return number of active shard routing instances
+     * 当前活跃的分片数量
      */
     int sizeActive();
 
     /**
      * Returns the next shard, or {@code null} if none available.
+     * 尝试获取下一个分片 如果没有则返回null
      */
     ShardRouting nextOrNull();
 
@@ -53,6 +57,7 @@ public interface ShardsIterator extends Iterable<ShardRouting> {
      * Return the number of shards remaining in this {@link ShardsIterator}
      *
      * @return number of shard remaining
+     * 迭代器中还有多少分片未遍历
      */
     int remaining();
 
@@ -64,6 +69,7 @@ public interface ShardsIterator extends Iterable<ShardRouting> {
 
     /**
      * Returns the {@link ShardRouting}s that this shards iterator holds.
+     * 将迭代器内的数据 以list形式返回
      */
     List<ShardRouting> getShardRoutings();
 }

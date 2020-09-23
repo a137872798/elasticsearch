@@ -39,23 +39,40 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+/**
+ * 协调元数据
+ * 包含了本次参与选举的所有节点信息  也就是协调操作本身就是多个节点共同参与才能完成
+ */
 public class CoordinationMetadata implements Writeable, ToXContentFragment {
 
     public static final CoordinationMetadata EMPTY_METADATA = builder().build();
 
+    /**
+     * 集群的任期信息
+     */
     private final long term;
 
+    /**
+     * 这里有关投票的动作被分为了  accepted 和 commited
+     * TODO 推测不同的操作有自己的 选举群  比如根据节点角色 判断某个节点参与某种操作的选举
+     */
     private final VotingConfiguration lastCommittedConfiguration;
 
     private final VotingConfiguration lastAcceptedConfiguration;
 
     private final Set<VotingConfigExclusion> votingConfigExclusions;
 
+    // ParseField 能够配合 XContentParser对象 解析结构化数据 并在命中field时 使用对应的consumer处理数据
     private static final ParseField TERM_PARSE_FIELD = new ParseField("term");
     private static final ParseField LAST_COMMITTED_CONFIGURATION_FIELD = new ParseField("last_committed_config");
     private static final ParseField LAST_ACCEPTED_CONFIGURATION_FIELD = new ParseField("last_accepted_config");
     private static final ParseField VOTING_CONFIG_EXCLUSIONS_FIELD = new ParseField("voting_config_exclusions");
 
+    /**
+     * 解析一组参数并获取任期信息    可以看到默认第一个参数为任期 第二个参数为 commited相关的选举节点 ...
+     * @param termAndConfigs
+     * @return
+     */
     private static long term(Object[] termAndConfigs) {
         return (long)termAndConfigs[0];
     }
@@ -78,11 +95,15 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
         return votingTombstones;
     }
 
+    /**
+     * ConstructingObjectParser 用于处理需要构造参数才能创建对象的场景
+     */
     private static final ConstructingObjectParser<CoordinationMetadata, Void> PARSER = new ConstructingObjectParser<>(
             "coordination_metadata",
             fields -> new CoordinationMetadata(term(fields), lastCommittedConfig(fields),
                     lastAcceptedConfig(fields), votingConfigExclusions(fields)));
     static {
+        // 使用 constructorArg() 特殊标识就代表这个field会作为构造函数的参数
         PARSER.declareLong(ConstructingObjectParser.constructorArg(), TERM_PARSE_FIELD);
         PARSER.declareStringArray(ConstructingObjectParser.constructorArg(), LAST_COMMITTED_CONFIGURATION_FIELD);
         PARSER.declareStringArray(ConstructingObjectParser.constructorArg(), LAST_ACCEPTED_CONFIGURATION_FIELD);
@@ -181,6 +202,9 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
             '}';
     }
 
+    /**
+     * 建造器模式
+     */
     public static class Builder {
         private long term = 0;
         private VotingConfiguration lastCommittedConfiguration = VotingConfiguration.EMPTY_CONFIG;
@@ -228,6 +252,9 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
         }
     }
 
+    /**
+     * 代表某个node信息不参与选举相关的操作
+     */
     public static class VotingConfigExclusion implements Writeable, ToXContentFragment {
         public static final String MISSING_VALUE_MARKER = "_absent_";
         private final String nodeId;
@@ -322,6 +349,7 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
 
     /**
      * A collection of persistent node ids, denoting the voting configuration for cluster state changes.
+     * 有关选举的配置信息
      */
     public static class VotingConfiguration implements Writeable, ToXContentFragment {
 
@@ -329,6 +357,9 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
         public static final VotingConfiguration MUST_JOIN_ELECTED_MASTER = new VotingConfiguration(Collections.singleton(
                 "_must_join_elected_master_"));
 
+        /**
+         * 参与选举的所有节点
+         */
         private final Set<String> nodeIds;
 
         public VotingConfiguration(Set<String> nodeIds) {
@@ -339,11 +370,21 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
             nodeIds = Collections.unmodifiableSet(Sets.newHashSet(in.readStringArray()));
         }
 
+        /**
+         * 将参与选举的节点id 以字符串数组的形式写入到 out中
+         * @param out
+         * @throws IOException
+         */
         @Override
         public void writeTo(StreamOutput out) throws IOException {
             out.writeStringArray(nodeIds.toArray(new String[0]));
         }
 
+        /**
+         * 也就是决定选择是否生效  (同意的节点数超过nodeIds的2分之1)   就是投票箱的意思
+         * @param votes
+         * @return
+         */
         public boolean hasQuorum(Collection<String> votes) {
             final HashSet<String> intersection = new HashSet<>(nodeIds);
             intersection.retainAll(votes);
@@ -376,6 +417,13 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
             return nodeIds.isEmpty();
         }
 
+        /**
+         * 将当前数据以数组形式写出
+         * @param builder
+         * @param params
+         * @return
+         * @throws IOException
+         */
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.startArray();
@@ -385,6 +433,11 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
             return builder.endArray();
         }
 
+        /**
+         * 将当前节点的id抽取出来 并包装成VotingConfiguration
+         * @param nodes
+         * @return
+         */
         public static VotingConfiguration of(DiscoveryNode... nodes) {
             return new VotingConfiguration(Arrays.stream(nodes).map(DiscoveryNode::getId).collect(Collectors.toSet()));
         }
