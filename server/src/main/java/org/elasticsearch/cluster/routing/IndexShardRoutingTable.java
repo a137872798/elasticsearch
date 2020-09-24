@@ -102,7 +102,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
 
 
     /**
-     * 每个  ShardRouting 代表一个最小粒度的数据分片
+     * 每个  ShardRouting 代表一个最小粒度的数据分片  推测这些shard 都是针对同一个索引
      * @param shardId
      * @param shards
      */
@@ -185,6 +185,10 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         return shardId();
     }
 
+    /**
+     * 这里遍历到的是所有的分片
+     * @return
+     */
     @Override
     public Iterator<ShardRouting> iterator() {
         return shards.iterator();
@@ -258,6 +262,10 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         return this.assignedShards;
     }
 
+    /**
+     * 在将所有分片打乱后 使用新顺序遍历分片
+     * @return
+     */
     public ShardIterator shardsRandomIt() {
         return new PlainShardIterator(shardId, shuffler.shuffle(shards));
     }
@@ -266,6 +274,11 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         return new PlainShardIterator(shardId, shards);
     }
 
+    /**
+     * 使用指定的随机值进行打乱
+     * @param seed
+     * @return
+     */
     public ShardIterator shardsIt(int seed) {
         return new PlainShardIterator(shardId, shuffler.shuffle(shards, seed));
     }
@@ -281,9 +294,11 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
     /**
      * Returns an iterator over active and initializing shards. Making sure though that
      * its random within the active shards, and initializing shards are the last to iterate through.
+     * 返回活跃的 和初始状态的列表 同时将活跃的放在前面   并且活跃的打乱 初始化的不修改
      */
     public ShardIterator activeInitializingShardsIt(int seed) {
         if (allInitializingShards.isEmpty()) {
+            // 没有处于初始状态的分片 仅返回所有活跃状态的分片
             return new PlainShardIterator(shardId, shuffler.shuffle(activeShards, seed));
         }
         ArrayList<ShardRouting> ordered = new ArrayList<>(activeShards.size() + allInitializingShards.size());
@@ -296,11 +311,15 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
      * Returns an iterator over active and initializing shards, ordered by the adaptive replica
      * selection formula. Making sure though that its random within the active shards of the same
      * (or missing) rank, and initializing shards are the last to iterate through.
+     * @param collector 该对象负责统计一些数据 (responseTime serviceTime queueSize)
+     *
+     *                  这里就是将分片数据 按照分类先更新一次统计数据 之后返回
      */
     public ShardIterator activeInitializingShardsRankedIt(@Nullable ResponseCollectorService collector,
                                                           @Nullable Map<String, Long> nodeSearchCounts) {
         final int seed = shuffler.nextSeed();
         if (allInitializingShards.isEmpty()) {
+            // 仅返回活跃分片
             return new PlainShardIterator(shardId,
                     rankShardsAndUpdateStats(shuffler.shuffle(activeShards, seed), collector, nodeSearchCounts));
         }
@@ -315,6 +334,11 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         return new PlainShardIterator(shardId, ordered);
     }
 
+    /**
+     * 从分片路由中获取对应的节点信息
+     * @param shards
+     * @return
+     */
     private static Set<String> getAllNodeIds(final List<ShardRouting> shards) {
         final Set<String> nodeIds = new HashSet<>();
         for (ShardRouting shard : shards) {
@@ -333,6 +357,12 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         return nodeStats;
     }
 
+    /**
+     * 实际上就是调用 stats的rank方法
+     * @param nodeStats
+     * @param nodeSearchCounts
+     * @return
+     */
     private static Map<String, Double> rankNodes(final Map<String, Optional<ResponseCollectorService.ComputedNodeStats>> nodeStats,
                                                  final Map<String, Long> nodeSearchCounts) {
         final Map<String, Double> nodeRanks = new HashMap<>(nodeStats.size());
@@ -340,6 +370,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
             Optional<ResponseCollectorService.ComputedNodeStats> maybeStats = entry.getValue();
             maybeStats.ifPresent(stats -> {
                 final String nodeId = entry.getKey();
+                // 这里默认值是 1 为啥???
                 nodeRanks.put(nodeId, stats.rank(nodeSearchCounts.getOrDefault(nodeId, 1L)));
             });
         }
@@ -356,6 +387,11 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
      * This adjustment takes the "winning" node's statistics and adds the average of those statistics with each non-winning node. Let's say
      * the winning node had a queue size of 10 and a non-winning node had a queue of 18. The average queue size is (10 + 18) / 2 = 14 so the
      * non-winning node will have statistics added for a queue size of 14. This is repeated for the response time and service times as well.
+     * @param collector  采集数据的对象
+     * @param nodeStats 该对象包含一个计算rank的api
+     * @param minNodeId 当前rank最小的节点id
+     * @param minStats 最小的节点对应的统计数据
+     * 调整统计值
      */
     private static void adjustStats(final ResponseCollectorService collector,
                                     final Map<String, Optional<ResponseCollectorService.ComputedNodeStats>> nodeStats,
@@ -365,17 +401,27 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
             for (Map.Entry<String, Optional<ResponseCollectorService.ComputedNodeStats>> entry : nodeStats.entrySet()) {
                 final String nodeId = entry.getKey();
                 final Optional<ResponseCollectorService.ComputedNodeStats> maybeStats = entry.getValue();
+                // 找到处理min 之外的其他节点
                 if (nodeId.equals(minNodeId) == false && maybeStats.isPresent()) {
+                    // 在跟min节点的数据综合后 生成一个新的统计对象 并填充到容器中
                     final ResponseCollectorService.ComputedNodeStats stats = maybeStats.get();
                     final int updatedQueue = (minStats.queueSize + stats.queueSize) / 2;
                     final long updatedResponse = (long) (minStats.responseTime + stats.responseTime) / 2;
                     final long updatedService = (long) (minStats.serviceTime + stats.serviceTime) / 2;
+                    // 因为之前已经存在这些node的数据了 所以这里是做加权求平均数处理
                     collector.addNodeStatistics(nodeId, updatedQueue, updatedResponse, updatedService);
                 }
             }
         }
     }
 
+    /**
+     *
+     * @param shards  当前待处理的分片
+     * @param collector   该对象具备收集节点 响应时间 服务时间等的能力
+     * @param nodeSearchCounts   节点查询数是什么???
+     * @return
+     */
     private static List<ShardRouting> rankShardsAndUpdateStats(List<ShardRouting> shards, final ResponseCollectorService collector,
                                                                final Map<String, Long> nodeSearchCounts) {
         if (collector == null || nodeSearchCounts == null || shards.size() <= 1) {
@@ -384,29 +430,36 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
 
         // Retrieve which nodes we can potentially send the query to
         final Set<String> nodeIds = getAllNodeIds(shards);
+        // 获取每个节点对应的统计数据  当对应数据不存在时  Optional为空
         final Map<String, Optional<ResponseCollectorService.ComputedNodeStats>> nodeStats = getNodeStats(nodeIds, collector);
 
         // Retrieve all the nodes the shards exist on
+        // 为每个 ComputedNodeStats 对象计算rank值
         final Map<String, Double> nodeRanks = rankNodes(nodeStats, nodeSearchCounts);
 
         // sort all shards based on the shard rank
         ArrayList<ShardRouting> sortedShards = new ArrayList<>(shards);
+        // 使用rank值为每个对象进行排序
         Collections.sort(sortedShards, new NodeRankComparator(nodeRanks));
 
         // adjust the non-winner nodes' stats so they will get a chance to receive queries
         if (sortedShards.size() > 1) {
+            // 获取rank分最小的shard 对象
             ShardRouting minShard = sortedShards.get(0);
             // If the winning shard is not started we are ranking initializing
             // shards, don't bother to do adjustments
+            // 必须要确保最小的分片已经启动了  TODO 什么意思  为什么只处理最小rank的分片  以及为什么仅处理started状态的
             if (minShard.started()) {
                 String minNodeId = minShard.currentNodeId();
                 Optional<ResponseCollectorService.ComputedNodeStats> maybeMinStats = nodeStats.get(minNodeId);
                 if (maybeMinStats.isPresent()) {
+                    // 调整统计值
                     adjustStats(collector, nodeStats, minNodeId, maybeMinStats.get());
                     // Increase the number of searches for the "winning" node by one.
                     // Note that this doesn't actually affect the "real" counts, instead
                     // it only affects the captured node search counts, which is
                     // captured once for each query in TransportSearchAction
+                    // 增加查询数
                     nodeSearchCounts.compute(minNodeId, (id, conns) -> conns == null ? 1 : conns + 1);
                 }
             }
@@ -415,6 +468,9 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         return sortedShards;
     }
 
+    /**
+     * 使用rank值比较大小
+     */
     private static class NodeRankComparator implements Comparator<ShardRouting> {
         private final Map<String, Double> nodeRanks;
 
@@ -451,11 +507,19 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
 
     /**
      * Returns an iterator only on the primary shard.
+     * 仅返回私有分片  primaryShard 认为这种分片仅存在于单个节点
+     * todo 如何确定某组分片针对同一个索引  一个IndexShardRoutingTable下的分片不是针对同一个索引的么 以及从代码逻辑看 一个索引只存在一个私有分片又是为什么
+     * 仅返回私有分片的迭代器
      */
     public ShardIterator primaryShardIt() {
         return new PlainShardIterator(shardId, primaryAsList);
     }
 
+    /**
+     * 将该节点下所有active/init的数据分片返回
+     * @param nodeId
+     * @return
+     */
     public ShardIterator onlyNodeActiveInitializingShardsIt(String nodeId) {
         ArrayList<ShardRouting> ordered = new ArrayList<>(activeShards.size() + allInitializingShards.size());
         int seed = shuffler.nextSeed();
@@ -479,11 +543,14 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
     /**
      * Returns shards based on nodeAttributes given  such as node name , node attribute, node IP
      * Supports node specifications in cluster API
+     * @param nodeAttributes 用于定位nodeId的查询条件
      */
     public ShardIterator onlyNodeSelectorActiveInitializingShardsIt(String[] nodeAttributes, DiscoveryNodes discoveryNodes) {
         ArrayList<ShardRouting> ordered = new ArrayList<>(activeShards.size() + allInitializingShards.size());
         Set<String> selectedNodes = Sets.newHashSet(discoveryNodes.resolveNodes(nodeAttributes));
         int seed = shuffler.nextSeed();
+        // 每次返回的数据都是打乱顺序的  为啥
+        // 这里将attr定位到的nodeId下 所有 active/init  的数据分片都设置到list中
         for (ShardRouting shardRouting : shuffler.shuffle(activeShards, seed)) {
             if (selectedNodes.contains(shardRouting.currentNodeId())) {
                 ordered.add(shardRouting);
@@ -506,9 +573,15 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         return new PlainShardIterator(shardId, ordered);
     }
 
+    /**
+     * @param nodeIds
+     * @return
+     */
     public ShardIterator preferNodeActiveInitializingShardsIt(Set<String> nodeIds) {
         ArrayList<ShardRouting> preferred = new ArrayList<>(activeShards.size() + allInitializingShards.size());
         ArrayList<ShardRouting> notPreferred = new ArrayList<>(activeShards.size() + allInitializingShards.size());
+        // 先存储所有活跃的分片数据 并且 命中nodeIds的排在前面 之后插入所有init的节点
+
         // fill it in a randomized fashion
         for (ShardRouting shardRouting : shuffler.shuffle(activeShards)) {
             if (nodeIds.contains(shardRouting.currentNodeId())) {
@@ -546,11 +619,17 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
 
     /**
      * Returns <code>true</code> iff all shards in the routing table are started otherwise <code>false</code>
+     * 检测是否所有的分片此时都处于started状态
      */
     public boolean allShardsStarted() {
         return allShardsStarted;
     }
 
+    /**
+     * 找到与分配id 匹配的分片对象  TODO 分配id可能会重复么
+     * @param allocationId
+     * @return
+     */
     @Nullable
     public ShardRouting getByAllocationId(String allocationId) {
         for (ShardRouting shardRouting : assignedShards()) {
@@ -565,6 +644,9 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         return allAllocationIds;
     }
 
+    /**
+     * 描述一组特殊的属性
+     */
     static class AttributesKey {
 
         final List<String> attributes;
@@ -592,6 +674,11 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         return this.replicas;
     }
 
+    /**
+     * 将副本中 符合状态的所有分片返回  replicas 存储的是除了 primary外的其他分片
+     * @param states
+     * @return
+     */
     public List<ShardRouting> replicaShardsWithState(ShardRoutingState... states) {
         List<ShardRouting> shards = new ArrayList<>();
         for (ShardRouting shardEntry : replicas) {
@@ -617,8 +704,14 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         return shards;
     }
 
+    /**
+     * 建造器模式
+     */
     public static class Builder {
 
+        /**
+         * 某个 IndexShardRoutingTable下的 shardId 都是一样的 也就意味着 他们对应的index都是一样的
+         */
         private ShardId shardId;
         private final List<ShardRouting> shards;
 

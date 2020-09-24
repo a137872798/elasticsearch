@@ -46,6 +46,8 @@ public interface LocalNodeMasterListener {
      * or {@link org.elasticsearch.threadpool.ThreadPool.Names#MANAGEMENT MANAGEMENT}).
      *
      * @return The name of the executor that will run the callbacks of this listener.
+     *
+     * 从 ThreadPool中 找到name匹配的线程池
      */
     String executorName();
 

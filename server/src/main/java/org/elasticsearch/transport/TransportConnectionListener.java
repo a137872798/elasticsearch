@@ -25,6 +25,7 @@ import org.elasticsearch.cluster.node.DiscoveryNode;
  * A listener interface that allows to react on transport events. All methods may be
  * executed on network threads. Consumers must fork in the case of long running or blocking
  * operations.
+ * 监听连接变化
  */
 public interface TransportConnectionListener {
 

@@ -67,6 +67,7 @@ import static org.elasticsearch.common.settings.Setting.positiveTimeSetting;
  * <p>
  * This component does not block on disconnections at all, because a disconnection might need to wait for an ongoing (background) connection
  * attempt to complete first.
+ * 维护节点间的连接功能
  */
 public class NodeConnectionsService extends AbstractLifecycleComponent {
     private static final Logger logger = LogManager.getLogger(NodeConnectionsService.class);
@@ -98,6 +99,8 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
     /**
      * Connect to all the given nodes, but do not disconnect from any extra nodes. Calls the completion handler on completion of all
      * connection attempts to _new_ nodes, but not on attempts to re-establish connections to nodes that are already known.
+     * @param discoveryNodes 与目标节点建立连接
+     * @param onCompletion 当连接完成时触发的函数
      */
     public void connectToNodes(DiscoveryNodes discoveryNodes, Runnable onCompletion) {
 

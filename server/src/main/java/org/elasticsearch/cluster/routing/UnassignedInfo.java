@@ -233,8 +233,8 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
     /**
      * creates an UnassignedInfo object based on **current** time
      *
-     * @param reason  the cause for making this shard unassigned. See {@link Reason} for more information.
-     * @param message more information about cause.
+     * @param reason  the cause for making this shard unassigned. See {@link Reason} for more information.   描述未分配的原因
+     * @param message more information about cause.     消息信息
      **/
     public UnassignedInfo(Reason reason, String message) {
         this(reason, message, null, reason == Reason.ALLOCATION_FAILED ? 1 : 0, System.nanoTime(), System.currentTimeMillis(), false,

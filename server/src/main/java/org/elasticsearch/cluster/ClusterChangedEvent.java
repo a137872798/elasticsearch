@@ -39,7 +39,7 @@ import java.util.stream.Collectors;
 
 /**
  * An event received by the local node, signaling that the cluster state has changed.
- * 代表集群发生了变化
+ * 代表集群变化的事件
  */
 public class ClusterChangedEvent {
 
@@ -86,6 +86,7 @@ public class ClusterChangedEvent {
      * Returns <code>true</code> iff the routing tables (for all indices) have
      * changed between the previous cluster state and the current cluster state.
      * Note that this is an object reference equality test, not an equals test.
+     * 代表路由表是否发生了变化
      */
     public boolean routingTableChanged() {
         return state.routingTable() != previousState.routingTable();
@@ -97,25 +98,32 @@ public class ClusterChangedEvent {
      */
     public boolean indexRoutingTableChanged(String index) {
         Objects.requireNonNull(index, "index must not be null");
+
+        // 如果前后路由表中都不包含这个索引 代表没有发生变化
         if (!state.routingTable().hasIndex(index) && !previousState.routingTable().hasIndex(index)) {
             return false;
         }
+        // 如果该索引的路由表信息发生变化 也返回true
         if (state.routingTable().hasIndex(index) && previousState.routingTable().hasIndex(index)) {
             return state.routingTable().index(index) != previousState.routingTable().index(index);
         }
+        // 其余情况代表之前有现在无 或者之前无现在有
         return true;
     }
 
     /**
      * Returns the indices created in this event
+     * 返回此时创建的所有索引
      */
     public List<String> indicesCreated() {
+        // 通过元数据是否发生了变化 可以快速的断定是否有新的索引被创建
         if (!metadataChanged()) {
             return Collections.emptyList();
         }
         List<String> created = null;
         for (ObjectCursor<String> cursor : state.metadata().indices().keys()) {
             String index = cursor.value;
+            // 找到没有存储在元数据中的索引 就是本次新建的
             if (!previousState.metadata().hasIndex(index)) {
                 if (created == null) {
                     created = new ArrayList<>();
@@ -128,13 +136,16 @@ public class ClusterChangedEvent {
 
     /**
      * Returns the indices deleted in this event
+     * 找到本次删除的索引信息
      */
     public List<Index> indicesDeleted() {
+        // TODO 先忽略
         if (previousState.blocks().hasGlobalBlock(GatewayService.STATE_NOT_RECOVERED_BLOCK)) {
             // working off of a non-initialized previous state, so use the tombstones for index deletions
             return indicesDeletedFromTombstones();
         } else {
             // examine the diffs in index metadata between the previous and new cluster states to get the deleted indices
+            // 基于前后2个集群metadata  比较本次删除的索引
             return indicesDeletedFromClusterState();
         }
     }
@@ -152,6 +163,7 @@ public class ClusterChangedEvent {
      * Returns a set of custom meta data types when any custom metadata for the cluster has changed
      * between the previous cluster state and the new cluster state. custom meta data types are
      * returned iff they have been added, updated or removed between the previous and the current state
+     * 返回发生变化的用户自定义的数据
      */
     public Set<String> changedCustomMetadataSet() {
         Set<String> result = new HashSet<>();
@@ -160,12 +172,14 @@ public class ClusterChangedEvent {
         if (currentCustoms.equals(previousCustoms) == false) {
             for (ObjectObjectCursor<String, Metadata.Custom> currentCustomMetadata : currentCustoms) {
                 // new custom md added or existing custom md changed
+                // 找到本次新增的 或者发生变化的自定义数据
                 if (previousCustoms.containsKey(currentCustomMetadata.key) == false
                         || currentCustomMetadata.value.equals(previousCustoms.get(currentCustomMetadata.key)) == false) {
                     result.add(currentCustomMetadata.key);
                 }
             }
             // existing custom md deleted
+            // 删除的也加入到列表中    (这样不是没法区分了吗 ???)
             for (ObjectObjectCursor<String, Metadata.Custom> previousCustomMetadata : previousCustoms) {
                 if (currentCustoms.containsKey(previousCustomMetadata.key) == false) {
                     result.add(previousCustomMetadata.key);
@@ -190,6 +204,7 @@ public class ClusterChangedEvent {
     /**
      * Returns <code>true</code> iff the cluster level blocks have changed between cluster states.
      * Note that this is an object reference equality test, not an equals test.
+     * 数据块是否发生了变化
      */
     public boolean blocksChanged() {
         return state.blocks() != previousState.blocks();
@@ -197,6 +212,7 @@ public class ClusterChangedEvent {
 
     /**
      * Returns <code>true</code> iff the local node is the master node of the cluster.
+     * 当前节点是否被选举为集群的master节点
      */
     public boolean localNodeMaster() {
         return state.nodes().isLocalNodeElectedMaster();
@@ -246,6 +262,7 @@ public class ClusterChangedEvent {
 
     // Get the deleted indices by comparing the index metadatas in the previous and new cluster states.
     // If an index exists in the previous cluster state, but not in the new cluster state, it must have been deleted.
+    // 基于前后2个state的 metadata 寻找本次删除的索引信息
     private List<Index> indicesDeletedFromClusterState() {
         // If the new cluster state has a new cluster UUID, the likely scenario is that a node was elected
         // master that has had its data directory wiped out, in which case we don't want to delete the indices and lose data;
@@ -254,12 +271,14 @@ public class ClusterChangedEvent {
         // See test DiscoveryWithServiceDisruptionsIT.testIndicesDeleted()
         // See discussion on https://github.com/elastic/elasticsearch/pull/9952 and
         // https://github.com/elastic/elasticsearch/issues/11665
+        // 当元数据没有发生变化 或者当前是一个新的集群  返回空列表
         if (metadataChanged() == false || isNewCluster()) {
             return Collections.emptyList();
         }
         List<Index> deleted = null;
         for (ObjectCursor<IndexMetadata> cursor : previousState.metadata().indices().values()) {
             IndexMetadata index = cursor.value;
+            // 代表之前的某个索引无法在当前 metadata中找到 就代表索引已经被删除
             IndexMetadata current = state.metadata().index(index.getIndex());
             if (current == null) {
                 if (deleted == null) {
@@ -271,6 +290,10 @@ public class ClusterChangedEvent {
         return deleted == null ? Collections.<Index>emptyList() : deleted;
     }
 
+    /**
+     * TODO 先忽略
+     * @return
+     */
     private List<Index> indicesDeletedFromTombstones() {
         // We look at the full tombstones list to see which indices need to be deleted.  In the case of
         // a valid previous cluster state, indicesDeletedFromClusterState() will be used to get the deleted

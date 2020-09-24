@@ -24,6 +24,7 @@ import org.elasticsearch.common.unit.TimeValue;
 
 /**
  * Cluster state update task configuration for timeout and priority
+ * 处理集群状态任务的配置
  */
 public interface ClusterStateTaskConfig {
     /**
@@ -33,6 +34,7 @@ public interface ClusterStateTaskConfig {
      * is invoked.
      *
      * @return the timeout, or null if one is not set
+     * 该任务的超时时间
      */
     @Nullable
     TimeValue timeout();
@@ -41,6 +43,7 @@ public interface ClusterStateTaskConfig {
      * The {@link Priority} for this cluster state update task configuration.
      *
      * @return the priority
+     * 该任务的优先级
      */
     Priority priority();
 
@@ -70,6 +73,9 @@ public interface ClusterStateTaskConfig {
         return new Basic(priority, timeout);
     }
 
+    /**
+     * 生成一个最基础的配置对象  只包含了基本信息
+     */
     class Basic implements ClusterStateTaskConfig {
         final TimeValue timeout;
         final Priority priority;

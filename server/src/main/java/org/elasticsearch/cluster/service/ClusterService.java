@@ -41,6 +41,9 @@ import org.elasticsearch.threadpool.ThreadPool;
 import java.util.Collections;
 import java.util.Map;
 
+/**
+ * 整个集群功能的入口
+ */
 public class ClusterService extends AbstractLifecycleComponent {
     private final MasterService masterService;
 

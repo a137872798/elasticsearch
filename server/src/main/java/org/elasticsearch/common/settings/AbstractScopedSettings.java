@@ -181,6 +181,7 @@ public abstract class AbstractScopedSettings {
      * settings.
      * @param newSettings the settings to apply
      * @return the unmerged applied settings
+     * 更新本地配置  一般是从集群中检测到 cluterState发生了变化 那么使用内部的settings 来更新本地配置
     */
     public synchronized Settings applySettings(Settings newSettings) {
         if (lastSettingsApplied != null && newSettings.equals(lastSettingsApplied)) {
@@ -191,6 +192,7 @@ public abstract class AbstractScopedSettings {
         final Settings previous = Settings.builder().put(this.settings).put(this.lastSettingsApplied).build();
         try {
             List<Runnable> applyRunnables = new ArrayList<>();
+            // 遍历所有配置更新的函数
             for (SettingUpdater<?> settingUpdater : settingUpdaters) {
                 try {
                     applyRunnables.add(settingUpdater.updater(current, previous));
@@ -593,6 +595,7 @@ public abstract class AbstractScopedSettings {
      * Transactional interface to update settings.
      * @see Setting
      * @param <T> the type of the value of the setting
+     *           封装了 处理集群配置变化的逻辑
      */
     public interface SettingUpdater<T> {
 

@@ -20,14 +20,17 @@ package org.elasticsearch.transport;
 
 import org.elasticsearch.cluster.node.DiscoveryNode;
 
+/**
+ * 当接收到req/res 时触发相关函数
+ */
 public interface TransportMessageListener {
 
     TransportMessageListener NOOP_LISTENER = new TransportMessageListener() {};
 
     /**
      * Called once a request is received
-     * @param requestId the internal request ID
-     * @param action the request action
+     * @param requestId the internal request ID    本次请求id
+     * @param action the request action           触发的api类型
      *
      */
     default void onRequestReceived(long requestId, String action) {}
@@ -36,7 +39,7 @@ public interface TransportMessageListener {
      * Called for every action response sent after the response has been passed to the underlying network implementation.
      * @param requestId the request ID (unique per client)
      * @param action the request action
-     * @param response the response send
+     * @param response the response send     这里会携带一个响应结构对象
      */
     default void onResponseSent(long requestId, String action, TransportResponse response) {}
 
@@ -54,7 +57,8 @@ public interface TransportMessageListener {
      * @param requestId the internal request id
      * @param action the action name
      * @param request the actual request
-     * @param finalOptions the request options
+     * @param finalOptions the request options      描述请求体的元数据信息
+     *                     该函数允许获取请求体信息
      */
     default void onRequestSent(DiscoveryNode node, long requestId, String action, TransportRequest request,
                                TransportRequestOptions finalOptions) {}
@@ -62,7 +66,7 @@ public interface TransportMessageListener {
     /**
      * Called for every response received
      * @param requestId the request id for this reponse
-     * @param context the response context or null if the context was already processed ie. due to a timeout.
+     * @param context the response context or null if the context was already processed ie. due to a timeout.  该对象相比res提供了更多的信息
      */
     @SuppressWarnings("rawtypes")
     default void onResponseReceived(long requestId, Transport.ResponseContext context) {}

@@ -44,11 +44,13 @@ public interface ClusterApplier {
 
     /**
      * Listener for results of cluster state application
+     * 处理集群状态的结果
      */
     interface ClusterApplyListener {
         /**
          * Called on successful cluster state application
          * @param source information where the cluster state came from
+         *               成功处理
          */
         default void onSuccess(String source) {
         }
@@ -57,6 +59,7 @@ public interface ClusterApplier {
          * Called on failure during cluster state application
          * @param source information where the cluster state came from
          * @param e exception that occurred
+         *          失败 比如任务超时
          */
         void onFailure(String source, Exception e);
     }

@@ -44,6 +44,10 @@ public abstract class AbstractDiffable<T extends Diffable<T>> implements Diffabl
         return new CompleteDiff<T>(reader, in);
     }
 
+    /**
+     * 该对象代表通过 reader对象读取input中的数据 并还原成 实现Diffable接口的类
+     * @param <T>
+     */
     private static class CompleteDiff<T extends Diffable<T>> implements Diff<T> {
 
         @Nullable

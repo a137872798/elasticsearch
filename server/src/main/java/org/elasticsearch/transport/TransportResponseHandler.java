@@ -21,11 +21,19 @@ package org.elasticsearch.transport;
 
 import org.elasticsearch.common.io.stream.Writeable;
 
+/**
+ * 响应结果处理器
+ * @param <T>
+ */
 public interface TransportResponseHandler<T extends TransportResponse> extends Writeable.Reader<T> {
 
     void handleResponse(T response);
 
     void handleException(TransportException exp);
 
+    /**
+     * 返回使用的线程池名称
+     * @return
+     */
     String executor();
 }

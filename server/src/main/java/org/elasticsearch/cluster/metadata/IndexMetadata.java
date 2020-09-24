@@ -160,7 +160,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         "index.number_of_routing_shards",
         INDEX_NUMBER_OF_SHARDS_SETTING,
         1,
-        new Setting.Validator<>() {
+        new Setting.Validator<Integer>() {
 
             @Override
             public void validate(final Integer value) {
@@ -319,6 +319,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
     private final ImmutableOpenMap<String, DiffableStringMap> customData;
 
+    /**
+     * 这个容器的作用是???
+     */
     private final ImmutableOpenIntMap<Set<String>> inSyncAllocationIds;
 
     private final transient int totalNumberOfShards;

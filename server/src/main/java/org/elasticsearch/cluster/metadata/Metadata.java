@@ -164,6 +164,9 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
 
     private static final NamedDiffableValueSerializer<Custom> CUSTOM_VALUE_SERIALIZER = new NamedDiffableValueSerializer<>(Custom.class);
 
+    /**
+     * 代表这个元数据是针对哪个集群   如果集群本身任期发生变化 该值会改变么???
+     */
     private final String clusterUUID;
     private final boolean clusterUUIDCommitted;
     private final long version;
@@ -174,6 +177,9 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
     private final Settings persistentSettings;
     private final Settings settings;
     private final DiffableStringMap hashesOfConsistentSettings;
+    /**
+     * 在元数据中存储了索引信息   当集群状态发生变化时 可以根据新旧的metadata 快速定位到本次新增的索引
+     */
     private final ImmutableOpenMap<String, IndexMetadata> indices;
     private final ImmutableOpenMap<String, IndexTemplateMetadata> templates;
     private final ImmutableOpenMap<String, Custom> customs;

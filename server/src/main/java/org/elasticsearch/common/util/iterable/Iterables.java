@@ -27,8 +27,17 @@ import java.util.Objects;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
+/**
+ * 迭代器工具类
+ */
 public class Iterables {
 
+    /**
+     * 将多个迭代器内部的元素合并成一个
+     * @param inputs
+     * @param <T>
+     * @return
+     */
     public static <T> Iterable<T> concat(Iterable<T>... inputs) {
         Objects.requireNonNull(inputs);
         return new ConcatenatedIterable<>(inputs);

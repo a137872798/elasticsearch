@@ -39,12 +39,22 @@ import java.util.stream.Collectors;
  * Class representing statistics about adaptive replica selection. This includes
  * EWMA of queue size, service time, and response time, as well as outgoing
  * searches to each node and the "rank" based on the ARS formula.
+ * 统计自适应的复制选择???
  */
 public class AdaptiveSelectionStats implements Writeable, ToXContentFragment {
 
+    /**
+     * 记录每个节点对外的连接数
+     */
     private final Map<String, Long> clientOutgoingConnections;
     private final Map<String, ResponseCollectorService.ComputedNodeStats> nodeComputedStats;
 
+
+    /**
+     *
+     * @param clientConnections  好像是每个client的连接数
+     * @param nodeComputedStats    该对象具备计算队列长度 响应时长 服务时长等信息的能力
+     */
     public AdaptiveSelectionStats(Map<String, Long> clientConnections,
                                   Map<String, ResponseCollectorService.ComputedNodeStats> nodeComputedStats) {
         this.clientOutgoingConnections = clientConnections;
@@ -109,6 +119,7 @@ public class AdaptiveSelectionStats implements Writeable, ToXContentFragment {
     public Map<String, Double> getRanks() {
         return nodeComputedStats.entrySet().stream()
                 .collect(Collectors.toMap(Map.Entry::getKey,
+                                // 根据连接数 计算一个 rank级别 并返回
                                 e -> e.getValue().rank(clientOutgoingConnections.getOrDefault(e.getKey(), 0L))));
     }
 }

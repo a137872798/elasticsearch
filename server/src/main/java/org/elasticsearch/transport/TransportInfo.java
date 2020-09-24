@@ -36,6 +36,9 @@ import java.util.Map;
 
 import static org.elasticsearch.common.Booleans.parseBoolean;
 
+/**
+ * 存储了节点通信必要的信息
+ */
 public class TransportInfo implements ReportingService.Info {
 
     private static final DeprecationLogger deprecationLogger = new DeprecationLogger(LogManager.getLogger(TransportInfo.class));

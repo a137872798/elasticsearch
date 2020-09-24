@@ -24,6 +24,9 @@ import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.unit.TimeValue;
 
+/**
+ * 集群状态发布对象
+ */
 public interface ClusterStatePublisher {
     /**
      * Publish all the changes to the cluster from the master (can be called just by the master). The publish

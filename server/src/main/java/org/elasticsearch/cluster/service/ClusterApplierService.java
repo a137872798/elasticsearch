@@ -71,52 +71,78 @@ import java.util.stream.Stream;
 import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
 
 /**
- * 处理集群状态变化
+ * 有关集群状态变化的逻辑处理都交由该对象处理  ClusterService 则充当一个中枢对象
  */
 public class ClusterApplierService extends AbstractLifecycleComponent implements ClusterApplier {
     private static final Logger logger = LogManager.getLogger(ClusterApplierService.class);
 
+    /**
+     * 同样是有关定期打印日志的周期
+     */
     public static final Setting<TimeValue> CLUSTER_SERVICE_SLOW_TASK_LOGGING_THRESHOLD_SETTING =
         Setting.positiveTimeSetting("cluster.service.slow_task_logging_threshold", TimeValue.timeValueSeconds(30),
             Setting.Property.Dynamic, Setting.Property.NodeScope);
 
+    /**
+     * 指定对应线程池创建的线程名
+     */
     public static final String CLUSTER_UPDATE_THREAD_NAME = "clusterApplierService#updateTask";
 
+    /**
+     * 集群相关配置
+     */
     private final ClusterSettings clusterSettings;
     protected final ThreadPool threadPool;
 
     private volatile TimeValue slowTaskLoggingThreshold;
 
+    /**
+     * 该线程池允许添加包含优先级的任务
+     */
     private volatile PrioritizedEsThreadPoolExecutor threadPoolExecutor;
 
     /**
      * Those 3 state listeners are changing infrequently - CopyOnWriteArrayList is just fine
+     * ClusterStateApplier 处理集群状态的变化  以下是分别存储3种优先级的容器 这样就可以配合 PrioritizedEsThreadPoolExecutor
      */
     private final Collection<ClusterStateApplier> highPriorityStateAppliers = new CopyOnWriteArrayList<>();
-
-    /**
-     * 增加某个处理集群状态变化的对象
-     */
     private final Collection<ClusterStateApplier> normalPriorityStateAppliers = new CopyOnWriteArrayList<>();
     private final Collection<ClusterStateApplier> lowPriorityStateAppliers = new CopyOnWriteArrayList<>();
+
     private final Iterable<ClusterStateApplier> clusterStateAppliers = Iterables.concat(highPriorityStateAppliers,
         normalPriorityStateAppliers, lowPriorityStateAppliers);
 
+    /**
+     * 这个接口的定义与 ClusterStateApplier 类似 都是接受一个集群状态变化的事件作为参数
+     */
     private final Collection<ClusterStateListener> clusterStateListeners = new CopyOnWriteArrayList<>();
+
+    /**
+     * 存储一组延时任务
+     */
     private final Collection<TimeoutClusterStateListener> timeoutClusterStateListeners =
         Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     /**
-     * 维护所有监听节点角色变化的监听器
+     * 该对象维护了 所有监听集群变化的监听器 (onMaster offMaster)  该对象也会设置到 clusterStateListeners中
      */
     private final LocalNodeMasterListeners localNodeMasterListeners;
 
+    /**
+     * NotifyTimeout 用于定义超时任务 同时还包含关闭超时任务的功能
+     */
     private final Queue<NotifyTimeout> onGoingTimeouts = ConcurrentCollections.newQueue();
 
+    /**
+     * 维护最新的状态信息
+     */
     private final AtomicReference<ClusterState> state; // last applied state
 
     private final String nodeName;
 
+    /**
+     * 该服务管理节点间的连接 或者说创建连接   以及处理req/res
+     */
     private NodeConnectionsService nodeConnectionsService;
 
     /**
@@ -130,12 +156,11 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         this.clusterSettings = clusterSettings;
         this.threadPool = threadPool;
         this.state = new AtomicReference<>();
-        // 监听当前节点在集群中角色的变化
         this.localNodeMasterListeners = new LocalNodeMasterListeners(threadPool);
         this.nodeName = nodeName;
 
-        // TODO 更新相关的先忽略
         this.slowTaskLoggingThreshold = CLUSTER_SERVICE_SLOW_TASK_LOGGING_THRESHOLD_SETTING.get(settings);
+        // 设置一个动态配置  master节点对该配置进行修改时 会通知到普通节点
         this.clusterSettings.addSettingsUpdateConsumer(CLUSTER_SERVICE_SLOW_TASK_LOGGING_THRESHOLD_SETTING,
             this::setSlowTaskLoggingThreshold);
     }
@@ -174,8 +199,14 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
             threadPool.scheduler());
     }
 
+    /**
+     * SourcePrioritizedRunnable 具备一个优先级属性
+     */
     class UpdateTask extends SourcePrioritizedRunnable implements Function<ClusterState, ClusterState> {
         final ClusterApplyListener listener;
+        /**
+         * 集群状态的更新函数
+         */
         final Function<ClusterState, ClusterState> updateFunction;
 
         UpdateTask(Priority priority, String source, ClusterApplyListener listener,
@@ -199,6 +230,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     @Override
     protected synchronized void doStop() {
         for (NotifyTimeout onGoingTimeout : onGoingTimeouts) {
+            // 强制关闭所有超时任务 并触发监听器
             onGoingTimeout.cancel();
             try {
                 onGoingTimeout.cancel();
@@ -209,7 +241,9 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         }
         ThreadPool.terminate(threadPoolExecutor, 10, TimeUnit.SECONDS);
         // close timeout listeners that did not have an ongoing timeout
+        // 关闭所有超时监听器
         timeoutClusterStateListeners.forEach(TimeoutClusterStateListener::onClose);
+        // 将监听本地节点是否为master节点的监听器移除
         removeListener(localNodeMasterListeners);
     }
 
@@ -298,6 +332,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
      * If provided, the listener will be notified once a specific time has elapsed.
      *
      * NOTE: the listener is not removed on timeout. This is the responsibility of the caller.
+     * 插入的超时监听器会直接执行
      */
     public void addTimeoutListener(@Nullable final TimeValue timeout, final TimeoutClusterStateListener listener) {
         if (lifecycle.stoppedOrClosed()) {
@@ -315,6 +350,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
                         onGoingTimeouts.add(notifyTimeout);
                     }
                     timeoutClusterStateListeners.add(listener);
+                    // 当任务成功添加时 会触发 postAdded方法
                     listener.postAdded();
                 }
             });
@@ -327,9 +363,16 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         }
     }
 
+    /**
+     * @param source
+     * @param clusterStateConsumer   处理集群状态的函数
+     * @param listener
+     * @param priority
+     */
     public void runOnApplierThread(final String source, Consumer<ClusterState> clusterStateConsumer,
                                    final ClusterApplyListener listener, Priority priority) {
         submitStateUpdateTask(source, ClusterStateTaskConfig.build(priority),
+            // 使用consumer更新集群状态
             (clusterState) -> {
                 clusterStateConsumer.accept(clusterState);
                 return clusterState;
@@ -346,6 +389,12 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         return threadPool;
     }
 
+    /**
+     * 这个是本对象监听到集群变化 此时不会直接处理 而是将函数转到线程池中调用
+     * @param source information where the cluster state came from
+     * @param clusterStateSupplier the cluster state supplier which provides the latest cluster state to apply
+     * @param listener callback that is invoked after cluster state is applied
+     */
     @Override
     public void onNewClusterState(final String source, final Supplier<ClusterState> clusterStateSupplier,
                                   final ClusterApplyListener listener) {
@@ -360,6 +409,13 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         submitStateUpdateTask(source, ClusterStateTaskConfig.build(Priority.HIGH), applyFunction, listener);
     }
 
+    /**
+     * 提交一个监听集群状态的任务
+     * @param source
+     * @param config   使用的配置信息 比如 任务的优先级，超时时间
+     * @param executor   如何将state更新
+     * @param listener  监听处理结果
+     */
     private void submitStateUpdateTask(final String source, final ClusterStateTaskConfig config,
                                        final Function<ClusterState, ClusterState> executor,
                                        final ClusterApplyListener listener) {
@@ -367,9 +423,11 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
             return;
         }
         try {
+            // 将处理函数包装成一个 updateTask 对象
             UpdateTask updateTask = new UpdateTask(config.priority(), source, new SafeClusterApplyListener(listener, logger), executor);
             if (config.timeout() != null) {
                 threadPoolExecutor.execute(updateTask, config.timeout(),
+                    // 超时时全部统一由 generic线程池执行任务
                     () -> threadPool.generic().execute(
                         () -> listener.onFailure(source, new ProcessClusterEventTimeoutException(config.timeout(), source))));
             } else {
@@ -409,6 +467,10 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         return true;
     }
 
+    /**
+     * 执行更新集群的任务
+     * @param task
+     */
     private void runTask(UpdateTask task) {
         if (!lifecycle.started()) {
             logger.debug("processing [{}]: ignoring, cluster applier service not started", task.source);
@@ -435,6 +497,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
             return;
         }
 
+        // 代表集群状态前后没有变化  不需要调用 applyChanges  也就是不需要通知相关监听器
         if (previousClusterState == newClusterState) {
             TimeValue executionTime = TimeValue.timeValueMillis(Math.max(0, currentTimeInMillis() - startTimeMS));
             logger.debug("processing [{}]: took [{}] no change in cluster state", task.source, executionTime);
@@ -474,9 +537,17 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         }
     }
 
+    /**
+     * 通知所有监听器
+     * @param task
+     * @param previousClusterState
+     * @param newClusterState
+     * @param stopWatch
+     */
     private void applyChanges(UpdateTask task, ClusterState previousClusterState, ClusterState newClusterState, StopWatch stopWatch) {
         ClusterChangedEvent clusterChangedEvent = new ClusterChangedEvent(task.source, newClusterState, previousClusterState);
         // new cluster state, notify all listeners
+        // 通过前后状态 生成节点的变化对象
         final DiscoveryNodes.Delta nodesDelta = clusterChangedEvent.nodesDelta();
         if (nodesDelta.hasChanges() && logger.isInfoEnabled()) {
             String summary = nodesDelta.shortSummary();
@@ -488,29 +559,40 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
 
         logger.trace("connecting to nodes of cluster state with version {}", newClusterState.version());
         try (Releasable ignored = stopWatch.timing("connecting to new nodes")) {
+            // 当前节点会立即与集群间其他节点建立连接  TODO 应该是只要master节点与其他节点建立连接就可以了啊 并且连接之后是想要做什么呢  应该只需要与共享分片的节点连接 用于拷贝数据
             connectToNodesAndWait(newClusterState);
         }
 
         // nothing to do until we actually recover from the gateway or any other block indicates we need to disable persistency
+        // TODO  gateway 和 block是什么 ???
+        // 代表状态开启了持久化 并且元数据发生了变化
         if (clusterChangedEvent.state().blocks().disableStatePersistence() == false && clusterChangedEvent.metadataChanged()) {
             logger.debug("applying settings from cluster state with version {}", newClusterState.version());
             final Settings incomingSettings = clusterChangedEvent.state().metadata().settings();
             try (Releasable ignored = stopWatch.timing("applying settings")) {
+                // 更新本地配置
                 clusterSettings.applySettings(incomingSettings);
             }
         }
 
         logger.debug("apply cluster state with version {}", newClusterState.version());
+        // 通知监听器
         callClusterStateAppliers(clusterChangedEvent, stopWatch);
 
+        // 这里又断开连接了???
         nodeConnectionsService.disconnectFromNodesExcept(newClusterState.nodes());
 
         logger.debug("set locally applied cluster state to version {}", newClusterState.version());
         state.set(newClusterState);
 
+        // 触发另一套监听器
         callClusterStateListeners(clusterChangedEvent, stopWatch);
     }
 
+    /**
+     * 与集群中其他节点建立连接
+     * @param newClusterState
+     */
     protected void connectToNodesAndWait(ClusterState newClusterState) {
         // can't wait for an ActionFuture on the cluster applier thread, but we do want to block the thread here, so use a CountDownLatch.
         final CountDownLatch countDownLatch = new CountDownLatch(1);
@@ -545,6 +627,9 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         });
     }
 
+    /**
+     * 包装原本的监听器 捕获处理异常并打印日志
+     */
     private static class SafeClusterApplyListener implements ClusterApplyListener {
         private final ClusterApplyListener listener;
         private final Logger logger;
@@ -584,9 +669,22 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         }
     }
 
+
+    /**
+     * 该对象会在一定延时后触发
+     */
     class NotifyTimeout implements Runnable {
+        /**
+         * 定义了处理逻辑的模板
+         */
         final TimeoutClusterStateListener listener;
+        /**
+         * 在多久后触发
+         */
         final TimeValue timeout;
+        /**
+         * 这个是用来关闭超时任务的
+         */
         volatile Scheduler.Cancellable cancellable;
 
         NotifyTimeout(TimeoutClusterStateListener listener, TimeValue timeout) {
@@ -600,11 +698,15 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
             }
         }
 
+        /**
+         *
+         */
         @Override
         public void run() {
             if (cancellable != null && cancellable.isCancelled()) {
                 return;
             }
+            // 检测ClusterApplierService 生命周期是否已经结束 是的话触发 onClose 否则触发超时
             if (lifecycle.stoppedOrClosed()) {
                 listener.onClose();
             } else {
@@ -615,18 +717,22 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
-     * 接收集群状态变化的事件 并进行处理
+     * 检测当前节点是否变更为master节点
      */
     private static class LocalNodeMasterListeners implements ClusterStateListener {
 
         /**
-         * 感应集群状态变化的监听器
+         * 本地节点变成master节点 或者降级为普通节点时 会触发不同的逻辑
          */
         private final List<LocalNodeMasterListener> listeners = new CopyOnWriteArrayList<>();
+
+        /**
+         * LocalNodeMasterListener 处理逻辑一般是交给线程池做的
+         */
         private final ThreadPool threadPool;
 
         /**
-         * 当前节点在 集群中是否属于master节点
+         * 当前节点是否是 master节点
          */
         private volatile boolean master = false;
 
@@ -635,16 +741,16 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         }
 
         /**
-         * 当集群状态发生变化时 委托给线程池执行
          * @param event
          */
         @Override
         public void clusterChanged(ClusterChangedEvent event) {
-            // 代表当前node被选举为集群的master节点 (基于什么算法实现的??? 欺负算法???)
+            // 代表本节点此时晋升为master节点  使用线程池执行对应逻辑
             if (!master && event.localNodeMaster()) {
                 master = true;
 
                 for (LocalNodeMasterListener listener : listeners) {
+                    // 根据线程池名字 从线程池总控对象中获取对应的线程池
                     java.util.concurrent.Executor executor = threadPool.executor(listener.executorName());
                     executor.execute(new OnMasterRunnable(listener));
                 }
@@ -667,7 +773,9 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
 
-    // 将监听器触发事件交托给线程池执行
+    /**
+     * 代表当前节点晋升成master节点
+     */
     private static class OnMasterRunnable implements Runnable {
 
         private final LocalNodeMasterListener listener;
@@ -682,6 +790,9 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         }
     }
 
+    /**
+     * 当前节点降级为普通节点
+     */
     private static class OffMasterRunnable implements Runnable {
 
         private final LocalNodeMasterListener listener;

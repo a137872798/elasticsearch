@@ -25,10 +25,17 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Implements exponentially weighted moving averages (commonly abbreviated EWMA) for a single value.
  * This class is safe to share between threads.
+ * 以特殊的权重值计算平均数
  */
 public class ExponentiallyWeightedMovingAverage {
 
+    /**
+     * 权重值
+     */
     private final double alpha;
+    /**
+     * 平均数
+     */
     private final AtomicLong averageBits;
 
     /**

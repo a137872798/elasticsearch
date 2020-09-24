@@ -89,20 +89,23 @@ public interface Transport extends LifecycleComponent {
 
     /**
      * A unidirectional connection to a {@link DiscoveryNode}
+     * 描述连接到某个节点的信息
      */
     interface Connection extends Closeable {
         /**
          * The node this connection is associated with
+         * 目标节点
          */
         DiscoveryNode getNode();
 
         /**
          * Sends the request to the node this connection is associated with
-         * @param requestId see {@link ResponseHandlers#add(ResponseContext)} for details
-         * @param action the action to execute
-         * @param request the request to send
-         * @param options request options to apply
+         * @param requestId see {@link ResponseHandlers#add(ResponseContext)} for details   请求的id
+         * @param action the action to execute     请求的api
+         * @param request the request to send    请求体
+         * @param options request options to apply   描述请求体的特殊信息
          * @throws NodeNotConnectedException if the given node is not connected
+         * 往目标节点发送请求
          */
         void sendRequest(long requestId, String action, TransportRequest request, TransportRequestOptions options) throws
             IOException, TransportException;
@@ -113,9 +116,14 @@ public interface Transport extends LifecycleComponent {
          * {@link ActionListener#onFailure(Exception)} will not be called.
          *
          * @param listener to be called
+         *                 该监听器负责处理 res 或者 请求失败
          */
         void addCloseListener(ActionListener<Void> listener);
 
+        /**
+         * 当前连接是否已经被关闭
+         * @return
+         */
         boolean isClosed();
 
         /**
@@ -140,13 +148,23 @@ public interface Transport extends LifecycleComponent {
     /**
      * This class represents a response context that encapsulates the actual response handler, the action and the connection it was
      * executed on.
+     * 对普通的 res对象进行了增强
      */
     final class ResponseContext<T extends TransportResponse> {
 
+        /**
+         * 该对象定义了如何处理res
+         */
         private final TransportResponseHandler<T> handler;
 
+        /**
+         * 描述与目标节点的连接信息 可以设置处理res/fail的监听器 以及包含close 关闭连接的api   看来集群内部节点通信是基于 TCP连接 而es应用服务器对外暴露的是http端口
+         */
         private final Connection connection;
 
+        /**
+         * 本次针对哪种api请求的结果
+         */
         private final String action;
 
         ResponseContext(TransportResponseHandler<T> handler, Connection connection, String action) {

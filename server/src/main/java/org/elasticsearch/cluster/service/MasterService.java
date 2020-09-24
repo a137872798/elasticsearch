@@ -82,6 +82,9 @@ public class MasterService extends AbstractLifecycleComponent {
 
     static final String MASTER_UPDATE_THREAD_NAME = "masterService#updateTask";
 
+    /**
+     * 集群状态发布对象
+     */
     ClusterStatePublisher clusterStatePublisher;
 
     /**

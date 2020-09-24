@@ -69,6 +69,9 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
+/**
+ * 传输层服务  该对象本身实现了监听连接状态变化的接口 以及处理接受请求/发送响应结果时的api
+ */
 public class TransportService extends AbstractLifecycleComponent implements ReportingService<TransportInfo>, TransportMessageListener,
     TransportConnectionListener {
     private static final Logger logger = LogManager.getLogger(TransportService.class);
