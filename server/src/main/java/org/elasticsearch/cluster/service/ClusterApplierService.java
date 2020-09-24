@@ -579,7 +579,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         // 通知监听器
         callClusterStateAppliers(clusterChangedEvent, stopWatch);
 
-        // 这里又断开连接了???
+        // 将 nodes外的其他节点修改成断开连接
         nodeConnectionsService.disconnectFromNodesExcept(newClusterState.nodes());
 
         logger.debug("set locally applied cluster state to version {}", newClusterState.version());
@@ -590,7 +590,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
-     * 与集群中其他节点建立连接
+     * 为每个node 创建一个 ConnectTarget 并执行连接操作
      * @param newClusterState
      */
     protected void connectToNodesAndWait(ClusterState newClusterState) {

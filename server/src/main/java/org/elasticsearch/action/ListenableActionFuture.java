@@ -22,7 +22,7 @@ package org.elasticsearch.action;
 /**
  * An {@link ActionFuture} that listeners can be added to.
  *
- *
+ *  拓展了future对象 可以以添加监听器的方式等待处理结果
  */
 public interface ListenableActionFuture<T> extends ActionFuture<T> {
 

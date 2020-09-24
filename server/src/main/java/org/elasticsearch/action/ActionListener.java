@@ -32,11 +32,13 @@ import java.util.function.Consumer;
 
 /**
  * A listener for action responses or failures.
+ * 监听某个api的调用结果
  */
 public interface ActionListener<Response> {
     /**
      * Handle action response. This response may constitute a failure or a
      * success but it is up to the listener to make that decision.
+     * 处理响应结果
      */
     void onResponse(Response response);
 
@@ -53,6 +55,7 @@ public interface ActionListener<Response> {
      * @param onFailure the consumer of the failure, when the listener receives one
      * @param <Response> the type of the response
      * @return a listener that listens for responses and invokes the consumer when received
+     * 将处理res的函数 以及处理失败的函数包装成监听器
      */
     static <Response> ActionListener<Response> wrap(CheckedConsumer<Response, ? extends Exception> onResponse,
             Consumer<Exception> onFailure) {

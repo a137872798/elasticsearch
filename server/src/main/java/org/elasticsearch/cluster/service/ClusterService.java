@@ -43,10 +43,14 @@ import java.util.Map;
 
 /**
  * 整个集群功能的入口
+ * 核心api都是转发给masterService 和 clusterApplierService的
  */
 public class ClusterService extends AbstractLifecycleComponent {
     private final MasterService masterService;
 
+    /**
+     * 用于处理节点状态变化的服务
+     */
     private final ClusterApplierService clusterApplierService;
 
     public static final org.elasticsearch.common.settings.Setting.AffixSetting<String> USER_DEFINED_METADATA =
@@ -59,6 +63,9 @@ public class ClusterService extends AbstractLifecycleComponent {
 
     private final ClusterName clusterName;
 
+    /**
+     * 提供了查询routingTable的api
+     */
     private final OperationRouting operationRouting;
 
     private final ClusterSettings clusterSettings;
@@ -88,7 +95,6 @@ public class ClusterService extends AbstractLifecycleComponent {
         this.settings = settings;
         this.nodeName = Node.NODE_NAME_SETTING.get(settings);
         this.masterService = masterService;
-        // 推测应该是 将api 转发到各种指令处理器上的类
         this.operationRouting = new OperationRouting(settings, clusterSettings);
         this.clusterSettings = clusterSettings;
         // 从配置中获取集群名 并设置  默认所有node属于同一集群 "elasticsearch"

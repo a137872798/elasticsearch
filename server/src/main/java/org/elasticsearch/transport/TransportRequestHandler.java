@@ -21,7 +21,18 @@ package org.elasticsearch.transport;
 
 import org.elasticsearch.tasks.Task;
 
+/**
+ * 传输层请求处理器
+ * @param <T>
+ */
 public interface TransportRequestHandler<T extends TransportRequest> {
 
+    /**
+     * 当接受到请求时 拦截的钩子
+     * @param request  本次的请求对象
+     * @param channel   使用的通道信息
+     * @param task   本次相关的任务信息
+     * @throws Exception
+     */
     void messageReceived(T request, TransportChannel channel, Task task) throws Exception;
 }

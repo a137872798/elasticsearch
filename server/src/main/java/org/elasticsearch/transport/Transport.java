@@ -39,10 +39,14 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 
+/**
+ * 传输层对象 实际上节点间的连接就是由该对象完成的
+ */
 public interface Transport extends LifecycleComponent {
 
     /**
      * Registers a new request handler
+     * 为传输层注册一个请求处理器
      */
     default <Request extends TransportRequest> void registerRequestHandler(RequestHandlerRegistry<Request> reg) {
         getRequestHandlers().registerHandler(reg);

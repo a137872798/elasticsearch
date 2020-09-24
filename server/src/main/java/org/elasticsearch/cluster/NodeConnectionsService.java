@@ -72,10 +72,16 @@ import static org.elasticsearch.common.settings.Setting.positiveTimeSetting;
 public class NodeConnectionsService extends AbstractLifecycleComponent {
     private static final Logger logger = LogManager.getLogger(NodeConnectionsService.class);
 
+    /**
+     * 节点间重新连接的间隔时间
+     */
     public static final Setting<TimeValue> CLUSTER_NODE_RECONNECT_INTERVAL_SETTING =
         positiveTimeSetting("cluster.nodes.reconnect_interval", TimeValue.timeValueSeconds(10), Property.NodeScope);
 
     private final ThreadPool threadPool;
+    /**
+     * 传输层服务对象  连接服务对外暴露api 而实际的连接操作则是交给传输层
+     */
     private final TransportService transportService;
 
     // Protects changes to targetsByNode and its values (i.e. ConnectionTarget#activityType and ConnectionTarget#listener).
@@ -84,9 +90,16 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
 
     // contains an entry for every node in the latest cluster state, as well as for nodes from which we are in the process of
     // disconnecting
+    // key 代表目标节点  value 包含了与目标节点的连接逻辑
     private final Map<DiscoveryNode, ConnectionTarget> targetsByNode = new HashMap<>();
 
+    /**
+     * 触发重连检测的时间间隔
+     */
     private final TimeValue reconnectInterval;
+    /**
+     * 该对象仅是检测 IDLE的对象是否连接  没有则主动进行连接
+     */
     private volatile ConnectionChecker connectionChecker;
 
     @Inject
@@ -109,6 +122,7 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
             return;
         }
 
+        // 该监听器就是设置到多个future对象上 并且等待它们都执行完毕时 才触发
         final GroupedActionListener<Void> listener
             = new GroupedActionListener<>(ActionListener.wrap(onCompletion), discoveryNodes.getSize());
 
@@ -125,13 +139,16 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
                 } else {
                     // existing node, but maybe we're disconnecting from it, in which case it was recently removed from the cluster
                     // state and has now been re-added so we should wait for the re-connection
+                    // 代表当前节点虽然存在 但是处于正在断开连接的情况
                     isNewNode = connectionTarget.isPendingDisconnection();
                 }
 
                 if (isNewNode) {
+                    // 重新执行连接操作 并使得之前的 disconnect失效
                     runnables.add(connectionTarget.connect(listener));
                 } else {
                     // known node, try and ensure it's connected but do not wait
+                    // 调用连接函数
                     runnables.add(connectionTarget.connect(null));
                     runnables.add(() -> listener.onResponse(null));
                 }
@@ -143,6 +160,8 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
     /**
      * Disconnect from any nodes to which we are currently connected which do not appear in the given nodes. Does not wait for the
      * disconnections to complete, because they might have to wait for ongoing connection attempts first.
+     * @param discoveryNodes 这些节点维持现状
+     *                       其余节点断开连接
      */
     public void disconnectFromNodesExcept(DiscoveryNodes discoveryNodes) {
         final List<Runnable> runnables = new ArrayList<>();
@@ -159,6 +178,10 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
         runnables.forEach(Runnable::run);
     }
 
+    /**
+     * 确保此时处于 IDLE的对象已完成连接  如果没有则触发连接
+     * @param onCompletion
+     */
     void ensureConnections(Runnable onCompletion) {
         // Called by tests after some disruption has concluded. It is possible that one or more targets are currently CONNECTING and have
         // been since the disruption was active, and that the connection attempt was thwarted by a concurrent disruption to the connection.
@@ -168,6 +191,9 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
         awaitPendingActivity(() -> connectDisconnectedTargets(onCompletion));
     }
 
+    /**
+     * @param onCompletion
+     */
     private void awaitPendingActivity(Runnable onCompletion) {
         final List<Runnable> runnables = new ArrayList<>();
         synchronized (mutex) {
@@ -189,10 +215,13 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
      * Makes a single attempt to reconnect to any nodes which are disconnected but should be connected. Does not attempt to reconnect any
      * nodes which are in the process of disconnecting. The onCompletion handler is called after all ongoing connection/disconnection
      * attempts have completed.
+     * @param onCompletion 检查完毕后的后置函数 一般是开启下次检测
+     * 在 ConnectionCheck对象中 会定期检测连接状态是否正常
      */
     private void connectDisconnectedTargets(Runnable onCompletion) {
         final List<Runnable> runnables = new ArrayList<>();
         synchronized (mutex) {
+            // 当某些 ConnectionTarget断开连接后 会从targetsByNode 中移除  这样就能确保每次都只是检测 IDLE 或者 Connecting的连接对象了 那么它的作用实际上是自动触发空闲连接的连接操作
             final Collection<ConnectionTarget> connectionTargets = targetsByNode.values();
             if (connectionTargets.isEmpty()) {
                 runnables.add(onCompletion);
@@ -200,6 +229,7 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
                 logger.trace("connectDisconnectedTargets: {}", targetsByNode);
                 final GroupedActionListener<Void> listener = new GroupedActionListener<>(
                     ActionListener.wrap(onCompletion), connectionTargets.size());
+                // 只有当所有runnable 都执行完的时候才会触发 listener
                 for (final ConnectionTarget connectionTarget : connectionTargets) {
                     runnables.add(connectionTarget.ensureConnected(listener));
                 }
@@ -208,6 +238,9 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
         runnables.forEach(Runnable::run);
     }
 
+    /**
+     * 自动对 transportService.nodeConnected == false 的连接进行重连
+     */
     class ConnectionChecker extends AbstractRunnable {
         protected void doRun() {
             if (connectionChecker == this) {
@@ -215,12 +248,19 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
             }
         }
 
+        /**
+         * 每隔多少时间就会调用一次 connectDisconnectedTargets  以确保连接正常 并会启动下一次定时任务
+         */
         void scheduleNextCheck() {
             if (connectionChecker == this) {
                 threadPool.scheduleUnlessShuttingDown(reconnectInterval, ThreadPool.Names.GENERIC, this);
             }
         }
 
+        /**
+         * 当处理失败时 还是会开启下次任务
+         * @param e
+         */
         @Override
         public void onFailure(Exception e) {
             logger.warn("unexpected error while checking for node reconnects", e);
@@ -251,15 +291,27 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
 
     // for disruption tests, re-establish any disrupted connections
     public void reconnectToNodes(DiscoveryNodes discoveryNodes, Runnable onCompletion) {
-        connectToNodes(discoveryNodes, () -> {
-            disconnectFromNodesExcept(discoveryNodes);
-            ensureConnections(onCompletion);
+        connectToNodes(discoveryNodes, () -> {   // 1.为目标节点创建连接
+            disconnectFromNodesExcept(discoveryNodes);  // 2.将其余节点连接断开
+            ensureConnections(onCompletion); // 3.等待结果
         });
     }
 
+    /**
+     * 描述此时连接状态
+     */
     private enum ActivityType {
+        /**
+         * 每当连接或者断开连接操作完成时 会停留在IDLE状态
+         */
         IDLE,
+        /**
+         * 代表正在连接中
+         */
         CONNECTING,
+        /**
+         * 代表正在断开连接
+         */
         DISCONNECTING
     }
 
@@ -291,15 +343,33 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
      * Similarly if we are currently disconnecting and then {@link ConnectionTarget#connect(ActionListener)} is called then all
      * disconnection listeners are immediately removed for failure notification and a connection is started once the disconnection is
      * complete.
+     * 代表连接的目标节点
      */
     private class ConnectionTarget {
+
+        /**
+         * 目标节点
+         */
         private final DiscoveryNode discoveryNode;
 
+        /**
+         * 该future对象可以设置监听器  并监听处理结果    代表一个连接/断开连接的操作
+         */
         private PlainListenableActionFuture<Void> future = PlainListenableActionFuture.newListenableFuture();
+
+        /**
+         * 描述连接活跃状态 空闲代表等待触发监听器
+         */
         private ActivityType activityType = ActivityType.IDLE; // indicates what any listeners are awaiting
 
+        /**
+         * 记录连续失败次数
+         */
         private final AtomicInteger consecutiveFailureCount = new AtomicInteger();
 
+        /**
+         * 这是一个连接的函数
+         */
         private final Runnable connectActivity = new AbstractRunnable() {
 
             final AbstractRunnable abstractRunnable = this;
@@ -307,13 +377,16 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
             @Override
             protected void doRun() {
                 assert Thread.holdsLock(mutex) == false : "mutex unexpectedly held";
+                // 检测是否已经连接到目标节点了
                 if (transportService.nodeConnected(discoveryNode)) {
                     // transportService.connectToNode is a no-op if already connected, but we don't want any DEBUG logging in this case
                     // since we run this for every node on every cluster state update.
                     logger.trace("still connected to {}", discoveryNode);
+                    // 触发钩子
                     onConnected();
                 } else {
                     logger.debug("connecting to {}", discoveryNode);
+                    // 此时开始连接到目标节点 同时传入监听器
                     transportService.connectToNode(discoveryNode, new ActionListener<Void>() {
                         @Override
                         public void onResponse(Void aVoid) {
@@ -330,11 +403,18 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
                 }
             }
 
+            /**
+             * 一旦连接成功就重置失败次数 以及触发钩子
+             */
             private void onConnected() {
                 consecutiveFailureCount.set(0);
                 onCompletion(ActivityType.CONNECTING, null, disconnectActivity);
             }
 
+            /**
+             * 当连接失败时
+             * @param e
+             */
             @Override
             public void onFailure(Exception e) {
                 assert Thread.holdsLock(mutex) == false : "mutex unexpectedly held";
@@ -352,6 +432,9 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
             }
         };
 
+        /**
+         * 想要断开连接时调用的函数
+         */
         private final Runnable disconnectActivity = new AbstractRunnable() {
             @Override
             protected void doRun() {
@@ -377,6 +460,8 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
             this.discoveryNode = discoveryNode;
         }
 
+        // 下面这3个函数为什么返回 runnable对象啊
+
         Runnable connect(@Nullable ActionListener<Void> listener) {
             return addListenerAndStartActivity(listener, ActivityType.CONNECTING, connectActivity,
                 "disconnection cancelled by reconnection");
@@ -387,19 +472,29 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
                 "connection cancelled by disconnection");
         }
 
+        /**
+         * 确保当前连接是否有效
+         * @param listener
+         * @return
+         */
         Runnable ensureConnected(@Nullable ActionListener<Void> listener) {
             assert Thread.holdsLock(mutex) : "mutex not held";
 
+            // 代表此时已经完成了 connect/disconnect动作
             if (activityType == ActivityType.IDLE) {
+                // 直接检测连接状态 如果连接有效 设置结果
                 if (transportService.nodeConnected(discoveryNode)) {
                     return () -> listener.onResponse(null);
                 } else {
                     // target is disconnected, and we are currently idle, so start a connection process.
+                    // 代表此时处于未连接状态 那么尝试进行连接
                     activityType = ActivityType.CONNECTING;
+                    // 将listener 转移到当前future对象上
                     addListener(listener);
                     return connectActivity;
                 }
             } else {
+                // 代表当前正处于 connect/disconnect 中 那么直接为future设置监听器就好  本次不需要做任何处理
                 addListener(listener);
                 return () -> {
                 };
@@ -433,6 +528,14 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
             return drainedFuture;
         }
 
+        /**
+         *
+         * @param listener  使用什么监听器监听对应的操作
+         * @param newActivityType   连接/断开连接
+         * @param activity       连接/断开连接的操作
+         * @param cancellationMessage
+         * @return
+         */
         private Runnable addListenerAndStartActivity(@Nullable ActionListener<Void> listener, ActivityType newActivityType,
                                                      Runnable activity, String cancellationMessage) {
             assert Thread.holdsLock(mutex) : "mutex not held";
@@ -444,6 +547,7 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
                 return activity;
             }
 
+            // 因为当前活跃状态已经是目标状态了 所以不需要做任何操作
             if (activityType == newActivityType) {
                 addListener(listener);
                 return () -> {
@@ -451,28 +555,41 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
             }
 
             activityType = newActivityType;
+            // 代表此时还处在 connecting/disconnecting  但是又传来了另一种指令 只能将之前进行中的操作打断
             final PlainListenableActionFuture<Void> oldFuture = getAndClearFuture();
             addListener(listener);
             return () -> oldFuture.onFailure(new ElasticsearchException(cancellationMessage));
         }
 
+        /**
+         * 代表某次操作完成   可能成功也可能失败
+         * @param completedActivityType
+         * @param e   代表失败
+         * @param oppositeActivity
+         */
         private void onCompletion(ActivityType completedActivityType, @Nullable Exception e, Runnable oppositeActivity) {
             assert Thread.holdsLock(mutex) == false : "mutex unexpectedly held";
 
             final Runnable cleanup;
             synchronized (mutex) {
                 assert activityType != ActivityType.IDLE;
+                // 代表当前状态与结束时的状态一致
                 if (activityType == completedActivityType) {
+                    // 获取当前正在等待结果的future对象
                     final PlainListenableActionFuture<Void> oldFuture = getAndClearFuture();
+                    // 当任务完成时  会将活跃状态调整成 空闲
                     activityType = ActivityType.IDLE;
 
+                    // 唤醒等待结果的线程
                     cleanup = e == null ? () -> oldFuture.onResponse(null) : () -> oldFuture.onFailure(e);
 
+                    // 如果是断开连接操作  将维护的连接关系移除
                     if (completedActivityType.equals(ActivityType.DISCONNECTING)) {
                         final ConnectionTarget removedTarget = targetsByNode.remove(discoveryNode);
                         assert removedTarget == this : removedTarget + " vs " + this;
                     }
                 } else {
+                    // 如果是未连接状态 而传入了连接状态 此时oppositeActivity 一般就是连接函数  反之也是
                     cleanup = oppositeActivity;
                 }
             }

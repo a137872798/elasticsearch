@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * A simple thread safe count-down class that in contrast to a {@link CountDownLatch}
  * never blocks. This class is useful if a certain action has to wait for N concurrent 
  * tasks to return or a timeout to occur in order to proceed.
+ * 模仿信号量的实现
  */
 public final class CountDown {
 

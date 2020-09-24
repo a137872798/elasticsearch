@@ -23,6 +23,7 @@ import java.util.function.Consumer;
 
 /**
  * A {@link Consumer}-like interface which allows throwing checked exceptions.
+ * 一个允许抛出受检异常的消费者
  */
 @FunctionalInterface
 public interface CheckedConsumer<T, E extends Exception> {

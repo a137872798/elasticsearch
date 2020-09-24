@@ -26,6 +26,10 @@ import org.elasticsearch.tasks.TaskManager;
 
 import java.io.IOException;
 
+/**
+ * 请求处理器注册对象
+ * @param <Request>
+ */
 public class RequestHandlerRegistry<Request extends TransportRequest> {
 
     private final String action;

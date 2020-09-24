@@ -21,6 +21,7 @@ package org.elasticsearch.cluster.routing;
 
 /**
  * Routing Preference Type
+ * 代表在寻找分片路由的时候 有某种偏好
  */
 public enum  Preference {
 

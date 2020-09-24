@@ -80,6 +80,10 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     public static final String HANDSHAKE_ACTION_NAME = "internal:transport/handshake";
 
     private final AtomicBoolean handleIncomingRequests = new AtomicBoolean();
+
+    /**
+     * 将一组监听器隐藏在一个监听器下
+     */
     private final DelegatingTransportMessageListener messageListener = new DelegatingTransportMessageListener();
     protected final Transport transport;
     protected final ConnectionManager connectionManager;
@@ -1253,8 +1257,14 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         return Objects.requireNonNull(discoveryNode, "discovery node must not be null").equals(localNode);
     }
 
+    /**
+     * 使用代理模式完成任务
+     */
     private static final class DelegatingTransportMessageListener implements TransportMessageListener {
 
+        /**
+         * 内部隐藏了一组监听器
+         */
         private final List<TransportMessageListener> listeners = new CopyOnWriteArrayList<>();
 
         @Override

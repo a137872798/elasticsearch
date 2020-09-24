@@ -31,12 +31,20 @@ import java.io.IOException;
 
 /**
  * Task id that consists of node id and id of the task on the node
+ * 标记某个task的id信息
  */
 public final class TaskId implements Writeable {
 
     public static final TaskId EMPTY_TASK_ID = new TaskId();
 
+    /**
+     * 该task是由哪个节点发出的
+     */
     private final String nodeId;
+
+    /**
+     * 该任务id
+     */
     private final long id;
 
     public TaskId(String nodeId, long id) {

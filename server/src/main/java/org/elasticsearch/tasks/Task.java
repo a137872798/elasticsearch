@@ -31,12 +31,14 @@ import java.util.Map;
 
 /**
  * Current task information
+ * 代表一个任务对象
  */
 public class Task {
 
     /**
      * The request header to mark tasks with specific ids
-     * 类似链路追踪的id
+     * 类似链路追踪的id  在一整套操作流程中该值是不变的
+     * 记得在线程上下文中看到 链路id本身是会延续的
      */
     public static final String X_OPAQUE_ID = "X-Opaque-Id";
 
@@ -48,8 +50,14 @@ public class Task {
 
     private final String description;
 
+    /**
+     * 该对象中包含了任务 id   以及 nodeId
+     */
     private final TaskId parentTask;
 
+    /**
+     * 任务头信息
+     */
     private final Map<String, String> headers;
 
     /**
@@ -86,7 +94,8 @@ public class Task {
      *            the id of the node this task is running on
      * @param detailed
      *            should the information include detailed, potentially slow to
-     *            generate data?
+     *            generate data?    是否需要包含描述信息
+     *            为当前任务对象创建任务信息
      */
     public final TaskInfo taskInfo(String localNodeId, boolean detailed) {
         String description = null;
@@ -186,10 +195,20 @@ public class Task {
         return headers.get(header);
     }
 
+    /**
+     * 代表某次任务执行失败
+     */
     public TaskResult result(DiscoveryNode node, Exception error) throws IOException {
         return new TaskResult(taskInfo(node.getId(), true), error);
     }
 
+    /**
+     * 任务执行成功 并且 ActionResponse 就是结果
+     * @param node
+     * @param response
+     * @return
+     * @throws IOException
+     */
     public TaskResult result(DiscoveryNode node, ActionResponse response) throws IOException {
         if (response instanceof ToXContent) {
             return new TaskResult(taskInfo(node.getId(), true), (ToXContent) response);

@@ -48,10 +48,13 @@ import static org.elasticsearch.common.xcontent.XContentHelper.convertToMap;
 /**
  * Information about a running task or a task that stored its result. Running tasks just have a {@link #getTask()} while
  * tasks with stored result will have either a {@link #getError()} or {@link #getResponse()}.
+ * 代表某次任务的结果
  */
 public final class TaskResult implements Writeable, ToXContentObject {
     private final boolean completed;
     private final TaskInfo task;
+
+    // 将 异常或者结果 以bytes形式输出
     @Nullable
     private final BytesReference error;
     @Nullable
@@ -218,6 +221,12 @@ public final class TaskResult implements Writeable, ToXContentObject {
         return Objects.hash(completed, task, getErrorAsMap(), getResponseAsMap());
     }
 
+    /**
+     * 将异常信息 以结构化数据输出
+     * @param error
+     * @return
+     * @throws IOException
+     */
     private static BytesReference toXContent(Exception error) throws IOException {
         try (XContentBuilder builder = XContentFactory.contentBuilder(Requests.INDEX_CONTENT_TYPE)) {
             builder.startObject();

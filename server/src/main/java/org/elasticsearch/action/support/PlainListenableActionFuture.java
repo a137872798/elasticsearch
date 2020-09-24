@@ -25,9 +25,19 @@ import org.elasticsearch.action.ListenableActionFuture;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 该future对象可以添加监听器处理结果
+ * @param <T>
+ */
 public class PlainListenableActionFuture<T> extends AdapterActionFuture<T, T> implements ListenableActionFuture<T> {
 
+    /**
+     * 一组监听器  Object可能是一个 List
+     */
     volatile Object listeners;
+    /**
+     * 代表已经触发过监听器了
+     */
     boolean executedListeners = false;
 
     protected PlainListenableActionFuture() {}
@@ -48,6 +58,9 @@ public class PlainListenableActionFuture<T> extends AdapterActionFuture<T, T> im
         internalAddListener(listener);
     }
 
+    /**
+     * 当填充完结果后触发该方法
+     */
     @Override
     protected void done() {
         super.done();
@@ -67,14 +80,22 @@ public class PlainListenableActionFuture<T> extends AdapterActionFuture<T, T> im
         }
     }
 
+    /**
+     * 这里没有做任何处理
+     */
     @Override
     protected T convert(T listenerResponse) {
         return listenerResponse;
     }
 
+    /**
+     * 添加监听器
+     * @param listener
+     */
     private void internalAddListener(ActionListener<T> listener) {
         boolean executeImmediate = false;
         synchronized (this) {
+            // 代表结果已经设置
             if (executedListeners) {
                 executeImmediate = true;
             } else {
@@ -92,6 +113,7 @@ public class PlainListenableActionFuture<T> extends AdapterActionFuture<T, T> im
                 this.listeners = listeners;
             }
         }
+        // 结果已经设置的情况下 立即触发监听器
         if (executeImmediate) {
             executeListener(listener);
         }

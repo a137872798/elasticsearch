@@ -29,6 +29,11 @@ import org.elasticsearch.common.util.concurrent.UncategorizedExecutionException;
 
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 该对象同时实现了监听器接口
+ * @param <T>
+ * @param <L>
+ */
 public abstract class AdapterActionFuture<T, L> extends BaseFuture<T> implements ActionFuture<T>, ActionListener<L> {
 
     @Override

@@ -33,11 +33,15 @@ import java.util.concurrent.atomic.AtomicReference;
  * it has received N results (either successes or failures). This allows synchronous
  * tasks to be forked off in a loop with the same listener and respond to a
  * higher level listener once all tasks responded.
+ * 该监听器会设置到多个future对象上 并触发多次 onResponse 在最后一次才会真正为future设置结果
  */
 public final class GroupedActionListener<T> implements ActionListener<T> {
     private final CountDown countDown;
     private final AtomicInteger pos = new AtomicInteger();
     private final AtomicArray<T> results;
+    /**
+     * 当这组任务执行完成时会触发函数
+     */
     private final ActionListener<Collection<T>> delegate;
     private final AtomicReference<Exception> failure = new AtomicReference<>();
 
@@ -58,6 +62,7 @@ public final class GroupedActionListener<T> implements ActionListener<T> {
     @Override
     public void onResponse(T element) {
         results.setOnce(pos.incrementAndGet() - 1, element);
+        // 只有设置为true的那一刻才是真正完成任务
         if (countDown.countDown()) {
             if (failure.get() != null) {
                 delegate.onFailure(failure.get());

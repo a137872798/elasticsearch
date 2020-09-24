@@ -49,6 +49,7 @@ import static org.elasticsearch.common.xcontent.ConstructingObjectParser.optiona
  * references as well as mutable state. That makes it impractical to send tasks over transport channels
  * and use in APIs. Instead, immutable and writeable TaskInfo objects are used to represent
  * snapshot information about currently running tasks.
+ * 描述某个 任务信息
  */
 public final class TaskInfo implements Writeable, ToXContentFragment {
     private final TaskId taskId;
@@ -63,14 +64,33 @@ public final class TaskInfo implements Writeable, ToXContentFragment {
 
     private final long runningTimeNanos;
 
+    /**
+     * 描述任务当前的状态
+     */
     private final Task.Status status;
 
     private final boolean cancellable;
 
+    /**
+     * 父级任务的id
+     */
     private final TaskId parentTaskId;
 
     private final Map<String, String> headers;
 
+    /**
+     *
+     * @param taskId
+     * @param type
+     * @param action
+     * @param description
+     * @param status
+     * @param startTime
+     * @param runningTimeNanos
+     * @param cancellable  当前任务是否可关闭
+     * @param parentTaskId
+     * @param headers
+     */
     public TaskInfo(TaskId taskId, String type, String action, String description, Task.Status status, long startTime,
                     long runningTimeNanos, boolean cancellable, TaskId parentTaskId, Map<String, String> headers) {
         this.taskId = taskId;
@@ -235,6 +255,7 @@ public final class TaskInfo implements Writeable, ToXContentFragment {
             });
     static {
         // Note for the future: this has to be backwards and forwards compatible with all changes to the task storage format
+        // 定义解析模板 也就是如果在结构化数据中检测到了这些字段该怎么处理 比如  constructorArg() 就代表数据将会作为构造对象的参数
         PARSER.declareString(constructorArg(), new ParseField("node"));
         PARSER.declareLong(constructorArg(), new ParseField("id"));
         PARSER.declareString(constructorArg(), new ParseField("type"));

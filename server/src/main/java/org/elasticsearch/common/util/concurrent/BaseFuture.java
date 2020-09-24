@@ -34,7 +34,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
 /**
- * 增强了jdk原生的 future对象
+ * 这里使用 Sync实现最小粒度的 阻塞获取结果 以及设置结果解除阻塞的功能
  * @param <V>
  */
 public abstract class BaseFuture<V> implements Future<V> {
