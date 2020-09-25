@@ -228,7 +228,9 @@ public final class ThreadContext implements Writeable {
      */
     public Supplier<StoredContext> wrapRestorable(StoredContext storedContext) {
         return () -> {
+            // 比如在触发监听器的相关方法时 先触发该方法 这时可以理解为 获取了一个临时的上下文对象 但是还没有处理它
             StoredContext context = newStoredContext(false);
+            // 先使用一个新的context 设置到当前线程
             storedContext.restore();
             return context;
         };

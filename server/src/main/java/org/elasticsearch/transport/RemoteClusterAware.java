@@ -40,6 +40,10 @@ public abstract class RemoteClusterAware {
     public static final String LOCAL_CLUSTER_GROUP_KEY = "";
 
     protected final Settings settings;
+
+    /**
+     * 该对象通过传入一组备选的集群名 以及一个通配符找到符合条件的远端集群
+     */
     private final ClusterNameExpressionResolver clusterNameResolver;
 
     /**

@@ -27,13 +27,25 @@ import org.elasticsearch.tasks.TaskManager;
 import java.io.IOException;
 
 /**
- * 请求处理器注册对象
+ * handler 仅包含处理逻辑 通过 将handler与action封装在一起使得每个 RequestHandlerRegistry 仅处理一类请求 同时相关上下文信息会封装在  TaskTransportChannel
+ * 注意在执行任务前后会先将任务存储到 taskManager中 完成时 会将任务移除
  * @param <Request>
  */
 public class RequestHandlerRegistry<Request extends TransportRequest> {
 
+    /**
+     * 每个handler 只处理一种行为
+     */
     private final String action;
+
+    /**
+     * 请求处理器 包含一个 messageReceived 的钩子
+     */
     private final TransportRequestHandler<Request> handler;
+
+    /**
+     * 这个强制执行应该是针对线程池的
+     */
     private final boolean forceExecution;
     private final boolean canTripCircuitBreaker;
     private final String executor;
@@ -60,13 +72,23 @@ public class RequestHandlerRegistry<Request extends TransportRequest> {
         return requestReader.read(in);
     }
 
+    /**
+     * 处理接受到的请求
+     * @param request  处理的请求可以是不同类型的
+     * @param channel  不同通道可能会有不同的特性 所以才把通道单独抽象出来
+     * @throws Exception
+     */
     public void processMessageReceived(Request request, TransportChannel channel) throws Exception {
+        // 将请求体交由taskManager 通过抽取req上action的类型 生成对应的task对象
+        // 为某种行为的处理 增加一个请求对象
         final Task task = taskManager.register(channel.getChannelType(), action, request);
         boolean success = false;
         try {
+            // 包装通道后交给 handler 处理
             handler.messageReceived(request, new TaskTransportChannel(taskManager, task, channel), task);
             success = true;
         } finally {
+            // 任务失败会提前注销task   当手动调用 TaskTransportChannel.sendResponse  会触发注销动作
             if (success == false) {
                 taskManager.unregister(task);
             }
@@ -94,6 +116,13 @@ public class RequestHandlerRegistry<Request extends TransportRequest> {
         return handler.toString();
     }
 
+    /**
+     * 替换registry内部的handler
+     * @param registry
+     * @param handler
+     * @param <R>
+     * @return
+     */
     public static <R extends TransportRequest> RequestHandlerRegistry<R> replaceHandler(RequestHandlerRegistry<R> registry,
                                                                                         TransportRequestHandler<R> handler) {
         return new RequestHandlerRegistry<>(registry.action, registry.requestReader, registry.taskManager, handler,

@@ -31,26 +31,33 @@ import java.util.stream.Collectors;
 /**
  * Resolves cluster names from an expression. The expression must be the exact match of a cluster
  * name or must be a wildcard expression.
+ * 集群名字解析器
  */
 public final class ClusterNameExpressionResolver {
 
+    /**
+     * 通配符解析器
+     */
     private final WildcardExpressionResolver wildcardResolver = new WildcardExpressionResolver();
 
     /**
      * Resolves the provided cluster expression to matching cluster names. Supports exact or wildcard matches.
      * Throws {@link NoSuchRemoteClusterException} in case there are no registered remote clusters matching the provided expression.
      *
-     * @param remoteClusters    the aliases for remote clusters
-     * @param clusterExpression the expressions that can be resolved to cluster names.
+     * @param remoteClusters    the aliases for remote clusters               存储了所有远端集群
+     * @param clusterExpression the expressions that can be resolved to cluster names.   通过这个通配符来筛选集群
      * @return the resolved cluster aliases.
      * @throws NoSuchRemoteClusterException if there are no remote clusters matching the provided expression
      */
     public List<String> resolveClusterNames(Set<String> remoteClusters, String clusterExpression) {
+        // 直接命中的情况下 直接返回
         if (remoteClusters.contains(clusterExpression)) {
             return Collections.singletonList(clusterExpression);
+            // 代表当前通配符有效  也就是携带 "*"
         } else if (Regex.isSimpleMatchPattern(clusterExpression)) {
             return wildcardResolver.resolve(remoteClusters, clusterExpression);
         } else {
+            // 匹配失败
             throw new NoSuchRemoteClusterException(clusterExpression);
         }
     }

@@ -109,6 +109,7 @@ public class TaskManager implements ClusterStateApplier {
 
     /**
      * Registers a task without parent task
+     * 注册一个待处理的任务
      */
     public Task register(String type, String action, TaskAwareRequest request) {
         Map<String, String> headers = new HashMap<>();

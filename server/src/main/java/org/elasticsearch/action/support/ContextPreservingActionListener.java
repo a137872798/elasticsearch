@@ -26,6 +26,7 @@ import java.util.function.Supplier;
 /**
  * Restores the given {@link org.elasticsearch.common.util.concurrent.ThreadContext.StoredContext}
  * once the listener is invoked
+ * 在触发监听器的相关方法时 会先存储线程上下文信息
  */
 public final class ContextPreservingActionListener<R> implements ActionListener<R> {
 

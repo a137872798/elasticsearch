@@ -30,18 +30,18 @@ import java.io.IOException;
  * A bounded transport address is a tuple of {@link TransportAddress}, one array that represents
  * the addresses the transport is bound to, and the other is the published one that represents the address clients
  * should communicate on.
+ * 表示当前节点连接到的所有地址 以及对外暴露的地址
  */
 public class BoundTransportAddress implements Writeable {
 
-    // 这里存在2种维度的地址
 
     /**
-     * TransportAddress 代表一个传输层的  ip + port
+     * 推测表示当前连接到的其他节点的地址
      */
     private TransportAddress[] boundAddresses;
 
     /**
-     * 在集群中对外暴露的地址
+     * 对外暴露的地址
      */
     private TransportAddress publishAddress;
 

@@ -26,8 +26,15 @@ import java.io.Closeable;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+/**
+ * 连接管理器
+ */
 public interface ConnectionManager extends Closeable {
 
+    /**
+     * 连接管理器本身支持添加/移除监听器
+     * @param listener
+     */
     void addListener(TransportConnectionListener listener);
 
     void removeListener(TransportConnectionListener listener);
@@ -60,6 +67,9 @@ public interface ConnectionManager extends Closeable {
         void validate(Transport.Connection connection, ConnectionProfile profile, ActionListener<Void> listener);
     }
 
+    /**
+     * 将一组监听器整合成一个对象
+     */
     final class DelegatingNodeConnectionListener implements TransportConnectionListener {
 
         private final CopyOnWriteArrayList<TransportConnectionListener> listeners = new CopyOnWriteArrayList<>();

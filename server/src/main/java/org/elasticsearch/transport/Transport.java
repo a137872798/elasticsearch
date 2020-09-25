@@ -46,49 +46,75 @@ public interface Transport extends LifecycleComponent {
 
     /**
      * Registers a new request handler
-     * 为传输层注册一个请求处理器
+     * 为传输层注册一个请求处理器  也就是任务的分发是做在传输层的???
      */
     default <Request extends TransportRequest> void registerRequestHandler(RequestHandlerRegistry<Request> reg) {
         getRequestHandlers().registerHandler(reg);
     }
 
+    /**
+     * 该监听器检测传输层收到的请求 发送的res 相当于一个拦截器
+     * @param listener
+     */
     void setMessageListener(TransportMessageListener listener);
 
+    /**
+     * 协议层是否需要加密
+     * @return
+     */
     default boolean isSecure() {
         return false;
     }
 
     /**
      * The address the transport is bound on.
+     * 当前传输层绑定的所有地址吧
      */
     BoundTransportAddress boundAddress();
 
     /**
      * Further profile bound addresses
      * @return <code>null</code> iff profiles are unsupported, otherwise a map with name of profile and its bound transport address
+     * 按照特性来对地址进行划分么
      */
     Map<String, BoundTransportAddress> profileBoundAddresses();
 
     /**
      * Returns an address from its string representation.
+     * 返回某个地址关联的所有 address
      */
     TransportAddress[] addressesFromString(String address) throws UnknownHostException;
 
     /**
      * Returns a list of all local addresses for this transport
+     * 当前节点可选择的一组地址
      */
     List<String> getDefaultSeedAddresses();
 
     /**
      * Opens a new connection to the given node. When the connection is fully connected, the listener is called.
      * The ActionListener will be called on the calling thread or the generic thread pool.
+     * @param profile 描述连接的详情
+     * 连接到某个节点
      */
     void openConnection(DiscoveryNode node, ConnectionProfile profile, ActionListener<Transport.Connection> listener);
 
+    /**
+     * 描述统计信息
+     * @return
+     */
     TransportStats getStats();
 
+    /**
+     * 相当于请求池  他处理的维度是细化到connect的  而 requestHandler是细化到 api层
+     * @return
+     */
     ResponseHandlers getResponseHandlers();
 
+    /**
+     * 该对象存储了所有的请求处理器
+     * @return
+     */
     RequestHandlers getRequestHandlers();
 
     /**
@@ -192,8 +218,12 @@ public interface Transport extends LifecycleComponent {
 
     /**
      * This class is a registry that allows
+     * 维护所有注册的响应处理器
+     * ResponseContext 同时包装了连接对象 以及TransportResponseHandler
      */
     final class ResponseHandlers {
+
+        // 这个有点像命令池啊
         private final ConcurrentMapLong<ResponseContext<? extends TransportResponse>> handlers = ConcurrentCollections
             .newConcurrentMapLongWithAggressiveConcurrency();
         private final AtomicLong requestIdGenerator = new AtomicLong();
@@ -208,6 +238,7 @@ public interface Transport extends LifecycleComponent {
         /**
          * Removes and return the {@link ResponseContext} for the given request ID or returns
          * <code>null</code> if no context is associated with this request ID.
+         * 代表某个请求已经处理完毕了
          */
         public ResponseContext<? extends TransportResponse> remove(long requestId) {
             return handlers.remove(requestId);
@@ -235,6 +266,7 @@ public interface Transport extends LifecycleComponent {
 
         /**
          * Removes and returns all {@link ResponseContext} instances that match the predicate
+         * 将满足谓语条件的 context移除 推测是超时之类的
          */
         public List<ResponseContext<? extends TransportResponse>> prune(Predicate<ResponseContext<? extends TransportResponse>> predicate) {
             final List<ResponseContext<? extends TransportResponse>> holders = new ArrayList<>();
@@ -254,6 +286,7 @@ public interface Transport extends LifecycleComponent {
          * called by the {@link Transport} implementation when a response or an exception has been received for a previously
          * sent request (before any processing or deserialization was done). Returns the appropriate response handler or null if not
          * found.
+         * 当某个请求收到响应结果时 从请求池中移除对象 并触发监听器
          */
         public TransportResponseHandler<? extends TransportResponse> onResponseReceived(final long requestId,
                                                                                         final TransportMessageListener listener) {
@@ -267,10 +300,18 @@ public interface Transport extends LifecycleComponent {
         }
     }
 
+    /**
+     * 该对象以 action为key 存储了所有的请求处理器
+     */
     final class RequestHandlers {
 
         private volatile Map<String, RequestHandlerRegistry<? extends TransportRequest>> requestHandlers = Collections.emptyMap();
 
+        /**
+         * 避免重复注册同一action的处理器
+         * @param reg
+         * @param <Request>
+         */
         synchronized <Request extends TransportRequest> void registerHandler(RequestHandlerRegistry<Request> reg) {
             if (requestHandlers.containsKey(reg.getAction())) {
                 throw new IllegalArgumentException("transport handlers for action " + reg.getAction() + " is already registered");
@@ -280,6 +321,7 @@ public interface Transport extends LifecycleComponent {
 
         // TODO: Only visible for testing. Perhaps move StubbableTransport from
         //  org.elasticsearch.test.transport to org.elasticsearch.transport
+        // 这里采用覆盖的方式进行注册
         public synchronized <Request extends TransportRequest> void forceRegister(RequestHandlerRegistry<Request> reg) {
             requestHandlers = Maps.copyMapWithAddedOrReplacedEntry(requestHandlers, reg.getAction(), reg);
         }

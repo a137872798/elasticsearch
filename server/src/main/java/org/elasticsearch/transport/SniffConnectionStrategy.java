@@ -63,6 +63,10 @@ import java.util.stream.Stream;
 
 import static org.elasticsearch.common.settings.Setting.intSetting;
 
+/**
+ * 代表探测模式的跨集群连接策略
+ * 该对象就是先从 候选的seedNodes中找到一个能成功连接的node  之后往该节点发送一个获取集群状态的请求 并根据结果中包含的所有node 挨个发送连接请求 直到达到连接上线
+ */
 public class SniffConnectionStrategy extends RemoteConnectionStrategy {
 
     /**
@@ -129,16 +133,27 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
             Setting.Property.Dynamic,
             Setting.Property.NodeScope));
 
+    /**
+     * 在该策略下每个连接 开启6个channel
+     */
     static final int CHANNELS_PER_CONNECTION = 6;
 
     private static final Logger logger = LogManager.getLogger(SniffConnectionStrategy.class);
 
+    /**
+     * 检测远端集群节点是否满足条件的函数
+     * 1 版本兼容
+     * 2 不是master节点 或者是 数据节点 或者是摄取节点
+     */
     private static final Predicate<DiscoveryNode> DEFAULT_NODE_PREDICATE = (node) -> Version.CURRENT.isCompatible(node.getVersion())
         && (node.isMasterNode() == false || node.isDataNode() || node.isIngestNode());
 
 
     private final List<String> configuredSeedNodes;
     private final List<Supplier<DiscoveryNode>> seedNodes;
+    /**
+     * 与远端集群的最大连接数
+     */
     private final int maxNumRemoteConnections;
     private final Predicate<DiscoveryNode> nodePredicate;
     private final SetOnce<ClusterName> remoteClusterName = new SetOnce<>();
@@ -165,6 +180,18 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
                 (Supplier<DiscoveryNode>) () -> resolveSeedNode(clusterAlias, seedAddress, proxyAddress)).collect(Collectors.toList()));
     }
 
+    /**
+     *
+     * @param clusterAlias
+     * @param transportService
+     * @param connectionManager
+     * @param proxyAddress  什么是代理地址
+     * @param settings
+     * @param maxNumRemoteConnections  远端连接数
+     * @param nodePredicate
+     * @param configuredSeedNodes
+     * @param seedNodes
+     */
     SniffConnectionStrategy(String clusterAlias, TransportService transportService, RemoteConnectionManager connectionManager,
                             String proxyAddress, Settings settings, int maxNumRemoteConnections, Predicate<DiscoveryNode> nodePredicate,
                             List<String> configuredSeedNodes, List<Supplier<DiscoveryNode>> seedNodes) {
@@ -184,6 +211,10 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
         return SniffModeInfo::new;
     }
 
+    /**
+     * 代表此时需要更多的连接
+     * @return
+     */
     @Override
     protected boolean shouldOpenMoreConnections() {
         return connectionManager.size() < maxNumRemoteConnections;
@@ -213,6 +244,11 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
         return new SniffModeInfo(configuredSeedNodes, maxNumRemoteConnections, connectionManager.size());
     }
 
+    /**
+     * 连接到目标节点的方法  这里只会创建一个连接 当连接到某个节点失败时 会自动尝试使用下一个节点
+     * @param seedNodes  候选的node
+     * @param listener
+     */
     private void collectRemoteNodes(Iterator<Supplier<DiscoveryNode>> seedNodes, ActionListener<Void> listener) {
         if (Thread.currentThread().isInterrupted()) {
             listener.onFailure(new InterruptedException("remote connect thread got interrupted"));
@@ -221,6 +257,7 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
 
         if (seedNodes.hasNext()) {
             final Consumer<Exception> onFailure = e -> {
+                // 代表这个节点无效 切换成下一个node 并继续创建连接
                 if (e instanceof ConnectTransportException ||
                     e instanceof IOException ||
                     e instanceof IllegalStateException) {
@@ -236,17 +273,20 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
                 listener.onFailure(e);
             };
 
+            // 获取此时尝试连接的节点
             final DiscoveryNode seedNode = seedNodes.next().get();
             logger.debug("[{}] opening connection to seed node: [{}] proxy address: [{}]", clusterAlias, seedNode,
                 proxyAddress);
             final StepListener<Transport.Connection> openConnectionStep = new StepListener<>();
             try {
+                // 创建连接
                 connectionManager.openConnection(seedNode, null, openConnectionStep);
             } catch (Exception e) {
                 onFailure.accept(e);
             }
 
             final StepListener<TransportService.HandshakeResponse> handshakeStep = new StepListener<>();
+            // 当任务完成时 触发第二步  发起握手请求
             openConnectionStep.whenComplete(connection -> {
                 ConnectionProfile connectionProfile = connectionManager.getConnectionProfile();
                 transportService.handshake(connection, connectionProfile.getHandshakeTimeout().millis(),
@@ -276,6 +316,8 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
                     assert handshakeResponse.getClusterName().value() != null;
                     remoteClusterName.set(handshakeResponse.getClusterName());
                 }
+
+                // 当以上步骤都完成时 返回一个连接对象 并发起一个获取对端集群状态的请求
                 final Transport.Connection connection = openConnectionStep.result();
 
                 ClusterStateRequest request = new ClusterStateRequest();
@@ -288,6 +330,7 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
                 ThreadContext threadContext = threadPool.getThreadContext();
                 TransportService.ContextRestoreResponseHandler<ClusterStateResponse> responseHandler = new TransportService
                     .ContextRestoreResponseHandler<>(threadContext.newRestorableContext(false),
+                    // 该对象负责处理响应结果
                     new SniffClusterStateResponseHandler(connection, listener, seedNodes));
                 try (ThreadContext.StoredContext ignore = threadContext.stashContext()) {
                     // we stash any context here since this is an internal execution and should not leak any
@@ -305,13 +348,22 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
         }
     }
 
-    /* This class handles the _state response from the remote cluster when sniffing nodes to connect to */
+    /**
+     * This class handles the _state response from the remote cluster when sniffing nodes to connect to
+     * 处理集群状态响应结果
+     */
     private class SniffClusterStateResponseHandler implements TransportResponseHandler<ClusterStateResponse> {
 
         private final Transport.Connection connection;
         private final ActionListener<Void> listener;
         private final Iterator<Supplier<DiscoveryNode>> seedNodes;
 
+        /**
+         *
+         * @param connection
+         * @param listener   用户在创建连接时传入的监听器
+         * @param seedNodes  本次连接候选的所有node
+         */
         SniffClusterStateResponseHandler(Transport.Connection connection, ActionListener<Void> listener,
                                          Iterator<Supplier<DiscoveryNode>> seedNodes) {
             this.connection = connection;
@@ -324,17 +376,33 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
             return new ClusterStateResponse(in);
         }
 
+        /**
+         * 处理响应结果
+         * @param response
+         */
         @Override
         public void handleResponse(ClusterStateResponse response) {
             handleNodes(response.getState().nodes().getNodes().valuesIt());
         }
 
+        /**
+         * 处理对端集群下所有的节点
+         * 从这里看好像只为每个节点建立了一条连接 (一个channel)
+         * @param nodesIter
+         */
         private void handleNodes(Iterator<DiscoveryNode> nodesIter) {
             while (nodesIter.hasNext()) {
+                // 将代理地址的信息追加到node中
                 final DiscoveryNode node = maybeAddProxyAddress(proxyAddress, nodesIter.next());
+                // 如果此时节点有效  就建立与该节点的连接   这些节点与 seedNodes是不一样的概念
                 if (nodePredicate.test(node) && shouldOpenMoreConnections()) {
                     connectionManager.connectToNode(node, null,
                         transportService.connectionValidator(node), new ActionListener<>() {
+
+                            /**
+                             * 处理完该节点后 继续处理下个节点
+                             * @param aVoid
+                             */
                             @Override
                             public void onResponse(Void aVoid) {
                                 handleNodes(nodesIter);
@@ -416,7 +484,11 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
         }
     }
 
-    // Default visibility for tests
+    /**
+     * 获取检测远端集群下节点是否有效的函数
+     * @param settings
+     * @return
+     */
     static Predicate<DiscoveryNode> getNodePredicate(Settings settings) {
         if (RemoteClusterService.REMOTE_NODE_ATTRIBUTE.exists(settings)) {
             // nodes can be tagged with node.attr.remote_gateway: true to allow a node to be a gateway node for cross cluster search
@@ -454,10 +526,16 @@ public class SniffConnectionStrategy extends RemoteConnectionStrategy {
         return Objects.equals(oldProxy, newProxy) == false;
     }
 
+    /**
+     * 探测模式的描述信息  看来要连接到其他集群的多个节点上 而在代理连接策略中只需要连接到一个节点上
+     */
     public static class SniffModeInfo implements RemoteConnectionInfo.ModeInfo {
 
         final List<String> seedNodes;
         final int maxConnectionsPerCluster;
+        /**
+         * 此时已经连接上了几个节点
+         */
         final int numNodesConnected;
 
         public SniffModeInfo(List<String> seedNodes, int maxConnectionsPerCluster, int numNodesConnected) {

@@ -42,13 +42,25 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * This class manages node connections within a cluster. The connection is opened by the underlying transport.
  * Once the connection is opened, this class manages the connection. This includes closing the connection when
  * the connection manager is closed.
+ * 管理当前集群中所有的连接
  */
 public class ClusterConnectionManager implements ConnectionManager {
 
     private static final Logger logger = LogManager.getLogger(ClusterConnectionManager.class);
 
+    /**
+     * key 代表本节点连接的目标节点 connection 具备往该节点发送请求的能力
+     */
     private final ConcurrentMap<DiscoveryNode, Transport.Connection> connectedNodes = ConcurrentCollections.newConcurrentMap();
+
+    /**
+     * 代表此时还在连接中  同时future对象上还挂载了一组监听器
+     */
     private final ConcurrentMap<DiscoveryNode, ListenableFuture<Void>> pendingConnections = ConcurrentCollections.newConcurrentMap();
+
+    /**
+     * 当引用计数为0时 用户定义关闭逻辑  这里就是将所有连接关闭
+     */
     private final AbstractRefCounted connectingRefCounter = new AbstractRefCounted("connection manager") {
         @Override
         protected void closeInternal() {
@@ -64,6 +76,10 @@ public class ClusterConnectionManager implements ConnectionManager {
             closeLatch.countDown();
         }
     };
+
+    /**
+     * 传输层对象包含了处理 req res
+     */
     private final Transport transport;
     private final ConnectionProfile defaultProfile;
     private final AtomicBoolean closing = new AtomicBoolean(false);

@@ -35,11 +35,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * A connection profile describes how many connection are established to specific node for each of the available request types.
  * ({@link org.elasticsearch.transport.TransportRequestOptions.Type}). This allows to tailor a connection towards a specific usage.
+ * 描述连接的信息  仅描述单条连接
  */
 public final class ConnectionProfile {
 
     /**
      * takes a {@link ConnectionProfile} resolves it to a fully specified (i.e., no nulls) profile
+     * 尝试使用 fallbackProfile的信息补充  profile 的信息 使得profile可用
      */
     public static ConnectionProfile resolveConnectionProfile(@Nullable ConnectionProfile profile, ConnectionProfile fallbackProfile) {
         Objects.requireNonNull(fallbackProfile);
@@ -73,6 +75,7 @@ public final class ConnectionProfile {
      * @return the connection profile
      */
     public static ConnectionProfile buildDefaultConnectionProfile(Settings settings) {
+        // 代表每种节点支持的连接数
         int connectionsPerNodeRecovery = TransportSettings.CONNECTIONS_PER_NODE_RECOVERY.get(settings);
         int connectionsPerNodeBulk = TransportSettings.CONNECTIONS_PER_NODE_BULK.get(settings);
         int connectionsPerNodeReg = TransportSettings.CONNECTIONS_PER_NODE_REG.get(settings);
@@ -83,6 +86,7 @@ public final class ConnectionProfile {
         builder.setHandshakeTimeout(TransportSettings.CONNECT_TIMEOUT.get(settings));
         builder.setPingInterval(TransportSettings.PING_SCHEDULE.get(settings));
         builder.setCompressionEnabled(TransportSettings.TRANSPORT_COMPRESS.get(settings));
+        // 代表对应类型的连接要创建多少 channel
         builder.addConnections(connectionsPerNodeBulk, TransportRequestOptions.Type.BULK);
         builder.addConnections(connectionsPerNodePing, TransportRequestOptions.Type.PING);
         // if we are not master eligible we don't need a dedicated channel to publish the state
@@ -96,6 +100,7 @@ public final class ConnectionProfile {
     /**
      * Builds a connection profile that is dedicated to a single channel type. Allows passing connection and
      * handshake timeouts and compression settings.
+     * 只创建某个类型的丽娜姐  并且连接数为1
      */
     public static ConnectionProfile buildSingleChannelProfile(TransportRequestOptions.Type channelType, @Nullable TimeValue connectTimeout,
                                                               @Nullable TimeValue handshakeTimeout, @Nullable TimeValue pingInterval,
@@ -104,6 +109,7 @@ public final class ConnectionProfile {
         builder.addConnections(1, channelType);
         final EnumSet<TransportRequestOptions.Type> otherTypes = EnumSet.allOf(TransportRequestOptions.Type.class);
         otherTypes.remove(channelType);
+        // 其余type创建的连接数为 0
         builder.addConnections(0, otherTypes.toArray(new TransportRequestOptions.Type[0]));
         if (connectTimeout != null) {
             builder.setConnectTimeout(connectTimeout);
@@ -142,6 +148,9 @@ public final class ConnectionProfile {
      */
     public static class Builder {
         private final List<ConnectionTypeHandle> handles = new ArrayList<>();
+        /**
+         * 此时已经设置的所有类型
+         */
         private final Set<TransportRequestOptions.Type> addedTypes = EnumSet.noneOf(TransportRequestOptions.Type.class);
         private int numConnections = 0;
         private TimeValue connectTimeout;
@@ -205,11 +214,14 @@ public final class ConnectionProfile {
          * Adds a number of connections for one or more types. Each type can only be added once.
          * @param numConnections the number of connections to use in the pool for the given connection types
          * @param types a set of types that should share the given number of connections
+         *             types 代表的是创建的连接具备的功能 比如某种连接会同时具备4种类型的职能
+         *              numConnections 代表这个connections 下有多少channel 每次请求时会负载到不同的channel上
          */
         public Builder addConnections(int numConnections, TransportRequestOptions.Type... types) {
             if (types == null || types.length == 0) {
                 throw new IllegalArgumentException("types must not be null");
             }
+            // 避免重复添加
             for (TransportRequestOptions.Type type : types) {
                 if (addedTypes.contains(type)) {
                     throw new IllegalArgumentException("type [" + type + "] is already registered");
@@ -228,6 +240,7 @@ public final class ConnectionProfile {
         public ConnectionProfile build() {
             EnumSet<TransportRequestOptions.Type> types = EnumSet.allOf(TransportRequestOptions.Type.class);
             types.removeAll(addedTypes);
+            // 必须要确保所有类型的连接数都要设置  没有就必须设置0
             if (types.isEmpty() == false) {
                 throw new IllegalStateException("not all types are added for this connection profile - missing types: " + types);
             }
@@ -279,6 +292,7 @@ public final class ConnectionProfile {
      * {@link org.elasticsearch.transport.TransportRequestOptions.Type#BULK} shares connections with
      * {@link org.elasticsearch.transport.TransportRequestOptions.Type#REG} they will return both the same number of connections from
      * this method but the connections are not distinct.
+     * 返回对应类型的连接 的channel数量
      */
     public int getNumConnectionsPerType(TransportRequestOptions.Type type) {
         for (ConnectionTypeHandle handle : handles) {
@@ -300,8 +314,12 @@ public final class ConnectionProfile {
      * Connection type handle encapsulates the logic which connection
      */
     static final class ConnectionTypeHandle {
+        // 每种类型的连接 可能都有多条channel
         public final int length;
         public final int offset;
+        /**
+         * 返回这个连接支持的类型
+         */
         private final Set<TransportRequestOptions.Type> types;
         private final AtomicInteger counter = new AtomicInteger();
 
@@ -314,6 +332,7 @@ public final class ConnectionProfile {
         /**
          * Returns one of the channels out configured for this handle. The channel is selected in a round-robin
          * fashion.
+         * 每次随机使用某个channel
          */
         <T> T getChannel(List<T> channels) {
             if (length == 0) {

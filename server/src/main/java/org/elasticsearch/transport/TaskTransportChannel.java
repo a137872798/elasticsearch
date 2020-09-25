@@ -25,6 +25,9 @@ import org.elasticsearch.tasks.TaskManager;
 
 import java.io.IOException;
 
+/**
+ * 一般是在处理task时 一并将channel也包装了一层    就是在原有channel上包装了 task  taskManager属性
+ */
 public class TaskTransportChannel implements TransportChannel {
 
     private final Task task;
@@ -69,6 +72,9 @@ public class TaskTransportChannel implements TransportChannel {
         return channel;
     }
 
+    /**
+     * 在发送结果前 会将task从 TaskManager中移除
+     */
     private void endTask() {
         taskManager.unregister(task);
     }

@@ -85,21 +85,39 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      * 将一组监听器隐藏在一个监听器下
      */
     private final DelegatingTransportMessageListener messageListener = new DelegatingTransportMessageListener();
+
+    /**
+     * 该对象负责建立连接 设置请求/响应处理器
+     */
     protected final Transport transport;
     protected final ConnectionManager connectionManager;
     protected final ThreadPool threadPool;
+    /**
+     * 该节点所在集群的名字
+     */
     protected final ClusterName clusterName;
     protected final TaskManager taskManager;
     private final TransportInterceptor.AsyncSender asyncSender;
     private final Function<BoundTransportAddress, DiscoveryNode> localNodeFactory;
     private final boolean remoteClusterClient;
+
+    /**
+     * 就相当于一个请求池
+     */
     private final Transport.ResponseHandlers responseHandlers;
     private final TransportInterceptor interceptor;
 
     // An LRU (don't really care about concurrency here) that holds the latest timed out requests so if they
     // do show up, we can print more descriptive information about them
+    // 维护超时信息  key 代表请求id
     final Map<Long, TimeoutInfoHolder> timeoutInfoHandlers =
         Collections.synchronizedMap(new LinkedHashMap<Long, TimeoutInfoHolder>(100, .75F, true) {
+
+            /**
+             * 最多仅维护 100 个数据
+             * @param eldest
+             * @return
+             */
             @Override
             protected boolean removeEldestEntry(Map.Entry eldest) {
                 return size() > 100;
@@ -1050,9 +1068,18 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         }
     }
 
+    /**
+     * 描述某次请求的action 以及超时信息
+     */
     static class TimeoutInfoHolder {
 
+        /**
+         * 本次请求的目标节点
+         */
         private final DiscoveryNode node;
+        /**
+         * 本次发起的请求类型
+         */
         private final String action;
         private final long sentTime;
         private final long timeoutTime;
@@ -1087,6 +1114,9 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      */
     public static final class ContextRestoreResponseHandler<T extends TransportResponse> implements TransportResponseHandler<T> {
 
+        /**
+         * 处理响应结果的对象
+         */
         private final TransportResponseHandler<T> delegate;
         private final Supplier<ThreadContext.StoredContext> contextSupplier;
         private volatile TimeoutHandler handler;

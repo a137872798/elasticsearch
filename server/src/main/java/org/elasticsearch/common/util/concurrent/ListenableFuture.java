@@ -37,10 +37,14 @@ import java.util.concurrent.TimeUnit;
  * for execution in the provided {@link ExecutorService}. If the computation has already
  * been performed, a request to add a listener will simply result in execution of the listener
  * on the calling thread.
+ * 该future对象可以添加一组监听器
  */
 public final class ListenableFuture<V> extends BaseFuture<V> implements ActionListener<V> {
 
     private volatile boolean done = false;
+    /**
+     * 每个监听器处理逻辑交由专门的线程池处理 以提高并行度
+     */
     private final List<Tuple<ActionListener<V>, ExecutorService>> listeners = new ArrayList<>();
 
 
@@ -63,8 +67,10 @@ public final class ListenableFuture<V> extends BaseFuture<V> implements ActionLi
      * It will apply the provided ThreadContext (if not null) when executing the listening.
      */
     public void addListener(ActionListener<V> listener, ExecutorService executor, ThreadContext threadContext) {
+        // 代表任务已经完成了  直接触发监听器
         if (done) {
             // run the callback directly, we don't hold the lock and don't need to fork!
+            // 此时就直接使用的当前线程 而没有使用线程池
             notifyListener(listener, EsExecutors.newDirectExecutorService());
         } else {
             final boolean run;
@@ -78,6 +84,7 @@ public final class ListenableFuture<V> extends BaseFuture<V> implements ActionLi
                     if (threadContext == null) {
                         wrappedListener = listener;
                     } else {
+                        // TODO 这层包装还没有理解
                         wrappedListener = ContextPreservingActionListener.wrapPreservingContext(listener, threadContext);
                     }
                     listeners.add(new Tuple<>(wrappedListener, executor));
@@ -92,9 +99,13 @@ public final class ListenableFuture<V> extends BaseFuture<V> implements ActionLi
         }
     }
 
+    /**
+     * 代表结果已经设置
+     */
     @Override
     protected synchronized void done() {
         done = true;
+        // 挨个触发监听器
         listeners.forEach(t -> notifyListener(t.v1(), t.v2()));
         // release references to any listeners as we no longer need them and will live
         // much longer than the listeners in most cases

@@ -51,12 +51,17 @@ import java.util.function.Consumer;
  */
 
 public final class StepListener<Response> extends NotifyOnceListener<Response> {
+
+    /**
+     * 该对象本身是一个 future对象 但是还挂载了一组监听器
+     */
     private final ListenableFuture<Response> delegate;
 
     public StepListener() {
         this.delegate = new ListenableFuture<>();
     }
 
+    // 当该监听器触发钩子是 将结果设置到future对象中 进而触发 监听future结果的 listener
     @Override
     protected void innerOnResponse(Response response) {
         delegate.onResponse(response);

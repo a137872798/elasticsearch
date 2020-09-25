@@ -50,6 +50,9 @@ public class TransportRequestOptions {
 
     public static final TransportRequestOptions EMPTY = new TransportRequestOptions.Builder().build();
 
+    /**
+     * 根据不同的类型 会创建不同的连接数
+     */
     public enum Type {
         RECOVERY,
         BULK,

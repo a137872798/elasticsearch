@@ -35,9 +35,13 @@ import java.util.Objects;
 /**
  * This class encapsulates all remote cluster information to be rendered on
  * {@code _remote/info} requests.
+ * 某条有关其他集群连接的信息
  */
 public final class RemoteConnectionInfo implements ToXContentFragment, Writeable {
 
+    /**
+     * 包含是否完成连接 采用的模式 连接策略等信息
+     */
     final ModeInfo modeInfo;
     final TimeValue initialConnectionTimeout;
     final String clusterAlias;
@@ -58,6 +62,7 @@ public final class RemoteConnectionInfo implements ToXContentFragment, Writeable
             clusterAlias = input.readString();
             skipUnavailable = input.readBoolean();
         } else {
+            // TODO 看来 7.6.0之前只有一种连接策略
             List<String> seedNodes = Arrays.asList(input.readStringArray());
             int connectionsPerCluster = input.readVInt();
             initialConnectionTimeout = input.readTimeValue();
@@ -142,12 +147,27 @@ public final class RemoteConnectionInfo implements ToXContentFragment, Writeable
         return Objects.hash(modeInfo, initialConnectionTimeout, clusterAlias, skipUnavailable);
     }
 
+    /**
+     * 有关连接模式的信息
+     */
     public interface ModeInfo extends ToXContentFragment, Writeable {
 
+        /**
+         * 是否已经完成连接
+         * @return
+         */
         boolean isConnected();
 
+        /**
+         * 采用的模式名
+         * @return
+         */
         String modeName();
 
+        /**
+         * 采用的连接策略
+         * @return
+         */
         RemoteConnectionStrategy.ConnectionStrategy modeType();
     }
 }

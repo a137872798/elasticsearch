@@ -36,6 +36,7 @@ package org.elasticsearch.common.util.concurrent;
  *          inst.decRef();
  *      }
  * </pre>
+ * 引用计数器
  */
 public interface RefCounted {
 

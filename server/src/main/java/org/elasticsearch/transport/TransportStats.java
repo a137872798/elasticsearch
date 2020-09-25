@@ -29,6 +29,9 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
 
+/**
+ * 统计传输时的相关信息 就是个简单的bean对象
+ */
 public class TransportStats implements Writeable, ToXContentFragment {
 
     private final long serverOpen;
