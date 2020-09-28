@@ -22,6 +22,9 @@ package org.elasticsearch.common.recycler;
 
 abstract class AbstractRecycler<T> implements Recycler<T> {
 
+    /**
+     * 该对象负责创建对象以及回收对象
+     */
     protected final Recycler.C<T> c;
 
     protected AbstractRecycler(Recycler.C<T> c) {

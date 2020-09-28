@@ -24,12 +24,19 @@ import java.util.Deque;
 
 /**
  * A {@link Recycler} implementation based on a {@link Deque}. This implementation is NOT thread-safe.
+ * 将对象存储在双端队列中  本对象本身不支持线程安全需要用户手动处理
  */
 public class DequeRecycler<T> extends AbstractRecycler<T> {
 
     final Deque<T> deque;
     final int maxSize;
 
+    /**
+     *
+     * @param c  定义了对象的创建和回收等逻辑
+     * @param queue
+     * @param maxSize
+     */
     public DequeRecycler(C<T> c, Deque<T> queue, int maxSize) {
         super(c);
         this.deque = queue;
@@ -40,6 +47,7 @@ public class DequeRecycler<T> extends AbstractRecycler<T> {
     public V<T> obtain() {
         final T v = deque.pollFirst();
         if (v == null) {
+            // 将对象包装成DV
             return new DV(c.newInstance(), false);
         }
         return new DV(v, true);
@@ -55,9 +63,15 @@ public class DequeRecycler<T> extends AbstractRecycler<T> {
         // nothing to do
     }
 
+    /**
+     * 该对象类似于一个 ValueHolder
+     */
     private class DV implements Recycler.V<T> {
 
         T value;
+        /**
+         * 该数据是否从对象池中获取
+         */
         final boolean recycled;
 
         DV(T value, boolean recycled) {
@@ -80,15 +94,19 @@ public class DequeRecycler<T> extends AbstractRecycler<T> {
             if (value == null) {
                 throw new IllegalStateException("recycler entry already released...");
             }
+            // 通过释放前的钩子决定是否回收该对象  比如针对双端队列 只要队列没有填满就可以进行回收
             final boolean recycle = beforeRelease();
             if (recycle) {
+                // 回收对象
                 c.recycle(value);
+                // 这里将对象的回收 与 需要做的额外行为拆解开了???  为什么不在 recycle中加入到队列
                 deque.addFirst(value);
             }
             else {
                 c.destroy(value);
             }
             value = null;
+            // 后置钩子
             afterRelease(recycle);
         }
     }

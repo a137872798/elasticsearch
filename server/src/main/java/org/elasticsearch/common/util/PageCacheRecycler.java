@@ -36,7 +36,10 @@ import static org.elasticsearch.common.recycler.Recyclers.concurrentDeque;
 import static org.elasticsearch.common.recycler.Recyclers.dequeFactory;
 import static org.elasticsearch.common.recycler.Recyclers.none;
 
-/** A recycler of fixed-size pages. */
+/**
+ * A recycler of fixed-size pages.
+ * 缓存数据的对象 这里的数据页指的就是存储数据的数组
+ */
 public class PageCacheRecycler {
 
     public static final Setting<Type> TYPE_SETTING =
@@ -60,6 +63,9 @@ public class PageCacheRecycler {
     public static final int INT_PAGE_SIZE = PAGE_SIZE_IN_BYTES / Integer.BYTES;
     public static final int BYTE_PAGE_SIZE = PAGE_SIZE_IN_BYTES;
 
+    /**
+     * 利用了对象池技术  在网络连接框架中经常可以看到对象池技术 比如netty自带的recycle对象 tomcat的对象池
+     */
     private final Recycler<byte[]> bytePage;
     private final Recycler<int[]> intPage;
     private final Recycler<long[]> longPage;
@@ -76,8 +82,11 @@ public class PageCacheRecycler {
      * @param settings
      */
     public PageCacheRecycler(Settings settings) {
+        // 默认使用基于分段锁的recycle对象
         final Type type = TYPE_SETTING.get(settings);
+        // 对象池允许使用的堆大小
         final long limit = LIMIT_HEAP_SETTING.get(settings).getBytes();
+        // 获取进程数  recycle对象如果是基于分段锁 会参考该值
         final int allocatedProcessors = EsExecutors.allocatedProcessors(settings);
 
         // We have a global amount of memory that we need to divide across data types.
@@ -93,16 +102,21 @@ public class PageCacheRecycler {
         // to direct ByteBuffers or sun.misc.Unsafe on a byte[] but this would have other issues
         // that would need to be addressed such as garbage collection of native memory or safety
         // of Unsafe writes.
+        // 为每种类型数据分配的大小权重
         final double bytesWeight = WEIGHT_BYTES_SETTING .get(settings);
         final double intsWeight = WEIGHT_INT_SETTING .get(settings);
         final double longsWeight = WEIGHT_LONG_SETTING .get(settings);
         final double objectsWeight = WEIGHT_OBJECTS_SETTING .get(settings);
 
         final double totalWeight = bytesWeight + intsWeight + longsWeight + objectsWeight;
+        // 最多允许使用多少数据页 每个数据页对应一个长度为BYTE_PAGE_SIZE的数组对象
         final int maxPageCount = (int) Math.min(Integer.MAX_VALUE, limit / PAGE_SIZE_IN_BYTES);
 
+        // 根据权重创建不同的数据页
         final int maxBytePageCount = (int) (bytesWeight * maxPageCount / totalWeight);
-        bytePage = build(type, maxBytePageCount, allocatedProcessors, new AbstractRecyclerC<byte[]>() {
+        bytePage = build(type, maxBytePageCount, allocatedProcessors,
+            // 这里定义了创建/回收数据的逻辑
+            new AbstractRecyclerC<byte[]>() {
             @Override
             public byte[] newInstance() {
                 return new byte[BYTE_PAGE_SIZE];
@@ -110,6 +124,7 @@ public class PageCacheRecycler {
             @Override
             public void recycle(byte[] value) {
                 // nothing to do
+                // 因为基于堆内存 会被GC回收 所以不需要做处理
             }
         });
 
@@ -181,6 +196,15 @@ public class PageCacheRecycler {
         return objectPage.obtain();
     }
 
+    /**
+     * 构建数据页对象
+     * @param type  recycle类型
+     * @param limit
+     * @param availableProcessors
+     * @param c
+     * @param <T>
+     * @return
+     */
     private static <T> Recycler<T> build(Type type, int limit, int availableProcessors, Recycler.C<T> c) {
         final Recycler<T> recycler;
         if (limit == 0) {
@@ -191,6 +215,9 @@ public class PageCacheRecycler {
         return recycler;
     }
 
+    /**
+     * 代表使用的对象池类型
+     */
     public enum Type {
         QUEUE {
             @Override
@@ -201,6 +228,10 @@ public class PageCacheRecycler {
         CONCURRENT {
             @Override
             <T> Recycler<T> build(Recycler.C<T> c, int limit, int availableProcessors) {
+                // limit / availableProcessors 代表队列的长度信息
+                // dequeFactory 创建的仅是基于普通双端队列的 recycle对象 不具备线程安全
+                // concurrent 赋予 普通回收对象线程安全的能力
+                // concurrent() 使用了分段锁的思想 降低每个recycle的竞争 借此提高性能
                 return concurrent(dequeFactory(c, limit / availableProcessors), availableProcessors);
             }
         },

@@ -43,15 +43,21 @@ import java.util.stream.Collectors;
 /**
  * CircuitBreakerService that attempts to redistribute space between breakers
  * if tripped
- * 基于等级制度的 断路器
+ * 当触发熔断时 允许重新分配空间
  */
 public class HierarchyCircuitBreakerService extends CircuitBreakerService {
     private static final Logger logger = LogManager.getLogger(HierarchyCircuitBreakerService.class);
 
     private static final String CHILD_LOGGER_PREFIX = "org.elasticsearch.indices.breaker.";
 
+    /**
+     * 便于获取此时JVM 已使用的内存
+     */
     private static final MemoryMXBean MEMORY_MX_BEAN = ManagementFactory.getMemoryMXBean();
 
+    /**
+     * 存储相关的熔断器
+     */
     private final ConcurrentMap<String, CircuitBreaker> breakers = new ConcurrentHashMap<>();
 
     public static final Setting<Boolean> USE_REAL_MEMORY_USAGE_SETTING =
@@ -95,6 +101,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
         new Setting<>("network.breaker.inflight_requests.type", "memory", CircuitBreaker.Type::parseValue, Property.NodeScope);
 
     private final boolean trackRealMemoryUsage;
+    // 熔断本身支持多种操作 每个独享settings对象
     private volatile BreakerSettings parentSettings;
     private volatile BreakerSettings fielddataSettings;
     private volatile BreakerSettings inFlightRequestsSettings;
@@ -152,13 +159,16 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
 
         this.trackRealMemoryUsage = USE_REAL_MEMORY_USAGE_SETTING.get(settings);
 
+        // 为每种操作设置熔断器
         registerBreaker(this.requestSettings);
         registerBreaker(this.fielddataSettings);
         registerBreaker(this.inFlightRequestsSettings);
         registerBreaker(this.accountingSettings);
 
+        // 追加检测配置变化的处理器    在master节点应该支持修改配置 并通知到下面 所有节点的能力
         clusterSettings.addSettingsUpdateConsumer(TOTAL_CIRCUIT_BREAKER_LIMIT_SETTING, this::setTotalCircuitBreakerLimit,
             this::validateTotalCircuitBreakerLimit);
+        // setFieldDataBreakerLimit 接受前后2个配置并处理
         clusterSettings.addSettingsUpdateConsumer(FIELDDATA_CIRCUIT_BREAKER_LIMIT_SETTING, FIELDDATA_CIRCUIT_BREAKER_OVERHEAD_SETTING,
             this::setFieldDataBreakerLimit);
         clusterSettings.addSettingsUpdateConsumer(IN_FLIGHT_REQUESTS_CIRCUIT_BREAKER_LIMIT_SETTING,
@@ -186,6 +196,11 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
         logger.info("Updated breaker settings for in-flight requests: {}", newInFlightRequestsSettings);
     }
 
+    /**
+     * 代表有关field数据的配置发生了变化 更新熔断器
+     * @param newFielddataMax
+     * @param newFielddataOverhead
+     */
     private void setFieldDataBreakerLimit(ByteSizeValue newFielddataMax, Double newFielddataOverhead) {
         long newFielddataLimitBytes = newFielddataMax == null ?
             HierarchyCircuitBreakerService.this.fielddataSettings.getLimit() : newFielddataMax.getBytes();
@@ -262,9 +277,21 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
             breaker.getTrippedCount());
     }
 
+    /**
+     * 表示此时已经使用的内存量
+     */
     private static class MemoryUsage {
+        /**
+         * 当前使用量
+         */
         final long baseUsage;
+        /**
+         * 加上申请后的总使用量
+         */
         final long totalUsage;
+        /**
+         * 代表该对象创建的熔断器中属于瞬时使用的内存占用多少量
+         */
         final long transientChildUsage;
         final long permanentChildUsage;
 
@@ -276,11 +303,18 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
         }
     }
 
+    /**
+     *
+     * @param newBytesReserved
+     * @return
+     */
     private MemoryUsage memoryUsed(long newBytesReserved) {
+        // 分别统计2种不同持久策略的使用量
         long transientUsage = 0;
         long permanentUsage = 0;
 
         for (CircuitBreaker breaker : this.breakers.values()) {
+            // 找到所有熔断器此时已经使用的bytes
             long breakerUsed = (long)(breaker.getUsed() * breaker.getOverhead());
             if (breaker.getDurability() == CircuitBreaker.Durability.TRANSIENT) {
                 transientUsage += breakerUsed;
@@ -289,6 +323,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
             }
         }
         if (this.trackRealMemoryUsage) {
+            // 代表使用 MXBean 获取总使用内存
             final long current = currentMemoryUsage();
             return new MemoryUsage(current, current + newBytesReserved, transientUsage, permanentUsage);
         } else {
@@ -317,10 +352,13 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
 
     /**
      * Checks whether the parent breaker has been tripped
+     * 检测当前对象是否发生了熔断
      */
     public void checkParentLimit(long newBytesReserved, String label) throws CircuitBreakingException {
         final MemoryUsage memoryUsed = memoryUsed(newBytesReserved);
+        // 获取总的限制量
         long parentLimit = this.parentSettings.getLimit();
+        // 代表发生了熔断
         if (memoryUsed.totalUsage > parentLimit) {
             this.parentTripCount.incrementAndGet();
             final StringBuilder message = new StringBuilder("[parent] Data too large, data for [" + label + "]" +
@@ -360,7 +398,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
     /**
      * Allows to register a custom circuit breaker.
      * Warning: Will overwrite any existing custom breaker with the same name.
-     * 注册断路器配置
+     * 注册熔断器
      */
     @Override
     public void registerBreaker(BreakerSettings breakerSettings) {
@@ -381,7 +419,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
                 if (oldBreaker == null) {
                     return;
                 }
-                // 如果之前已经存在断路器了 以它作为parent 继续创建 ChildMemoryCircuitBreaker 这样就可以构建层级关系了
+                // 如果之前已经存在熔断器了 从之前的对象中拷贝相关信息
                 breaker = new ChildMemoryCircuitBreaker(breakerSettings,
                         (ChildMemoryCircuitBreaker)oldBreaker,
                         LogManager.getLogger(CHILD_LOGGER_PREFIX + breakerSettings.getName()),

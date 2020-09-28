@@ -24,9 +24,14 @@ import org.elasticsearch.common.lease.Releasable;
 /**
  * A recycled object, note, implementations should support calling obtain and then recycle
  * on different threads.
+ * 对象池技术  获取和回收应该在不同线程???
  */
 public interface Recycler<T> {
 
+    /**
+     * 方便自定义recycle对象
+     * @param <T>
+     */
     interface Factory<T> {
         Recycler<T> build();
     }

@@ -24,6 +24,7 @@ import org.elasticsearch.common.unit.ByteSizeValue;
 
 /**
  * Settings for a {@link CircuitBreaker}
+ * 熔断器相关配置
  */
 public final class BreakerSettings {
 

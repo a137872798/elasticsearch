@@ -31,6 +31,7 @@ import java.util.Objects;
  *
  * The registration is keyed by the combination of the category class of {@link NamedWriteable}, and a name unique
  * to that category.
+ * 该对象维护了 某个class 以及定义如何读取数据的reader对象
  */
 public class NamedWriteableRegistry {
 

@@ -35,6 +35,7 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
 /**
  * 这里使用 Sync实现最小粒度的 阻塞获取结果 以及设置结果解除阻塞的功能
+ * AQS 本身提供了一个模板 而实际上 决定能否获取锁 或者检测释放锁的逻辑是2个钩子  用户可以自定义实现的逻辑
  * @param <V>
  */
 public abstract class BaseFuture<V> implements Future<V> {

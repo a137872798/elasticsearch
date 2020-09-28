@@ -93,29 +93,63 @@ import static org.elasticsearch.common.transport.NetworkExceptionHelper.isCloseC
 import static org.elasticsearch.common.transport.NetworkExceptionHelper.isConnectException;
 import static org.elasticsearch.common.util.concurrent.ConcurrentCollections.newConcurrentMap;
 
+/**
+ * 基于TCP协议实现传输层功能
+ */
 public abstract class TcpTransport extends AbstractLifecycleComponent implements Transport {
     private static final Logger logger = LogManager.getLogger(TcpTransport.class);
 
     public static final String TRANSPORT_WORKER_THREAD_NAME_PREFIX = "transport_worker";
 
     // This is the number of bytes necessary to read the message size
+    // 消息头长度
     private static final int BYTES_NEEDED_FOR_MESSAGE_SIZE = TcpHeader.MARKER_BYTES_SIZE + TcpHeader.MESSAGE_LENGTH_SIZE;
+    /**
+     * 30% 的 jvm堆大小
+     */
     private static final long THIRTY_PER_HEAP_SIZE = (long) (JvmInfo.jvmInfo().getMem().getHeapMax().getBytes() * 0.3);
 
+    /**
+     * 统计相关信息的对象
+     */
     final StatsTracker statsTracker = new StatsTracker();
 
     // this limit is per-address
     private static final int LIMIT_LOCAL_PORTS_COUNT = 6;
 
+    /**
+     * 初始化传输对象需要的参数从这里获取
+     */
     protected final Settings settings;
+    /**
+     * 描述ES的版本 主要是做兼容性判断
+     */
     private final Version version;
+    /**
+     * 维护所有线程池对象
+     */
     protected final ThreadPool threadPool;
+
+    /**
+     * 该对象内部存储了各种 数组
+     */
     protected final PageCacheRecycler pageCacheRecycler;
     protected final NetworkService networkService;
+    /**
+     * 包含一组描述传输层配置的对象
+     */
     protected final Set<ProfileSettings> profileSettings;
+
+    /**
+     * 提供熔断功能
+     */
     private final CircuitBreakerService circuitBreakerService;
 
+
     private final ConcurrentMap<String, BoundTransportAddress> profileBoundAddresses = newConcurrentMap();
+    /**
+     * 这里指出了 channel必须基于tcp实现
+     */
     private final Map<String, List<TcpServerChannel>> serverChannels = newConcurrentMap();
     private final Set<TcpChannel> acceptedChannels = ConcurrentCollections.newConcurrentSet();
 
@@ -131,6 +165,16 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
     private final ResponseHandlers responseHandlers = new ResponseHandlers();
     private final RequestHandlers requestHandlers = new RequestHandlers();
 
+    /**
+     * 创建基于tcp协议实现的传输层
+     * @param settings
+     * @param version
+     * @param threadPool
+     * @param pageCacheRecycler  该对象内部存储了各种数组
+     * @param circuitBreakerService
+     * @param namedWriteableRegistry  这里定义了一系列class 以及如何读取读取的reader对象
+     * @param networkService
+     */
     public TcpTransport(Settings settings, Version version, ThreadPool threadPool, PageCacheRecycler pageCacheRecycler,
                         CircuitBreakerService circuitBreakerService, NamedWriteableRegistry namedWriteableRegistry,
                         NetworkService networkService) {
@@ -853,6 +897,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * Representation of a transport profile settings for a {@code transport.profiles.$profilename.*}
+     * 描述传输层配置的对象
      */
     public static final class ProfileSettings {
         public final String profileName;

@@ -23,6 +23,9 @@ import org.elasticsearch.common.metrics.MeanMetric;
 
 import java.util.concurrent.atomic.LongAdder;
 
+/**
+ * 用于统计传输层写入/读取的数据长度
+ */
 public class StatsTracker {
 
     private final LongAdder bytesRead = new LongAdder();

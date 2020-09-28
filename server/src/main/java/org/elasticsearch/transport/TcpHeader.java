@@ -24,6 +24,9 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 
 import java.io.IOException;
 
+/**
+ * 包含了TCP 协议的请求头报文
+ */
 public class TcpHeader {
 
     public static final Version VERSION_WITH_HEADER_SIZE = Version.V_7_6_0;

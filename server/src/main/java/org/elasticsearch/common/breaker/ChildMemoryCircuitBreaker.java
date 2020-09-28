@@ -28,15 +28,28 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Breaker that will check a parent's when incrementing
+ * 熔断器的默认实现
  */
 public class ChildMemoryCircuitBreaker implements CircuitBreaker {
 
+    /**
+     * 代表针对使用内存的限制
+     */
     private final long memoryBytesLimit;
+    /**
+     * 类似一个转换率的东西 limit 需要 * 这个值才能与 memoryBytesLimit做比较
+     */
     private final double overheadConstant;
+    /**
+     * 描述持久性
+     */
     private final Durability durability;
     private final AtomicLong used;
     private final AtomicLong trippedCount;
     private final Logger logger;
+    /**
+     * 代表该熔断器是由哪个 CircuitBreakerService 创建的
+     */
     private final HierarchyCircuitBreakerService parent;
     private final String name;
 
@@ -61,7 +74,7 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
      * @param settings settings to configure this breaker
      * @param parent parent circuit breaker service to delegate tripped breakers to
      * @param name the name of the breaker
-     * @param oldBreaker the previous circuit breaker to inherit the used value from (starting offset)
+     * @param oldBreaker the previous circuit breaker to inherit the used value from (starting offset)   这是有继承关系的么  会复用之前的数据
      */
     public ChildMemoryCircuitBreaker(BreakerSettings settings, ChildMemoryCircuitBreaker oldBreaker,
                                      Logger logger, HierarchyCircuitBreakerService parent, String name) {
@@ -86,6 +99,7 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
     /**
      * Method used to trip the breaker, delegates to the parent to determine
      * whether to trip the breaker or not
+     * 触发熔断
      */
     @Override
     public void circuitBreak(String fieldName, long bytesNeeded) {
@@ -105,10 +119,12 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
      * set &lt; 0, but can still be used to aggregate estimations.
      * @param bytes number of bytes to add to the breaker
      * @return number of "used" bytes so far
+     * 增加将要使用的内存 并检测是否会发生熔断
      */
     @Override
     public double addEstimateBytesAndMaybeBreak(long bytes, String label) throws CircuitBreakingException {
         // short-circuit on no data allowed, immediately throwing an exception
+        // 参数本身设置无效值时 立即触发熔断逻辑
         if (memoryBytesLimit == 0) {
             circuitBreak(label, bytes);
         }
@@ -118,13 +134,17 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
         // .addAndGet() instead of looping (because we don't have to check a
         // limit), which makes the RamAccountingTermsEnum case faster.
         if (this.memoryBytesLimit == -1) {
+            // 代表不做限制  此时直接使用AtomicLong.addAndGet 来替代 loop 因为不需要在每次尝试时检测limit是否超标
+            // newUsed 代表此时已经使用的总内存
             newUsed = noLimit(bytes, label);
         } else {
+            // 在这里没抛出异常 就代表没有触发熔断
             newUsed = limit(bytes, label);
         }
 
         // Additionally, we need to check that we haven't exceeded the parent's limit
         try {
+            // 还需要检测父对象是否发生熔断 推测父对象会维护所有分配的熔断器使用的内存 可能父对象单独维护一个limit值
             parent.checkParentLimit((long) (bytes * overheadConstant), label);
         } catch (CircuitBreakingException e) {
             // If the parent breaker is tripped, this breaker has to be
@@ -146,6 +166,12 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
         return newUsed;
     }
 
+    /**
+     * 尝试申请更多的内存
+     * @param bytes
+     * @param label
+     * @return
+     */
     private long limit(long bytes, String label) {
         long newUsed;// Otherwise, check the addition and commit the addition, looping if
         // there are conflicts. May result in additional logging, but it's
@@ -167,6 +193,7 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
                         this.name,
                         newUsedWithOverhead, new ByteSizeValue(newUsedWithOverhead), label,
                         memoryBytesLimit, new ByteSizeValue(memoryBytesLimit));
+                // 触发熔断
                 circuitBreak(label, newUsedWithOverhead);
             }
             // Attempt to set the new used value, but make sure it hasn't changed
@@ -184,6 +211,7 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
      *
      * @param bytes number of bytes to add to the breaker
      * @return number of "used" bytes so far
+     * 代表在熔断前已使用的内存大小
      */
     @Override
     public long addWithoutBreaking(long bytes) {

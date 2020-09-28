@@ -155,6 +155,7 @@ public interface ActionListener<Response> {
         return new ActionListener<>() {
             @Override
             public void onResponse(Response response) {
+                // 先通过映射函数处理结果后 再触发正常的处理逻辑
                 T mapped;
                 try {
                     mapped = fn.apply(response);

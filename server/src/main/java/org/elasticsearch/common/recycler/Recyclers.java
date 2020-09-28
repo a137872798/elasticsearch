@@ -109,14 +109,17 @@ public enum Recyclers {
     /**
      * Create a concurrent implementation that can support concurrent access from
      * <code>concurrencyLevel</code> threads with little contention.
+     * 为普通的recycle对象 追加线程安全能力
      */
     public static <T> Recycler<T> concurrent(final Recycler.Factory<T> factory, final int concurrencyLevel) {
         if (concurrencyLevel < 1) {
             throw new IllegalArgumentException("concurrencyLevel must be >= 1");
         }
         if (concurrencyLevel == 1) {
+            // 这个意思应该是在并行度不高的情况下使用jvm的内置锁
             return locked(factory.build());
         }
+        // 采用了分段锁的思想 每个线程仅选择其中一个recyclers 借此降低每个recycle的竞争程度
         return new FilterRecycler<T>() {
 
             private final Recycler<T>[] recyclers;

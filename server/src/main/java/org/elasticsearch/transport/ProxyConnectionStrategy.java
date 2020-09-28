@@ -280,7 +280,7 @@ public class ProxyConnectionStrategy extends RemoteConnectionStrategy {
                 DiscoveryNode node = new DiscoveryNode(id, resolved, attributes, DiscoveryNodeRole.BUILT_IN_ROLES,
                     Version.CURRENT.minimumCompatibilityVersion());
 
-                // 通过manager对象创建连接  每次连接调用还有2次额外机会
+                // 通过manager对象创建连接  每次连接调用还有2次额外机会    调用connectToNode 针对一个节点最多只存在一条连接  可能这就是体现proxy的地方吧 也就是模拟了很多成功的连接
                 connectionManager.connectToNode(node, null, clusterNameValidator, new ActionListener<>() {
                     @Override
                     public void onResponse(Void v) {

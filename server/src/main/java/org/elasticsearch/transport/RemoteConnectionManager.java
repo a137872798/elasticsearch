@@ -29,16 +29,26 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * 该对象负责管理通往远端集群的connection
+ */
 public class RemoteConnectionManager implements ConnectionManager {
 
     private final String clusterAlias;
+    /**
+     * 内部应该就是 ClusterConnectionManager吧   ClusterConnectionManager 应该是管理一个集群内部的连接的
+     */
     private final ConnectionManager delegate;
     private final AtomicLong counter = new AtomicLong();
+    /**
+     * 每当delegate成功创建有关某个node 的连接时 会在该列表中也存储一份
+     */
     private volatile List<DiscoveryNode> connectedNodes = Collections.emptyList();
 
     RemoteConnectionManager(String clusterAlias, ConnectionManager delegate) {
         this.clusterAlias = clusterAlias;
         this.delegate = delegate;
+        // 当代理对象成功连接到某个节点时 在当前对象的 connectedNodes 中追加相同的对象
         this.delegate.addListener(new TransportConnectionListener() {
             @Override
             public void onNodeConnected(DiscoveryNode node, Transport.Connection connection) {
@@ -98,16 +108,22 @@ public class RemoteConnectionManager implements ConnectionManager {
         return delegate.getConnectionProfile();
     }
 
+    /**
+     * 返回任意一个连接对象
+     * @return
+     */
     public Transport.Connection getAnyRemoteConnection() {
         List<DiscoveryNode> localConnectedNodes = this.connectedNodes;
         long curr;
-        while ((curr = counter.incrementAndGet()) == Long.MIN_VALUE);
-        if (localConnectedNodes.isEmpty() == false) {
-            DiscoveryNode nextNode = localConnectedNodes.get(Math.floorMod(curr, localConnectedNodes.size()));
-            try {
-                return delegate.getConnection(nextNode);
-            } catch (NodeNotConnectedException e) {
-                // Ignore. We will manually create an iterator of open nodes
+        // 可以看出这里是采用轮询的方式
+        while ((curr = counter.incrementAndGet()) == Long.MIN_VALUE) {
+            if (localConnectedNodes.isEmpty() == false) {
+                DiscoveryNode nextNode = localConnectedNodes.get(Math.floorMod(curr, localConnectedNodes.size()));
+                try {
+                    return delegate.getConnection(nextNode);
+                } catch (NodeNotConnectedException e) {
+                    // Ignore. We will manually create an iterator of open nodes
+                }
             }
         }
         Set<DiscoveryNode> allConnectionNodes = getAllConnectedNodes();
@@ -141,6 +157,11 @@ public class RemoteConnectionManager implements ConnectionManager {
         delegate.closeNoBlock();
     }
 
+    /**
+     * 当感知到通往某个node的连接被创建时  更新当前node列表
+     *
+     * @param addedNode
+     */
     private synchronized void addConnectedNode(DiscoveryNode addedNode) {
         ArrayList<DiscoveryNode> newConnections = new ArrayList<>(this.connectedNodes);
         newConnections.add(addedNode);
@@ -159,6 +180,9 @@ public class RemoteConnectionManager implements ConnectionManager {
         this.connectedNodes = Collections.unmodifiableList(newConnectedNodes);
     }
 
+    /**
+     * 代理连接对象
+     */
     static final class ProxyConnection implements Transport.Connection {
         private final Transport.Connection connection;
         private final DiscoveryNode targetNode;
@@ -182,7 +206,7 @@ public class RemoteConnectionManager implements ConnectionManager {
 
         @Override
         public void close() {
-            assert false: "proxy connections must not be closed";
+            assert false : "proxy connections must not be closed";
         }
 
         @Override

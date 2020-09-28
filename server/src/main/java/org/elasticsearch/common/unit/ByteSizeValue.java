@@ -34,6 +34,9 @@ import java.io.IOException;
 import java.util.Locale;
 import java.util.Objects;
 
+/**
+ * 描述bytes大小的bean对象
+ */
 public class ByteSizeValue implements Writeable, Comparable<ByteSizeValue>, ToXContentFragment {
 
     /**
@@ -48,6 +51,9 @@ public class ByteSizeValue implements Writeable, Comparable<ByteSizeValue>, ToXC
     public static final ByteSizeValue ZERO = new ByteSizeValue(0, ByteSizeUnit.BYTES);
 
     private final long size;
+    /**
+     * 代表size的单位  bytes/kb/mb/gb 等等
+     */
     private final ByteSizeUnit unit;
 
     public ByteSizeValue(StreamInput in) throws IOException {
