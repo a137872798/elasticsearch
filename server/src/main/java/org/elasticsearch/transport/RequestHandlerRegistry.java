@@ -50,6 +50,9 @@ public class RequestHandlerRegistry<Request extends TransportRequest> {
     private final boolean canTripCircuitBreaker;
     private final String executor;
     private final TaskManager taskManager;
+    /**
+     * 该对象可以将 消息体中的数据 反序列化成 req 对象 (一般都是处理InboundMessage的消息体)
+     */
     private final Writeable.Reader<Request> requestReader;
 
     public RequestHandlerRegistry(String action, Writeable.Reader<Request> requestReader, TaskManager taskManager,
@@ -75,7 +78,7 @@ public class RequestHandlerRegistry<Request extends TransportRequest> {
     /**
      * 处理接受到的请求
      * @param request  处理的请求可以是不同类型的
-     * @param channel  不同通道可能会有不同的特性 所以才把通道单独抽象出来
+     * @param channel  将结果通过channel返回
      * @throws Exception
      */
     public void processMessageReceived(Request request, TransportChannel channel) throws Exception {

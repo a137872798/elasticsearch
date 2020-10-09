@@ -434,7 +434,7 @@ public class NioSelector implements Closeable {
                 executeFailedListener(writeOperation.getListener(), e);
             }
 
-            // 代表之前没有刷盘任务  TODO 为什么只有当之前没有刷盘任务时才进行处理
+            // 之前没有囤积的flush 代表此时可以直接将数据写入到缓冲区   如果有囤积任务 代表之前缓冲区就满了 必须等待write事件准备完成
             if (shouldFlushAfterQueuing) {
                 // We only attempt the write if the connect process is complete and the context is not
                 // signalling that it should be closed.
@@ -443,7 +443,7 @@ public class NioSelector implements Closeable {
                     // 使用eventHandler 处理context内所有待刷盘任务
                     handleWrite(context);
                 }
-                // 触发后置钩子
+                // 触发后置钩子 检测此时是否有数据无法写入到缓冲区 有的话 选择注册Write事件
                 eventHandler.postHandling(context);
             }
         }

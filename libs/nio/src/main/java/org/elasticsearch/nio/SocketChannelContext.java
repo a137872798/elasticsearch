@@ -369,6 +369,7 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
 
         // 代表该flushOp内部的数据还没有写完
         boolean continueFlush = flushOperation.isFullyFlushed() == false;
+        // 记录本次总计写入了多少数据
         int totalBytesFlushed = 0;
         while (continueFlush) {
             ioBuffer.clear();

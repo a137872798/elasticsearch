@@ -41,7 +41,7 @@ import org.elasticsearch.threadpool.ThreadPool;
 import java.io.IOException;
 
 /**
- * 处理发往外部的消息  既可以发送req 也可以发送res
+ * 该对象总结起来就是生成合适的对象 并通过channel将数据发出
  */
 final class OutboundHandler {
 
@@ -77,6 +77,7 @@ final class OutboundHandler {
      * @param listener
      */
     void sendBytes(TcpChannel channel, BytesReference bytes, ActionListener<Void> listener) {
+        // 将相关参数封装成一个上下文对象
         SendContext sendContext = new SendContext(channel, () -> bytes, listener);
         try {
             internalSend(channel, sendContext);
@@ -89,15 +90,20 @@ final class OutboundHandler {
     /**
      * Sends the request to the given channel. This method should be used to send {@link TransportRequest}
      * objects back to the caller.
+     * 往某个指定的节点发送消息
+     * @param isHandshake  本次发送的请求是否是握手请求
      */
     void sendRequest(final DiscoveryNode node, final TcpChannel channel, final long requestId, final String action,
                      final TransportRequest request, final TransportRequestOptions options, final Version channelVersion,
                      final boolean compressRequest, final boolean isHandshake) throws IOException, TransportException {
         Version version = Version.min(this.version, channelVersion);
+        // 根据相关信息生成 message对象
         OutboundMessage.Request message =
             new OutboundMessage.Request(threadPool.getThreadContext(), request, version, action, requestId, isHandshake, compressRequest);
+        // 将messageListener 包装成监听器
         ActionListener<Void> listener = ActionListener.wrap(() ->
             messageListener.onRequestSent(node, requestId, action, request, options));
+        // 使用channel 发送消息
         sendMessage(channel, message, listener);
     }
 
@@ -118,6 +124,7 @@ final class OutboundHandler {
 
     /**
      * Sends back an error response to the caller via the given channel
+     * 发送一个异常对象到对端???
      */
     void sendErrorResponse(final Version nodeVersion, final TcpChannel channel, final long requestId, final String action,
                            final Exception error) throws IOException {
@@ -130,13 +137,27 @@ final class OutboundHandler {
         sendMessage(channel, message, listener);
     }
 
+    /**
+     * 将消息经过特殊处理后发送
+     * @param channel
+     * @param networkMessage
+     * @param listener
+     * @throws IOException
+     */
     private void sendMessage(TcpChannel channel, OutboundMessage networkMessage, ActionListener<Void> listener) throws IOException {
         MessageSerializer serializer = new MessageSerializer(networkMessage, bigArrays);
         SendContext sendContext = new SendContext(channel, serializer, listener, serializer);
         internalSend(channel, sendContext);
     }
 
+    /**
+     * 将数据通过channel 发送
+     * @param channel
+     * @param sendContext
+     * @throws IOException
+     */
     private void internalSend(TcpChannel channel, SendContext sendContext) throws IOException {
+        // 更新该channel的最后活跃时间 这样在心跳任务对象中就可以节省部分开销
         channel.getChannelStats().markAccessed(threadPool.relativeTimeInMillis());
         BytesReference reference = sendContext.get();
         try {
@@ -157,6 +178,9 @@ final class OutboundHandler {
         }
     }
 
+    /**
+     * 该对象负责将消息序列化
+     */
     private static class MessageSerializer implements CheckedSupplier<BytesReference, IOException>, Releasable {
 
         private final OutboundMessage message;
@@ -189,7 +213,13 @@ final class OutboundHandler {
          *  本次发送数据的channel
          */
         private final TcpChannel channel;
+        /**
+         * 获取待发送的数据
+         */
         private final CheckedSupplier<BytesReference, IOException> messageSupplier;
+        /**
+         * 发送结果由该监听器处理
+         */
         private final ActionListener<Void> listener;
         private final Releasable optionalReleasable;
         private long messageSize = -1;
@@ -207,6 +237,11 @@ final class OutboundHandler {
             this.optionalReleasable = optionalReleasable;
         }
 
+        /**
+         * 获取需要发送的数据
+         * @return
+         * @throws IOException
+         */
         public BytesReference get() throws IOException {
             BytesReference message;
             try {
@@ -220,10 +255,13 @@ final class OutboundHandler {
             }
         }
 
+        // 当产生结果时触发下面的函数
+
         @Override
         protected void innerOnResponse(Void v) {
             assert messageSize != -1 : "If onResponse is being called, the message should have been serialized";
             statsTracker.markBytesWritten(messageSize);
+            // 转发到创建该对象时的listener
             closeAndCallback(() -> listener.onResponse(v));
         }
 

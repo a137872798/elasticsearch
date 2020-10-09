@@ -24,10 +24,14 @@ import org.elasticsearch.common.util.concurrent.ThreadContext;
 /**
  * Represents a transport message sent over the network. Subclasses implement serialization and
  * deserialization.
+ * 代表在网络中传输的消息
  */
 public abstract class NetworkMessage {
 
     protected final Version version;
+    /**
+     * 线程池需要的各种信息
+     */
     protected final ThreadContext threadContext;
     protected final ThreadContext.StoredContext storedContext;
     protected final long requestId;

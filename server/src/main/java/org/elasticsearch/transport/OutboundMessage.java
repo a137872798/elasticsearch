@@ -30,8 +30,14 @@ import org.elasticsearch.common.util.concurrent.ThreadContext;
 
 import java.io.IOException;
 
+/**
+ * NetworkMessage 可以理解成一个简单的bean对象
+ */
 abstract class OutboundMessage extends NetworkMessage {
 
+    /**
+     * 待发送的消息体
+     */
     private final Writeable message;
 
     OutboundMessage(ThreadContext threadContext, Version version, byte status, long requestId, Writeable message) {
@@ -39,6 +45,12 @@ abstract class OutboundMessage extends NetworkMessage {
         this.message = message;
     }
 
+    /**
+     * 将内部数据写入到 output中
+     * @param bytesStream
+     * @return
+     * @throws IOException
+     */
     BytesReference serialize(BytesStreamOutput bytesStream) throws IOException {
         storedContext.restore();
         bytesStream.setVersion(version);
@@ -98,8 +110,14 @@ abstract class OutboundMessage extends NetworkMessage {
         }
     }
 
+    /**
+     * 代表某种请求对象
+     */
     static class Request extends OutboundMessage {
 
+        /**
+         * 发起的命令
+         */
         private final String action;
 
         Request(ThreadContext threadContext, Writeable message, Version version, String action, long requestId,

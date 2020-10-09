@@ -35,6 +35,12 @@ import java.util.Arrays;
 /** Utility class to work with arrays. */
 public class BigArrays {
 
+    final PageCacheRecycler recycler;
+    private final CircuitBreakerService breakerService;
+    private final boolean checkBreaker;
+    private final BigArrays circuitBreakingInstance;
+    private final String breakerName;
+
     public static final BigArrays NON_RECYCLING_INSTANCE = new BigArrays(null, null, CircuitBreaker.REQUEST);
 
     /** Returns the next size to grow when working with parallel arrays that
@@ -356,11 +362,6 @@ public class BigArrays {
 
     }
 
-    final PageCacheRecycler recycler;
-    private final CircuitBreakerService breakerService;
-    private final boolean checkBreaker;
-    private final BigArrays circuitBreakingInstance;
-    private final String breakerName;
 
     /**
      *

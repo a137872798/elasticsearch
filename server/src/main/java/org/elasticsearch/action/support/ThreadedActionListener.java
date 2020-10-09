@@ -28,11 +28,15 @@ import org.elasticsearch.threadpool.ThreadPool;
 
 /**
  * An action listener that wraps another action listener and threading its execution.
+ * 将监听器的触发逻辑交给线程池处理
  */
 public final class ThreadedActionListener<Response> implements ActionListener<Response> {
 
     private final Logger logger;
     private final ThreadPool threadPool;
+    /**
+     * ThreadPool 中按照name 分成了多种线程池 需要使用 name 来指定线程池
+     */
     private final String executor;
     private final ActionListener<Response> listener;
     private final boolean forceExecution;
@@ -49,6 +53,10 @@ public final class ThreadedActionListener<Response> implements ActionListener<Re
     @Override
     public void onResponse(final Response response) {
         threadPool.executor(executor).execute(new ActionRunnable<>(listener) {
+            /**
+             * 如果当前任务需要强制执行 那么即使任务队列已经设置满了 还会继续添加
+             * @return
+             */
             @Override
             public boolean isForceExecution() {
                 return forceExecution;

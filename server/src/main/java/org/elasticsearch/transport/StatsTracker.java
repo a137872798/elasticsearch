@@ -30,6 +30,9 @@ public class StatsTracker {
 
     private final LongAdder bytesRead = new LongAdder();
     private final LongAdder messagesReceived = new LongAdder();
+    /**
+     * 总计往外发送了多少数据
+     */
     private final MeanMetric writeBytesMetric = new MeanMetric();
 
     public void markBytesRead(long bytesReceived) {

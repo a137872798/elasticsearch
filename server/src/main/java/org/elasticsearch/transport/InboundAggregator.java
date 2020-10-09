@@ -121,7 +121,6 @@ public class InboundAggregator implements Releasable {
     }
 
     /**
-     * 当所有消息收集成功时 进行聚合 不过比起在接收端进行聚合 肯定不如在发送时进行聚合 比如kafka
      * @return
      * @throws IOException
      */

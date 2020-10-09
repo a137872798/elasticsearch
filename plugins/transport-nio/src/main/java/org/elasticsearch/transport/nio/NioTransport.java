@@ -84,6 +84,12 @@ public class NioTransport extends TcpTransport {
         return serverChannel;
     }
 
+    /**
+     * 建立一条连接到目标节点的channel
+     * @param node for the initiated connection
+     * @return
+     * @throws IOException
+     */
     @Override
     protected NioTcpChannel initiateChannel(DiscoveryNode node) throws IOException {
         InetSocketAddress address = node.getAddress().address();

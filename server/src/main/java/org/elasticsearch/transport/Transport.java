@@ -286,7 +286,7 @@ public interface Transport extends LifecycleComponent {
          * called by the {@link Transport} implementation when a response or an exception has been received for a previously
          * sent request (before any processing or deserialization was done). Returns the appropriate response handler or null if not
          * found.
-         * 当某个请求收到响应结果时 从请求池中移除对象 并触发监听器
+         * 当某个请求接收到匹配的res时 从handlers中移除
          */
         public TransportResponseHandler<? extends TransportResponse> onResponseReceived(final long requestId,
                                                                                         final TransportMessageListener listener) {

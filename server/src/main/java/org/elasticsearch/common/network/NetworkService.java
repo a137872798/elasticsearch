@@ -144,8 +144,8 @@ public final class NetworkService {
      * @param publishHosts list of hosts to publish as. this may contain special pseudo-hostnames
      *                     such as _local_ (see the documentation). if it is null, it will fall back to _local_
      * @return single internet address
+     * 从候选地址中返回一个作为 发布地址
      */
-    // TODO: needs to be InetAddress[]
     public InetAddress resolvePublishHostAddresses(String publishHosts[]) throws IOException {
         if (publishHosts == null || publishHosts.length == 0) {
             for (CustomNameResolver customNameResolver : customNameResolvers) {

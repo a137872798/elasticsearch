@@ -62,6 +62,7 @@ public class InboundPipeline implements Releasable {
 
     /**
      * param1 代表从哪条channel接受到消息  param2 代表接受到的消息本身
+     * 实际上就是 Transport::inboundMessage
      */
     private final BiConsumer<TcpChannel, InboundMessage> messageHandler;
     private Exception uncaughtException;
@@ -75,7 +76,7 @@ public class InboundPipeline implements Releasable {
      * @param recycler
      * @param relativeTimeInMillis
      * @param circuitBreaker  该对象负责获取熔断器
-     * @param registryFunction  通过actionName 可以获取到对应的请求处理器
+     * @param registryFunction  通过actionName 可以获取到对应的请求处理器   这里主要是检测处理消息时是否应该触发熔断
      * @param messageHandler   定义了如何处理消息的逻辑
      */
     public InboundPipeline(Version version, StatsTracker statsTracker, PageCacheRecycler recycler, LongSupplier relativeTimeInMillis,

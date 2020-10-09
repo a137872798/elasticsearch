@@ -25,16 +25,30 @@ import org.elasticsearch.common.lease.Releasable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * 贴近业务层的 channel对象   每当处理某个req对象时 就会生成一个对应的channel
+ * 该对象只负责发送 res
+ */
 public final class TcpTransportChannel implements TransportChannel {
 
     private final AtomicBoolean released = new AtomicBoolean();
+    /**
+     * 该对象定义了通过channel发送消息的逻辑
+     */
     private final OutboundHandler outboundHandler;
+    /**
+     * 底层channel对象 包含发送message的api
+     */
     private final TcpChannel channel;
     private final String action;
     private final long requestId;
     private final Version version;
     private final boolean compressResponse;
     private final boolean isHandshake;
+
+    /**
+     * 在该对象处理完毕时 减少熔断器的负载 避免触发熔断
+     */
     private final Releasable breakerRelease;
 
     TcpTransportChannel(OutboundHandler outboundHandler, TcpChannel channel, String action, long requestId, Version version,

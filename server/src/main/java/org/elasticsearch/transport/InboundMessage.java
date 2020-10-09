@@ -105,6 +105,10 @@ public class InboundMessage implements Releasable {
         return exception != null;
     }
 
+    /**
+     * 减小熔断器此时的负载 避免触发熔断
+     * @return
+     */
     public Releasable takeBreakerReleaseControl() {
         final Releasable toReturn = breakerRelease;
         breakerRelease = null;

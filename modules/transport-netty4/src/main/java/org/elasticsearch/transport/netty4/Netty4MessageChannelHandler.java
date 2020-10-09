@@ -43,16 +43,34 @@ import java.util.Queue;
 /**
  * A handler (must be the last one!) that does size based frame decoding and forwards the actual message
  * to the relevant action.
+ * ChannelDuplexHandler 代表在接收数据和发送数据时都会通过该handler 处理
  */
 final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
 
+    /**
+     * 传输层对象
+     */
     private final Netty4Transport transport;
 
+    /**
+     * 缓冲队列  在选择器被唤醒到处理缓存的写操作期间 外部线程添加的操作都会存储到这个对象
+     */
     private final Queue<WriteOperation> queuedWrites = new ArrayDeque<>();
 
+    /**
+     * 当前正在处理的写入操作
+     */
     private WriteOperation currentWrite;
+    /**
+     * 该对象实现了拆包粘包 解压等功能  (不用netty自带的编解码器)
+     */
     private final InboundPipeline pipeline;
 
+    /**
+     *
+     * @param recycler  内部缓存了各种数组
+     * @param transport  传输层对象
+     */
     Netty4MessageChannelHandler(PageCacheRecycler recycler, Netty4Transport transport) {
         this.transport = transport;
         final ThreadPool threadPool = transport.getThreadPool();
@@ -61,6 +79,12 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
             transport.getInflightBreaker(), requestHandlers::getHandler, transport::inboundMessage);
     }
 
+    /**
+     * 接收外部发送的数据
+     * @param ctx
+     * @param msg
+     * @throws Exception
+     */
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
         assert Transports.assertTransportThread();
@@ -68,7 +92,9 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
 
         final ByteBuf buffer = (ByteBuf) msg;
         Netty4TcpChannel channel = ctx.channel().attr(Netty4Transport.CHANNEL_KEY).get();
+        // 做一层转换
         final BytesReference wrapped = Netty4Utils.toBytesReference(buffer);
+        // 当使用完毕时 释放堆外内存
         try (ReleasableBytesReference reference = new ReleasableBytesReference(wrapped, buffer::release)) {
             pipeline.handleBytes(channel, reference);
         }
@@ -87,6 +113,12 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
         }
     }
 
+    /**
+     * netty本身会维护一个往外发送数据的对象
+     * @param ctx
+     * @param msg
+     * @param promise
+     */
     @Override
     public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
         assert msg instanceof ByteBuf;
@@ -94,6 +126,10 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
         assert queued;
     }
 
+    /**
+     * 当水位发生变化时 这里应该就是指 Write事件准备完毕  需要复习netty的时候才好理解
+     * @param ctx
+     */
     @Override
     public void channelWritabilityChanged(ChannelHandlerContext ctx) {
         if (ctx.channel().isWritable()) {
@@ -102,6 +138,10 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
         ctx.fireChannelWritabilityChanged();
     }
 
+    /**
+     * 将之前写入的 WriteOp 对象发送到对端
+     * @param ctx
+     */
     @Override
     public void flush(ChannelHandlerContext ctx) {
         Channel channel = ctx.channel();
@@ -110,6 +150,11 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
         }
     }
 
+    /**
+     * 失活时将所有 writerOp以失败形式触发
+     * @param ctx
+     * @throws Exception
+     */
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         doFlush(ctx);
@@ -117,6 +162,10 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
         super.channelInactive(ctx);
     }
 
+    /**
+     * 处理之前存储的所有 writeOp对象
+     * @param ctx
+     */
     private void doFlush(ChannelHandlerContext ctx) {
         assert ctx.executor().inEventLoop();
         final Channel channel = ctx.channel();
@@ -151,6 +200,7 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
             } else {
                 writeBuffer = write.buf;
             }
+            // writeBuffer 是当前还未写入的数据分片 这里是考虑可能之前无法写入数据 而此时准备好了 Write事件 水位发生了变化 所以可以将之前的数据写入
             final ChannelFuture writeFuture = ctx.write(writeBuffer);
             if (sliced == false || write.buf.readableBytes() == 0) {
                 currentWrite = null;
@@ -170,6 +220,7 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
                     }
                 });
             }
+            // 将数据写入底层的channel
             ctx.flush();
             if (channel.isActive() == false) {
                 failQueuedWrites();
@@ -185,6 +236,9 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
         }
     }
 
+    /**
+     * 这里的监听器使用了netty自带的 promise对象
+     */
     private static final class WriteOperation {
 
         private final ByteBuf buf;

@@ -58,7 +58,9 @@ public class BytesStreamOutput extends BytesStream {
     }
 
     protected BytesStreamOutput(int expectedSize, BigArrays bigArrays) {
+        // 存储写入的数据
         this.bigArrays = bigArrays;
+        // 分配目标大小的数组
         this.bytes = bigArrays.newByteArray(expectedSize, false);
     }
 

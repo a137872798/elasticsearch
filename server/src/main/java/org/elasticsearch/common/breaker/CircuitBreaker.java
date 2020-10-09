@@ -53,6 +53,7 @@ public interface CircuitBreaker {
     /**
      * The in-flight request breaker tracks bytes allocated for reading and
      * writing requests on the network layer.
+     * 专门针对 将要处理的req 做熔断  一旦总的处理中的数据量达到一定值 之后的req都会以异常结果返回
      */
     String IN_FLIGHT_REQUESTS = "inflight_requests";
     /**

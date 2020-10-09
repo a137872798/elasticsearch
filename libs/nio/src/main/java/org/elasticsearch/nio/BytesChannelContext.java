@@ -91,6 +91,7 @@ public class BytesChannelContext extends SocketChannelContext {
 
     /**
      * Returns a boolean indicating if the operation was fully flushed.
+     * 这里就会出现拆包问题
      */
     private boolean singleFlush(FlushOperation flushOperation) throws IOException {
         // 将flushOp内部的数据通过channel写到对端

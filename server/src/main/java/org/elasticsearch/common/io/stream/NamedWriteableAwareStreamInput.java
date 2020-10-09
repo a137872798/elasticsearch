@@ -26,6 +26,9 @@ import java.io.IOException;
  */
 public class NamedWriteableAwareStreamInput extends FilterStreamInput {
 
+    /**
+     * 该对象定义了指定的class 以及对应的reader对象
+     */
     private final NamedWriteableRegistry namedWriteableRegistry;
 
     public NamedWriteableAwareStreamInput(StreamInput delegate, NamedWriteableRegistry namedWriteableRegistry) {
@@ -39,6 +42,14 @@ public class NamedWriteableAwareStreamInput extends FilterStreamInput {
         return readNamedWriteable(categoryClass, name);
     }
 
+    /**
+     * 当指定class 时 使用特殊的reader 读取本对象 并返回结果
+     * @param categoryClass
+     * @param name
+     * @param <C>
+     * @return
+     * @throws IOException
+     */
     @Override
     public <C extends NamedWriteable> C readNamedWriteable(@SuppressWarnings("unused") Class<C> categoryClass,
                                                            @SuppressWarnings("unused") String name) throws IOException {

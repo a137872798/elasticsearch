@@ -32,6 +32,9 @@ import org.elasticsearch.transport.TransportException;
 
 import java.net.InetSocketAddress;
 
+/**
+ * 适配了netty的channel
+ */
 public class Netty4TcpChannel implements TcpChannel {
 
     private final Channel channel;
@@ -141,6 +144,11 @@ public class Netty4TcpChannel implements TcpChannel {
         return (InetSocketAddress) channel.remoteAddress();
     }
 
+    /**
+     * 发送消息时 使用ByteBuf包裹数据
+     * @param reference to send to channel
+     * @param listener to execute upon send completion
+     */
     @Override
     public void sendMessage(BytesReference reference, ActionListener<Void> listener) {
         channel.writeAndFlush(Netty4Utils.toByteBuf(reference), addPromise(listener, channel));

@@ -76,6 +76,11 @@ final class TransportKeepAlive implements Closeable {
      */
     private final BytesReference pingMessage;
 
+    /**
+     *
+     * @param threadPool
+     * @param pingSender  对应 outboundHandler::sendBytes 也就是将消息体通过channel发送
+     */
     TransportKeepAlive(ThreadPool threadPool, AsyncBiFunction<TcpChannel, BytesReference, Void> pingSender) {
         this.threadPool = threadPool;
         this.pingSender = pingSender;
@@ -120,6 +125,7 @@ final class TransportKeepAlive implements Closeable {
      * this method does nothing as the client initiated the ping in the first place.
      *
      * @param channel that received the keep alive ping
+     *                代表接收到来自 服务端的ping 请求 此时要发送ack到对端 完成一次心跳检测
      */
     void receiveKeepAlive(TcpChannel channel) {
         // The client-side initiates pings and the server-side responds. So if this is a client channel, this
