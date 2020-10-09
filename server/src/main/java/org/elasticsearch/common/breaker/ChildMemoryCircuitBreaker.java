@@ -211,7 +211,7 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
      *
      * @param bytes number of bytes to add to the breaker
      * @return number of "used" bytes so far
-     * 代表在熔断前已使用的内存大小
+     * 该数据的变化是不会触发熔断的
      */
     @Override
     public long addWithoutBreaking(long bytes) {

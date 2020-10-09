@@ -43,18 +43,37 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Implements the scheduling and sending of keep alive pings. Client channels send keep alive pings to the
  * server and server channels respond. Pings are only sent at the scheduled time if the channel did not send
  * and receive a message since the last ping.
+ * 定期发送心跳包  在ES的架构中 心跳包是由中心服务器向其他节点发送的
  */
 final class TransportKeepAlive implements Closeable {
 
     static final int PING_DATA_SIZE = -1;
 
     private final Logger logger = LogManager.getLogger(TransportKeepAlive.class);
+
+    /**
+     * 记录总计成功了多少次 ping
+     */
     private final CounterMetric successfulPings = new CounterMetric();
+    /**
+     * 记录失败的ping
+     */
     private final CounterMetric failedPings = new CounterMetric();
     private final ConcurrentMap<TimeValue, ScheduledPing> pingIntervals = ConcurrentCollections.newConcurrentMap();
+
+    /**
+     * 描述当前对象的生命周期状态  ping任务在执行时会检测当前生命周期  在不合适的时候会停止发送
+     */
     private final Lifecycle lifecycle = new Lifecycle();
     private final ThreadPool threadPool;
+
+    /**
+     * 该对象定义了将数据包发往哪个channel 同时使用结果触发监听器的逻辑
+     */
     private final AsyncBiFunction<TcpChannel, BytesReference, Void> pingSender;
+    /**
+     * 心跳包本身是单例模式
+     */
     private final BytesReference pingMessage;
 
     TransportKeepAlive(ThreadPool threadPool, AsyncBiFunction<TcpChannel, BytesReference, Void> pingSender) {
@@ -62,6 +81,7 @@ final class TransportKeepAlive implements Closeable {
         this.pingSender = pingSender;
 
         try (BytesStreamOutput out = new BytesStreamOutput()) {
+            // ES的自定义协议 以 “ES” 作为开头
             out.writeByte((byte) 'E');
             out.writeByte((byte) 'S');
             out.writeInt(PING_DATA_SIZE);
@@ -73,6 +93,11 @@ final class TransportKeepAlive implements Closeable {
         this.lifecycle.moveToStarted();
     }
 
+    /**
+     * 针对所有需要检测的channel 生成一个任务对象
+     * @param nodeChannels
+     * @param connectionProfile  该对象维护了心跳检测间隔
+     */
     void registerNodeConnection(List<TcpChannel> nodeChannels, ConnectionProfile connectionProfile) {
         TimeValue pingInterval = connectionProfile.getPingInterval();
         if (pingInterval.millis() < 0) {
@@ -84,6 +109,7 @@ final class TransportKeepAlive implements Closeable {
 
         for (TcpChannel channel : nodeChannels) {
             scheduledPing.addChannel(channel);
+            // 当某个channel 被关闭时 自动从ping任务中移除
             channel.addCloseListener(ActionListener.wrap(() -> scheduledPing.removeChannel(channel)));
         }
     }
@@ -111,6 +137,10 @@ final class TransportKeepAlive implements Closeable {
         return failedPings.count();
     }
 
+    /**
+     * 往某个channel 发送心跳包
+     * @param channel
+     */
     private void sendPing(TcpChannel channel) {
         pingSender.apply(channel, pingMessage, new ActionListener<Void>() {
 
@@ -139,21 +169,34 @@ final class TransportKeepAlive implements Closeable {
         }
     }
 
+    /**
+     * 该任务有生命周期的概念 同时在一定时间间隔后会向所有目标节点发送心跳包
+     */
     private class ScheduledPing extends AbstractLifecycleRunnable {
 
+        /**
+         * 对应发送心跳包的时间点
+         */
         private final TimeValue pingInterval;
 
+        /**
+         * 将会发往哪些channel
+         */
         private final Set<TcpChannel> channels = ConcurrentCollections.newConcurrentSet();
 
         private final AtomicBoolean isStarted = new AtomicBoolean(false);
         private volatile long lastPingRelativeMillis;
 
         private ScheduledPing(TimeValue pingInterval) {
+            // 当本对象无效时 ping任务也不需要继续处理了
             super(lifecycle, logger);
             this.pingInterval = pingInterval;
             this.lastPingRelativeMillis = threadPool.relativeTimeInMillis();
         }
 
+        /**
+         * 启动任务
+         */
         void ensureStarted() {
             if (isStarted.get() == false && isStarted.compareAndSet(false, true)) {
                 threadPool.schedule(this, pingInterval, ThreadPool.Names.GENERIC);
@@ -174,6 +217,7 @@ final class TransportKeepAlive implements Closeable {
                 // In the future it is possible that we may want to kill a channel if we have not read from
                 // the channel since the last ping. However, this will need to be backwards compatible with
                 // pre-6.6 nodes that DO NOT respond to pings
+                // 只找到需要检测的channel  并发送心跳包
                 if (needsKeepAlivePing(channel)) {
                     sendPing(channel);
                 }
@@ -181,6 +225,9 @@ final class TransportKeepAlive implements Closeable {
             this.lastPingRelativeMillis = threadPool.relativeTimeInMillis();
         }
 
+        /**
+         * 当心跳包发送完成时的后置钩子  就是定时执行下次任务
+         */
         @Override
         protected void onAfterInLifecycle() {
             threadPool.scheduleUnlessShuttingDown(pingInterval, ThreadPool.Names.GENERIC, this);
@@ -191,8 +238,14 @@ final class TransportKeepAlive implements Closeable {
             logger.warn("failed to send ping transport message", e);
         }
 
+        /**
+         * 判断某个channel是否有检测的必要   比如刚从某个channel接收到数据 那么就不需要检测了
+         * @param channel
+         * @return
+         */
         private boolean needsKeepAlivePing(TcpChannel channel) {
             TcpChannel.ChannelStats stats = channel.getChannelStats();
+            // 代表在该对象生成之后 接收到了该channel发送的数据 那么该channel  本轮不需要检测
             long accessedDelta = stats.lastAccessedTime() - lastPingRelativeMillis;
             return accessedDelta <= 0;
         }

@@ -40,6 +40,9 @@ import org.elasticsearch.threadpool.ThreadPool;
 
 import java.io.IOException;
 
+/**
+ * 处理发往外部的消息  既可以发送req 也可以发送res
+ */
 final class OutboundHandler {
 
     private static final Logger logger = LogManager.getLogger(OutboundHandler.class);
@@ -51,6 +54,14 @@ final class OutboundHandler {
     private final BigArrays bigArrays;
     private volatile TransportMessageListener messageListener = TransportMessageListener.NOOP_LISTENER;
 
+    /**
+     *
+     * @param nodeName   对应当前节点的名字
+     * @param version     节点的版本号
+     * @param statsTracker
+     * @param threadPool
+     * @param bigArrays
+     */
     OutboundHandler(String nodeName, Version version, StatsTracker statsTracker, ThreadPool threadPool, BigArrays bigArrays) {
         this.nodeName = nodeName;
         this.version = version;
@@ -59,6 +70,12 @@ final class OutboundHandler {
         this.bigArrays = bigArrays;
     }
 
+    /**
+     * 往某个channel 发送bytes 同时使用listener监听结果
+     * @param channel
+     * @param bytes
+     * @param listener
+     */
     void sendBytes(TcpChannel channel, BytesReference bytes, ActionListener<Void> listener) {
         SendContext sendContext = new SendContext(channel, () -> bytes, listener);
         try {
@@ -163,8 +180,14 @@ final class OutboundHandler {
         }
     }
 
+    /**
+     * 在某次发送操作中维护了各种需要的信息
+     */
     private class SendContext extends NotifyOnceListener<Void> implements CheckedSupplier<BytesReference, IOException> {
 
+        /**
+         *  本次发送数据的channel
+         */
         private final TcpChannel channel;
         private final CheckedSupplier<BytesReference, IOException> messageSupplier;
         private final ActionListener<Void> listener;

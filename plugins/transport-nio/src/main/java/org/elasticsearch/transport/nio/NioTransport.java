@@ -151,6 +151,9 @@ public class NioTransport extends TcpTransport {
         }
     }
 
+    /**
+     * jdk底层的channel 会被封装成es的channel
+     */
     private class TcpChannelFactoryImpl extends TcpChannelFactory {
 
         private final boolean isClient;
@@ -166,7 +169,9 @@ public class NioTransport extends TcpTransport {
         public NioTcpChannel createChannel(NioSelector selector, SocketChannel channel, Config.Socket socketConfig) {
             NioTcpChannel nioChannel = new NioTcpChannel(isClient == false, profileName, channel);
             Consumer<Exception> exceptionHandler = (e) -> onException(nioChannel, e);
+            // 用于处理tcp读取请求的handler
             TcpReadWriteHandler handler = new TcpReadWriteHandler(nioChannel, pageCacheRecycler, NioTransport.this);
+            // 将相关对象包装成context  设置到channel后返回channel
             BytesChannelContext context = new BytesChannelContext(nioChannel, selector, socketConfig, exceptionHandler, handler,
                 new InboundChannelBuffer(pageAllocator));
             nioChannel.setContext(context);

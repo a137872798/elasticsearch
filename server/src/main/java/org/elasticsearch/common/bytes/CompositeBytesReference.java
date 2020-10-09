@@ -33,11 +33,18 @@ import java.util.Objects;
  * into one without copying.
  *
  * Note, {@link #toBytesRef()} will materialize all pages in this BytesReference.
+ * 将一组消息合并成一个  (通过一系列加工后 在逻辑上展示为一个ref)
  */
 public final class CompositeBytesReference extends AbstractBytesReference {
 
     private final BytesReference[] references;
+    /**
+     * 将整个 references 在逻辑上看成一个整体 这样每个对象对应的起点能够在整体上对应到一个偏移量
+     */
     private final int[] offsets;
+    /**
+     * 总数据长度
+     */
     private final int length;
     private final long ramBytesUsed;
 
@@ -72,6 +79,7 @@ public final class CompositeBytesReference extends AbstractBytesReference {
 
     @Override
     public int indexOf(byte marker, int from) {
+        // 计算剩余部分还有多少
         final int remainingBytes = Math.max(length - from, 0);
         Objects.checkFromIndexSize(from, remainingBytes, length);
 
@@ -80,15 +88,19 @@ public final class CompositeBytesReference extends AbstractBytesReference {
             return result;
         }
 
+        // 转换成数组下标
         final int firstReferenceIndex = getOffsetIndex(from);
         for (int i = firstReferenceIndex; i < references.length; ++i) {
             final BytesReference reference = references[i];
+
+            // 代表在单个ref中的偏移量
             final int internalFrom;
             if (i == firstReferenceIndex) {
                 internalFrom = from - offsets[firstReferenceIndex];
             } else {
                 internalFrom = 0;
             }
+            // 从目标位置起返回 marker第一次出现的位置
             result = reference.indexOf(marker, internalFrom);
             if (result != -1) {
                 result += offsets[i];

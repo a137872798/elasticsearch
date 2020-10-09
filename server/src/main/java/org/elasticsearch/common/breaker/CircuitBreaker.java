@@ -25,6 +25,7 @@ import java.util.Locale;
 /**
  * Interface for an object that can be incremented, breaking after some
  * configured limit has been reached.
+ * 代表一个可累加的对象  当某个值达到限制时 触发熔断
  */
 public interface CircuitBreaker {
 

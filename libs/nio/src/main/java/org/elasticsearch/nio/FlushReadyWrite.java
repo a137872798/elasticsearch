@@ -22,6 +22,9 @@ package org.elasticsearch.nio;
 import java.nio.ByteBuffer;
 import java.util.function.BiConsumer;
 
+/**
+ * 将某个待发送消息包装后生成该对象
+ */
 public class FlushReadyWrite extends FlushOperation implements WriteOperation {
 
     private final SocketChannelContext channelContext;

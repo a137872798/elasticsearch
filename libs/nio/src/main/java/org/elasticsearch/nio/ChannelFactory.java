@@ -75,8 +75,17 @@ public abstract class ChannelFactory<ServerSocket extends NioServerSocketChannel
         return channel;
     }
 
+    /**
+     * 将 java.nio.channel  封装成 es增强的channel
+     * @param rawChannel
+     * @param supplier
+     * @return
+     * @throws IOException
+     */
     public Socket acceptNioChannel(SocketChannel rawChannel, Supplier<NioSelector> supplier) throws IOException {
+        // 设置成非阻塞模式
         setNonBlocking(rawChannel);
+        // 随机获取一个selector 并进行绑定
         NioSelector selector = supplier.get();
         InetSocketAddress remoteAddress = getRemoteAddress(rawChannel);
         Socket channel = internalCreateChannel(selector, rawChannel, createSocketConfig(remoteAddress, true));
@@ -128,6 +137,14 @@ public abstract class ChannelFactory<ServerSocket extends NioServerSocketChannel
         return remoteAddress;
     }
 
+    /**
+     * 使用相关参数生成 channel对象
+     * @param selector
+     * @param rawChannel
+     * @param config
+     * @return
+     * @throws IOException
+     */
     private Socket internalCreateChannel(NioSelector selector, SocketChannel rawChannel, Config.Socket config) throws IOException {
         try {
             Socket channel = createChannel(selector, rawChannel, config);

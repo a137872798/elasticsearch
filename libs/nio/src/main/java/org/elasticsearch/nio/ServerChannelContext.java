@@ -40,12 +40,27 @@ import java.util.function.Supplier;
  */
 public class ServerChannelContext extends ChannelContext<ServerSocketChannel> {
 
+    /**
+     * 该上下文绑定的服务端通道
+     */
     private final NioServerSocketChannel channel;
+    /**
+     * 该对象定义了是事件循环的逻辑
+     */
     private final NioSelector selector;
+    /**
+     * 配置信息
+     */
     private final Config.ServerSocket config;
+    /**
+     * 定义了当接受到新的通道时该如何处理
+     */
     private final Consumer<NioSocketChannel> acceptor;
     private final AtomicBoolean isClosing = new AtomicBoolean(false);
     private final ChannelFactory<?, ?> channelFactory;
+    /**
+     * 监听绑定动作是否完成
+     */
     private final CompletableContext<Void> bindContext = new CompletableContext<>();
 
     public ServerChannelContext(NioServerSocketChannel channel, ChannelFactory<?, ?> channelFactory, NioSelector selector,
@@ -61,7 +76,9 @@ public class ServerChannelContext extends ChannelContext<ServerSocketChannel> {
 
     public void acceptChannels(Supplier<NioSelector> selectorSupplier) throws IOException {
         SocketChannel acceptedChannel;
+        // 这里不断循环 直到接收到新的客户端
         while ((acceptedChannel = accept(rawChannel)) != null) {
+            // 封装成ESchannel
             NioSocketChannel nioChannel = channelFactory.acceptNioChannel(acceptedChannel, selectorSupplier);
             acceptor.accept(nioChannel);
         }
@@ -110,6 +127,12 @@ public class ServerChannelContext extends ChannelContext<ServerSocketChannel> {
         socket.setReuseAddress(config.tcpReuseAddress());
     }
 
+    /**
+     * 处于非阻塞模式 调用accept 并立即返回
+     * @param serverSocketChannel
+     * @return
+     * @throws IOException
+     */
     protected static SocketChannel accept(ServerSocketChannel serverSocketChannel) throws IOException {
         try {
             assert serverSocketChannel.isBlocking() == false;

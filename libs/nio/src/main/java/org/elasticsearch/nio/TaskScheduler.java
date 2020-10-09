@@ -25,9 +25,13 @@ import java.util.PriorityQueue;
 /**
  * A basic priority queue backed timer service. The service is thread local and should only be used by a
  * single nio selector event loop thread.
+ * 一个简单的基于优先队列的定时器对象
  */
 public class TaskScheduler {
 
+    /**
+     * 所有待执行任务被包装成 DelayedTask  并根据任务触发时间进行排序
+     */
     private final PriorityQueue<DelayedTask> tasks = new PriorityQueue<>(Comparator.comparingLong(DelayedTask::getDeadline));
 
     /**
@@ -45,6 +49,11 @@ public class TaskScheduler {
         return delayedTask;
     }
 
+    /**
+     * 获取首个到达触发时间的任务
+     * @param relativeNanos
+     * @return
+     */
     public Runnable pollTask(long relativeNanos) {
         DelayedTask task;
         while ((task = tasks.peek()) != null) {
@@ -60,6 +69,11 @@ public class TaskScheduler {
         return null;
     }
 
+    /**
+     * 获取距离下个任务触发还有多久时间
+     * @param relativeNanos
+     * @return
+     */
     long nanosUntilNextTask(long relativeNanos) {
         DelayedTask nextTask = tasks.peek();
         if (nextTask == null) {
@@ -71,8 +85,14 @@ public class TaskScheduler {
 
     private static class DelayedTask implements Runnable {
 
+        /**
+         * 代表任务触发时间
+         */
         private final long deadline;
         private final Runnable runnable;
+        /**
+         * 任务是否被关闭  一般使用者会持有该对象的引用 这样就可以随时关闭任务
+         */
         private boolean cancelled = false;
 
         private DelayedTask(long deadline, Runnable runnable) {

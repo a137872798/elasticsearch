@@ -34,6 +34,9 @@ import java.util.ArrayDeque;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
+/**
+ * 解压缩对象  针对数据流特别大的情况可以考虑使用压缩算法
+ */
 public class TransportDecompressor implements Closeable {
 
     private final Inflater inflater;
@@ -48,9 +51,16 @@ public class TransportDecompressor implements Closeable {
         pages = new ArrayDeque<>(4);
     }
 
+    /**
+     * 对数据体进行解压
+     * @param bytesReference
+     * @return
+     * @throws IOException
+     */
     public int decompress(BytesReference bytesReference) throws IOException {
         int bytesConsumed = 0;
         if (hasReadHeader == false) {
+            // 校验解压方式是否一致
             if (CompressorFactory.COMPRESSOR.isCompressed(bytesReference) == false) {
                 int maxToRead = Math.min(bytesReference.length(), 10);
                 StringBuilder sb = new StringBuilder("stream marked as compressed, but no compressor found, first [")
@@ -64,10 +74,12 @@ public class TransportDecompressor implements Closeable {
             }
             hasReadHeader = true;
             int headerLength = CompressorFactory.COMPRESSOR.headerLength();
+            // 剩余的数据才是需要解压的
             bytesReference = bytesReference.slice(headerLength, bytesReference.length() - headerLength);
             bytesConsumed += headerLength;
         }
 
+        // inflater具体怎么用先不管
         BytesRefIterator refIterator = bytesReference.iterator();
         BytesRef ref;
         while ((ref = refIterator.next()) != null) {

@@ -24,6 +24,9 @@ import java.nio.channels.ServerSocketChannel;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 
+/**
+ * 服务端通道
+ */
 public class NioServerSocketChannel extends NioChannel {
 
     private final ServerSocketChannel serverSocketChannel;

@@ -38,15 +38,33 @@ import org.elasticsearch.transport.Transport;
 import java.io.IOException;
 import java.util.function.Supplier;
 
+/**
+ * 该对象定义了消费channel中读取的数据 以及会针对即将写入channel的数据做转换 (WriteOp -> FlushOp)
+ */
 public class TcpReadWriteHandler extends BytesWriteHandler {
 
+    /**
+     * 关联的channel
+     */
     private final NioTcpChannel channel;
+
+    /**
+     * 基于管道模式消费数据
+     */
     private final InboundPipeline pipeline;
 
+    /**
+     *
+     * @param channel
+     * @param recycler 对象池 就是重复利用各种数组对象
+     * @param transport
+     */
     public TcpReadWriteHandler(NioTcpChannel channel, PageCacheRecycler recycler, TcpTransport transport) {
         this.channel = channel;
+        // 从传输层对象获取各种参数
         final ThreadPool threadPool = transport.getThreadPool();
         final Supplier<CircuitBreaker> breaker = transport.getInflightBreaker();
+        // 存储了所有请求处理器
         final Transport.RequestHandlers requestHandlers = transport.getRequestHandlers();
         this.pipeline = new InboundPipeline(transport.getVersion(), transport.getStatsTracker(), recycler, threadPool::relativeTimeInMillis,
             breaker, requestHandlers::getHandler, transport::inboundMessage);

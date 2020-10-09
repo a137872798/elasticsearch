@@ -23,8 +23,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
+/**
+ * 每个对象内部维护了一组选择器 每次获取时采用轮询机制
+ * @param <S>
+ */
 final class RoundRobinSupplier<S> implements Supplier<S> {
 
+    /**
+     * 标注该对象内部的选择器是否已经设置
+     */
     private final AtomicBoolean selectorsSet = new AtomicBoolean(false);
     private volatile S[] selectors;
     private AtomicInteger counter = new AtomicInteger(0);

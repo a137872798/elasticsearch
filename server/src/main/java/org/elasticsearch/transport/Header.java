@@ -28,14 +28,26 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 基于tcp传输时使用的消息头
+ */
 public class Header {
 
     private static final String RESPONSE_NAME = "NO_ACTION_NAME_FOR_RESPONSES";
 
+    /**
+     * 有效消息长度  包含消息头
+     */
     private final int networkMessageSize;
     private final Version version;
+    /**
+     * 本次请求id
+     */
     private final long requestId;
     private final byte status;
+
+    // 在 7.6版本之后 追加的属性
+
     // These are directly set by tests
     String actionName;
     Tuple<Map<String, String>, Map<String, Set<String>>> headers;

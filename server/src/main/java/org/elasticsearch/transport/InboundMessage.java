@@ -28,15 +28,30 @@ import org.elasticsearch.core.internal.io.IOUtils;
 import java.io.IOException;
 import java.util.Objects;
 
+/**
+ * 代表从传输层接受到的数据流
+ */
 public class InboundMessage implements Releasable {
 
+    /**
+     * 消息头
+     */
     private final Header header;
+    /**
+     * 当消息体处理完毕时 触发release函数
+     */
     private final ReleasableBytesReference content;
     private final Exception exception;
     private final boolean isPing;
     private Releasable breakerRelease;
     private StreamInput streamInput;
 
+    /**
+     *
+     * @param header 消息头
+     * @param content  消息体 (可能是多个对象合并 比如 CompositeBytesReference)
+     * @param breakerRelease
+     */
     public InboundMessage(Header header, ReleasableBytesReference content, Releasable breakerRelease) {
         this.header = header;
         this.content = content;
@@ -45,6 +60,11 @@ public class InboundMessage implements Releasable {
         this.isPing = false;
     }
 
+    /**
+     * 代表本条消息因为熔断没有正常处理
+     * @param header
+     * @param exception  熔断异常
+     */
     public InboundMessage(Header header, Exception exception) {
         this.header = header;
         this.content = null;

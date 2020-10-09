@@ -32,6 +32,11 @@ public class BytesChannelContext extends SocketChannelContext {
         super(channel, selector, socketConfig, exceptionHandler, handler, channelBuffer);
     }
 
+    /**
+     * 当 selectorKey的读事件准备完成时 就会触发该方法 读取对端的数据 通过handler处理后 生成待写回到对端的数据
+     * @return
+     * @throws IOException
+     */
     @Override
     public int read() throws IOException {
         // 使用 selector.ioBuffer 从该context相关的channel上读取数据 之后将数据转移到channelBuffer上
@@ -58,7 +63,9 @@ public class BytesChannelContext extends SocketChannelContext {
         FlushOperation flushOperation;
         while (lastOpCompleted && (flushOperation = getPendingFlush()) != null) {
             try {
+                // 将当前flushOp的数据全部通过channel写出  当返回true时代表数据被写完
                 if (singleFlush(flushOperation)) {
+                    // 触发Op相关的监听器
                     currentFlushOperationComplete();
                 } else {
                     lastOpCompleted = false;

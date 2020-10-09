@@ -31,6 +31,7 @@ public interface NioChannelHandler {
 
     /**
      * This method is called when the channel is active for use.
+     * 当某个channel被激活时触发 在nio模型中认为某个channel注册到selector时就是激活状态
      */
     void channelActive();
 
@@ -53,6 +54,7 @@ public interface NioChannelHandler {
      *
      * @param writeOperation to be converted to bytes
      * @return the operations to flush the bytes to the channel
+     * 处理入参 并返回一个要写入到对端的结果
      */
     List<FlushOperation> writeToBytes(WriteOperation writeOperation);
 

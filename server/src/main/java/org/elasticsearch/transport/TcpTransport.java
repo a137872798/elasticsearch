@@ -152,7 +152,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     private final ConcurrentMap<String, BoundTransportAddress> profileBoundAddresses = newConcurrentMap();
     /**
-     * 这里指出了 channel必须基于tcp实现
+     * 维护所有连接的channel 推测key 应该是服务端bound的地址
      */
     private final Map<String, List<TcpServerChannel>> serverChannels = newConcurrentMap();
     private final Set<TcpChannel> acceptedChannels = ConcurrentCollections.newConcurrentSet();
@@ -162,9 +162,22 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
     private final ReadWriteLock closeLock = new ReentrantReadWriteLock();
     private volatile BoundTransportAddress boundAddress;
 
+    /**
+     * 处理握手的对象 先忽略
+     */
     private final TransportHandshaker handshaker;
+
+    /**
+     * 该对象专门负责维护心跳
+     */
     private final TransportKeepAlive keepAlive;
+    /**
+     * 处理发往外部的消息
+     */
     private final OutboundHandler outboundHandler;
+    /**
+     * 处理接收到的消息
+     */
     private final InboundHandler inboundHandler;
     private final ResponseHandlers responseHandlers = new ResponseHandlers();
     private final RequestHandlers requestHandlers = new RequestHandlers();
@@ -748,7 +761,9 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
     }
 
     private static int readHeaderBuffer(BytesReference headerBuffer) throws IOException {
+        // 代表不是基于ES内部消息协议   可能是基于http协议
         if (headerBuffer.get(0) != 'E' || headerBuffer.get(1) != 'S') {
+            // 不允许出现Http协议要求的请求报文格式
             if (appearsToBeHTTPRequest(headerBuffer)) {
                 throw new HttpRequestOnTransportException("This is not an HTTP port");
             }
@@ -764,14 +779,17 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
                     + Integer.toHexString(headerBuffer.get(2) & 0xFF) + ","
                     + Integer.toHexString(headerBuffer.get(3) & 0xFF) + ")";
 
+            // 忽略加密报文
             if (appearsToBeTLS(headerBuffer)) {
                 throw new StreamCorruptedException("SSL/TLS request received but SSL/TLS is not enabled on this node, got " + firstBytes);
             }
 
             throw new StreamCorruptedException("invalid internal transport message format, got " + firstBytes);
         }
+        // 获取消息长度
         final int messageLength = headerBuffer.getInt(TcpHeader.MARKER_BYTES_SIZE);
 
+        // 代表本次是一个心跳包
         if (messageLength == TransportKeepAlive.PING_DATA_SIZE) {
             // This is a ping
             return 0;

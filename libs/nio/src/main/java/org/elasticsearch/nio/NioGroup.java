@@ -26,16 +26,19 @@ import java.net.InetSocketAddress;
 /**
  * An class for interfacing with java.nio. Implementations implement the underlying logic for opening
  * channels and registering them with the OS.
+ * 事件循环组
  */
 public interface NioGroup extends Closeable {
 
     /**
      * Opens and binds a server channel to accept incoming connections.
+     * 绑定一个本地地址
      */
     <S extends NioServerSocketChannel> S bindServerChannel(InetSocketAddress address, ChannelFactory<S, ?> factory) throws IOException;
 
     /**
      * Opens a outgoing client channel.
+     * 连接到一个远端地址
      */
     <S extends NioSocketChannel> S openChannel(InetSocketAddress address, ChannelFactory<?, S> factory) throws IOException;
 

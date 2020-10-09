@@ -69,6 +69,7 @@ public class EventHandler {
      * only be called once per channel.
      *
      * @param context that was registered
+     *                处理注册请求
      */
     protected void handleRegistration(ChannelContext<?> context) throws IOException {
         context.register();
@@ -91,13 +92,17 @@ public class EventHandler {
      * per channel.
      *
      * @param context that was marked active
+     *                当某个channel 活跃时触发
      */
     protected void handleActive(ChannelContext<?> context) throws IOException {
         context.channelActive();
         if (context instanceof SocketChannelContext) {
+            // 此时已经有待刷盘的数据 (需要写到对端)
             if (((SocketChannelContext) context).readyForFlush()) {
+                // 注册读写事件
                 SelectionKeyUtils.setConnectReadAndWriteInterested(context.getSelectionKey());
             } else {
+                // 仅注册读事件
                 SelectionKeyUtils.setConnectAndReadInterested(context.getSelectionKey());
             }
         } else {
@@ -200,6 +205,7 @@ public class EventHandler {
      * This method is called after events (READ, WRITE, CONNECT) have been handled for a channel.
      *
      * @param context that was handled
+     *                每次处理相关事件的后置函数
      */
     protected void postHandling(SocketChannelContext context) {
         if (context.selectorShouldClose()) {
@@ -210,8 +216,10 @@ public class EventHandler {
             }
         } else {
             SelectionKey selectionKey = context.getSelectionKey();
+            // 当前是否包含写事件
             boolean currentlyWriteInterested = SelectionKeyUtils.isWriteInterested(selectionKey);
             boolean pendingWrites = context.readyForFlush();
+            // 根据此时还有没有待写入的数据 修改 Interested
             if (currentlyWriteInterested == false && pendingWrites) {
                 SelectionKeyUtils.setWriteInterested(selectionKey);
             } else if (currentlyWriteInterested && pendingWrites == false) {
@@ -244,6 +252,7 @@ public class EventHandler {
      * This method handles the closing of an NioChannel
      *
      * @param context that should be closed
+     *                这里仅仅做了检测 没有执行关闭逻辑
      */
     protected void handleClose(ChannelContext<?> context) throws IOException {
         context.closeFromSelector();

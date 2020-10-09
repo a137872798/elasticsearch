@@ -45,6 +45,7 @@ import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadF
  * both {@link #getHttpGroup()} and {@link #getTransportGroup()} if
  * {@link NioTransportPlugin#NIO_HTTP_WORKER_COUNT} is configured to be 0. If that setting is not 0, then it
  * will return a different group in the {@link #getHttpGroup()} call.
+ * 生成 循环组的工厂
  */
 public final class NioGroupFactory {
 
@@ -79,6 +80,7 @@ public final class NioGroupFactory {
 
     private NioGroup getGenericGroup() throws IOException {
         if (refCountedGroup == null) {
+            // 获取线程工程  该工厂创建的线程都是守护线程
             ThreadFactory threadFactory = daemonThreadFactory(this.settings, TcpTransport.TRANSPORT_WORKER_THREAD_NAME_PREFIX);
             NioSelectorGroup nioGroup = new NioSelectorGroup(threadFactory, NioTransportPlugin.NIO_WORKER_COUNT.get(settings),
                 (s) -> new EventHandler(this::onException, s));
@@ -95,6 +97,9 @@ public final class NioGroupFactory {
             exception);
     }
 
+    /**
+     * 有关group的引用计数 当归0时关闭对象
+     */
     private static class RefCountedNioGroup extends AbstractRefCounted implements NioGroup {
 
         public static final String NAME = "ref-counted-nio-group";

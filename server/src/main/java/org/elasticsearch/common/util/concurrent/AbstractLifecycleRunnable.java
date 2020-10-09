@@ -27,6 +27,7 @@ import java.util.Objects;
  * {@code AbstractLifecycleRunnable} is a service-lifecycle aware {@link AbstractRunnable}.
  * <p>
  * This simplifies the running and rescheduling of {@link Lifecycle}-based {@code Runnable}s.
+ * 为任务本身赋予生命周期
  */
 public abstract class AbstractLifecycleRunnable extends AbstractRunnable {
     /**

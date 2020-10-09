@@ -167,7 +167,7 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
         boolean isConnected = rawChannel.isConnected();
         if (isConnected == false) {
             try {
-                // 该方法会阻塞直到channel完成连接
+                // 该方法会阻塞直到channel完成连接  在非阻塞模式下 如果连接还未完成会返回false
                 isConnected = rawChannel.finishConnect();
             } catch (IOException | RuntimeException e) {
                 connectException = e;
@@ -194,7 +194,7 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
             return;
         }
 
-        // 将消息包装成一个 op对象并写入发送队列   批发送么 ???
+        // 将消息体封装成一个Op对象 赋予业务意义
         WriteOperation writeOperation = channelHandler.createWriteOperation(this, message, listener);
 
         // 如果是在业务线程 那么会存储到选择器的队列中 如果是IO线程 会直接处理写操作

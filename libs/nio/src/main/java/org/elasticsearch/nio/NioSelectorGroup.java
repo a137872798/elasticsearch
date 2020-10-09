@@ -41,13 +41,20 @@ import java.util.stream.Stream;
  * <p>
  * The logic specific to a particular channel is provided by the {@link ChannelFactory} passed to the method
  * when the channel is created. This is what allows an NioSelectorGroup to support different channel types.
+ * 模仿netty的事件循环组
  */
 public class NioSelectorGroup implements NioGroup {
 
-
+    /**
+     * 专门负责接受外部连接的选择器   通过将连接与读写解耦 确保读写紧张时不会影响新建连接 也就是reactor模型
+     */
     private final List<NioSelector> dedicatedAcceptors;
+    /**
+     * 该对象以轮询的方式每次随机获取一个选择器  netty中也有类似的接口 基于特殊的策略返回一个事件循环对象
+     */
     private final RoundRobinSupplier<NioSelector> acceptorSupplier;
 
+    // 只负责处理读写请求的选择器
     private final List<NioSelector> selectors;
     private final RoundRobinSupplier<NioSelector> selectorSupplier;
 
@@ -61,6 +68,7 @@ public class NioSelectorGroup implements NioGroup {
      * @param selectorCount the number of selectors to be created
      * @param eventHandlerFunction function for creating event handlers
      * @throws IOException occurs if there is a problem while opening a java.nio.Selector
+     * 默认情况下是不创建 acceptorThread的
      */
     public NioSelectorGroup(ThreadFactory threadFactory, int selectorCount,
                             Function<Supplier<NioSelector>, EventHandler> eventHandlerFunction) throws IOException {
@@ -81,10 +89,13 @@ public class NioSelectorGroup implements NioGroup {
      */
     public NioSelectorGroup(ThreadFactory acceptorThreadFactory, int dedicatedAcceptorCount, ThreadFactory selectorThreadFactory,
                             int selectorCount, Function<Supplier<NioSelector>, EventHandler> eventHandlerFunction) throws IOException {
+
+        // 分别生成 处理连接请求/处理读写请求的选择器组
         dedicatedAcceptors = new ArrayList<>(dedicatedAcceptorCount);
         selectors = new ArrayList<>(selectorCount);
 
         try {
+            // 内部每个RoundRobinSupplier 使用的 selector[] 都是一样的
             List<RoundRobinSupplier<NioSelector>> suppliersToSet = new ArrayList<>(selectorCount);
             for (int i = 0; i < selectorCount; ++i) {
                 RoundRobinSupplier<NioSelector> supplier = new RoundRobinSupplier<>();
@@ -153,9 +164,15 @@ public class NioSelectorGroup implements NioGroup {
         }
     }
 
+    /**
+     * 启动所有的选择器
+     * @param selectors
+     * @param threadFactory
+     */
     private static void startSelectors(Iterable<NioSelector> selectors, ThreadFactory threadFactory) {
         for (NioSelector selector : selectors) {
             if (selector.isRunning() == false) {
+                // 每个事件循环 用专门的IO线程去执行
                 threadFactory.newThread(selector::runLoop).start();
                 try {
                     selector.isRunningFuture().get();

@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
  * {@link #runLoop()}, the selector will run until {@link #close()} is called. This instance handles closing
  * of channels. Users should call {@link #queueChannelClose(NioChannel)} to schedule a channel for close by
  * this selector.
- * ES 封装的选择器   选择器的定位应该是管理多个channel的
+ * ES 封装的选择器  定义了事件循环的处理逻辑
  */
 public class NioSelector implements Closeable {
 
@@ -61,14 +61,20 @@ public class NioSelector implements Closeable {
      * 而在es封装的选择器中 并没有直接维护channel 而是通过一个context对象实现解耦
      */
     private final ConcurrentLinkedQueue<ChannelContext<?>> channelsToRegister = new ConcurrentLinkedQueue<>();
+    /**
+     * 定义处理选择器相关事件的逻辑
+     */
     private final EventHandler eventHandler;
     private final Selector selector;
 
     /**
-     * 这个对象应该就是在IO线程(事件循环线程)中使用 以为它没有做线程安全
+     * 这个对象应该就是在IO线程(事件循环线程)中使用 因为它没有做线程安全
      */
     private final ByteBuffer ioBuffer;
 
+    /**
+     * 简易的定时队列 单线程环境下使用
+     */
     private final TaskScheduler taskScheduler = new TaskScheduler();
     private final ReentrantLock runLock = new ReentrantLock();
     private final CountDownLatch exitedLoop = new CountDownLatch(1);
@@ -79,12 +85,20 @@ public class NioSelector implements Closeable {
      * 事件循环线程
      */
     private final AtomicReference<Thread> thread = new AtomicReference<>(null);
+    /**
+     * 代表下次应该调用 selectNow
+     */
     private final AtomicBoolean wokenUp = new AtomicBoolean(false);
 
     public NioSelector(EventHandler eventHandler) throws IOException {
         this(eventHandler, Selector.open());
     }
 
+    /**
+     *
+     * @param eventHandler
+     * @param selector  通过分配合理的时间监听io密集型/cpu密集型
+     */
     public NioSelector(EventHandler eventHandler, Selector selector) {
         this.selector = selector;
         this.eventHandler = eventHandler;
@@ -138,11 +152,13 @@ public class NioSelector implements Closeable {
 
     /**
      * Starts this selector. The selector will run until {@link #close()} is called.
+     * 每个选择器被创建后 会通过专门的线程执行该函数
      */
     public void runLoop() {
         if (runLock.tryLock()) {
             isRunningFuture.complete(null);
             try {
+                // 设置IO线程 之后便于判断触发某些函数是在IO线程还是业务线程
                 setThread();
                 while (isOpen()) {
                     singleLoop();
@@ -157,6 +173,7 @@ public class NioSelector implements Closeable {
                         eventHandler.selectorException(e);
                     } finally {
                         runLock.unlock();
+                        // 当事件循环结束时 唤醒闭锁
                         exitedLoop.countDown();
                     }
                 }
@@ -166,20 +183,30 @@ public class NioSelector implements Closeable {
         }
     }
 
+    /**
+     * 代表单次完整循环
+     * 核心逻辑就是有可以处理的任务就尽可能立即处理 等到无任务时选择阻塞监听准备好的事件  这样可以提高线程的利用率
+     */
     void singleLoop() {
         try {
+            // 检测绑定在该选择器上所有关闭的channel 并进行处理     当外部线程添加一个close任务时 就会唤醒选择器 这样事件循环线程就可以立即醒来 并处理事件 提高了事件循环线程的利用率 也使得外部线程更快返回 因为close/register等任务本身就可以以异步方式实现
             closePendingChannels();
+            // 做一些准备工作
             preSelect();
             long nanosUntilNextTask = taskScheduler.nanosUntilNextTask(System.nanoTime());
             int ready;
+            // 代表在阻塞过程中 wokenUp被设置过true    或者此时有待执行的任务 那么立即触发一次select 如果此时马上获取到准备好的事件就可以处理 否则留到下次
             if (wokenUp.getAndSet(false) || nanosUntilNextTask == 0) {
                 ready = selector.selectNow();
             } else {
+                // 检测taskScheduler 下次任务触发时间 并根据该时间阻塞调用select
                 long millisUntilNextTask = TimeUnit.NANOSECONDS.toMillis(nanosUntilNextTask);
                 // Only select until the next task needs to be run. Do not select with a value of 0 because
                 // that blocks without a timeout.
                 ready = selector.select(Math.min(300, Math.max(millisUntilNextTask, 1)));
             }
+
+            // 处理准备好的事件
             if (ready > 0) {
                 Set<SelectionKey> selectionKeys = selector.selectedKeys();
                 Iterator<SelectionKey> keyIterator = selectionKeys.iterator();
@@ -198,6 +225,7 @@ public class NioSelector implements Closeable {
                 }
             }
 
+            // 处理定时队列中的任务
             handleScheduledTasks(System.nanoTime());
         } catch (ClosedSelectorException e) {
             if (isOpen()) {
@@ -210,6 +238,9 @@ public class NioSelector implements Closeable {
         }
     }
 
+    /**
+     * 终止所有待处理的注册 写入事件
+     */
     void cleanupAndCloseChannels() {
         cleanupPendingWrites();
         channelsToClose.addAll(channelsToRegister);
@@ -225,6 +256,7 @@ public class NioSelector implements Closeable {
             wakeup();
             if (isRunning()) {
                 try {
+                    // 等待事件循环结束
                     exitedLoop.await();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -236,8 +268,13 @@ public class NioSelector implements Closeable {
         }
     }
 
+    /**
+     * 处理准备好的事件
+     * @param selectionKey
+     */
     void processKey(SelectionKey selectionKey) {
         ChannelContext<?> context = (ChannelContext<?>) selectionKey.attachment();
+        // 先忽略服务端channel
         if (selectionKey.isAcceptable()) {
             assert context instanceof ServerChannelContext : "Only server channels can receive accept events";
             ServerChannelContext serverChannelContext = (ServerChannelContext) context;
@@ -250,10 +287,12 @@ public class NioSelector implements Closeable {
             assert context instanceof SocketChannelContext : "Only sockets channels can receive non-accept events";
             SocketChannelContext channelContext = (SocketChannelContext) context;
             int ops = selectionKey.readyOps();
+            // 检测连接是否完成
             if ((ops & SelectionKey.OP_CONNECT) != 0) {
                 attemptConnect(channelContext, true);
             }
 
+            // 当连接完成时才能处理读写事件
             if (channelContext.isConnectComplete()) {
                 if (channelContext.selectorShouldClose() == false) {
                     if ((ops & SelectionKey.OP_WRITE) != 0) {
@@ -264,6 +303,7 @@ public class NioSelector implements Closeable {
                     }
                 }
             }
+            // 主要是检测是否还需要注册 write事件
             eventHandler.postHandling(channelContext);
         }
 
@@ -275,7 +315,9 @@ public class NioSelector implements Closeable {
      * a selection key.
      */
     void preSelect() {
+        // 每次select一段时间后 会囤积一些新的连接 这里进行注册
         setUpNewChannels();
+        // 处理队列中所有 待写入任务
         handleQueuedWrites();
     }
 
@@ -301,6 +343,7 @@ public class NioSelector implements Closeable {
      *
      * @param writeOperation to be queued
      *                       这里模拟了netty的事件循环机制   每当某个channel 想要写入数据时都是将数据封装成一个 WriteOperation 并存入到关联selector的队列中
+     *                       flushOp 需要准备好write事件  而 writeOp 不需要准备 所以这里可以提前唤醒选择器
      */
     public void queueWrite(WriteOperation writeOperation) {
         // 如果当前是io线程 直接写入到channel中
@@ -315,7 +358,7 @@ public class NioSelector implements Closeable {
                     writeOperation.getListener().accept(null, new ClosedSelectorException());
                 }
             } else {
-                // 在关闭前会唤醒选择器并处理所有未执行的任务
+                // 提前唤醒选择器
                 wakeup();
             }
         }
@@ -324,11 +367,14 @@ public class NioSelector implements Closeable {
     public void queueChannelClose(NioChannel channel) {
         ChannelContext<?> context = channel.getContext();
         assert context.getSelector() == this : "Must schedule a channel for closure with its selector";
+        // 在业务线程中调用 (或者说外部线程 那么将任务包装后设置到队列中)   这样的分配是为了提高事件循环线程本身的利用率
         if (isOnCurrentThread() == false) {
             channelsToClose.offer(context);
             ensureSelectorOpenForEnqueuing(channelsToClose, context);
+            // 唤醒选择器
             wakeup();
         } else {
+            // 在IO 线程内直接关闭某个context关联的channel
             closeChannel(context);
         }
     }
@@ -338,14 +384,17 @@ public class NioSelector implements Closeable {
      * eventually registered next time through the event loop.
      *
      * @param channel to register
+     *                处理某个channel的注册操作 套路跟其他是一致的
      */
     public void scheduleForRegistration(NioChannel channel) {
         ChannelContext<?> context = channel.getContext();
         if (isOnCurrentThread() == false) {
+            // 非事件循环线程 添加任务后唤醒选择器
             channelsToRegister.add(context);
             ensureSelectorOpenForEnqueuing(channelsToRegister, context);
             wakeup();
         } else {
+            // 在事件循环线程中 直接执行注册
             registerChannel(context);
         }
     }
@@ -385,7 +434,7 @@ public class NioSelector implements Closeable {
                 executeFailedListener(writeOperation.getListener(), e);
             }
 
-            // 代表之前没有刷盘任务  为什么只有当之前没有刷盘任务时才进行处理
+            // 代表之前没有刷盘任务  TODO 为什么只有当之前没有刷盘任务时才进行处理
             if (shouldFlushAfterQueuing) {
                 // We only attempt the write if the connect process is complete and the context is not
                 // signalling that it should be closed.
@@ -438,6 +487,10 @@ public class NioSelector implements Closeable {
         }
     }
 
+    /**
+     * 处理写事件
+     * @param context
+     */
     private void handleWrite(SocketChannelContext context) {
         try {
             eventHandler.handleWrite(context);
@@ -454,6 +507,11 @@ public class NioSelector implements Closeable {
         }
     }
 
+    /**
+     * 代表一条连接事件完成
+     * @param context
+     * @param connectEvent
+     */
     private void attemptConnect(SocketChannelContext context, boolean connectEvent) {
         try {
             eventHandler.handleConnect(context);
@@ -472,13 +530,20 @@ public class NioSelector implements Closeable {
         }
     }
 
+    /**
+     * 处理一些囤积的注册请求
+     * @param newChannel
+     */
     private void registerChannel(ChannelContext<?> newChannel) {
         assert newChannel.getSelector() == this : "The channel must be registered with the selector with which it was created";
         try {
             if (newChannel.isOpen()) {
+                // 在这里将channel注册到了 selector上
                 eventHandler.handleRegistration(newChannel);
+                // 触发钩子函数
                 channelActive(newChannel);
                 if (newChannel instanceof SocketChannelContext) {
+                    // 检测连接是否完成， 是的话移除 connect事件
                     attemptConnect((SocketChannelContext) newChannel, false);
                 }
             } else {
@@ -491,14 +556,22 @@ public class NioSelector implements Closeable {
         }
     }
 
+    /**
+     * 在基于原生nio开发的 连接框架中 当channel注册到选择器上时 认为channel处于活跃状态
+     * @param newChannel
+     */
     private void channelActive(ChannelContext<?> newChannel) {
         try {
+            // 默认实现就是为 key 设置读写Op
             eventHandler.handleActive(newChannel);
         } catch (IOException e) {
             eventHandler.activeException(newChannel, e);
         }
     }
 
+    /**
+     * 处理关闭的channel
+     */
     private void closePendingChannels() {
         ChannelContext<?> channelContext;
         while ((channelContext = channelsToClose.poll()) != null) {
@@ -506,6 +579,10 @@ public class NioSelector implements Closeable {
         }
     }
 
+    /**
+     * 委托给eventHandler关闭channel
+     * @param channelContext
+     */
     private void closeChannel(final ChannelContext<?> channelContext) {
         try {
             eventHandler.handleClose(channelContext);
