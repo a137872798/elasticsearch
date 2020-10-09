@@ -134,6 +134,10 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
      * 该对象内部存储了各种 数组
      */
     protected final PageCacheRecycler pageCacheRecycler;
+
+    /**
+     * 该对象内置了一组地址解析器  可以对传入的地址进行解析 同时还包含了一系列网络需要的配置
+     */
     protected final NetworkService networkService;
     /**
      * 包含一组描述传输层配置的对象

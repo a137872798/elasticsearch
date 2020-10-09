@@ -25,6 +25,7 @@ import java.util.function.BiConsumer;
 
 /**
  * Implements the application specific logic for handling channel operations.
+ * 处理channel的相关操作 比如写入消息
  */
 public interface NioChannelHandler {
 
@@ -42,6 +43,7 @@ public interface NioChannelHandler {
      * @param message the message
      * @param listener the listener to be called when the message is sent
      * @return the write operation to be queued
+     * 将某个待发送消息包装成一个 写入操作
      */
     WriteOperation createWriteOperation(SocketChannelContext context, Object message, BiConsumer<Void, Exception> listener);
 

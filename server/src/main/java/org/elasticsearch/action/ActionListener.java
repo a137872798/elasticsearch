@@ -193,6 +193,7 @@ public interface ActionListener<Response> {
      * @param listener that will be wrapped
      * @param <Response> the type of the response
      * @return a bi consumer that will complete the wrapped listener
+     * 做了一层适配  使得监听器能同时处理 rep 以及 failure的情况
      */
     static <Response> BiConsumer<Response, Exception> toBiConsumer(ActionListener<Response> listener) {
         return (response, throwable) -> {

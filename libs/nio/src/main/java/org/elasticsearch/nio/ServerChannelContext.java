@@ -35,6 +35,9 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
+/**
+ * 对应服务端channel的上下文对象 每当新生成一个连接 就会产生一个新的 ChannelContext (客户端channel)
+ */
 public class ServerChannelContext extends ChannelContext<ServerSocketChannel> {
 
     private final NioServerSocketChannel channel;

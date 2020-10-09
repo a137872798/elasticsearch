@@ -231,7 +231,7 @@ public class PageCacheRecycler {
                 // limit / availableProcessors 代表队列的长度信息
                 // dequeFactory 创建的仅是基于普通双端队列的 recycle对象 不具备线程安全
                 // concurrent 赋予 普通回收对象线程安全的能力
-                // concurrent() 使用了分段锁的思想 降低每个recycle的竞争 借此提高性能
+                // concurrent() 使用了分段锁的思想 降低每个recycle的竞争 借此提高性能   并且每个段使用 synchronized实现
                 return concurrent(dequeFactory(c, limit / availableProcessors), availableProcessors);
             }
         },

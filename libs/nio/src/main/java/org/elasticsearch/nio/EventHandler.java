@@ -25,9 +25,18 @@ import java.nio.channels.Selector;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
+/**
+ * 定义了一套获取选择器 并使用 异常处理器处理Exception的模板
+ */
 public class EventHandler {
 
+    /**
+     * 该对象处理异常
+     */
     protected final Consumer<Exception> exceptionHandler;
+    /**
+     * 该对象负责获取选择器
+     */
     private final Supplier<NioSelector> selectorSupplier;
 
     public EventHandler(Consumer<Exception> exceptionHandler, Supplier<NioSelector> selectorSupplier) {

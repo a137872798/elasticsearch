@@ -33,12 +33,26 @@ import java.util.function.Consumer;
  * selector, managing the selection key, closing, etc is implemented by this class or its subclasses.
  *
  * @param <S> the type of channel
+ *           有关本次通道绑定的上下文信息
  */
 public abstract class ChannelContext<S extends SelectableChannel & NetworkChannel> {
 
+    /**
+     * 通道对象本身
+     */
     protected final S rawChannel;
+    /**
+     * 该对象负责处理异常
+     */
     private final Consumer<Exception> exceptionHandler;
+    /**
+     * 该对象就是在future对象上绑定一个监听器 当future对象生成结果时触发
+     */
     private final CompletableContext<Void> closeContext = new CompletableContext<>();
+
+    /**
+     * nio的选择键
+     */
     private volatile SelectionKey selectionKey;
 
     ChannelContext(S rawChannel, Consumer<Exception> exceptionHandler) {
@@ -50,10 +64,15 @@ public abstract class ChannelContext<S extends SelectableChannel & NetworkChanne
         doSelectorRegister();
     }
 
+    /**
+     * 当channel被激活时触发
+     * @throws IOException
+     */
     protected void channelActive() throws IOException {}
 
     // Package private for testing
     void doSelectorRegister() throws IOException {
+        // 这里做了一层适配  通过rawSelector 从es封装的selector中剥离出最基础的选择器  同时将它注册到未封装的channel上
         setSelectionKey(rawChannel.register(getSelector().rawSelector(), 0, this));
     }
 
@@ -71,6 +90,7 @@ public abstract class ChannelContext<S extends SelectableChannel & NetworkChanne
      * should only be called by the selector thread.
      *
      * @throws IOException during channel / context close
+     * 通过选择器关闭该上下文 同时为future对象设置结果 这样还会触发context上绑定的监听器
      */
     public void closeFromSelector() throws IOException {
         if (isOpen()) {

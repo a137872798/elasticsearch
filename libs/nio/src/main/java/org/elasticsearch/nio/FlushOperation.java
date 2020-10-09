@@ -23,6 +23,9 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.function.BiConsumer;
 
+/**
+ * 代表一个刷盘操作   内部的数据会在合适的时候写入到channel中
+ */
 public class FlushOperation {
 
     private static final ByteBuffer[] EMPTY_ARRAY = new ByteBuffer[0];

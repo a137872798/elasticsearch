@@ -26,6 +26,9 @@ import org.elasticsearch.tasks.TaskId;
 
 import java.io.IOException;
 
+/**
+ * 每种指令都会对应一种req对象
+ */
 public abstract class TransportRequest extends TransportMessage implements TaskAwareRequest {
     public static class Empty extends TransportRequest {
         public static final Empty INSTANCE = new Empty();

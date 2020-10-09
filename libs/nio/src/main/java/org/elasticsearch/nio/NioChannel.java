@@ -28,6 +28,7 @@ import java.util.function.BiConsumer;
  * <p>
  * A channel is open once it is constructed. The channel remains open and {@link #isOpen()} will return
  * true until the channel is explicitly closed.
+ * 包装了基于java.nio 原生类的api  仅暴露最核心的api
  */
 public abstract class NioChannel {
 
@@ -55,7 +56,15 @@ public abstract class NioChannel {
 
     public abstract InetSocketAddress getLocalAddress();
 
+    /**
+     * 获取jdk原生的channel
+     * @return
+     */
     public abstract NetworkChannel getRawChannel();
 
+    /**
+     * 每个通道都是可以获取到关联的上下文对象的
+     * @return
+     */
     public abstract ChannelContext<?> getContext();
 }

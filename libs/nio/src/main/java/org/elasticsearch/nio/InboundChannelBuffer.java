@@ -34,24 +34,41 @@ import java.util.function.IntFunction;
  * and consumed, the {@link #release(long)} method releases the bytes from the head of the buffer and closes
  * the pages internally. If more space is needed at the end of the buffer {@link #ensureCapacity(long)} can
  * be called and the buffer will expand using the supplier provided.
+ * 存储写入的数据     思考一下  在网络交互中2端都应该会频繁的为读取/写入数据分配byte[] 对象 那么这时池化技术就很有必要了
  */
 public final class InboundChannelBuffer implements AutoCloseable {
 
+    // 上面的参数都是规定页的大小
     public static final int PAGE_SIZE = 1 << 14;
     private static final int PAGE_MASK = PAGE_SIZE - 1;
     private static final int PAGE_SHIFT = Integer.numberOfTrailingZeros(PAGE_SIZE);
     private static final ByteBuffer[] EMPTY_BYTE_BUFFER_ARRAY = new ByteBuffer[0];
     private static final Page[] EMPTY_BYTE_PAGE_ARRAY = new Page[0];
 
+    /**
+     * Page对象内部就是一个 ByteBuffer 对象
+     */
     private final IntFunction<Page> pageAllocator;
+    /**
+     * 相当于对象池
+     */
     private final ArrayDeque<Page> pages = new ArrayDeque<>();
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
 
+    // 下面3个参数应该是用来指定page的
     private long capacity = 0;
+    /**
+     * 代表已经写入到的偏移量
+     */
     private long internalIndex = 0;
     // The offset is an int as it is the offset of where the bytes begin in the first buffer
+    // 这个应该是类似于那种分片的偏移量
     private int offset = 0;
 
+    /**
+     *
+     * @param pageAllocator  该对象负责生成新的页    该函数接受一个int参数
+     */
     public InboundChannelBuffer(IntFunction<Page> pageAllocator) {
         this.pageAllocator = pageAllocator;
     }
@@ -60,6 +77,9 @@ public final class InboundChannelBuffer implements AutoCloseable {
         return new InboundChannelBuffer((n) -> new Page(ByteBuffer.allocate(n), () -> {}));
     }
 
+    /**
+     * 当关闭该缓存对象时 关闭所有page
+     */
     @Override
     public void close() {
         if (isClosed.compareAndSet(false, true)) {
@@ -81,7 +101,9 @@ public final class InboundChannelBuffer implements AutoCloseable {
             throw new IllegalStateException("Cannot allocate new pages if the buffer is closed.");
         }
         if (capacity < requiredCapacity) {
+            // 计算总计需要多少页
             int numPages = numPages(requiredCapacity + offset);
+            // 还需要添加多少页
             int pagesToAdd = numPages - pages.size();
             for (int i = 0; i < pagesToAdd; i++) {
                 Page page = pageAllocator.apply(PAGE_SIZE);
@@ -102,6 +124,7 @@ public final class InboundChannelBuffer implements AutoCloseable {
             throw new IllegalArgumentException("Releasing more bytes [" + bytesToRelease + "] than buffer capacity [" + capacity + "].");
         }
 
+        // 计算总计要释放多少页
         int pagesToRelease = pageIndex(offset + bytesToRelease);
         for (int i = 0; i < pagesToRelease; i++) {
             pages.removeFirst().close();
@@ -110,6 +133,8 @@ public final class InboundChannelBuffer implements AutoCloseable {
         internalIndex = Math.max(internalIndex - bytesToRelease, 0);
         offset = indexInPage(bytesToRelease + offset);
     }
+
+    // 下面几个方法都是有关创建分片的
 
     /**
      * This method will return an array of {@link ByteBuffer} representing the bytes from the beginning of
@@ -249,6 +274,11 @@ public final class InboundChannelBuffer implements AutoCloseable {
         return remaining;
     }
 
+    /**
+     * 预计分配目标容量会需要多少个page
+     * @param capacity
+     * @return
+     */
     private int numPages(long capacity) {
         final long numPages = (capacity + PAGE_MASK) >>> PAGE_SHIFT;
         if (numPages > Integer.MAX_VALUE) {

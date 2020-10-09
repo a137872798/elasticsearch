@@ -26,8 +26,14 @@ import org.elasticsearch.transport.TcpChannel;
 
 import java.nio.channels.SocketChannel;
 
+/**
+ * 基于tcp层的channel    实现了TcpChannel.sendMessage 也就是具备发送消息到对端的能力
+ */
 public class NioTcpChannel extends NioSocketChannel implements TcpChannel {
 
+    /**
+     * 当前通道是否是服务端通道
+     */
     private final boolean isServer;
     private final String profile;
     private final ChannelStats stats = new ChannelStats();
@@ -38,6 +44,11 @@ public class NioTcpChannel extends NioSocketChannel implements TcpChannel {
         this.profile = profile;
     }
 
+    /**
+     * BytesReference 应该类似于lucene的 BytesRef    就是包装了byte[] 提供了方便的api
+     * @param reference to send to channel
+     * @param listener to execute upon send completion
+     */
     public void sendMessage(BytesReference reference, ActionListener<Void> listener) {
         getContext().sendMessage(BytesReference.toByteBuffers(reference), ActionListener.toBiConsumer(listener));
     }

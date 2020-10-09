@@ -24,12 +24,21 @@ import java.nio.channels.SocketChannel;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 
+/**
+ * 父类以 context 以及 rawChannel 构建了一套模板
+ */
 public class NioSocketChannel extends NioChannel {
 
     private final AtomicBoolean contextSet = new AtomicBoolean(false);
+    /**
+     * 对应jdk channel
+     */
     private final SocketChannel socketChannel;
     private volatile InetSocketAddress remoteAddress;
     private volatile InetSocketAddress localAddress;
+    /**
+     * 通道上绑定的上下文对象
+     */
     private volatile SocketChannelContext context;
 
     public NioSocketChannel(SocketChannel socketChannel) {
@@ -44,6 +53,10 @@ public class NioSocketChannel extends NioChannel {
         }
     }
 
+    /**
+     * 原生的 channel本身就支持获取local/remote 地址
+     * @return
+     */
     @Override
     public InetSocketAddress getLocalAddress() {
         if (localAddress == null) {

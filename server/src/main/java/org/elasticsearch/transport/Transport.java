@@ -46,7 +46,7 @@ public interface Transport extends LifecycleComponent {
 
     /**
      * Registers a new request handler
-     * 为传输层注册一个请求处理器  也就是任务的分发是做在传输层的???
+     * 为传输层注册一个请求处理器  也就是任务的分发是做在传输层的
      */
     default <Request extends TransportRequest> void registerRequestHandler(RequestHandlerRegistry<Request> reg) {
         getRequestHandlers().registerHandler(reg);

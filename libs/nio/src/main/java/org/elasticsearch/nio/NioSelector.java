@@ -46,14 +46,27 @@ import java.util.stream.Collectors;
  * {@link #runLoop()}, the selector will run until {@link #close()} is called. This instance handles closing
  * of channels. Users should call {@link #queueChannelClose(NioChannel)} to schedule a channel for close by
  * this selector.
+ * ES 封装的选择器   选择器的定位应该是管理多个channel的
  */
 public class NioSelector implements Closeable {
 
+    /**
+     * 存储业务线程生成的写入操作
+     */
     private final ConcurrentLinkedQueue<WriteOperation> queuedWrites = new ConcurrentLinkedQueue<>();
+
     private final ConcurrentLinkedQueue<ChannelContext<?>> channelsToClose = new ConcurrentLinkedQueue<>();
+    /**
+     * 应该是这样 每当某个channel被注册时 相关的context 就会存入到这个队列  而当channel被关闭时 就会设置到 close 队列
+     * 而在es封装的选择器中 并没有直接维护channel 而是通过一个context对象实现解耦
+     */
     private final ConcurrentLinkedQueue<ChannelContext<?>> channelsToRegister = new ConcurrentLinkedQueue<>();
     private final EventHandler eventHandler;
     private final Selector selector;
+
+    /**
+     * 这个对象应该就是在IO线程(事件循环线程)中使用 以为它没有做线程安全
+     */
     private final ByteBuffer ioBuffer;
 
     private final TaskScheduler taskScheduler = new TaskScheduler();
@@ -61,6 +74,10 @@ public class NioSelector implements Closeable {
     private final CountDownLatch exitedLoop = new CountDownLatch(1);
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
     private final CompletableFuture<Void> isRunningFuture = new CompletableFuture<>();
+
+    /**
+     * 事件循环线程
+     */
     private final AtomicReference<Thread> thread = new AtomicReference<>(null);
     private final AtomicBoolean wokenUp = new AtomicBoolean(false);
 
@@ -283,11 +300,14 @@ public class NioSelector implements Closeable {
      * right away.
      *
      * @param writeOperation to be queued
+     *                       这里模拟了netty的事件循环机制   每当某个channel 想要写入数据时都是将数据封装成一个 WriteOperation 并存入到关联selector的队列中
      */
     public void queueWrite(WriteOperation writeOperation) {
+        // 如果当前是io线程 直接写入到channel中
         if (isOnCurrentThread()) {
             writeToChannel(writeOperation);
         } else {
+            // 当前属于任务线程 存储到队列中
             queuedWrites.offer(writeOperation);
             if (isOpen() == false) {
                 boolean wasRemoved = queuedWrites.remove(writeOperation);
@@ -295,6 +315,7 @@ public class NioSelector implements Closeable {
                     writeOperation.getListener().accept(null, new ClosedSelectorException());
                 }
             } else {
+                // 在关闭前会唤醒选择器并处理所有未执行的任务
                 wakeup();
             }
         }
@@ -336,13 +357,18 @@ public class NioSelector implements Closeable {
      * not have pending writes already, the channel will be flushed.
      *
      * @param writeOperation to be queued in a channel's buffer
+     *                       将某个待写入数据通过channel发送
      */
     private void writeToChannel(WriteOperation writeOperation) {
+        // 确保当前线程是  该选择器关联的事件循环线程
         assertOnSelectorThread();
+        // 找到本次生成该操作的 channel
         SocketChannelContext context = writeOperation.getChannel();
 
         if (context.isOpen() == false) {
+            // 以失败方式触发监听器
             executeFailedListener(writeOperation.getListener(), new ClosedChannelException());
+            // 代表还没有触发register方法  此时应抛出异常
         } else if (context.getSelectionKey() == null) {
             // This should very rarely happen. The only times a channel is exposed outside the event loop,
             // but might not registered is through the exception handler and channel accepted callbacks.
@@ -352,18 +378,23 @@ public class NioSelector implements Closeable {
             // the write operation is queued.
             boolean shouldFlushAfterQueuing = context.readyForFlush() == false;
             try {
+                // 使用 handler处理写入操作后 并存储到刷盘队列
                 context.queueWriteOperation(writeOperation);
             } catch (Exception e) {
                 shouldFlushAfterQueuing = false;
                 executeFailedListener(writeOperation.getListener(), e);
             }
 
+            // 代表之前没有刷盘任务  为什么只有当之前没有刷盘任务时才进行处理
             if (shouldFlushAfterQueuing) {
                 // We only attempt the write if the connect process is complete and the context is not
                 // signalling that it should be closed.
+                // 如果连接已经完成 且 未关闭
                 if (context.isConnectComplete() && context.selectorShouldClose() == false) {
+                    // 使用eventHandler 处理context内所有待刷盘任务
                     handleWrite(context);
                 }
+                // 触发后置钩子
                 eventHandler.postHandling(context);
             }
         }

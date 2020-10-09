@@ -53,6 +53,9 @@ import java.util.function.Function;
 
 import static org.elasticsearch.common.util.concurrent.ConcurrentCollections.newConcurrentMap;
 
+/**
+ * 使用原生的 NIO 实现传输层
+ */
 public class NioTransport extends TcpTransport {
 
     private static final Logger logger = LogManager.getLogger(NioTransport.class);

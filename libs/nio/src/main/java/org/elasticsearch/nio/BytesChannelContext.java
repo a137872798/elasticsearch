@@ -22,6 +22,9 @@ package org.elasticsearch.nio;
 import java.io.IOException;
 import java.util.function.Consumer;
 
+/**
+ * 先忽略SSL对象 该对象基于明文数据使用
+ */
 public class BytesChannelContext extends SocketChannelContext {
 
     public BytesChannelContext(NioSocketChannel channel, NioSelector selector, Config.Socket socketConfig,
@@ -31,17 +34,23 @@ public class BytesChannelContext extends SocketChannelContext {
 
     @Override
     public int read() throws IOException {
+        // 使用 selector.ioBuffer 从该context相关的channel上读取数据 之后将数据转移到channelBuffer上
         int bytesRead = readFromChannel(channelBuffer);
 
         if (bytesRead == 0) {
             return 0;
         }
 
+        // 消费读取到的数据 并将结果 包装成flushOp
         handleReadBytes();
 
         return bytesRead;
     }
 
+    /**
+     * 处理所有待刷盘任务
+     * @throws IOException
+     */
     @Override
     public void flushChannel() throws IOException {
         getSelector().assertOnSelectorThread();
@@ -77,6 +86,7 @@ public class BytesChannelContext extends SocketChannelContext {
      * Returns a boolean indicating if the operation was fully flushed.
      */
     private boolean singleFlush(FlushOperation flushOperation) throws IOException {
+        // 将flushOp内部的数据通过channel写到对端
         flushToChannel(flushOperation);
         return flushOperation.isFullyFlushed();
     }

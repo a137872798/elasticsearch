@@ -24,6 +24,9 @@ import org.elasticsearch.common.util.concurrent.AbstractRefCounted;
 import java.io.Closeable;
 import java.nio.ByteBuffer;
 
+/**
+ * 将byteBuffer对象包装成了 page
+ */
 public class Page implements Closeable {
 
     private final ByteBuffer byteBuffer;
@@ -31,6 +34,7 @@ public class Page implements Closeable {
     // duplicate. With reference counting we can increment the reference count, return a new page,
     // and safely close the pages independently. The closeable will not be called until each page is
     // released.
+    // 引用计数对象  并在计数归0时触发函数
     private final RefCountedCloseable refCountedCloseable;
 
     public Page(ByteBuffer byteBuffer) {
@@ -72,6 +76,9 @@ public class Page implements Closeable {
         refCountedCloseable.decRef();
     }
 
+    /**
+     * 当引用计数归0时触发函数
+     */
     private static class RefCountedCloseable extends AbstractRefCounted {
 
         private final Runnable closeable;

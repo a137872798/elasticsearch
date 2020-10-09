@@ -49,18 +49,44 @@ import java.util.function.Consumer;
  *
  * The only methods of the context that should ever be called from a non-selector thread are
  * {@link #closeChannel()} and {@link #sendMessage(Object, BiConsumer)}.
+ * 父类只是定义了一套模板 子类实现了有关发送消息等的操作
+ * 该对象好像一开始就组装了需要的所有参数 同时在使用前会调用register
  */
 public abstract class SocketChannelContext extends ChannelContext<SocketChannel> {
 
+    /**
+     * ES 适配后的channel
+     */
     protected final NioSocketChannel channel;
+    /**
+     * 该对象可以理解为一个对象池 内部存储了多个page(byteBuffer)
+     */
     protected final InboundChannelBuffer channelBuffer;
     protected final AtomicBoolean isClosing = new AtomicBoolean(false);
+    /**
+     * 该对象负责处理收到的数据
+     */
     private final NioChannelHandler channelHandler;
+    /**
+     * 该对象相关的channel 绑定在哪个选择器上
+     */
     private final NioSelector selector;
+    /**
+     * 有关套接字的配置信息
+     */
     private final Config.Socket socketConfig;
+    /**
+     * 当连接完成时 会设置该future的结果
+     */
     private final CompletableContext<Void> connectContext = new CompletableContext<>();
+    /**
+     * 待处理的刷盘操作
+     */
     private final LinkedList<FlushOperation> pendingFlushes = new LinkedList<>();
     private boolean closeNow;
+    /**
+     * 绑定的channel是否已经装配过socket
+     */
     private boolean socketOptionsSet;
     private Exception connectException;
 
@@ -87,13 +113,16 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
 
     @Override
     protected void register() throws IOException {
+        // 完成nio的selector/channel注册
         super.register();
 
+        // 将socket相关配置注册到 Socket对象上
         configureSocket(rawChannel.socket(), false);
 
         if (socketConfig.isAccepted() == false) {
             InetSocketAddress remoteAddress = socketConfig.getRemoteAddress();
             try {
+                // 连接到目标地址
                 connect(rawChannel, remoteAddress);
             } catch (IOException e) {
                 throw new IOException("Failed to initiate socket channel connection {remoteAddress=" + remoteAddress + "}.", e);
@@ -120,8 +149,10 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
      * @throws IOException if an I/O error occurs
      */
     public boolean connect() throws IOException {
+        // 连接成功 忽略
         if (isConnectComplete()) {
             return true;
+        // 连接出现异常时 抛出异常
         } else if (connectContext.isCompletedExceptionally()) {
             Exception exception = connectException;
             if (exception == null) {
@@ -136,6 +167,7 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
         boolean isConnected = rawChannel.isConnected();
         if (isConnected == false) {
             try {
+                // 该方法会阻塞直到channel完成连接
                 isConnected = rawChannel.finishConnect();
             } catch (IOException | RuntimeException e) {
                 connectException = e;
@@ -150,17 +182,29 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
         return isConnected;
     }
 
+
+    /**
+     * 这里尽可能泛化了 发送消息的参数  这样更加灵活
+     * @param message
+     * @param listener
+     */
     public void sendMessage(Object message, BiConsumer<Void, Exception> listener) {
         if (isClosing.get()) {
             listener.accept(null, new ClosedChannelException());
             return;
         }
 
+        // 将消息包装成一个 op对象并写入发送队列   批发送么 ???
         WriteOperation writeOperation = channelHandler.createWriteOperation(this, message, listener);
 
+        // 如果是在业务线程 那么会存储到选择器的队列中 如果是IO线程 会直接处理写操作
         getSelector().queueWrite(writeOperation);
     }
 
+    /**
+     * 将某个WriteOperation 对象先写入到handler中 并返回一个flush任务 添加到刷盘队列
+     * @param writeOperation
+     */
     public void queueWriteOperation(WriteOperation writeOperation) {
         getSelector().assertOnSelectorThread();
         pendingFlushes.addAll(channelHandler.writeToBytes(writeOperation));
@@ -184,11 +228,19 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
         return pendingFlushes.peekFirst();
     }
 
+    /**
+     * 当连接被激活时 由handler进行处理
+     * @throws IOException
+     */
     @Override
     protected void channelActive() throws IOException {
         channelHandler.channelActive();
     }
 
+    /**
+     * 代表通过selector 关闭context
+     * @throws IOException
+     */
     @Override
     public void closeFromSelector() throws IOException {
         getSelector().assertOnSelectorThread();
@@ -203,6 +255,7 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
             isClosing.set(true);
 
             // Poll for new flush operations to close
+            // 以关闭异常触发所有监听器
             pendingFlushes.addAll(channelHandler.pollFlushOperations());
             FlushOperation flushOperation;
             while ((flushOperation = pendingFlushes.pollFirst()) != null) {
@@ -222,6 +275,10 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
         }
     }
 
+    /**
+     * 处理读取到的数据
+     * @throws IOException
+     */
     protected void handleReadBytes() throws IOException {
         int bytesConsumed = Integer.MAX_VALUE;
         while (isOpen() && bytesConsumed > 0 && channelBuffer.getIndex() > 0) {
@@ -230,9 +287,14 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
         }
 
         // Some protocols might produce messages to flush during a read operation.
+        // 通过 channelHandler.consumeReads 处理读取到的数据 并在内部转换成flushOp 对象 之后在这里取出数据并追加到pendingFlushes
         pendingFlushes.addAll(channelHandler.pollFlushOperations());
     }
 
+    /**
+     * 此时是否有待处理的刷盘任务
+     * @return
+     */
     public boolean readyForFlush() {
         getSelector().assertOnSelectorThread();
         return pendingFlushes.isEmpty() == false;
@@ -262,7 +324,7 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
     // The choice of 64KB is rather arbitrary. We can explore different sizes in the future. However, any
     // data that is copied to the buffer for a write, but not successfully flushed immediately, must be
     // copied again on the next call.
-
+    // 从channel中读取数据 并存储到channelBuffer
     protected int readFromChannel(InboundChannelBuffer channelBuffer) throws IOException {
         ByteBuffer ioBuffer = getSelector().getIoBuffer();
         int bytesRead;
@@ -277,13 +339,16 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
             return 0;
         } else {
             ioBuffer.flip();
+            // 确保此时有足够的空间
             channelBuffer.ensureCapacity(channelBuffer.getIndex() + ioBuffer.remaining());
+            // 这里获取到的就是 ioBuffer.remaining() 对应的空容器大小
             ByteBuffer[] buffers = channelBuffer.sliceBuffersFrom(channelBuffer.getIndex());
             int j = 0;
             while (j < buffers.length && ioBuffer.remaining() > 0) {
                 ByteBuffer buffer = buffers[j++];
                 ByteBufferUtils.copyBytes(ioBuffer, buffer);
             }
+            // 增加已经使用的数据对应的下标
             channelBuffer.incrementIndex(bytesRead);
             return bytesRead;
         }
@@ -293,15 +358,24 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
     // copying.
     private static final int WRITE_LIMIT = 1 << 16;
 
+    /**
+     * 将flushOp 内部的所有数据写入到channel中
+     * @param flushOperation
+     * @return
+     * @throws IOException
+     */
     protected int flushToChannel(FlushOperation flushOperation) throws IOException {
         ByteBuffer ioBuffer = getSelector().getIoBuffer();
 
+        // 代表该flushOp内部的数据还没有写完
         boolean continueFlush = flushOperation.isFullyFlushed() == false;
         int totalBytesFlushed = 0;
         while (continueFlush) {
             ioBuffer.clear();
             ioBuffer.limit(Math.min(WRITE_LIMIT, ioBuffer.limit()));
+            // 从未写入的 位置开始读取目标数量的buffer
             ByteBuffer[] buffers = flushOperation.getBuffersToWrite(WRITE_LIMIT);
+            // 将数据转移到ioBuffer中后 写入到channel
             ByteBufferUtils.copyBytes(buffers, ioBuffer);
             ioBuffer.flip();
             int bytesFlushed;
