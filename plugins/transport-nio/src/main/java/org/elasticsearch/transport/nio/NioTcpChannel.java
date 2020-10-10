@@ -32,7 +32,7 @@ import java.nio.channels.SocketChannel;
 public class NioTcpChannel extends NioSocketChannel implements TcpChannel {
 
     /**
-     * 当前通道是否是服务端通道
+     * 代表当前连接是由客户端创建的 还是由服务端接收到连接时被动创建的
      */
     private final boolean isServer;
     private final String profile;

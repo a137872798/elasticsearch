@@ -42,14 +42,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * This class manages node connections within a cluster. The connection is opened by the underlying transport.
  * Once the connection is opened, this class manages the connection. This includes closing the connection when
  * the connection manager is closed.
- * 管理当前集群中所有的连接
+ * 管理当前集群中与其他节点的所有连接
  */
 public class ClusterConnectionManager implements ConnectionManager {
 
     private static final Logger logger = LogManager.getLogger(ClusterConnectionManager.class);
 
     /**
-     * key 代表本节点连接的目标节点 connection 具备往该节点发送请求的能力
+     * key 代表本节点连接的目标节点    Connection代表与该节点的连接  在底层是由多条channel组合成的  每次发送请求时会随机选择一个channel发送
      */
     private final ConcurrentMap<DiscoveryNode, Transport.Connection> connectedNodes = ConcurrentCollections.newConcurrentMap();
 
@@ -78,7 +78,7 @@ public class ClusterConnectionManager implements ConnectionManager {
     };
 
     /**
-     * 传输层对象包含了处理 req res
+     * 传输层是一套网络框架 实现节点间发送/读取消息  建立新连接等能力  (包含channel的心跳检测 还有握手请求)
      */
     private final Transport transport;
     /**
@@ -121,7 +121,7 @@ public class ClusterConnectionManager implements ConnectionManager {
     }
 
     /**
-     * 开启一条通往指定node 的连接  注意这里允许重复创建连接
+     * 开启一条通往指定node 的连接
      * @param node
      * @param connectionProfile  使用传入的profile信息去填充默认信息  并使用新的信息去创建连接
      * @param listener

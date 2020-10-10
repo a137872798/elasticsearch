@@ -32,13 +32,13 @@ public interface NioGroup extends Closeable {
 
     /**
      * Opens and binds a server channel to accept incoming connections.
-     * 绑定一个本地地址
+     * 绑定本地端口
      */
     <S extends NioServerSocketChannel> S bindServerChannel(InetSocketAddress address, ChannelFactory<S, ?> factory) throws IOException;
 
     /**
      * Opens a outgoing client channel.
-     * 连接到一个远端地址
+     * 连接到服务器
      */
     <S extends NioSocketChannel> S openChannel(InetSocketAddress address, ChannelFactory<?, S> factory) throws IOException;
 

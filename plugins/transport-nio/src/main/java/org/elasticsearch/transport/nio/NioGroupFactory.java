@@ -78,6 +78,11 @@ public final class NioGroupFactory {
         }
     }
 
+    /**
+     * 生成事件循环组
+     * @return
+     * @throws IOException
+     */
     private NioGroup getGenericGroup() throws IOException {
         if (refCountedGroup == null) {
             // 获取线程工程  该工厂创建的线程都是守护线程
@@ -103,6 +108,10 @@ public final class NioGroupFactory {
     private static class RefCountedNioGroup extends AbstractRefCounted implements NioGroup {
 
         public static final String NAME = "ref-counted-nio-group";
+
+        /**
+         * 内部是事件循环组  模仿netty的 EventLoopGroup 每个线程都处理任务队列中的任务 同时在空闲事件select准备好的事件
+         */
         private final NioSelectorGroup nioGroup;
 
         private RefCountedNioGroup(NioSelectorGroup nioGroup) {

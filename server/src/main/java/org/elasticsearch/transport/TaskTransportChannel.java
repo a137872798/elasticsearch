@@ -26,7 +26,7 @@ import org.elasticsearch.tasks.TaskManager;
 import java.io.IOException;
 
 /**
- * 一般是在处理task时 一并将channel也包装了一层    就是在原有channel上包装了 task  taskManager属性
+ * 在原来的channel上追加了 task taskManage属性
  */
 public class TaskTransportChannel implements TransportChannel {
 

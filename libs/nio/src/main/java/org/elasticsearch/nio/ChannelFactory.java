@@ -28,6 +28,11 @@ import java.nio.channels.SocketChannel;
 import java.nio.channels.spi.AbstractSelectableChannel;
 import java.util.function.Supplier;
 
+/**
+ * 这里包含了即将设置到 channel上的各种属性
+ * @param <ServerSocket>
+ * @param <Socket>
+ */
 public abstract class ChannelFactory<ServerSocket extends NioServerSocketChannel, Socket extends NioSocketChannel> {
 
     private final boolean tcpNoDelay;
@@ -93,12 +98,22 @@ public abstract class ChannelFactory<ServerSocket extends NioServerSocketChannel
         return channel;
     }
 
+    /**
+     *
+     * @param localAddress  channel即将绑定的地址
+     * @param supplier  基于某种方式从一组选择器中选择其中一个
+     * @return
+     * @throws IOException
+     */
     public ServerSocket openNioServerSocketChannel(InetSocketAddress localAddress, Supplier<NioSelector> supplier) throws IOException {
         ServerSocketChannel rawChannel = rawChannelFactory.openNioServerSocketChannel();
+        // 将channel 设置成非阻塞模式
         setNonBlocking(rawChannel);
         NioSelector selector = supplier.get();
         Config.ServerSocket config = new Config.ServerSocket(tcpReuseAddress, localAddress);
+        // 配置channel对象
         ServerSocket serverChannel = internalCreateServerChannel(selector, rawChannel, config);
+        // 将channel注册到选择器上
         scheduleServerChannel(serverChannel, selector);
         return serverChannel;
     }
@@ -171,6 +186,11 @@ public abstract class ChannelFactory<ServerSocket extends NioServerSocketChannel
         }
     }
 
+    /**
+     * 将channel注册到选择器上 同时注册读写事件
+     * @param channel
+     * @param selector
+     */
     private void scheduleChannel(Socket channel, NioSelector selector) {
         try {
             selector.scheduleForRegistration(channel);
@@ -211,6 +231,9 @@ public abstract class ChannelFactory<ServerSocket extends NioServerSocketChannel
             tcpReceiveBufferSize, remoteAddress, isAccepted);
     }
 
+    /**
+     * 该对象负责创建原生的channel
+     */
     public static class RawChannelFactory {
 
         SocketChannel openNioChannel() throws IOException {

@@ -81,11 +81,17 @@ public class TaskManager implements ClusterStateApplier {
     private final List<String> taskHeaders;
     private final ThreadPool threadPool;
 
+    /**
+     * 维护了所有待处理的任务对象 每个任务对象内部有一个req
+     */
     private final ConcurrentMapLong<Task> tasks = ConcurrentCollections.newConcurrentMapLongWithAggressiveConcurrency();
 
     private final ConcurrentMapLong<CancellableTaskHolder> cancellableTasks = ConcurrentCollections
         .newConcurrentMapLongWithAggressiveConcurrency();
 
+    /**
+     * 生成task的唯一id
+     */
     private final AtomicLong taskIdGenerator = new AtomicLong();
 
     private final Map<TaskId, String> banedParents = new ConcurrentHashMap<>();
@@ -94,6 +100,9 @@ public class TaskManager implements ClusterStateApplier {
 
     private DiscoveryNodes lastDiscoveryNodes = DiscoveryNodes.EMPTY_NODES;
 
+    /**
+     * 该对象包含一个长度和单位信息  表示请求头的最大长度是多少
+     */
     private final ByteSizeValue maxHeaderSize;
 
     public TaskManager(Settings settings, ThreadPool threadPool, Set<String> taskHeaders) {
@@ -109,14 +118,19 @@ public class TaskManager implements ClusterStateApplier {
 
     /**
      * Registers a task without parent task
+     * @param type channel类型 比如使用传输层通道 还是使用本地通道
+     * @param action 代表本次请求的指令
+     * @param request 请求体本身
      * 注册一个待处理的任务
      */
     public Task register(String type, String action, TaskAwareRequest request) {
         Map<String, String> headers = new HashMap<>();
         long headerSize = 0;
         long maxSize = maxHeaderSize.getBytes();
+        // 获取当前线程上下文
         ThreadContext threadContext = threadPool.getThreadContext();
         for (String key : taskHeaders) {
+            // 从上下文中获取各种请求头
             String httpHeader = threadContext.getHeader(key);
             if (httpHeader != null) {
                 headerSize += key.length() * 2 + httpHeader.length() * 2;
@@ -126,6 +140,7 @@ public class TaskManager implements ClusterStateApplier {
                 headers.put(key, httpHeader);
             }
         }
+        // 这个parentTask 是代表ES自带链路追踪么
         Task task = request.createTask(taskIdGenerator.incrementAndGet(), type, action, request.getParentTask(), headers);
         Objects.requireNonNull(task);
         assert task.getParentTaskId().equals(request.getParentTask()) : "Request [ " + request + "] didn't preserve it parentTaskId";
@@ -136,6 +151,7 @@ public class TaskManager implements ClusterStateApplier {
         if (task instanceof CancellableTask) {
             registerCancellableTask(task);
         } else {
+            // 存储任务
             Task previousTask = tasks.put(task.getId(), task);
             assert previousTask == null;
         }

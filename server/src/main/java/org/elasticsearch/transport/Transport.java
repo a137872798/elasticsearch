@@ -53,7 +53,7 @@ public interface Transport extends LifecycleComponent {
     }
 
     /**
-     * 该监听器检测传输层收到的请求 发送的res 相当于一个拦截器
+     * 监听整个传输层发送/接收的req/res
      * @param listener
      */
     void setMessageListener(TransportMessageListener listener);
@@ -68,14 +68,14 @@ public interface Transport extends LifecycleComponent {
 
     /**
      * The address the transport is bound on.
-     * 当前传输层绑定的所有地址吧
+     * 服务器绑定的所有地址 每个地址都允许接收新的连接  不同的profileSettings会定义不同的地址
      */
     BoundTransportAddress boundAddress();
 
     /**
      * Further profile bound addresses
      * @return <code>null</code> iff profiles are unsupported, otherwise a map with name of profile and its bound transport address
-     * 按照特性来对地址进行划分么
+     * 通过profile进行分组
      */
     Map<String, BoundTransportAddress> profileBoundAddresses();
 

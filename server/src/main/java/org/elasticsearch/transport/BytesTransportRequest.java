@@ -29,6 +29,7 @@ import java.io.IOException;
 /**
  * A specialized, bytes only request, that can potentially be optimized on the network
  * layer, specifically for the same large buffer send to several nodes.
+ * 代表数据体已经完成了序列化处理
  */
 public class BytesTransportRequest extends TransportRequest {
 

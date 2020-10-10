@@ -89,8 +89,14 @@ public class NettyAllocator {
         }
     }
 
+    /**
+     * 该对象负责为 Bootstrap分配 ByteBuf  这个对象屏蔽了使用DirectBuffer的api  是为了避免内存泄漏么
+     */
     private static class NoDirectBuffers implements ByteBufAllocator {
 
+        /**
+         * 使用代理模式  delegate 实际上还是netty自带的分配器
+         */
         private final ByteBufAllocator delegate;
 
         private NoDirectBuffers(ByteBufAllocator delegate) {

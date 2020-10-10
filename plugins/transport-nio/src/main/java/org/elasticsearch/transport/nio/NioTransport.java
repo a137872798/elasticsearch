@@ -60,10 +60,17 @@ public class NioTransport extends TcpTransport {
 
     private static final Logger logger = LogManager.getLogger(NioTransport.class);
 
+    /**
+     * 该对象会按需分配内存
+     */
     protected final PageAllocator pageAllocator;
     private final ConcurrentMap<String, TcpChannelFactory> profileToChannelFactory = newConcurrentMap();
     private final NioGroupFactory groupFactory;
     private volatile NioGroup nioGroup;
+
+    /**
+     * 根据传入的node 生成对应的channel
+     */
     private volatile Function<DiscoveryNode, TcpChannelFactory> clientChannelFactory;
 
     protected NioTransport(Settings settings, Version version, ThreadPool threadPool, NetworkService networkService,
@@ -74,12 +81,23 @@ public class NioTransport extends TcpTransport {
         this.groupFactory = groupFactory;
     }
 
+    /**
+     * 将服务端channel 注册到事件循环组中 同时绑定目标地址
+     * @param name    the profile name
+     * @param address the address to bind to
+     * @return
+     * @throws IOException
+     */
     @Override
     protected NioTcpServerChannel bind(String name, InetSocketAddress address) throws IOException {
         TcpChannelFactory channelFactory = this.profileToChannelFactory.get(name);
+        // 生成channel 并注册到事件循环组
+        // 因为这里是非事件循环线程执行的绑定 绑定动作会异步化 这里需要阻塞监听结果
         NioTcpServerChannel serverChannel = nioGroup.bindServerChannel(address, channelFactory);
         PlainActionFuture<Void> future = PlainActionFuture.newFuture();
+        // 当绑定完成时 触发监听器
         serverChannel.addBindListener(ActionListener.toBiConsumer(future));
+        // 阻塞直到绑定完成
         future.actionGet();
         return serverChannel;
     }
@@ -96,15 +114,23 @@ public class NioTransport extends TcpTransport {
         return nioGroup.openChannel(address, clientChannelFactory.apply(node));
     }
 
+    /**
+     * 当传输层对象启动时 首先触发该方法
+     */
     @Override
     protected void doStart() {
         boolean success = false;
         try {
+            // 生成一个事件循环组
+            // 对应NettyTransport的  eventLoopGroup = new NioEventLoopGroup(workerCount, threadFactory);
             nioGroup = groupFactory.getTransportGroup();
 
             ProfileSettings clientProfileSettings = new ProfileSettings(settings, TransportSettings.DEFAULT_PROFILE);
+
+            // 专门生成 clientChannel的工厂 对应 Bootstrap
             clientChannelFactory = clientChannelFactoryFunction(clientProfileSettings);
 
+            // 如果当前节点作为服务端 那么根据配置创建各种不同的channel装配工厂
             if (NetworkService.NETWORK_SERVER.get(settings)) {
                 // loop through all profiles and start them up, special handling for default one
                 for (ProfileSettings profileSettings : profileSettings) {
@@ -144,6 +170,11 @@ public class NioTransport extends TcpTransport {
         return new TcpChannelFactoryImpl(profileSettings, false);
     }
 
+    /**
+     * 该对象根据传入的node 自动生成channel工厂   注意channel与绑定哪个地址 或者连接哪个地址是没有直接关系的
+     * @param profileSettings
+     * @return
+     */
     protected Function<DiscoveryNode, TcpChannelFactory> clientChannelFactoryFunction(ProfileSettings profileSettings) {
         return (n) -> new TcpChannelFactoryImpl(profileSettings, true);
     }
@@ -162,9 +193,17 @@ public class NioTransport extends TcpTransport {
      */
     private class TcpChannelFactoryImpl extends TcpChannelFactory {
 
+        /**
+         * 代表创建的是 服务端channel 还是客户端channel
+         */
         private final boolean isClient;
         private final String profileName;
 
+        /**
+         *
+         * @param profileSettings  该配置对象中的各种属性会被抽取出来 用于组装原生的channel
+         * @param isClient
+         */
         private TcpChannelFactoryImpl(ProfileSettings profileSettings, boolean isClient) {
             super(profileSettings);
             this.isClient = isClient;
@@ -189,6 +228,7 @@ public class NioTransport extends TcpTransport {
                                                        Config.ServerSocket socketConfig) {
             NioTcpServerChannel nioChannel = new NioTcpServerChannel(channel);
             Consumer<Exception> exceptionHandler = (e) -> onServerException(nioChannel, e);
+            // 当接收到一条新的连接时 触发acceptChannel  当前逻辑仅是打印一条日志
             Consumer<NioSocketChannel> acceptor = NioTransport.this::acceptChannel;
             ServerChannelContext context = new ServerChannelContext(nioChannel, this, selector, socketConfig, acceptor, exceptionHandler);
             nioChannel.setContext(context);

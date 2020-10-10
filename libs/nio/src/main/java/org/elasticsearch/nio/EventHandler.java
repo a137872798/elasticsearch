@@ -49,6 +49,7 @@ public class EventHandler {
      * accept logic should occur in this call.
      *
      * @param context that can accept a connection
+     *                当ServerSocketChannel 接收到新的连接时 会触发该方法
      */
     protected void acceptChannel(ServerChannelContext context) throws IOException {
         context.acceptChannels(selectorSupplier);
@@ -92,20 +93,21 @@ public class EventHandler {
      * per channel.
      *
      * @param context that was marked active
-     *                当某个channel 活跃时触发
+     *                代表某个channel注册到了选择器上
      */
     protected void handleActive(ChannelContext<?> context) throws IOException {
         context.channelActive();
         if (context instanceof SocketChannelContext) {
-            // 此时已经有待刷盘的数据 (需要写到对端)
+            // 代表有囤积的数据
             if (((SocketChannelContext) context).readyForFlush()) {
                 // 注册读写事件
                 SelectionKeyUtils.setConnectReadAndWriteInterested(context.getSelectionKey());
             } else {
-                // 仅注册读事件
+                // 注册读取以及连接事件
                 SelectionKeyUtils.setConnectAndReadInterested(context.getSelectionKey());
             }
         } else {
+            // 如果是服务端通道就是监听 accept事件
             assert context instanceof ServerChannelContext : "If not SocketChannelContext the context must be a ServerChannelContext";
             SelectionKeyUtils.setAcceptInterested(context.getSelectionKey());
         }

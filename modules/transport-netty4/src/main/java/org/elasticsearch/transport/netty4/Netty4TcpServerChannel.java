@@ -26,8 +26,14 @@ import org.elasticsearch.transport.TcpServerChannel;
 
 import java.net.InetSocketAddress;
 
+/**
+ * 服务端通道对象
+ */
 public class Netty4TcpServerChannel implements TcpServerChannel {
 
+    /**
+     * 该channel 可以获取到本地地址
+     */
     private final Channel channel;
     private final CompletableContext<Void> closeContext = new CompletableContext<>();
 

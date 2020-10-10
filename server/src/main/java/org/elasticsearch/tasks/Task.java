@@ -31,7 +31,7 @@ import java.util.Map;
 
 /**
  * Current task information
- * 代表一个任务对象
+ * 描述一个任务对象 当在传输层接收到 req时 会将req加入到一个taskManager中 这时会根据req 生成task对象
  */
 public class Task {
 

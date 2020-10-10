@@ -139,9 +139,18 @@ public class NioSelectorGroup implements NioGroup {
     public <S extends NioServerSocketChannel> S bindServerChannel(InetSocketAddress address, ChannelFactory<S, ?> factory)
         throws IOException {
         ensureOpen();
+        // 如果在这里单独为 acceptor定义了一组selector 就可以将 接收连接的事件循环组 与处于跟client交互的事件循环组隔离开
         return factory.openNioServerSocketChannel(address, acceptorSupplier);
     }
 
+    /**
+     * 如果创建的是客户端channel 是直接绑定到 selectorSupplier上的 与acceptor做隔离
+     * @param address
+     * @param factory
+     * @param <S>
+     * @return
+     * @throws IOException
+     */
     @Override
     public <S extends NioSocketChannel> S openChannel(InetSocketAddress address, ChannelFactory<?, S> factory) throws IOException {
         ensureOpen();

@@ -94,7 +94,7 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
         Netty4TcpChannel channel = ctx.channel().attr(Netty4Transport.CHANNEL_KEY).get();
         // 做一层转换
         final BytesReference wrapped = Netty4Utils.toBytesReference(buffer);
-        // 当使用完毕时 释放堆外内存
+        // 当使用完毕时 释放堆外内存  如果是堆内存则不需要处理 (通过GC自然回收)
         try (ReleasableBytesReference reference = new ReleasableBytesReference(wrapped, buffer::release)) {
             pipeline.handleBytes(channel, reference);
         }

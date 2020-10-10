@@ -46,7 +46,7 @@ public class BytesChannelContext extends SocketChannelContext {
             return 0;
         }
 
-        // 消费读取到的数据 并将结果 包装成flushOp
+        // 消费读取到的数据
         handleReadBytes();
 
         return bytesRead;
@@ -91,7 +91,6 @@ public class BytesChannelContext extends SocketChannelContext {
 
     /**
      * Returns a boolean indicating if the operation was fully flushed.
-     * 这里就会出现拆包问题
      */
     private boolean singleFlush(FlushOperation flushOperation) throws IOException {
         // 将flushOp内部的数据通过channel写到对端

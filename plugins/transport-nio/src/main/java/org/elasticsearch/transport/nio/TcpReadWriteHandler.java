@@ -70,6 +70,12 @@ public class TcpReadWriteHandler extends BytesWriteHandler {
             breaker, requestHandlers::getHandler, transport::inboundMessage);
     }
 
+    /**
+     * 当准备好read事件时 这里读取数据块 并在上层通过 pipeline将数据块转换成可以被处理的消息
+     * @param channelBuffer of bytes read from the network
+     * @return
+     * @throws IOException
+     */
     @Override
     public int consumeReads(InboundChannelBuffer channelBuffer) throws IOException {
         Page[] pages = channelBuffer.sliceAndRetainPagesTo(channelBuffer.getIndex());
@@ -79,6 +85,7 @@ public class TcpReadWriteHandler extends BytesWriteHandler {
         }
         Releasable releasable = () -> IOUtils.closeWhileHandlingException(pages);
         try (ReleasableBytesReference reference = new ReleasableBytesReference(new CompositeBytesReference(references), releasable)) {
+            // 在这里会处理完请求
             pipeline.handleBytes(channel, reference);
             return reference.length();
         }

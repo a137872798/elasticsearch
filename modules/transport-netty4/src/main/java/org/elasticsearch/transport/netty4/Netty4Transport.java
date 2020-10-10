@@ -77,6 +77,8 @@ import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadF
  * batch) with high payload that will cause regular request. (like search or single index) to take
  * longer. Med is for the typical search / single doc index. And High for things like cluster state. Ping is reserved for
  * sending out ping requests to other nodes.
+ * TcpTransport 实际的连接操作会交由子类实现
+ * 通过 Bootstrap/ServerBootstrap 组装channel 并注册到事件循环中 之后通过事件循环监听准备好的事件 并通过handler处理读写请求
  */
 public class Netty4Transport extends TcpTransport {
     private static final Logger logger = LogManager.getLogger(Netty4Transport.class);
@@ -95,19 +97,35 @@ public class Netty4Transport extends TcpTransport {
     public static final Setting<Integer> NETTY_BOSS_COUNT =
         intSetting("transport.netty.boss_count", 1, 1, Property.NodeScope);
 
-
+    /**
+     * 分配接收消息的缓冲区
+     */
     private final RecvByteBufAllocator recvByteBufAllocator;
     private final int workerCount;
+    /**
+     * 描述应当分配的最小空间 以及最大空间
+     */
     private final ByteSizeValue receivePredictorMin;
     private final ByteSizeValue receivePredictorMax;
+    /**
+     * 每个profile对应一个引导程序
+     */
     private final Map<String, ServerBootstrap> serverBootstraps = newConcurrentMap();
+
+    /**
+     * 该对象负责快速使用 SocketChannel 连接到某个地址
+     */
     private volatile Bootstrap clientBootstrap;
+    /**
+     * 每个对象都包含一个事件循环线程
+     */
     private volatile NioEventLoopGroup eventLoopGroup;
 
     public Netty4Transport(Settings settings, Version version, ThreadPool threadPool, NetworkService networkService,
                            PageCacheRecycler pageCacheRecycler, NamedWriteableRegistry namedWriteableRegistry,
                            CircuitBreakerService circuitBreakerService) {
         super(settings, version, threadPool, pageCacheRecycler, circuitBreakerService, namedWriteableRegistry, networkService);
+        // 设置进程数 核心线程数
         Netty4Utils.setAvailableProcessors(EsExecutors.NODE_PROCESSORS_SETTING.get(settings));
         this.workerCount = WORKER_COUNT.get(settings);
 
@@ -117,21 +135,29 @@ public class Netty4Transport extends TcpTransport {
         if (receivePredictorMax.getBytes() == receivePredictorMin.getBytes()) {
             recvByteBufAllocator = new FixedRecvByteBufAllocator((int) receivePredictorMax.getBytes());
         } else {
+            // 基于当前情况自动分配合适大小的byteBuf缓冲区  不细看
             recvByteBufAllocator = new AdaptiveRecvByteBufAllocator((int) receivePredictorMin.getBytes(),
                 (int) receivePredictorMin.getBytes(), (int) receivePredictorMax.getBytes());
         }
     }
 
+    /**
+     * 当传输层对象被启动时 绑定本地端口开启监听
+     */
     @Override
     protected void doStart() {
         boolean success = false;
         try {
             ThreadFactory threadFactory = daemonThreadFactory(settings, TRANSPORT_WORKER_THREAD_NAME_PREFIX);
+            // 每条线程都会进行事件循环
             eventLoopGroup = new NioEventLoopGroup(workerCount, threadFactory);
+            // 创建一个新的bootstrap 并进行装配 这样channel 会注册到 某个eventLoop的 selector上
             clientBootstrap = createClientBootstrap(eventLoopGroup);
+            // 如果当前节点在集群中以服务器的角色存在  创建对应数量的服务器引导程序
             if (NetworkService.NETWORK_SERVER.get(settings)) {
                 for (ProfileSettings profileSettings : profileSettings) {
                     createServerBootstrap(profileSettings, eventLoopGroup);
+                    // 在这里将会根据指定的地址数量 创建等量 ServerSocketChannel   使用多个ServerBootstrap是因为每个profile配置值不同  注意 ServerBootstrap本身就仅作为一个引导程序
                     bindServer(profileSettings);
                 }
             }
@@ -144,6 +170,11 @@ public class Netty4Transport extends TcpTransport {
         }
     }
 
+    /**
+     * 这里完成了对 Bootstrap的装配
+     * @param eventLoopGroup 每个对象都会检测各种io事件 以及在空闲时间处理队列中的任务
+     * @return
+     */
     private Bootstrap createClientBootstrap(NioEventLoopGroup eventLoopGroup) {
         final Bootstrap bootstrap = new Bootstrap();
         bootstrap.group(eventLoopGroup);
@@ -215,6 +246,7 @@ public class Netty4Transport extends TcpTransport {
         serverBootstrap.option(ChannelOption.ALLOCATOR, NettyAllocator.getAllocator());
         serverBootstrap.childOption(ChannelOption.ALLOCATOR, NettyAllocator.getAllocator());
 
+        // 当监听到连接时 会转给子对象处理 借此实现reactor模型
         serverBootstrap.childHandler(getServerChannelInitializer(name));
         serverBootstrap.handler(new ServerChannelExceptionHandler());
 
@@ -274,12 +306,19 @@ public class Netty4Transport extends TcpTransport {
     static final AttributeKey<Netty4TcpChannel> CHANNEL_KEY = AttributeKey.newInstance("es-channel");
     static final AttributeKey<Netty4TcpServerChannel> SERVER_CHANNEL_KEY = AttributeKey.newInstance("es-server-channel");
 
+    /**
+     * 生成通往目标地址的channel
+     * @param node for the initiated connection
+     * @return
+     * @throws IOException
+     */
     @Override
     protected Netty4TcpChannel initiateChannel(DiscoveryNode node) throws IOException {
         InetSocketAddress address = node.getAddress().address();
         Bootstrap bootstrapWithHandler = clientBootstrap.clone();
         bootstrapWithHandler.handler(getClientChannelInitializer(node));
         bootstrapWithHandler.remoteAddress(address);
+        // 生成channel 并连接到目标地址
         ChannelFuture connectFuture = bootstrapWithHandler.connect();
 
         Channel channel = connectFuture.channel();
@@ -295,8 +334,15 @@ public class Netty4Transport extends TcpTransport {
         return nettyChannel;
     }
 
+    /**
+     * 生成合适的地址后 绑定仅返回生成的channel
+     * @param name    the profile name
+     * @param address the address to bind to
+     * @return
+     */
     @Override
     protected Netty4TcpServerChannel bind(String name, InetSocketAddress address) {
+        // 先创建一个serverChannel 并注册到事件循环上 之后为该对象设置accept事件 这样就可以在事件循环中接收新的连接了
         Channel channel = serverBootstraps.get(name).bind(address).syncUninterruptibly().channel();
         Netty4TcpServerChannel esChannel = new Netty4TcpServerChannel(channel);
         channel.attr(SERVER_CHANNEL_KEY).set(esChannel);
@@ -334,6 +380,9 @@ public class Netty4Transport extends TcpTransport {
         }
     }
 
+    /**
+     * 装配管道
+     */
     protected class ServerChannelInitializer extends ChannelInitializer<Channel> {
 
         protected final String name;
@@ -345,10 +394,14 @@ public class Netty4Transport extends TcpTransport {
         @Override
         protected void initChannel(Channel ch) throws Exception {
             addClosedExceptionLogger(ch);
+            // 将es增强的管道绑定在原生的netty管道上 这样就可以随时获取该对象
             Netty4TcpChannel nettyTcpChannel = new Netty4TcpChannel(ch, true, name, ch.newSucceededFuture());
             ch.attr(CHANNEL_KEY).set(nettyTcpChannel);
+            // 该对象会在触发每一环时打印相关日志
             ch.pipeline().addLast("logging", new ESLoggingHandler());
+            // 该对象定义了消息流的编解码 解压 粘包 以及处理   WriteOp中的数据流应该是已经编码后的
             ch.pipeline().addLast("dispatcher", new Netty4MessageChannelHandler(pageCacheRecycler, Netty4Transport.this));
+            // 因为接入了一个新的channel 打印日志
             serverAcceptedChannel(nettyTcpChannel);
         }
 

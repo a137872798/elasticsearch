@@ -274,7 +274,7 @@ public class NioSelector implements Closeable {
      */
     void processKey(SelectionKey selectionKey) {
         ChannelContext<?> context = (ChannelContext<?>) selectionKey.attachment();
-        // 先忽略服务端channel
+        // 代表接收到了新的连接
         if (selectionKey.isAcceptable()) {
             assert context instanceof ServerChannelContext : "Only server channels can receive accept events";
             ServerChannelContext serverChannelContext = (ServerChannelContext) context;
@@ -508,9 +508,9 @@ public class NioSelector implements Closeable {
     }
 
     /**
-     * 代表一条连接事件完成
+     * 检测连接是否完成
      * @param context
-     * @param connectEvent
+     * @param connectEvent  是否准备好连接事件
      */
     private void attemptConnect(SocketChannelContext context, boolean connectEvent) {
         try {
@@ -562,7 +562,7 @@ public class NioSelector implements Closeable {
      */
     private void channelActive(ChannelContext<?> newChannel) {
         try {
-            // 默认实现就是为 key 设置读写Op
+            // 当channel被激活时监听对应的事件 比如 ServerSocketChannel 就要监听 accept事件  如果是 SocketChannel 就是监听read事件
             eventHandler.handleActive(newChannel);
         } catch (IOException e) {
             eventHandler.activeException(newChannel, e);

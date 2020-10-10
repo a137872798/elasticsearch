@@ -38,10 +38,12 @@ public class PageAllocator implements IntFunction<Page> {
 
     @Override
     public Page apply(int length) {
+        // 复用之前创建的page
         if (length >= RECYCLE_LOWER_THRESHOLD && length <= PageCacheRecycler.BYTE_PAGE_SIZE){
             Recycler.V<byte[]> bytePage = recycler.bytePage(false);
             return new Page(ByteBuffer.wrap(bytePage.v(), 0, length), bytePage::close);
         } else {
+            // 如果本次创建的page 比较大 那么不适合进行回收 就直接创建 
             return new Page(ByteBuffer.allocate(length), () -> {});
         }
     }

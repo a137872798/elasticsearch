@@ -154,7 +154,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
      */
     private final ConcurrentMap<String, BoundTransportAddress> profileBoundAddresses = newConcurrentMap();
     /**
-     * 维护所有连接的channel 推测key 应该是服务端bound的地址
+     * 维护所有连接的channel  key对应profile的名字  每个profile应该是类似于一种应用名
      */
     private final Map<String, List<TcpServerChannel>> serverChannels = newConcurrentMap();
     private final Set<TcpChannel> acceptedChannels = ConcurrentCollections.newConcurrentSet();
@@ -394,7 +394,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
      * 初始化连接对象
      * @param node
      * @param connectionProfile
-     * @param listener
+     * @param listener   这个监听器要处理无法正常连接到某个node的逻辑 包含了因为版本号不兼容导致的失败
      * @return
      */
     private List<TcpChannel> initiateConnection(DiscoveryNode node, ConnectionProfile connectionProfile,
@@ -1135,7 +1135,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
                 try {
                     // 将结果交由 listener处理 这里好像是发送探测信息
                     executeHandshake(node, handshakeChannel, connectionProfile,
-                        // 定义了如何处理对端的版本号
+                        // 定义了如何处理对端的版本号   当不兼容时会以失败形式触发
                         ActionListener.wrap(version -> {
                             // 将相关信息包装成 NodeChannels
                         NodeChannels nodeChannels = new NodeChannels(node, channels, connectionProfile, version);
@@ -1147,6 +1147,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
                         });
                         keepAlive.registerNodeConnection(nodeChannels.channels, connectionProfile);
                         listener.onResponse(nodeChannels);
+                        // 代表版本号不兼容  关闭所有连接
                     }, e -> closeAndFail(e instanceof ConnectTransportException ?
                         e : new ConnectTransportException(node, "general node connection failure", e))));
                 } catch (Exception ex) {

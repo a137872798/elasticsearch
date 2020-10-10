@@ -27,7 +27,7 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * 连接管理器
+ * 连接管理器   核心api还是获取通往某个node的连接 或者创建连接
  */
 public interface ConnectionManager extends Closeable {
 

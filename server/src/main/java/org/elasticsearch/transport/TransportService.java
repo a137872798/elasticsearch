@@ -79,6 +79,9 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     public static final String DIRECT_RESPONSE_PROFILE = ".direct";
     public static final String HANDSHAKE_ACTION_NAME = "internal:transport/handshake";
 
+    /**
+     * 该标识代表是否允许处理请求  ap模式???
+     */
     private final AtomicBoolean handleIncomingRequests = new AtomicBoolean();
 
     /**
@@ -87,7 +90,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     private final DelegatingTransportMessageListener messageListener = new DelegatingTransportMessageListener();
 
     /**
-     * 该对象负责建立连接 设置请求/响应处理器
+     * 该对象负责建立连接 以及处理发送/接收数据
      */
     protected final Transport transport;
     protected final ConnectionManager connectionManager;
@@ -96,20 +99,41 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      * 该节点所在集群的名字
      */
     protected final ClusterName clusterName;
+
+    /**
+     * 下层接收到的req都会转换成某种action 并交由taskManager处理
+     */
     protected final TaskManager taskManager;
+
+    /**
+     * 代表将某个请求 通过某条connection 发送到目标节点  这里指定了操作类型 以及对应的 resHandler
+     * 对应 sendRequestInternal()
+     */
     private final TransportInterceptor.AsyncSender asyncSender;
+
+    /**
+     * 将地址转换成 node
+     */
     private final Function<BoundTransportAddress, DiscoveryNode> localNodeFactory;
+
+    /**
+     * 是否需要访问远端集群
+     */
     private final boolean remoteClusterClient;
 
     /**
-     * 就相当于一个请求池
+     * 维护了所有待处理的req 以及对应的res处理器
      */
     private final Transport.ResponseHandlers responseHandlers;
+
+    /**
+     * 在应用层做拦截工作  某些拦截器是针对传输层
+     */
     private final TransportInterceptor interceptor;
 
     // An LRU (don't really care about concurrency here) that holds the latest timed out requests so if they
     // do show up, we can print more descriptive information about them
-    // 维护超时信息  key 代表请求id
+    // 这里会维护最近超时的一些请求    value包含了超时信息
     final Map<Long, TimeoutInfoHolder> timeoutInfoHandlers =
         Collections.synchronizedMap(new LinkedHashMap<Long, TimeoutInfoHolder>(100, .75F, true) {
 
@@ -130,13 +154,26 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
 
     private final Logger tracerLog;
 
+    /**
+     * 可能某些不需要打印日志
+     */
     volatile String[] tracerLogInclude;
     volatile String[] tracerLogExclude;
 
+    /**
+     * 管理与远端集群的通讯
+     */
     private final RemoteClusterService remoteClusterService;
 
-    /** if set will call requests sent to this id to shortcut and executed locally */
+    /**
+     * if set will call requests sent to this id to shortcut and executed locally
+     * 本地节点 如果需要将请求发往本地节点 会直接调用相关指令 而不需要通过网络  在某些node即作为es集群中的服务节点又作为请求节点时使用
+     * */
     volatile DiscoveryNode localNode = null;
+
+    /**
+     * 模拟连接到本地node
+     */
     private final Transport.Connection localNodeConnection = new Transport.Connection() {
         @Override
         public DiscoveryNode getNode() {
@@ -146,6 +183,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         @Override
         public void sendRequest(long requestId, String action, TransportRequest request, TransportRequestOptions options)
             throws TransportException {
+            // 直接交由本地的 reqHandler处理请求
             sendLocalRequest(requestId, action, request, options);
         }
 
@@ -176,6 +214,17 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
             new ClusterConnectionManager(settings, transport));
     }
 
+    /**
+     * 初始化传输层服务对象
+     * @param settings
+     * @param transport
+     * @param threadPool
+     * @param transportInterceptor
+     * @param localNodeFactory
+     * @param clusterSettings
+     * @param taskHeaders
+     * @param connectionManager
+     */
     public TransportService(Settings settings, Transport transport, ThreadPool threadPool, TransportInterceptor transportInterceptor,
                             Function<BoundTransportAddress, DiscoveryNode> localNodeFactory, @Nullable ClusterSettings clusterSettings,
                             Set<String> taskHeaders, ConnectionManager connectionManager) {
@@ -187,8 +236,12 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         setTracerLogInclude(TransportSettings.TRACE_LOG_INCLUDE_SETTING.get(settings));
         setTracerLogExclude(TransportSettings.TRACE_LOG_EXCLUDE_SETTING.get(settings));
         tracerLog = Loggers.getLogger(logger, ".tracer");
+
+        // 创建任务管理器
         taskManager = createTaskManager(settings, threadPool, taskHeaders);
         this.interceptor = transportInterceptor;
+
+
         this.asyncSender = interceptor.interceptSender(this::sendRequestInternal);
         this.remoteClusterClient = Node.NODE_REMOTE_CLUSTER_CLIENT.get(settings);
         remoteClusterService = new RemoteClusterService(settings, this);
@@ -670,6 +723,15 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         sendRequest(connection, action, request, options, handler);
     }
 
+    /**
+     * 异步发送某个请求
+     * @param connection  本次使用的连接对象  连接对象代表某个目标node 以及多条channel
+     * @param action
+     * @param request
+     * @param options
+     * @param handler
+     * @param <T>
+     */
     private <T extends TransportResponse> void sendRequestInternal(final Transport.Connection connection, final String action,
                                                                    final TransportRequest request,
                                                                    final TransportRequestOptions options,
@@ -679,7 +741,9 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         }
         DiscoveryNode node = connection.getNode();
 
+        // 创建一个新的上下文对象
         Supplier<ThreadContext.StoredContext> storedContextSupplier = threadPool.getThreadContext().newRestorableContext(true);
+        // 将上下文与resHandler包装在一起
         ContextRestoreResponseHandler<T> responseHandler = new ContextRestoreResponseHandler<>(storedContextSupplier, handler);
         // TODO we can probably fold this entire request ID dance into connection.sendRequest but it will be a bigger refactoring
         final long requestId = responseHandlers.add(new Transport.ResponseContext<>(responseHandler, connection, action));
@@ -746,11 +810,20 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         }
     }
 
+    /**
+     * 直接在本地处理请求
+     * @param requestId
+     * @param action
+     * @param request
+     * @param options
+     */
     private void sendLocalRequest(long requestId, final String action, final TransportRequest request, TransportRequestOptions options) {
         final DirectResponseChannel channel = new DirectResponseChannel(localNode, action, requestId, this, threadPool);
         try {
+            // 触发钩子
             onRequestSent(localNode, requestId, action, request, options);
             onRequestReceived(requestId, action);
+            // 根据action 获取对应的请求处理器
             final RequestHandlerRegistry reg = getRequestHandler(action);
             if (reg == null) {
                 throw new ActionNotFoundTransportException("Action [" + action + "] not found");
@@ -760,6 +833,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
                 //noinspection unchecked
                 reg.processMessageReceived(request, channel);
             } else {
+                // 通过线程池异步执行任务   当前线程应该是事件循环线程
                 threadPool.executor(executor).execute(new AbstractRunnable() {
                     @Override
                     protected void doRun() throws Exception {
@@ -775,6 +849,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
                     @Override
                     public void onFailure(Exception e) {
                         try {
+                            // 当出现异常时 将异常信息发送到对端
                             channel.sendResponse(e);
                         } catch (Exception inner) {
                             inner.addSuppressed(e);
@@ -1012,12 +1087,27 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         }
     }
 
+    /**
+     * 当请求处理超时时触发
+     */
     final class TimeoutHandler implements Runnable {
 
+        /**
+         * 本次需要监控超时的请求对象
+         */
         private final long requestId;
+        /**
+         * 请求发送时间
+         */
         private final long sentTime = threadPool.relativeTimeInMillis();
+        /**
+         * 指令类型
+         */
         private final String action;
         private final DiscoveryNode node;
+        /**
+         * 定时任务可以通过该对象关闭 这样就不会触发超时异常
+         */
         volatile Scheduler.Cancellable cancellable;
 
         TimeoutHandler(long requestId, DiscoveryNode node, String action) {
@@ -1026,16 +1116,22 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
             this.action = action;
         }
 
+        /**
+         * 在一定延迟后触发该方法
+         */
         @Override
         public void run() {
+            // 确保此时没有从响应池中移除
             if (responseHandlers.contains(requestId)) {
                 long timeoutTime = threadPool.relativeTimeInMillis();
+                // 将超时信息抽取出来存到handler中
                 timeoutInfoHandlers.put(requestId, new TimeoutInfoHolder(node, action, sentTime, timeoutTime));
                 // now that we have the information visible via timeoutInfoHandlers, we try to remove the request id
                 final Transport.ResponseContext<? extends TransportResponse> holder = responseHandlers.remove(requestId);
                 if (holder != null) {
                     assert holder.action().equals(action);
                     assert holder.connection().getNode().equals(node);
+                    // 处理超时异常
                     holder.handler().handleException(
                         new ReceiveTimeoutTransportException(holder.connection().getNode(), holder.action(),
                             "request_id [" + requestId + "] timed out after [" + (timeoutTime - sentTime) + "ms]"));
@@ -1049,6 +1145,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         /**
          * cancels timeout handling. this is a best effort only to avoid running it. remove the requestId from {@link #responseHandlers}
          * to make sure this doesn't run.
+         * 从外部关闭超时任务
          */
         public void cancel() {
             assert responseHandlers.contains(requestId) == false :
@@ -1063,6 +1160,10 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
             return "timeout handler for [" + requestId + "][" + action + "]";
         }
 
+        /**
+         * 开始超时任务
+         * @param timeout
+         */
         private void scheduleTimeout(TimeValue timeout) {
             this.cancellable = threadPool.schedule(this, timeout, ThreadPool.Names.GENERIC);
         }
@@ -1111,6 +1212,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     /**
      * This handler wrapper ensures that the response thread executes with the correct thread context. Before any of the handle methods
      * are invoked we restore the context.
+     * 将resHandler 与上下文对象组合在一起
      */
     public static final class ContextRestoreResponseHandler<T extends TransportResponse> implements TransportResponseHandler<T> {
 
@@ -1167,6 +1269,9 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
 
     }
 
+    /**
+     * 模拟一条可以向对端发送结果的通道  实质上直接在本地处理
+     */
     static class DirectResponseChannel implements TransportChannel {
         final DiscoveryNode localNode;
         private final String action;
@@ -1174,6 +1279,14 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         final TransportService service;
         final ThreadPool threadPool;
 
+        /**
+         *
+         * @param localNode  本地节点
+         * @param action  本次请求的指令类型
+         * @param requestId  请求id
+         * @param service   生成该channel的服务对象
+         * @param threadPool
+         */
         DirectResponseChannel(DiscoveryNode localNode, String action, long requestId, TransportService service, ThreadPool threadPool) {
             this.localNode = localNode;
             this.action = action;

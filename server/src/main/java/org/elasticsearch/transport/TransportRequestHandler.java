@@ -22,13 +22,13 @@ package org.elasticsearch.transport;
 import org.elasticsearch.tasks.Task;
 
 /**
- * 传输层请求处理器
+ * 该对象负责处理各种请求
  * @param <T>
  */
 public interface TransportRequestHandler<T extends TransportRequest> {
 
     /**
-     * 当接受到请求时 拦截的钩子
+     * TODO 当处理完成时 应该会将task从manager中移除
      * @param request  本次的请求对象
      * @param channel   使用的通道信息
      * @param task   本次相关的任务信息

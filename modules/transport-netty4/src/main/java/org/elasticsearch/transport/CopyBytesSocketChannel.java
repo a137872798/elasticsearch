@@ -56,7 +56,8 @@ import static io.netty.channel.internal.ChannelUtils.MAX_BYTES_PER_GATHERING_WRI
  * The purpose of this class is to allow the disabling of netty direct buffer pooling while allowing us to
  * control how bytes end up being copied to direct memory. If we simply disabled netty pooling, we would rely
  * on the JDK's internal thread local buffer pooling. Instead, this class allows us to create a one thread
- * local buffer with a defined size.
+ * local buffer with a defined size.、
+ * 这里没有使用netty原生的  NioSocketChannel
  */
 @SuppressForbidden(reason = "Channel#write")
 public class CopyBytesSocketChannel extends NioSocketChannel {
@@ -75,6 +76,11 @@ public class CopyBytesSocketChannel extends NioSocketChannel {
         super(parent, socket);
     }
 
+    /**
+     * 定义了如何将缓冲区的数据 写入到底层channel
+     * @param in
+     * @throws Exception
+     */
     @Override
     protected void doWrite(ChannelOutboundBuffer in) throws Exception {
         int writeSpinCount = config().getWriteSpinCount();

@@ -34,6 +34,7 @@ import java.net.InetSocketAddress;
 
 /**
  * 适配了netty的channel
+ * 区别点就是利用netty实现消息的发送 (通过pipeline处理链)
  */
 public class Netty4TcpChannel implements TcpChannel {
 

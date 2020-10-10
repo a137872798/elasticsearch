@@ -44,6 +44,7 @@ import java.util.List;
 /**
  * This class is adapted from {@link NioServerSocketChannel} class in the Netty project. It overrides the
  * channel read messages behavior to ensure that a {@link CopyBytesSocketChannel} socket channel is created.
+ * 服务端管道对象 该对象不支持分配堆外内存
  */
 public class CopyBytesServerSocketChannel extends NioServerSocketChannel {
 

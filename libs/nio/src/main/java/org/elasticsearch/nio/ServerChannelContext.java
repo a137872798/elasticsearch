@@ -63,6 +63,15 @@ public class ServerChannelContext extends ChannelContext<ServerSocketChannel> {
      */
     private final CompletableContext<Void> bindContext = new CompletableContext<>();
 
+    /**
+     *
+     * @param channel   该对象是ES封装的channel
+     * @param channelFactory
+     * @param selector  该channel会被注册到这个选择器上
+     * @param config
+     * @param acceptor   当接收到客户端channel 触发该方法  用于实现reactor模式
+     * @param exceptionHandler
+     */
     public ServerChannelContext(NioServerSocketChannel channel, ChannelFactory<?, ?> channelFactory, NioSelector selector,
                                 Config.ServerSocket config, Consumer<NioSocketChannel> acceptor,
                                 Consumer<Exception> exceptionHandler) {
@@ -74,6 +83,11 @@ public class ServerChannelContext extends ChannelContext<ServerSocketChannel> {
         this.acceptor = acceptor;
     }
 
+    /**
+     * 代表接收到新的客户端连接 这里会将连接挨个注册到选择器上  并注册读写事件监听client发送的数据 或者向client发送数据
+     * @param selectorSupplier
+     * @throws IOException
+     */
     public void acceptChannels(Supplier<NioSelector> selectorSupplier) throws IOException {
         SocketChannel acceptedChannel;
         // 这里不断循环 直到接收到新的客户端
@@ -88,6 +102,10 @@ public class ServerChannelContext extends ChannelContext<ServerSocketChannel> {
         bindContext.addListener(listener);
     }
 
+    /**
+     * 针对服务端通道 当调用bind时会阻塞直到绑定成功
+     * @throws IOException
+     */
     @Override
     protected void register() throws IOException {
         super.register();

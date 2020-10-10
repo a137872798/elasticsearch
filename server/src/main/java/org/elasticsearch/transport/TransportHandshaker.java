@@ -119,7 +119,7 @@ final class TransportHandshaker {
      * @throws IOException
      */
     void handleHandshake(TransportChannel channel, long requestId, StreamInput stream) throws IOException {
-        // Must read the handshake request to exhaust the stream
+        // Must read the handshake request to exhaust the stream   这里代表要消耗stream 这样下一个byte才是版本号
         HandshakeRequest handshakeRequest = new HandshakeRequest(stream);
         final int nextByte = stream.read();
         if (nextByte != -1) {
@@ -199,7 +199,7 @@ final class TransportHandshaker {
             if (isDone.compareAndSet(false, true)) {
                 listener.onFailure(new IllegalStateException("handshake failed", e));
             }
-        }
+    }
 
         void handleLocalException(TransportException e) {
             if (removeHandlerForHandshake(requestId) != null && isDone.compareAndSet(false, true)) {

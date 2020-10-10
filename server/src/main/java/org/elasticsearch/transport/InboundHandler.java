@@ -137,7 +137,7 @@ public class InboundHandler {
                 assertRemoteVersion(streamInput, header.getVersion());
                 final TransportResponseHandler<?> handler;
                 long requestId = header.getRequestId();
-                // TODO
+                // 当接收到一个握手的响应结果时 从命令池中移除等待的请求 并处理
                 if (header.isHandshake()) {
                     handler = handshaker.removeHandlerForHandshake(requestId);
                 } else {
@@ -182,7 +182,7 @@ public class InboundHandler {
         final String action = header.getActionName();
         final long requestId = header.getRequestId();
         final Version version = header.getVersion();
-        // TODO 先忽略握手请求
+        // 代表接收到的是一个握手请求 也就是刚连接到某个节点时会发送探测请求
         if (header.isHandshake()) {
             messageListener.onRequestReceived(requestId, action);
             // Cannot short circuit handshakes
