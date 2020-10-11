@@ -651,7 +651,7 @@ public abstract class AbstractClient implements Client {
          */
         private final ClusterAdmin clusterAdmin;
         /**
-         * 索引监控对象
+         * 索引管理对象  该 client是专门处理有关索引的请求
          */
         private final IndicesAdmin indicesAdmin;
 

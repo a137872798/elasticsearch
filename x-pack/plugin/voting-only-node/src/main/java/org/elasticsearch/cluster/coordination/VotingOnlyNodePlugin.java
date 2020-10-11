@@ -142,6 +142,9 @@ public class VotingOnlyNodePlugin extends Plugin implements DiscoveryPlugin, Net
         return Settings.builder().put(DiscoveryModule.ELECTION_STRATEGY_SETTING.getKey(), VOTING_ONLY_ELECTION_STRATEGY).build();
     }
 
+    /**
+     * 这是ES内置的选举算法
+     */
     static class VotingOnlyNodeElectionStrategy extends ElectionStrategy {
 
         @Override

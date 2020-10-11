@@ -66,7 +66,7 @@ import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_MAX_HEAD
 
 /**
  * Task Manager service for keeping track of currently running tasks on the nodes
- * 任务管理器  从client接收到的所有任务 最终都会交托给该对象  该对象负责维护任务以及处理
+ * 任务管理器  从client接收到的所有任务 都会在这里注册
  */
 public class TaskManager implements ClusterStateApplier {
 
@@ -78,6 +78,7 @@ public class TaskManager implements ClusterStateApplier {
     private static final TimeValue WAIT_FOR_COMPLETION_POLL = timeValueMillis(100);
 
     /** Rest headers that are copied to the task */
+    // 这组任务头会拷贝到每个task上
     private final List<String> taskHeaders;
     private final ThreadPool threadPool;
 
@@ -86,6 +87,9 @@ public class TaskManager implements ClusterStateApplier {
      */
     private final ConcurrentMapLong<Task> tasks = ConcurrentCollections.newConcurrentMapLongWithAggressiveConcurrency();
 
+    /**
+     * 可关闭的task需要分开维护
+     */
     private final ConcurrentMapLong<CancellableTaskHolder> cancellableTasks = ConcurrentCollections
         .newConcurrentMapLongWithAggressiveConcurrency();
 
@@ -96,8 +100,14 @@ public class TaskManager implements ClusterStateApplier {
 
     private final Map<TaskId, String> banedParents = new ConcurrentHashMap<>();
 
+    /**
+     * 负责处理每个task的结果
+     */
     private TaskResultsService taskResultsService;
 
+    /**
+     * 记录此时最新的 集群中所有节点的快照
+     */
     private DiscoveryNodes lastDiscoveryNodes = DiscoveryNodes.EMPTY_NODES;
 
     /**
@@ -140,7 +150,7 @@ public class TaskManager implements ClusterStateApplier {
                 headers.put(key, httpHeader);
             }
         }
-        // 这个parentTask 是代表ES自带链路追踪么
+        // 每个任务可能会衍生子任务 而在任务管理器中会对任务做追踪
         Task task = request.createTask(taskIdGenerator.incrementAndGet(), type, action, request.getParentTask(), headers);
         Objects.requireNonNull(task);
         assert task.getParentTaskId().equals(request.getParentTask()) : "Request [ " + request + "] didn't preserve it parentTaskId";
@@ -203,6 +213,10 @@ public class TaskManager implements ClusterStateApplier {
         return task;
     }
 
+    /**
+     * 将某个可关闭的task 设置到容器中
+     * @param task
+     */
     private void registerCancellableTask(Task task) {
         CancellableTask cancellableTask = (CancellableTask) task;
         CancellableTaskHolder holder = new CancellableTaskHolder(cancellableTask);
@@ -211,6 +225,7 @@ public class TaskManager implements ClusterStateApplier {
         // Check if this task was banned before we start it. The empty check is used to avoid
         // computing the hash code of the parent taskId as most of the time banedParents is empty.
         if (task.getParentTaskId().isSet() && banedParents.isEmpty() == false) {
+            // 如果该任务已经被禁止了 直接关闭任务
             String reason = banedParents.get(task.getParentTaskId());
             if (reason != null) {
                 try {
@@ -243,6 +258,7 @@ public class TaskManager implements ClusterStateApplier {
 
     /**
      * Unregister the task
+     * 将task 从容器中移除
      */
     public Task unregister(Task task) {
         logger.trace("unregister task for id: {}", task.getId());
@@ -262,22 +278,27 @@ public class TaskManager implements ClusterStateApplier {
     /**
      * Register a node on which a child task will execute. The returned {@link Releasable} must be called
      * to unregister the child node once the child task is completed or failed.
+     * 注册某个任务衍生出的子任务请求 发送到了哪个节点
      */
     public Releasable registerChildNode(long taskId, DiscoveryNode node) {
+        // 看来存在父子关系的task 本身一定是一个可关闭的task
         final CancellableTaskHolder holder = cancellableTasks.get(taskId);
         if (holder != null) {
             logger.trace("register child node [{}] task [{}]", node, taskId);
             holder.registerChildNode(node);
+            // 当任务完成时 进行注销
             return Releasables.releaseOnce(() -> {
                 logger.trace("unregister child node [{}] task [{}]", node, taskId);
                 holder.unregisterChildNode(node);
             });
         }
+        // 否则不做任何处理
         return () -> {};
     }
 
     /**
      * Stores the task failure
+     * 处理完成时存储结果
      */
     public <Response extends ActionResponse> void storeResult(Task task, Exception error, ActionListener<Response> listener) {
         DiscoveryNode localNode = lastDiscoveryNodes.getLocalNode();
@@ -288,12 +309,14 @@ public class TaskManager implements ClusterStateApplier {
         }
         final TaskResult taskResult;
         try {
+            // 生成结果对象
             taskResult = task.result(localNode, error);
         } catch (IOException ex) {
             logger.warn(() -> new ParameterizedMessage("couldn't store error {}", ExceptionsHelper.stackTrace(error)), ex);
             listener.onFailure(ex);
             return;
         }
+        // 存储结果
         taskResultsService.storeResult(taskResult, new ActionListener<Void>() {
             @Override
             public void onResponse(Void aVoid) {
@@ -452,6 +475,10 @@ public class TaskManager implements ClusterStateApplier {
         }
     }
 
+    /**
+     * 该对象会监控集群的变化 主要就是获取此时集群中所有的node
+     * @param event
+     */
     @Override
     public void applyClusterState(ClusterChangedEvent event) {
         lastDiscoveryNodes = event.state().getNodes();
@@ -459,6 +486,7 @@ public class TaskManager implements ClusterStateApplier {
             synchronized (banedParents) {
                 lastDiscoveryNodes = event.state().getNodes();
                 // Remove all bans that were registered by nodes that are no longer in the cluster state
+                // 既然集群中已经不存在这些node了 就不需要再ban了
                 Iterator<TaskId> banIterator = banedParents.keySet().iterator();
                 while (banIterator.hasNext()) {
                     TaskId taskId = banIterator.next();
@@ -470,6 +498,7 @@ public class TaskManager implements ClusterStateApplier {
                 }
             }
             // Cancel cancellable tasks for the nodes that are gone
+            // 将不存在的node 关闭
             for (Map.Entry<Long, CancellableTaskHolder> taskEntry : cancellableTasks.entrySet()) {
                 CancellableTaskHolder holder = taskEntry.getValue();
                 CancellableTask task = holder.getTask();
@@ -500,18 +529,43 @@ public class TaskManager implements ClusterStateApplier {
         throw new ElasticsearchTimeoutException("Timed out waiting for completion of [{}]", task);
     }
 
+    /**
+     * 代表某个可关闭的任务对象  一般是存在父子级关系的
+     */
     private static class CancellableTaskHolder {
+
+        /**
+         * 当前可关闭的任务对象
+         */
         private final CancellableTask task;
         private boolean finished = false;
+        /**
+         * 当关闭时触发的一组监听器
+         */
         private List<Runnable> cancellationListeners = null;
+        /**
+         * 代表关联的子任务发送到了哪个节点  key应该就是下标
+         */
         private ObjectIntMap<DiscoveryNode> childTasksPerNode = null;
+        /**
+         * 该任务不允许追加子任务
+         */
         private boolean banChildren = false;
+        /**
+         * 当子任务完成时触发
+         */
         private List<Runnable> childTaskCompletedListeners = null;
 
         CancellableTaskHolder(CancellableTask task) {
             this.task = task;
         }
 
+        /**
+         * 如果任务还未完成 将listener 加入到cancellationListeners
+         * 如果已经完成 直接触发监听器
+         * @param reason
+         * @param listener
+         */
         void cancel(String reason, Runnable listener) {
             final Runnable toRun;
             synchronized (this) {
@@ -543,6 +597,7 @@ public class TaskManager implements ClusterStateApplier {
 
         /**
          * Marks task as finished.
+         * 调用finish时 会将之前囤积的所有 cancel监听器执行
          */
         public void finish() {
             final List<Runnable> listeners;
@@ -573,6 +628,11 @@ public class TaskManager implements ClusterStateApplier {
             ExceptionsHelper.reThrowIfNotNull(rootException);
         }
 
+        /**
+         * 检查该task 是否有父级任务
+         * @param parentTaskId
+         * @return
+         */
         public boolean hasParent(TaskId parentTaskId) {
             return task.getParentTaskId().equals(parentTaskId);
         }
@@ -581,6 +641,10 @@ public class TaskManager implements ClusterStateApplier {
             return task;
         }
 
+        /**
+         * 为当前任务 注册一个子级任务
+         * @param node
+         */
         synchronized void registerChildNode(DiscoveryNode node) {
             if (banChildren) {
                 throw new TaskCancelledException("The parent task was cancelled, shouldn't start any child tasks");
@@ -597,6 +661,7 @@ public class TaskManager implements ClusterStateApplier {
                 if (childTasksPerNode.addTo(node, -1) == 0) {
                     childTasksPerNode.remove(node);
                 }
+                // 当所有子级任务都完成时 触发监听器
                 if (childTasksPerNode.isEmpty() && this.childTaskCompletedListeners != null) {
                     listeners = childTaskCompletedListeners;
                     childTaskCompletedListeners = null;
@@ -607,6 +672,11 @@ public class TaskManager implements ClusterStateApplier {
             notifyListeners(listeners);
         }
 
+        /**
+         * 此时禁止在增加新的子级任务  同时设置子级人物完成时的监听器
+         * @param onChildTasksCompleted
+         * @return
+         */
         Set<DiscoveryNode> startBan(Runnable onChildTasksCompleted) {
             final Set<DiscoveryNode> pendingChildNodes;
             final Runnable toRun;

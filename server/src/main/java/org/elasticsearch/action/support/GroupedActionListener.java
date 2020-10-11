@@ -38,6 +38,10 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class GroupedActionListener<T> implements ActionListener<T> {
     private final CountDown countDown;
     private final AtomicInteger pos = new AtomicInteger();
+
+    /**
+     * 以线程安全的方式将数据存储到数组中 每个slot仅允许操作一次
+     */
     private final AtomicArray<T> results;
     /**
      * 当这组任务执行完成时会触发函数
@@ -59,6 +63,10 @@ public final class GroupedActionListener<T> implements ActionListener<T> {
         this.delegate = delegate;
     }
 
+    /**
+     * 将接收到的结果挨个存储到array中 只有当收集到的结果数量与一开始要求的数量一致时 才会触发监听器
+     * @param element
+     */
     @Override
     public void onResponse(T element) {
         results.setOnce(pos.incrementAndGet() - 1, element);

@@ -35,6 +35,7 @@ import static org.elasticsearch.common.xcontent.ConstructingObjectParser.constru
 
 /**
  * A response for a create index action.
+ * 代表创建索引的结果
  */
 public class CreateIndexResponse extends ShardsAcknowledgedResponse {
 

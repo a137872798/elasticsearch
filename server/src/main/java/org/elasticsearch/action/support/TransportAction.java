@@ -29,9 +29,17 @@ import org.elasticsearch.tasks.TaskManager;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * 该对象可以直接运行
+ * @param <Request>
+ * @param <Response>
+ */
 public abstract class TransportAction<Request extends ActionRequest, Response extends ActionResponse> {
 
     public final String actionName;
+    /**
+     * 这组拦截器会在 chain中使用
+     */
     private final ActionFilter[] filters;
     protected final TaskManager taskManager;
     /**
@@ -48,6 +56,8 @@ public abstract class TransportAction<Request extends ActionRequest, Response ex
 
     /**
      * Use this method when the transport action should continue to run in the context of the current task
+     * @param request 本次待处理的请求对象
+     * @param listener 当请求处理完成时 会回调该对象
      */
     public final void execute(Task task, Request request, ActionListener<Response> listener) {
         ActionRequestValidationException validationException = request.validate();
@@ -66,9 +76,17 @@ public abstract class TransportAction<Request extends ActionRequest, Response ex
 
     protected abstract void doExecute(Task task, Request request, ActionListener<Response> listener);
 
+    /**
+     * 处理链对象
+     * @param <Request>
+     * @param <Response>
+     */
     private static class RequestFilterChain<Request extends ActionRequest, Response extends ActionResponse>
             implements ActionFilterChain<Request, Response> {
 
+        /**
+         * 该对象本身可以直接运行
+         */
         private final TransportAction<Request, Response> action;
         private final AtomicInteger index = new AtomicInteger();
         private final Logger logger;
@@ -99,6 +117,7 @@ public abstract class TransportAction<Request extends ActionRequest, Response ex
 
     /**
      * Wrapper for an action listener that stores the result at the end of the execution
+     * 该对象会将处理结果存储到 taskManager中
      */
     private static class TaskResultStoringActionListener<Response extends ActionResponse> implements ActionListener<Response> {
         private final ActionListener<Response> delegate;

@@ -26,23 +26,27 @@ import org.elasticsearch.action.support.IndicesOptions;
  * one or more indices. Allows to retrieve which indices the action relates to.
  * In case of internal requests  originated during the distributed execution of an external request,
  * they will still return the indices that the original request related to.
+ * 有关索引的请求
  */
 public interface IndicesRequest {
 
     /**
      * Returns the array of indices that the action relates to
+     * 与本次请求相关的所有索引
      */
     String[] indices();
 
     /**
      * Returns the indices options used to resolve indices. They tell for instance whether a single index is
      * accepted, whether an empty array will be converted to _all, and how wildcards will be expanded if needed.
+     * 一些描述索引的选项
      */
     IndicesOptions indicesOptions();
 
     interface Replaceable extends IndicesRequest {
         /**
          * Sets the indices that the action relates to.
+         * 替换本次req相关的索引
          */
         IndicesRequest indices(String... indices);
     }

@@ -92,6 +92,9 @@ import static org.elasticsearch.cluster.coordination.NoMasterBlockService.NO_MAS
 import static org.elasticsearch.gateway.ClusterStateUpdaters.hideStateIfNotRecovered;
 import static org.elasticsearch.gateway.GatewayService.STATE_NOT_RECOVERED_BLOCK;
 
+/**
+ * 整个集群的协调者 内部应该使用了某种一致性算法
+ */
 public class Coordinator extends AbstractLifecycleComponent implements Discovery {
 
     private static final Logger logger = LogManager.getLogger(Coordinator.class);
@@ -102,13 +105,21 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             TimeValue.timeValueMillis(10000), TimeValue.timeValueMillis(1), Setting.Property.NodeScope);
 
     // the timeout for the publication of each value
+    // 将统一后的集群信息发布到其他节点的超时时间
     public static final Setting<TimeValue> PUBLISH_TIMEOUT_SETTING =
         Setting.timeSetting("cluster.publish.timeout",
             TimeValue.timeValueMillis(30000), TimeValue.timeValueMillis(1), Setting.Property.NodeScope);
 
     private final Settings settings;
+
     private final boolean singleNodeDiscovery;
+    /**
+     * 使用的选举策略
+     */
     private final ElectionStrategy electionStrategy;
+    /**
+     * 传输层服务 通过该对象可以在节点之间建立连接 以及发送数据包
+     */
     private final TransportService transportService;
     private final MasterService masterService;
     private final AllocationService allocationService;

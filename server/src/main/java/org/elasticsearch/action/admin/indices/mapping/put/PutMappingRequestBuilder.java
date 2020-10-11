@@ -31,6 +31,7 @@ import java.util.Map;
 
 /**
  * Builder for a put mapping request
+ * 发送一个更新mapping的请求
  */
 public class PutMappingRequestBuilder
     extends AcknowledgedRequestBuilder<PutMappingRequest, AcknowledgedResponse, PutMappingRequestBuilder> {

@@ -35,6 +35,7 @@ import static org.elasticsearch.common.xcontent.ConstructingObjectParser.constru
 
 /**
  * A response that indicates that a request has been acknowledged
+ * 当前响应结果是否被确认
  */
 public class AcknowledgedResponse extends ActionResponse implements ToXContentObject {
 

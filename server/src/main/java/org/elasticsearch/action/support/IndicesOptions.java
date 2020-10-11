@@ -39,6 +39,7 @@ import static org.elasticsearch.common.xcontent.support.XContentMapValues.nodeSt
 /**
  * Controls how to deal with unavailable concrete indices (closed or missing), how wildcard expressions are expanded
  * to actual indices (all, closed or open indices) and how to deal with wildcard expressions that resolve to no indices.
+ * 描述某个索引的选项
  */
 public class IndicesOptions implements ToXContentFragment {
 

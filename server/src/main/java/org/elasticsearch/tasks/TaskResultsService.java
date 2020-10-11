@@ -60,6 +60,7 @@ import static org.elasticsearch.common.unit.TimeValue.timeValueMillis;
 
 /**
  * Service that can store task results.
+ * 该对象负责存储某个 task的结果
  */
 public class TaskResultsService {
 
@@ -76,12 +77,16 @@ public class TaskResultsService {
     /**
      * The backoff policy to use when saving a task result fails. The total wait
      * time is 600000 milliseconds, ten minutes.
+     * 当存储失败时 采用指数级补偿策略
      */
     static final BackoffPolicy STORE_BACKOFF_POLICY =
             BackoffPolicy.exponentialBackoff(timeValueMillis(250), 14);
 
     private final Client client;
 
+    /**
+     * 该服务负责获取集群相关的信息 内部应该是使用了某种一致性算法
+     */
     private final ClusterService clusterService;
 
     private final ThreadPool threadPool;
@@ -93,17 +98,28 @@ public class TaskResultsService {
         this.threadPool = threadPool;
     }
 
+    /**
+     * 存储某个taskResult
+     * @param taskResult
+     * @param listener
+     */
     public void storeResult(TaskResult taskResult, ActionListener<Void> listener) {
 
+        // 获取此时的集群状态  包含了此时有多少node等信息
         ClusterState state = clusterService.state();
 
+        // 如果此时不包含有关 .tasks的路由表
         if (state.routingTable().hasIndex(TASK_INDEX) == false) {
+            // 这里创建了一个申请索引的请求   也就是将taskResult当作普通数据存储到es服务器中么
             CreateIndexRequest createIndexRequest = new CreateIndexRequest();
+            // 下面的属性是 CreateIndexRequest必备的 而有关taskResult的这些属性是固定的
             createIndexRequest.settings(taskResultIndexSettings());
             createIndexRequest.index(TASK_INDEX);
+            // 可以找到 task-index-mapping.json 的文件 内部存储了一系列属性 可以将它设置到req上
             createIndexRequest.mapping(taskResultIndexMapping());
             createIndexRequest.cause("auto(task api)");
 
+            // TODO 先不管请求是如何发送的  当创建索引完成时 触发监听器的逻辑 也就是再发送一个添加索引数据的信息
             client.admin().indices().create(createIndexRequest, new ActionListener<CreateIndexResponse>() {
                 @Override
                 public void onResponse(CreateIndexResponse result) {
@@ -127,6 +143,7 @@ public class TaskResultsService {
             });
         } else {
             IndexMetadata metadata = state.getMetadata().index(TASK_INDEX);
+            // 先获取集群当前taskIndex的版本    如果版本太旧 尝试更新
             if (getTaskResultMappingVersion(metadata) < TASK_RESULT_MAPPING_VERSION) {
                 // The index already exists but doesn't have our mapping
                 client.admin().indices().preparePutMapping(TASK_INDEX)
@@ -150,9 +167,15 @@ public class TaskResultsService {
         return (int) meta.get(TASK_RESULT_MAPPING_VERSION_META_FIELD);
     }
 
+    /**
+     * 将某个任务结果发往某个es节点并存储
+     * @param taskResult
+     * @param listener
+     */
     private void doStoreResult(TaskResult taskResult, ActionListener<Void> listener) {
         IndexRequestBuilder index = client.prepareIndex(TASK_INDEX).setId(taskResult.getTask().getTaskId().toString());
         try (XContentBuilder builder = XContentFactory.contentBuilder(Requests.INDEX_CONTENT_TYPE)) {
+            // 将结果转换成json格式后设置到 indexReq上
             taskResult.toXContent(builder, ToXContent.EMPTY_PARAMS);
             index.setSource(builder);
         } catch (IOException e) {
@@ -161,6 +184,12 @@ public class TaskResultsService {
         doStoreResult(STORE_BACKOFF_POLICY.iterator(), index, listener);
     }
 
+    /**
+     * 将创建索引的请求发往各个节点 当失败时 在等待一定时间后进行重试
+     * @param backoff
+     * @param index
+     * @param listener
+     */
     private void doStoreResult(Iterator<TimeValue> backoff, IndexRequestBuilder index, ActionListener<Void> listener) {
         index.execute(new ActionListener<IndexResponse>() {
             @Override
@@ -182,10 +211,17 @@ public class TaskResultsService {
         });
     }
 
+    /**
+     * 这里获取有关 taskResult的默认配置
+     * @return
+     */
     private Settings taskResultIndexSettings() {
         return Settings.builder()
+            // taskResult的分片数量为1
             .put(IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.getKey(), 1)
+            // 在复制时自动扩充???
             .put(IndexMetadata.INDEX_AUTO_EXPAND_REPLICAS_SETTING.getKey(), "0-1")
+            // 最高优先级
             .put(IndexMetadata.SETTING_PRIORITY, Integer.MAX_VALUE)
             .build();
     }

@@ -26,6 +26,7 @@ import org.elasticsearch.tasks.Task;
 
 /**
  * A filter allowing to filter transport actions
+ * 当直接执行 TransportAction时 会通过该对象做拦截
  */
 public interface ActionFilter {
 

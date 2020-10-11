@@ -42,7 +42,7 @@ import java.util.Collections;
 import java.util.Map;
 
 /**
- * 整个集群功能的入口
+ * 该对象负责管理集群中各种元数据
  * 核心api都是转发给masterService 和 clusterApplierService的
  */
 public class ClusterService extends AbstractLifecycleComponent {

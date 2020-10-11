@@ -36,7 +36,7 @@ public class RemoteConnectionManager implements ConnectionManager {
 
     private final String clusterAlias;
     /**
-     * 内部应该就是 ClusterConnectionManager吧   ClusterConnectionManager 应该是管理一个集群内部的连接的
+     * 就是 ClusterConnectionManager
      */
     private final ConnectionManager delegate;
     private final AtomicLong counter = new AtomicLong();

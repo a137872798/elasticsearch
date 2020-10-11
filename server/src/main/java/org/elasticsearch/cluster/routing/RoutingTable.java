@@ -67,7 +67,8 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
 
     /**
      * index to IndexRoutingTable map
-     * 理解为一个简单的hashMap
+     * ImmutableOpenMap理解为一个简单的hashMap
+     * 这里存储了集群下所有索引的路由对象
      */
     private final ImmutableOpenMap<String, IndexRoutingTable> indicesRouting;
 

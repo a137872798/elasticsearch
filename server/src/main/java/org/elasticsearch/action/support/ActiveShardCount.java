@@ -36,12 +36,14 @@ import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_WAIT_FOR_
 /**
  * A class whose instances represent a value for counting the number
  * of active shard copies for a given shard in an index.
+ * 代表某个索引的分片数量
  */
 public final class ActiveShardCount implements Writeable {
 
     private static final int ACTIVE_SHARD_COUNT_DEFAULT = -2;
     private static final int ALL_ACTIVE_SHARDS = -1;
 
+    // 这里记录了几种特殊值
     public static final ActiveShardCount DEFAULT = new ActiveShardCount(ACTIVE_SHARD_COUNT_DEFAULT);
     public static final ActiveShardCount ALL = new ActiveShardCount(ALL_ACTIVE_SHARDS);
     public static final ActiveShardCount NONE = new ActiveShardCount(0);

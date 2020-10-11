@@ -48,11 +48,21 @@ import java.util.function.Function;
  * In the case of a disconnection, this class will issue a re-connect task to establish at most
  * {@link SniffConnectionStrategy#REMOTE_CONNECTIONS_PER_CLUSTER} until either all eligible nodes are exhausted or the maximum number of
  * connections per cluster has been reached.
+ * 创建通往某个远端集群的连接对象
  */
 final class RemoteClusterConnection implements Closeable {
 
+    /**
+     * 该对象内部包含了连接到某个node 的逻辑
+     */
     private final TransportService transportService;
+    /**
+     * 维护所有远端集群连接对象
+     */
     private final RemoteConnectionManager remoteConnectionManager;
+    /**
+     * 连接还有不同的策略
+     */
     private final RemoteConnectionStrategy connectionStrategy;
     private final String clusterAlias;
     private final ThreadPool threadPool;
@@ -98,6 +108,7 @@ final class RemoteClusterConnection implements Closeable {
      * will invoke the listener immediately.
      */
     void ensureConnected(ActionListener<Void> listener) {
+        // 当还没有任何一条通往远端集群的连接时 进行连接
         if (remoteConnectionManager.size() == 0) {
             connectionStrategy.connect(listener);
         } else {

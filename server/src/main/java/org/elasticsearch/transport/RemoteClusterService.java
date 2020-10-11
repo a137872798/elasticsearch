@@ -117,6 +117,11 @@ public final class RemoteClusterService extends RemoteClusterAware implements Cl
     private final TransportService transportService;
     private final Map<String, RemoteClusterConnection> remoteClusters = ConcurrentCollections.newConcurrentMap();
 
+    /**
+     *
+     * @param settings
+     * @param transportService   该对象是由哪个传输层对象创建的
+     */
     RemoteClusterService(Settings settings, TransportService transportService) {
         super(settings);
         this.enabled = Node.NODE_REMOTE_CLUSTER_CLIENT.get(settings);
@@ -247,9 +252,10 @@ public final class RemoteClusterService extends RemoteClusterAware implements Cl
     /**
      * This method updates the list of remote clusters. It's intended to be used as an update consumer on the settings infrastructure
      *
-     * @param clusterAlias a cluster alias to discovery node mapping representing the remote clusters seeds nodes
+     * @param clusterAlias a cluster alias to discovery node mapping representing the remote clusters seeds nodes  某个远端集群的名字
      * @param newSettings the updated settings for the remote connection
      * @param listener a listener invoked once every configured cluster has been connected to
+     *                 连接到远端的某个集群
      */
     synchronized void updateRemoteCluster(String clusterAlias, Settings newSettings, ActionListener<Void> listener) {
         if (LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias)) {
@@ -257,6 +263,7 @@ public final class RemoteClusterService extends RemoteClusterAware implements Cl
         }
 
         RemoteClusterConnection remote = this.remoteClusters.get(clusterAlias);
+        // 如果不允许连接到目标集群 跳过这个集群
         if (RemoteConnectionStrategy.isConnectionEnabled(clusterAlias, newSettings) == false) {
             try {
                 IOUtils.close(remote);
@@ -268,12 +275,15 @@ public final class RemoteClusterService extends RemoteClusterAware implements Cl
             return;
         }
 
+        // 尝试新建连接
         if (remote == null) {
             // this is a new cluster we have to add a new representation
             Settings finalSettings = Settings.builder().put(this.settings, false).put(newSettings, false).build();
             remote = new RemoteClusterConnection(finalSettings, clusterAlias, transportService);
             remoteClusters.put(clusterAlias, remote);
+            // 当还没有通往远端集群的连接时 调用connect
             remote.ensureConnected(listener);
+            // 当连接已经存在时检测是否需要重建连接
         } else if (remote.shouldRebuildConnection(newSettings)) {
             // Changes to connection configuration. Must tear down existing connection
             try {
@@ -287,6 +297,7 @@ public final class RemoteClusterService extends RemoteClusterAware implements Cl
             remoteClusters.put(clusterAlias, remote);
             remote.ensureConnected(listener);
         } else {
+            // 连接已存在 不做处理
             // No changes to connection configuration.
             listener.onResponse(null);
         }
@@ -295,16 +306,20 @@ public final class RemoteClusterService extends RemoteClusterAware implements Cl
     /**
      * Connects to all remote clusters in a blocking fashion. This should be called on node startup to establish an initial connection
      * to all configured seed nodes.
+     * 当开启了从远程集群获取数据的选项时 开始初始化集群服务   这个套路跟eureka类似
      */
     void initializeRemoteClusters() {
         final TimeValue timeValue = REMOTE_INITIAL_CONNECTION_TIMEOUT_SETTING.get(settings);
         final PlainActionFuture<Collection<Void>> future = new PlainActionFuture<>();
+
+        // 获取允许访问的所有远端集群name
         Set<String> enabledClusters = RemoteClusterAware.getEnabledRemoteClusters(settings);
 
         if (enabledClusters.isEmpty()) {
             return;
         }
 
+        // 当连接上所有远端集群时 才会设置future的结果
         GroupedActionListener<Void> listener = new GroupedActionListener<>(future, enabledClusters.size());
         for (String clusterAlias : enabledClusters) {
             updateRemoteCluster(clusterAlias, settings, listener);

@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A task that can be canceled
+ * 代表一个可关闭的任务
  */
 public abstract class CancellableTask extends Task {
 

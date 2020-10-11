@@ -66,6 +66,7 @@ import static org.elasticsearch.common.settings.Settings.writeSettingsToStream;
  * @see org.elasticsearch.client.IndicesAdminClient#create(CreateIndexRequest)
  * @see org.elasticsearch.client.Requests#createIndexRequest(String)
  * @see CreateIndexResponse
+ * 代表一个创建索引的请求
  */
 public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> implements IndicesRequest {
 
@@ -83,8 +84,14 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
 
     private Boolean preferV2Templates;
 
+    /**
+     * 为什么会需要别名
+     */
     private final Set<Alias> aliases = new HashSet<>();
 
+    /**
+     * 该对象是描述创建的索引对应的分片数量  难道说这个请求应该发往分片数量的节点上???
+     */
     private ActiveShardCount waitForActiveShards = ActiveShardCount.DEFAULT;
 
     public CreateIndexRequest(StreamInput in) throws IOException {
@@ -206,6 +213,7 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
 
     /**
      * The settings to create the index with (either json or yaml format)
+     * @param source 将配置值以格式化结构传入 比如json或者yml
      */
     public CreateIndexRequest settings(String source, XContentType xContentType) {
         this.settings = Settings.builder().loadFromSource(source, xContentType).build();
@@ -226,6 +234,7 @@ public class CreateIndexRequest extends AcknowledgedRequest<CreateIndexRequest> 
     public CreateIndexRequest settings(Map<String, ?> source) {
         try {
             XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON);
+            // 将map对象转换成格式化数据
             builder.map(source);
             settings(Strings.toString(builder), XContentType.JSON);
         } catch (IOException e) {

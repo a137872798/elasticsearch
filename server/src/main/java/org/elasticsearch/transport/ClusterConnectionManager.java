@@ -178,7 +178,7 @@ public class ClusterConnectionManager implements ConnectionManager {
 
         currentListener.addListener(listener, EsExecutors.newDirectExecutorService());
 
-        // 当任务执行完毕时 恢复引用计数 这里使用的目的是为了避免还有正在尝试连接的节点 程序却被直接停止
+        // 当任务执行完毕时 恢复引用计数 这里使用引用计数的目的是为了避免还有正在尝试连接的节点 程序却被直接停止
         final RunOnce releaseOnce = new RunOnce(connectingRefCounter::decRef);
 
         // 连接本身是委派给 transport对象的
@@ -255,6 +255,7 @@ public class ClusterConnectionManager implements ConnectionManager {
 
     /**
      * Disconnected from the given node, if not connected, will do nothing.
+     * 断开与某个节点的连接 就是切断所有的channel  这样会从selector上注销channel
      */
     @Override
     public void disconnectFromNode(DiscoveryNode node) {

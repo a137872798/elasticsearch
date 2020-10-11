@@ -399,7 +399,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
      */
     private List<TcpChannel> initiateConnection(DiscoveryNode node, ConnectionProfile connectionProfile,
                                                 ActionListener<Transport.Connection> listener) {
-        // 代表要针对某个node建立多条连接么 能够提高性能么
+        // 代表要针对某个node建立多条channel 能够提高性能么
         int numConnections = connectionProfile.getNumConnections();
         assert numConnections > 0 : "A connection profile must be configured with at least one connection";
 
@@ -422,7 +422,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
             }
         }
 
-        // 此时已经为目标节点创建了多条channel 了
+        // 此时已经为目标节点创建了多条channel了  但是连接不一定完成
         ChannelsConnectedListener channelsConnectedListener = new ChannelsConnectedListener(node, connectionProfile, channels,
             new ThreadedActionListener<>(logger, threadPool, ThreadPool.Names.GENERIC, listener, false));
 
@@ -1129,11 +1129,11 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
         @Override
         public void onResponse(Void v) {
             // Returns true if all connections have completed successfully
-            // 返回ture 代表本次使得闭锁被打开  之后继续调用该方法都是返回false
+            // 返回ture 代表本次使得闭锁被打开  之后继续调用该方法都是返回false    也就是仅有所有达到要求的channel数量连接完成时才发起握手请求 检测节点间的兼容性
             if (countDown.countDown()) {
                 final TcpChannel handshakeChannel = channels.get(0);
                 try {
-                    // 将结果交由 listener处理 这里好像是发送探测信息
+                    // 发送探测信息 检测2个节点间能否兼容  避免某些请求无法处理的情况
                     executeHandshake(node, handshakeChannel, connectionProfile,
                         // 定义了如何处理对端的版本号   当不兼容时会以失败形式触发
                         ActionListener.wrap(version -> {

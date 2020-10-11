@@ -80,7 +80,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     public static final String HANDSHAKE_ACTION_NAME = "internal:transport/handshake";
 
     /**
-     * 该标识代表是否允许处理请求  ap模式???
+     * 该标识代表是否允许处理请求  ap模式???  这种套路有点像是eureka的 在节点数据同步前无法处理请求
      */
     private final AtomicBoolean handleIncomingRequests = new AtomicBoolean();
 
@@ -117,7 +117,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     private final Function<BoundTransportAddress, DiscoveryNode> localNodeFactory;
 
     /**
-     * 是否需要访问远端集群
+     * 是否需要访问远端集群  如果需要的话 还支持从远端集群监听配置的变化
      */
     private final boolean remoteClusterClient;
 
@@ -126,9 +126,6 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      */
     private final Transport.ResponseHandlers responseHandlers;
 
-    /**
-     * 在应用层做拦截工作  某些拦截器是针对传输层
-     */
     private final TransportInterceptor interceptor;
 
     // An LRU (don't really care about concurrency here) that holds the latest timed out requests so if they
@@ -241,11 +238,15 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         taskManager = createTaskManager(settings, threadPool, taskHeaders);
         this.interceptor = transportInterceptor;
 
-
+        // sendRequestInternal 就是一个发送请求的模板
         this.asyncSender = interceptor.interceptSender(this::sendRequestInternal);
         this.remoteClusterClient = Node.NODE_REMOTE_CLUSTER_CLIENT.get(settings);
         remoteClusterService = new RemoteClusterService(settings, this);
+
+        // 该对象存储了所有 发送的req对应的 resHandler
         responseHandlers = transport.getResponseHandlers();
+
+        // 监听支持动态更新的配置
         if (clusterSettings != null) {
             clusterSettings.addSettingsUpdateConsumer(TransportSettings.TRACE_LOG_INCLUDE_SETTING, this::setTracerLogInclude);
             clusterSettings.addSettingsUpdateConsumer(TransportSettings.TRACE_LOG_EXCLUDE_SETTING, this::setTracerLogExclude);
@@ -253,11 +254,13 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
                 remoteClusterService.listenForUpdates(clusterSettings);
             }
         }
+        // 注册有关握手action的处理器
         registerRequestHandler(
             HANDSHAKE_ACTION_NAME,
             ThreadPool.Names.SAME,
             false, false,
             HandshakeRequest::new,
+            // 针对握手请求的请求处理器  可以看到 直接将当前节点信息返回
             (request, channel, task) -> channel.sendResponse(
                 new HandshakeResponse(localNode, clusterName, localNode.getVersion())));
     }
@@ -295,10 +298,15 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         this.tracerLogExclude = tracerLogExclude.toArray(Strings.EMPTY_ARRAY);
     }
 
+    /**
+     * 启动传输层服务
+     */
     @Override
     protected void doStart() {
+        // 使用当前对象监听接受发送的 req/res
         transport.setMessageListener(this);
         connectionManager.addListener(this);
+        // 这里其实就是开启客户端channel 组装工厂和 服务端channel组装工厂  (其中包含了将channel注册到事件循环对应的selector的逻辑)
         transport.start();
         if (transport.boundAddress() != null && logger.isInfoEnabled()) {
             logger.info("{}", transport.boundAddress());
@@ -306,8 +314,10 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
                 logger.info("profile [{}]: {}", entry.getKey(), entry.getValue());
             }
         }
+        // 通过该函数生成本地 node
         localNode = localNodeFactory.apply(transport.boundAddress());
 
+        // TODO 先忽略有关远端集群的
         if (remoteClusterClient) {
             // here we start to connect to the remote clusters
             remoteClusterService.initializeRemoteClusters();
@@ -323,6 +333,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         } finally {
             // in case the transport is not connected to our local node (thus cleaned on node disconnect)
             // make sure to clean any leftover on going handles
+            // 以特殊方式处理之前所有囤积的请求
             for (final Transport.ResponseContext holderToNotify : responseHandlers.prune(h -> true)) {
                 // callback that an exception happened, but on a different thread since we don't
                 // want handlers to worry about stack overflows
@@ -346,6 +357,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
                     }
                     @Override
                     public void doRun() {
+                        // 以异常方式触发之前resHandler
                         TransportException ex = new SendRequestTransportException(holderToNotify.connection().getNode(),
                             holderToNotify.action(), new NodeClosedException(localNode));
                         holderToNotify.handler().handleException(ex);
@@ -419,18 +431,26 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      * @param node the node to connect to
      * @param connectionProfile the connection profile to use when connecting to this node
      * @param listener the action listener to notify
+     *                 通过传输层建立与某个node 的连接
      */
     public void connectToNode(final DiscoveryNode node, ConnectionProfile connectionProfile, ActionListener<Void> listener) {
         if (isLocalNode(node)) {
             listener.onResponse(null);
             return;
         }
+        // 当生成与某个node的 connection时 再进行一次校验
         connectionManager.connectToNode(node, connectionProfile, connectionValidator(node), listener);
     }
 
+    /**
+     * 为了鉴别连接是否有效 需要一个连接检测器 这个对象就是基于握手请求实现的  而在传输层也有一个握手请求 那个时候是检测节点间版本是否兼容
+     * @param node
+     * @return
+     */
     public ConnectionManager.ConnectionValidator connectionValidator(DiscoveryNode node) {
         return (newConnection, actualProfile, listener) -> {
             // We don't validate cluster names to allow for CCS connections.
+            // 这里确保不是连接到本节点
             handshake(newConnection, actualProfile.getHandshakeTimeout().millis(), cn -> true, ActionListener.map(listener, resp -> {
                 final DiscoveryNode remote = resp.discoveryNode;
                 if (node.equals(remote) == false) {
@@ -448,10 +468,12 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      * @param node the node to connect to
      * @param connectionProfile the connection profile to use
      * @param listener the action listener to notify
+     *                 创建与目标节点的连接
      */
     public void openConnection(final DiscoveryNode node, ConnectionProfile connectionProfile,
                                ActionListener<Transport.Connection> listener) {
         if (isLocalNode(node)) {
+            // 连接本地节点会绕过握手请求
             listener.onResponse(localNodeConnection);
         } else {
             connectionManager.openConnection(node, connectionProfile, listener);
@@ -488,15 +510,17 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      *
      * @param connection       the connection to a specific node
      * @param handshakeTimeout handshake timeout
-     * @param clusterNamePredicate cluster name validation predicate
+     * @param clusterNamePredicate cluster name validation predicate  代表只有符合条件的集群才会处理这个请求
      * @param listener         action listener to notify
      * @throws IllegalStateException if the handshake failed
+     * 当建立与某个node的connection 时 需要在一次探测 也就是握手请求
      */
     public void handshake(
         final Transport.Connection connection,
         final long handshakeTimeout, Predicate<ClusterName> clusterNamePredicate,
         final ActionListener<HandshakeResponse> listener) {
         final DiscoveryNode node = connection.getNode();
+        // 发送请求到目标节点
         sendRequest(connection, HANDSHAKE_ACTION_NAME, HandshakeRequest.INSTANCE,
             TransportRequestOptions.builder().withTimeout(handshakeTimeout).build(),
             new ActionListenerResponseHandler<>(
@@ -527,6 +551,9 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         return connectionManager;
     }
 
+    /**
+     * 该握手请求与 Transport的 握手请求不同 那个对象携带了一个版本号 而该对象没有存储任何信息  针对这一层的握手请求仅检测连接的节点是否是本节点
+     */
     static class HandshakeRequest extends TransportRequest {
 
         public static final HandshakeRequest INSTANCE = new HandshakeRequest();
@@ -540,7 +567,14 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
 
     }
 
+    /**
+     * 针对握手请求的响应结果
+     */
     public static class HandshakeResponse extends TransportResponse {
+
+        /**
+         * 将当前节点信息返回给对端
+         */
         private final DiscoveryNode discoveryNode;
         private final ClusterName clusterName;
         private final Version version;
@@ -574,6 +608,10 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         }
     }
 
+    /**
+     * 实际上就是关闭所有channel
+     * @param node
+     */
     public void disconnectFromNode(DiscoveryNode node) {
         if (isLocalNode(node)) {
             return;
@@ -597,6 +635,14 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         connectionManager.removeListener(listener);
     }
 
+    /**
+     * 发送请求 并使用预备好的 resHandler处理结果
+     * @param node
+     * @param action
+     * @param request
+     * @param handler
+     * @param <T>
+     */
     public <T extends TransportResponse> void sendRequest(final DiscoveryNode node, final String action,
                                                                 final TransportRequest request,
                                                                 final TransportResponseHandler<T> handler) {
@@ -635,14 +681,17 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      * @param options    the options for this request
      * @param handler    the response handler
      * @param <T>        the type of the transport response
+     *           发送请求到目标节点
      */
     public final <T extends TransportResponse> void sendRequest(final Transport.Connection connection, final String action,
                                                                 final TransportRequest request,
                                                                 final TransportRequestOptions options,
                                                                 TransportResponseHandler<T> handler) {
         try {
+            // 本次请求是由某个父任务触发的
             if (request.getParentTask().isSet()) {
                 // TODO: capture the connection instead so that we can cancel child tasks on the remote connections.
+                // 返回的对象用于在接受到子任务结果时调用 主要是注销之前注册的任务
                 final Releasable unregisterChildNode = taskManager.registerChildNode(request.getParentTask().getId(), connection.getNode());
                 final TransportResponseHandler<T> delegate = handler;
                 handler = new TransportResponseHandler<>() {
@@ -669,6 +718,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
                     }
                 };
             }
+            // 这里实际上就是通过 transport发送请求
             asyncSender.sendRequest(connection, action, request, options, handler);
         } catch (final Exception ex) {
             // the caller might not handle this so we invoke the handler
@@ -694,6 +744,16 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         }
     }
 
+    /**
+     * 发送一个子请求 可能在某些比较复杂的逻辑中无法通过一次交互完成  而此时又需要做链路追踪 所以需要在task中做关联吧
+     * @param node
+     * @param action
+     * @param request
+     * @param parentTask    代表本次task 是由哪个父任务创建的
+     * @param options
+     * @param handler
+     * @param <T>
+     */
     public final <T extends TransportResponse> void sendChildRequest(final DiscoveryNode node, final String action,
                                                                      final TransportRequest request, final Task parentTask,
                                                                      final TransportRequestOptions options,
@@ -719,6 +779,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
                                                                final TransportRequest request, final Task parentTask,
                                                                final TransportRequestOptions options,
                                                                final TransportResponseHandler<T> handler) {
+        // 设置父任务
         request.setParentTask(localNode.getId(), parentTask.getId());
         sendRequest(connection, action, request, options, handler);
     }
@@ -748,6 +809,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         // TODO we can probably fold this entire request ID dance into connection.sendRequest but it will be a bigger refactoring
         final long requestId = responseHandlers.add(new Transport.ResponseContext<>(responseHandler, connection, action));
         final TimeoutHandler timeoutHandler;
+        // 本次请求支持超时的情况 创建超时对象
         if (options.timeout() != null) {
             timeoutHandler = new TimeoutHandler(requestId, connection.getNode(), action);
             responseHandler.setTimeoutHandler(timeoutHandler);
@@ -764,6 +826,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
             }
             if (timeoutHandler != null) {
                 assert options.timeout() != null;
+                // 启动定时任务 在一定延迟后以超时异常触发 resHandler
                 timeoutHandler.scheduleTimeout(options.timeout());
             }
             connection.sendRequest(requestId, action, request, options); // local node optimization happens upstream
@@ -893,12 +956,19 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         return true;
     }
 
+    /**
+     * 将格式化后的地址通过 地址解析器转换成一组传输层地址
+     * @param address
+     * @return
+     * @throws UnknownHostException
+     */
     public TransportAddress[] addressesFromString(String address) throws UnknownHostException {
         return transport.addressesFromString(address);
     }
 
     /**
      * A set of all valid action prefixes.
+     * 每种action 会有对应的前缀
      */
     public static final Set<String> VALID_ACTION_PREFIXES = Set.of(
             "indices:admin",
@@ -941,12 +1011,15 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      * @param requestReader  a callable to be used construct new instances for streaming
      * @param executor       The executor the request handling will be executed on
      * @param handler        The handler itself that implements the request handling
+     *                       注册某种action的req处理器
      */
     public <Request extends TransportRequest> void registerRequestHandler(String action, String executor,
                                                                           Writeable.Reader<Request> requestReader,
                                                                           TransportRequestHandler<Request> handler) {
+        // 检验actionName是否有效
         validateActionName(action);
         handler = interceptor.interceptHandler(action, executor, false, handler);
+        // 包装相关对象 并注册
         RequestHandlerRegistry<Request> reg = new RequestHandlerRegistry<>(
             action, requestReader, taskManager, handler, executor, false, true);
         transport.registerRequestHandler(reg);
@@ -957,10 +1030,12 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      *
      * @param action                The action the request handler is associated with
      * @param requestReader               The request class that will be used to construct new instances for streaming
+     *                                    该对象定义了如何将输入流转换成 请求对象
      * @param executor              The executor the request handling will be executed on
      * @param forceExecution        Force execution on the executor queue and never reject it
      * @param canTripCircuitBreaker Check the request size and raise an exception in case the limit is breached.
      * @param handler               The handler itself that implements the request handling
+     *                              注册某种请求处理器
      */
     public <Request extends TransportRequest> void registerRequestHandler(String action,
                                                                           String executor, boolean forceExecution,
@@ -977,6 +1052,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     /**
      * called by the {@link Transport} implementation when an incoming request arrives but before
      * any parsing of it has happened (with the exception of the requestId and action)
+     * 该对象会作为监听器注册到 transport上  每当接受到一个请求时 触发下面所有的监听器
      */
     @Override
     public void onRequestReceived(long requestId, String action) {
@@ -1002,6 +1078,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     @Override
     public void onResponseReceived(long requestId, Transport.ResponseContext holder) {
         if (holder == null) {
+            // 当收到某个请求对应的结果时 检测请求是否超时
             checkForTimeout(requestId);
         } else if (tracerLog.isTraceEnabled() && shouldTraceAction(holder.action())) {
             tracerLog.trace("[{}][{}] received response from [{}]", requestId, holder.action(), holder.connection().getNode());
@@ -1031,12 +1108,17 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         return transport.getRequestHandlers().getHandler(action);
     }
 
+    /**
+     * 检测某个请求的响应结果是否超时  这里只是打印日志
+     * @param requestId
+     */
     private void checkForTimeout(long requestId) {
         // lets see if its in the timeout holder, but sync on mutex to make sure any ongoing timeout handling has finished
         final DiscoveryNode sourceNode;
         final String action;
         assert responseHandlers.contains(requestId) == false;
         TimeoutInfoHolder timeoutInfoHolder = timeoutInfoHandlers.remove(requestId);
+        // 代表已经超时了
         if (timeoutInfoHolder != null) {
             long time = threadPool.relativeTimeInMillis();
             logger.warn("Received response for a request that has timed out, sent [{}ms] ago, timed out [{}ms] ago, " +
@@ -1061,6 +1143,10 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         }
     }
 
+    /**
+     * 当某个连接被关闭时触发   将相关的等待响应结果的对象都以异常触发
+     * @param connection the closed connection
+     */
     @Override
     public void onConnectionClosed(Transport.Connection connection) {
         try {
@@ -1221,6 +1307,9 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
          */
         private final TransportResponseHandler<T> delegate;
         private final Supplier<ThreadContext.StoredContext> contextSupplier;
+        /**
+         * 当本次请求响应超时时 使用该对象处理
+         */
         private volatile TimeoutHandler handler;
 
         public ContextRestoreResponseHandler(Supplier<ThreadContext.StoredContext> contextSupplier, TransportResponseHandler<T> delegate) {
@@ -1340,6 +1429,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
             final TransportResponseHandler handler = service.responseHandlers.onResponseReceived(requestId, service);
             // ignore if its null, the service logs it
             if (handler != null) {
+                // 将本地异常模拟成一个远端异常
                 final RemoteTransportException rtx = wrapInRemote(exception);
                 final String executor = handler.executor();
                 if (ThreadPool.Names.SAME.equals(executor)) {

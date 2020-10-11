@@ -202,7 +202,14 @@ public abstract class RemoteConnectionStrategy implements TransportConnectionLis
         return enablementSettings.flatMap(s -> getClusterAlias(settings, s)).collect(Collectors.toSet());
     }
 
+    /**
+     * 尝试建立与某个远端集群的连接
+     * @param clusterAlias
+     * @param settings
+     * @return
+     */
     public static boolean isConnectionEnabled(String clusterAlias, Settings settings) {
+        // 获取连接该集群使用的策略
         ConnectionStrategy mode = REMOTE_CONNECTION_MODE.getConcreteSettingForNamespace(clusterAlias).get(settings);
         if (mode.equals(ConnectionStrategy.SNIFF)) {
             List<String> seeds = SniffConnectionStrategy.REMOTE_CLUSTER_SEEDS.getConcreteSettingForNamespace(clusterAlias).get(settings);
@@ -283,7 +290,7 @@ public abstract class RemoteConnectionStrategy implements TransportConnectionLis
     /**
      * Triggers a connect round unless there is one running already. If there is a connect round running, the listener will either
      * be queued or rejected and failed.
-     * 连接到远端集群
+     * 连接到远端集群  并在连接完成时触发监听器
      */
     void connect(ActionListener<Void> connectListener) {
         boolean runConnect = false;

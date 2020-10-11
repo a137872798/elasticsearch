@@ -81,6 +81,9 @@ import static org.elasticsearch.cluster.node.DiscoveryNodeFilters.OpType.OR;
 import static org.elasticsearch.common.settings.Settings.readSettingsFromStream;
 import static org.elasticsearch.common.settings.Settings.writeSettingsToStream;
 
+/**
+ * 描述某个创建的索引元数据信息
+ */
 public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragment {
 
     public static final ClusterBlock INDEX_READ_ONLY_BLOCK =

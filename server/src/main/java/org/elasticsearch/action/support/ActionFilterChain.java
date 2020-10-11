@@ -26,6 +26,7 @@ import org.elasticsearch.tasks.Task;
 
 /**
  * A filter chain allowing to continue and process the transport action request
+ * 该对象为处理请求 追加了链式结构
  */
 public interface ActionFilterChain<Request extends ActionRequest, Response extends ActionResponse> {
 

@@ -38,6 +38,7 @@ public interface ClusterStatePublisher {
      *
      * The {@link AckListener} allows to keep track of the ack received from nodes, and verify whether
      * they updated their own cluster state or not.
+     * 将集群所有的变化发布到master节点
      */
     void publish(ClusterChangedEvent clusterChangedEvent, ActionListener<Void> publishListener, AckListener ackListener);
 

@@ -26,6 +26,7 @@ import org.elasticsearch.common.component.LifecycleComponent;
  * A pluggable module allowing to implement discovery of other nodes, publishing of the cluster
  * state to all nodes, electing a master of the cluster that raises cluster state change
  * events.
+ * 允许发现其他节点 以及将集群状态发布到所有节点
  */
 public interface Discovery extends LifecycleComponent, ClusterStatePublisher {
 

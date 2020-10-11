@@ -25,6 +25,7 @@ import org.elasticsearch.cluster.node.DiscoveryNode;
 /**
  * Allows plugging in a custom election strategy, restricting the notion of an election quorum.
  * Custom additional quorum restrictions can be defined by implementing the {@link #satisfiesAdditionalQuorumConstraints} method.
+ * ES 内部节点会通过选举算法确定协调者
  */
 public abstract class ElectionStrategy {
 
@@ -43,6 +44,7 @@ public abstract class ElectionStrategy {
 
     /**
      * Whether there is an election quorum from the point of view of the given local node under the provided voting configurations
+     * @param joinVotes 代表所有参与选举的节点
      */
     public final boolean isElectionQuorum(DiscoveryNode localNode, long localCurrentTerm, long localAcceptedTerm, long localAcceptedVersion,
                                           VotingConfiguration lastCommittedConfiguration, VotingConfiguration lastAcceptedConfiguration,

@@ -23,16 +23,19 @@ import org.elasticsearch.common.unit.TimeValue;
 
 /**
  * Identifies a cluster state update request with acknowledgement support
+ * 代表某些需要确认的请求
  */
 public interface AckedRequest {
 
     /**
      * Returns the acknowledgement timeout
+     * 收到ack的超时时间
      */
     TimeValue ackTimeout();
 
     /**
      * Returns the timeout for the request to be completed on the master node
+     * 当前请求在主节点上完成的时间
      */
     TimeValue masterNodeTimeout();
 }

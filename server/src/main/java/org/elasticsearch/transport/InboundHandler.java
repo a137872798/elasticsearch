@@ -101,8 +101,7 @@ public class InboundHandler {
         TransportLogger.logInboundMessage(channel, message);
 
         if (message.isPing()) {
-            // 代表接收到心跳消息  如果是client 需要返回消息到server
-            // TODO 如果是server接收到ack信息 不做任何处理 那么服务端不就无法观察到本次探测结果了么  如果仅通过发送成功就认为对端存活 那么client应该没有回复ack的必要了
+            // 当服务端接收到心跳包时 会返回一个响应结果
             keepAlive.receiveKeepAlive(channel);
         } else {
             messageReceived(channel, message);

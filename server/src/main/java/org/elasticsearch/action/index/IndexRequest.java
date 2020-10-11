@@ -73,6 +73,7 @@ import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
  * @see IndexResponse
  * @see org.elasticsearch.client.Requests#indexRequest(String)
  * @see org.elasticsearch.client.Client#index(IndexRequest)
+ * 代表写入索引数据的请求
  */
 public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implements DocWriteRequest<IndexRequest>, CompositeIndicesRequest {
 

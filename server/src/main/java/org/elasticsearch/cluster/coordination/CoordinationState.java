@@ -504,6 +504,7 @@ public class CoordinationState {
 
     /**
      * A collection of votes, used to calculate quorums. Optionally records the Joins as well.
+     * 包含了所有参与选举的node
      */
     public static class VoteCollection {
 

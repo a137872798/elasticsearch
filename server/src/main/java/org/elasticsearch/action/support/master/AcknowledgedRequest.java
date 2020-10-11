@@ -30,6 +30,8 @@ import static org.elasticsearch.common.unit.TimeValue.timeValueSeconds;
 /**
  * Abstract class that allows to mark action requests that support acknowledgements.
  * Facilitates consistency across different api.
+ * 代表这些请求需要返回响应信息
+ * 该对象包含了ack的超时时间
  */
 public abstract class AcknowledgedRequest<Request extends MasterNodeRequest<Request>> extends MasterNodeRequest<Request>
         implements AckedRequest {

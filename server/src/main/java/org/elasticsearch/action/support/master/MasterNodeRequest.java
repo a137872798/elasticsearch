@@ -28,6 +28,7 @@ import java.io.IOException;
 
 /**
  * A based request for master based operation.
+ * 该对象在master节点上处理有一个超时时间
  */
 public abstract class MasterNodeRequest<Request extends MasterNodeRequest<Request>> extends ActionRequest {
 

@@ -31,7 +31,7 @@ import java.io.IOException;
 
 /**
  * Allows for shard level components to be injected with the shard id.
- * 每个数据分片有一个id信息   可以看出数据分片是以索引为单位的
+ * 每个数据分片有一个id信息   每个索引对应多个分片
  */
 public class ShardId implements Comparable<ShardId>, ToXContentFragment, Writeable {
 

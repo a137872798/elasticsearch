@@ -243,6 +243,7 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
      */
     @Override
     public void closeFromSelector() throws IOException {
+        // 因为确保在单线程环境执行 所以不需要考虑并发问题
         getSelector().assertOnSelectorThread();
         if (isOpen()) {
             ArrayList<IOException> closingExceptions = new ArrayList<>(3);

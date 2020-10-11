@@ -31,6 +31,7 @@ public interface TransportInterceptor {
      * {@link TransportService#registerRequestHandler(String, String, boolean, boolean, Reader, TransportRequestHandler)} or
      * {@link TransportService#registerRequestHandler(String, String, Reader, TransportRequestHandler)}. The returned handler is
      * used instead of the passed in handler. By default the provided handler is returned.
+     * 在注册某种请求处理器前 进行拦截
      */
     default <T extends TransportRequest> TransportRequestHandler<T> interceptHandler(String action, String executor,
                                                                                      boolean forceExecution,

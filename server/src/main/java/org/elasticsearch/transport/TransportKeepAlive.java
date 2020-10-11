@@ -43,7 +43,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Implements the scheduling and sending of keep alive pings. Client channels send keep alive pings to the
  * server and server channels respond. Pings are only sent at the scheduled time if the channel did not send
  * and receive a message since the last ping.
- * 定期发送心跳包  在ES的架构中 心跳包是由中心服务器向其他节点发送的
+ * 定期发送心跳包  在ES的架构中 心跳包是由客户端发往服务器的
+ * 每当传输层建立了与某个node的连接时 当前节点就会作为客户端往节点发送心跳包
  */
 final class TransportKeepAlive implements Closeable {
 
@@ -125,11 +126,12 @@ final class TransportKeepAlive implements Closeable {
      * this method does nothing as the client initiated the ping in the first place.
      *
      * @param channel that received the keep alive ping
-     *                代表接收到来自 服务端的ping 请求 此时要发送ack到对端 完成一次心跳检测
+     *                当某个服务端无法正常返回心跳包时会怎么样呢
      */
     void receiveKeepAlive(TcpChannel channel) {
         // The client-side initiates pings and the server-side responds. So if this is a client channel, this
         // method is a no-op.
+        // 当前服务端收到某个client的心跳请求时 返回响应信息
         if (channel.isServerChannel()) {
             sendPing(channel);
         }
@@ -177,6 +179,7 @@ final class TransportKeepAlive implements Closeable {
 
     /**
      * 该任务有生命周期的概念 同时在一定时间间隔后会向所有目标节点发送心跳包
+     * 以 Connection为单位
      */
     private class ScheduledPing extends AbstractLifecycleRunnable {
 

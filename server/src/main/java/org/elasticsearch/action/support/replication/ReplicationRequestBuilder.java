@@ -26,6 +26,12 @@ import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.client.ElasticsearchClient;
 import org.elasticsearch.common.unit.TimeValue;
 
+/**
+ * 该节点代表索引本身会分为多个分片 并且多个分片的写入有一个超时时间
+ * @param <Request>
+ * @param <Response>
+ * @param <RequestBuilder>
+ */
 public abstract class ReplicationRequestBuilder<Request extends ReplicationRequest<Request>, Response extends ActionResponse,
         RequestBuilder extends ReplicationRequestBuilder<Request, Response, RequestBuilder>>
         extends ActionRequestBuilder<Request, Response> {

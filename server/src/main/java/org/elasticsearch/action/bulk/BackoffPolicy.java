@@ -40,6 +40,7 @@ import java.util.NoSuchElementException;
  * </ul>
  *
  * Note that backoff policies are exposed as <code>Iterables</code> in order to be consumed multiple times.
+ * 补偿策略 内部维护了一组时间
  */
 public abstract class BackoffPolicy implements Iterable<TimeValue> {
     private static final BackoffPolicy NO_BACKOFF = new NoBackoff();
@@ -85,6 +86,7 @@ public abstract class BackoffPolicy implements Iterable<TimeValue> {
      * @param maxNumberOfRetries The maximum number of retries. Must be a non-negative number.
      * @return A backoff policy with an exponential increase in wait time for retries. The returned instance is thread safe but each
      * iterator created from it should only be used by a single thread.
+     * 补偿时间按指数级增长
      */
     public static BackoffPolicy exponentialBackoff(TimeValue initialDelay, int maxNumberOfRetries) {
         return new ExponentialBackoff((int) checkDelay(initialDelay).millis(), maxNumberOfRetries);
@@ -121,9 +123,19 @@ public abstract class BackoffPolicy implements Iterable<TimeValue> {
         }
     }
 
+    /**
+     * 代表一个指数级增长的补偿策略
+     */
     private static class ExponentialBackoff extends BackoffPolicy {
+
+        /**
+         * 初始值
+         */
         private final int start;
 
+        /**
+         * 总计会生成多少元素
+         */
         private final int numberOfElements;
 
         private ExponentialBackoff(int start, int numberOfElements) {
@@ -139,11 +151,24 @@ public abstract class BackoffPolicy implements Iterable<TimeValue> {
         }
     }
 
+    /**
+     * 指数增长对应的迭代器
+     */
     private static class ExponentialBackoffIterator implements Iterator<TimeValue> {
+
+        /**
+         * 总计有多少元素
+         */
         private final int numberOfElements;
 
+        /**
+         * 起始值
+         */
         private final int start;
 
+        /**
+         * 此时已经换算成第几个值
+         */
         private int currentlyConsumed;
 
         private ExponentialBackoffIterator(int start, int numberOfElements) {

@@ -33,6 +33,7 @@ import java.io.IOException;
 /**
  * Interface implemented by requests that modify the documents in an index like {@link IndexRequest}, {@link UpdateRequest}, and
  * {@link BulkRequest}. Rather than implement this directly most implementers should extend {@link ReplicatedWriteRequest}.
+ * 代表一个写入索引数据的请求
  */
 public interface WriteRequest<R extends WriteRequest<R>> extends Writeable {
     /**
