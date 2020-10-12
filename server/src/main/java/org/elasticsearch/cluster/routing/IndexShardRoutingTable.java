@@ -48,7 +48,12 @@ import java.util.Set;
  * a disjoint set of the index data and each shard has one or more instances
  * referred to as replicas of a shard. Given that, this class encapsulates all
  * replicas (instances) for a single index shard.
- * 管理相同 shardId的分片  并根据分片状态划分到不同的容器中
+ *
+ * 该对象管理了某个index在集群范围的所有分片   并且按照当前分片的状态划分到不同的容器中
+ *
+ * IndexShardRoutingTable 与 RoutingNode 是以不同维度管理数据分片的
+ * IndexShardRoutingTable 代表某个索引相关的shardId相同的所有分片
+ * RoutingNode            代表某个node下的所有分片
  */
 public class IndexShardRoutingTable implements Iterable<ShardRouting> {
 
@@ -63,7 +68,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
     final ShardId shardId;
 
     /**
-     * 难道只会有一个分片是节点私有的么  为什么要这样设计
+     * 每个shardId 对应的所有分片中 只有一个是主分片 其余都是副本
      */
     final ShardRouting primary;
     final List<ShardRouting> primaryAsList;
@@ -85,6 +90,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
 
     /**
      * 存储了所有 ShardRouting 的AllocationId
+     * AllocationId 应该是为该分片进行分配的分配器id
      */
     final Set<String> allAllocationIds;
 
@@ -507,9 +513,6 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
 
     /**
      * Returns an iterator only on the primary shard.
-     * 仅返回私有分片  primaryShard 认为这种分片仅存在于单个节点
-     * todo 如何确定某组分片针对同一个索引  一个IndexShardRoutingTable下的分片不是针对同一个索引的么 以及从代码逻辑看 一个索引只存在一个私有分片又是为什么
-     * 仅返回私有分片的迭代器
      */
     public ShardIterator primaryShardIt() {
         return new PlainShardIterator(shardId, primaryAsList);

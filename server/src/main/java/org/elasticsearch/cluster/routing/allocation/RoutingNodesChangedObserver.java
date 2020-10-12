@@ -26,6 +26,7 @@ import org.elasticsearch.cluster.routing.UnassignedInfo;
 
 /**
  * Records if changes were made to {@link RoutingNodes} during an allocation round.
+ * 每当某个分片发生变化时 修改内部的标识
  */
 public class RoutingNodesChangedObserver implements RoutingChangesObserver {
     private boolean changed;

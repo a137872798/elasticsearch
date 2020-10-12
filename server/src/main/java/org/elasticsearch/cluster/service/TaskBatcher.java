@@ -73,7 +73,7 @@ public abstract class TaskBatcher {
         assert tasks.stream().allMatch(t -> t.batchingKey == firstTask.batchingKey) :
             "tasks submitted in a batch should share the same batching key: " + tasks;
         // convert to an identity map to check for dups based on task identity
-        // 以task 作为 key  (注意不是那个batchingKey)
+        // 这里主要是校验某个task 是否已经添加到 tasksPerBatchingKey 中了
         final Map<Object, BatchedTask> tasksIdentity = tasks.stream().collect(Collectors.toMap(
             BatchedTask::getTask,
             Function.identity(),
@@ -85,7 +85,7 @@ public abstract class TaskBatcher {
             // 以 batchingKey 作为key 存储该批任务
             LinkedHashSet<BatchedTask> existingTasks = tasksPerBatchingKey.computeIfAbsent(firstTask.batchingKey,
                 k -> new LinkedHashSet<>(tasks.size()));
-            // 因为即使是针对同一个batchingKey 也可以存储多批任务 这里不允许出现重复
+            // 重复检测
             for (BatchedTask existing : existingTasks) {
                 // check that there won't be two tasks with the same identity for the same batching key
                 BatchedTask duplicateTask = tasksIdentity.get(existing.getTask());

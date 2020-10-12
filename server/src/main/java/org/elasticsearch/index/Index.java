@@ -34,6 +34,7 @@ import java.util.Objects;
 
 /**
  * A value class representing the basic required properties of an Elasticsearch index.
+ * 表示某个索引对象
  */
 public class Index implements Writeable, ToXContentObject {
 
@@ -47,6 +48,7 @@ public class Index implements Writeable, ToXContentObject {
         INDEX_PARSER.declareString(Builder::uuid, new ParseField(INDEX_UUID_KEY));
     }
 
+    // 索引对象有自己的名字 以及唯一id
     private final String name;
     private final String uuid;
 

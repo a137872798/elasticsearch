@@ -33,6 +33,7 @@ import java.util.Collections;
 /**
  * A composite {@link AllocationDecider} combining the "decision" of multiple
  * {@link AllocationDecider} implementations into a single allocation decision.
+ * 将一组分配对象包装成一个
  */
 public class AllocationDeciders extends AllocationDecider {
 
@@ -44,6 +45,12 @@ public class AllocationDeciders extends AllocationDecider {
         this.allocations = Collections.unmodifiableCollection(allocations);
     }
 
+    /**
+     * 结果会受到多个分配器的影响
+     * @param shardRouting
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canRebalance(ShardRouting shardRouting, RoutingAllocation allocation) {
         Decision.Multi ret = new Decision.Multi();
@@ -51,6 +58,7 @@ public class AllocationDeciders extends AllocationDecider {
             Decision decision = allocationDecider.canRebalance(shardRouting, allocation);
             // short track if a NO is returned.
             if (decision == Decision.NO) {
+                // 当不需要输出日志信息时 直接返回 No对象
                 if (!allocation.debugDecision()) {
                     return decision;
                 } else {
@@ -60,11 +68,13 @@ public class AllocationDeciders extends AllocationDecider {
                 addDecision(ret, decision, allocation);
             }
         }
+        // 返回多个决定的共同结果
         return ret;
     }
 
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
+        // 如果该分配对象本身不支持将某个分片设置到该node上 直接返回结果
         if (allocation.shouldIgnoreShardForNode(shardRouting.shardId(), node.nodeId())) {
             return Decision.NO;
         }
@@ -89,6 +99,8 @@ public class AllocationDeciders extends AllocationDecider {
         }
         return ret;
     }
+
+    // 以下的几个方法逻辑都是类似的
 
     @Override
     public Decision canRemain(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {

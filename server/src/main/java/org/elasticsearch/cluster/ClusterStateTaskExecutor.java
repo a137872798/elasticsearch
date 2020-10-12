@@ -71,6 +71,11 @@ public interface ClusterStateTaskExecutor<T> {
     class ClusterTasksResult<T> {
         @Nullable
         public final ClusterState resultingState;
+
+        /**
+         * 存储批任务的结果
+         * key 任务对象本身
+         */
         public final Map<T, TaskResult> executionResults;
 
         /**
@@ -129,7 +134,13 @@ public interface ClusterStateTaskExecutor<T> {
         }
     }
 
+    /**
+     * 代表一批任务中 某个任务的结果
+     */
     final class TaskResult {
+        /**
+         * 任务执行失败
+         */
         private final Exception failure;
 
         private static final TaskResult SUCCESS = new TaskResult(null);

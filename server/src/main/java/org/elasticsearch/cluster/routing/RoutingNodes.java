@@ -64,15 +64,29 @@ import java.util.function.Predicate;
  * <li> {@link #relocateShard} starts relocation of a started shard.
  * <li> {@link #failShard} fails/cancels an assigned shard.
  * </ul>
+ * 每个RoutingNode 代表某个节点上此时包含的所有分片信息  分片信息用 ShardRouting表示
+ * 而该对象代表的是整个集群下所有node 此时分配的分片信息
  */
 public class RoutingNodes implements Iterable<RoutingNode> {
 
+    /**
+     * 这个容器中仅存储已经分配完毕的分片
+     */
     private final Map<String, RoutingNode> nodesToShards = new HashMap<>();
 
+    /**
+     * 该对象管理了当前集群所有节点中未分配的分片
+     */
     private final UnassignedShards unassignedShards = new UnassignedShards(this);
 
+    /**
+     * 该容器管理所有已分配的分片
+     */
     private final Map<ShardId, List<ShardRouting>> assignedShards = new HashMap<>();
 
+    /**
+     * 如果当前对象是只读对象 不允许修改
+     */
     private final boolean readOnly;
 
     private int inactivePrimaryCount = 0;
@@ -81,19 +95,42 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
     private int relocatingShards = 0;
 
+    /**
+     * key 对应node value对应每个node的属性 同时属性可以通过下标检索
+     */
     private final Map<String, ObjectIntHashMap<String>> nodesPerAttributeNames = new HashMap<>();
+
+    /**
+     * key 应该标识每个node value代表每个node的补偿对象
+     */
     private final Map<String, Recoveries> recoveriesPerNode = new HashMap<>();
 
+    /**
+     * 默认情况下该对象就是只读的 也就是无法修改 UnassignedShards 迭代器内部的元素
+     * @param clusterState
+     */
     public RoutingNodes(ClusterState clusterState) {
         this(clusterState, true);
     }
 
+    /**
+     * 通过之前以索引为单位维护的分片信息转换成以node为维度
+     * @param clusterState  通过当前集群状态对象进行初始化
+     * @param readOnly
+     */
     public RoutingNodes(ClusterState clusterState, boolean readOnly) {
         this.readOnly = readOnly;
+        /**
+         * 该对象以索引为维度存储了所有分片信息
+         * 内部还有更细化的
+         * 维护同一索引的
+         * 维护同一shardId的(同一shardId在同一索引的基础上)
+         */
         final RoutingTable routingTable = clusterState.routingTable();
 
         Map<String, LinkedHashMap<ShardId, ShardRouting>> nodesToShards = new HashMap<>();
         // fill in the nodeToShards with the "live" nodes
+        // 遍历所有存储数据的node  并追加映射关系
         for (ObjectCursor<DiscoveryNode> cursor : clusterState.nodes().getDataNodes().values()) {
             nodesToShards.put(cursor.value.getId(), new LinkedHashMap<>()); // LinkedHashMap to preserve order
         }
@@ -101,6 +138,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         // fill in the inverse of node -> shards allocated
         // also fill replicaSet information
         for (ObjectCursor<IndexRoutingTable> indexRoutingTable : routingTable.indicesRouting().values()) {
+            // 这里管理的就是每个 shardId 下的所有分片  (虽然id相同但是他们可以归属于不同的node)
             for (IndexShardRoutingTable indexShard : indexRoutingTable.value) {
                 assert indexShard.primary != null;
                 for (ShardRouting shard : indexShard) {
@@ -108,6 +146,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                     // we define a replica set and keep track of it. A replica set is identified
                     // by the ShardId, as this is common for primary and replicas.
                     // A replica Set might have one (and not more) replicas with the state of RELOCATING.
+                    // 找到此时已经分配好的分片
                     if (shard.assignedToNode()) {
                         Map<ShardId, ShardRouting> entries = nodesToShards.computeIfAbsent(shard.currentNodeId(),
                             k -> new LinkedHashMap<>()); // LinkedHashMap to preserve order
@@ -115,7 +154,10 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                         if (previousValue != null) {
                             throw new IllegalArgumentException("Cannot have two different shards with same shard id on same node");
                         }
+                        // 增加一个已分配的分片
                         assignedShardsAdd(shard);
+
+                        // 根据该分片处于初始状态 或者是重分配状态做不同处理
                         if (shard.relocating()) {
                             relocatingShards++;
                             // LinkedHashMap to preserve order.
@@ -123,12 +165,14 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                             // it's relocating from.
                             entries = nodesToShards.computeIfAbsent(shard.relocatingNodeId(),
                                 k -> new LinkedHashMap<>());
+                            // 当分片处于重分配状态时 会在内部存储一个 targetRelocating
                             ShardRouting targetShardRouting = shard.getTargetRelocatingShard();
                             addInitialRecovery(targetShardRouting, indexShard.primary);
                             previousValue = entries.put(targetShardRouting.shardId(), targetShardRouting);
                             if (previousValue != null) {
                                 throw new IllegalArgumentException("Cannot have two different shards with same shard id on same node");
                             }
+                            // 将重分配的节点也加入
                             assignedShardsAdd(targetShardRouting);
                         } else if (shard.initializing()) {
                             if (shard.primary()) {
@@ -143,8 +187,10 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                 }
             }
         }
+        // 此时分片已经按照node分组
         for (Map.Entry<String, LinkedHashMap<ShardId, ShardRouting>> entry : nodesToShards.entrySet()) {
             String nodeId = entry.getKey();
+            // 将属于同一node 的所有分片对象合并成 RoutingNode
             this.nodesToShards.put(nodeId, new RoutingNode(nodeId, clusterState.nodes().get(nodeId), entry.getValue()));
         }
     }
@@ -161,6 +207,12 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         updateRecoveryCounts(routing, true, initialPrimaryShard);
     }
 
+    /**
+     * TODO 这个方法还需要再梳理
+     * @param routing  待处理的分片
+     * @param increment  本次是添加还是移除
+     * @param primary   与 routing相同shardId的 某个私有分片 在IndexShardRoutingTable中可以看到 每个shardId 对应的所有分片中都有一个是私有分片
+     */
     private void updateRecoveryCounts(final ShardRouting routing, final boolean increment, @Nullable final ShardRouting primary) {
         final int howMany = increment ? 1 : -1;
         assert routing.initializing() : "routing must be initializing: " + routing;
@@ -168,24 +220,30 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         assert primary == null || primary.assignedToNode() :
             "shard is initializing but its primary is not assigned to a node";
 
+        // 代表某个节点对应的分片数量增加了1
         Recoveries.getOrAdd(recoveriesPerNode, routing.currentNodeId()).addIncoming(howMany);
 
+        // 如果该分片的数据从 其他节点获取  那么必须设置私有分片  TODO 难道私有分片的定位就是 用来恢复数据的
         if (routing.recoverySource().getType() == RecoverySource.Type.PEER) {
             // add/remove corresponding outgoing recovery on node with primary shard
             if (primary == null) {
                 throw new IllegalStateException("shard is peer recovering but primary is unassigned");
             }
+            // 记录一次私有分片
             Recoveries.getOrAdd(recoveriesPerNode, primary.currentNodeId()).addOutgoing(howMany);
 
+            // 如果本次是某个分片的移除操作 并且该分片是私有分片
             if (increment == false && routing.primary() && routing.relocatingNodeId() != null) {
                 // primary is done relocating, move non-primary recoveries from old primary to new primary
                 int numRecoveringReplicas = 0;
+                // 找到所有需要从远端恢复的分片
                 for (ShardRouting assigned : assignedShards(routing.shardId())) {
                     if (assigned.primary() == false && assigned.initializing() &&
                         assigned.recoverySource().getType() == RecoverySource.Type.PEER) {
                         numRecoveringReplicas++;
                     }
                 }
+                // 更新变动
                 recoveriesPerNode.get(routing.relocatingNodeId()).addOutgoing(-numRecoveringReplicas);
                 recoveriesPerNode.get(routing.currentNodeId()).addOutgoing(numRecoveringReplicas);
             }
@@ -422,6 +480,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      *
      * @param existingAllocationId allocation id to use. If null, a fresh allocation id is generated.
      * @return                     the initialized shard
+     * 将某个未分配的分片修改成初始化状态
      */
     public ShardRouting initializeShard(ShardRouting unassignedShard, String nodeId, @Nullable String existingAllocationId,
                                         long expectedSize, RoutingChangesObserver routingChangesObserver) {
@@ -719,6 +778,10 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         return relocationMarkerRemoved;
     }
 
+    /**
+     * 添加一个已分配的分片
+     * @param shard
+     */
     private void assignedShardsAdd(ShardRouting shard) {
         assert shard.unassigned() == false : "unassigned shard " + shard + " cannot be added to list of assigned shards";
         List<ShardRouting> shards = assignedShards.computeIfAbsent(shard.shardId(), k -> new ArrayList<>());
@@ -799,13 +862,34 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         return nodesToShards.size();
     }
 
+
+    /**
+     * 整个集群中所有还未分配的分片
+     */
     public static final class UnassignedShards implements Iterable<ShardRouting>  {
 
+        /**
+         * 本次选取的node范围
+         */
         private final RoutingNodes nodes;
+        /**
+         * 未分配的分片列表
+         */
         private final List<ShardRouting> unassigned;
+
+        /**
+         * 某些分片将不会参与分配 此时会存储到这个list中
+         */
         private final List<ShardRouting> ignored;
 
+        /**
+         * 其中有多少分片被标记成 primary
+         */
         private int primaries = 0;
+
+        /**
+         * 每当有某个标记成 primary的分片被 ignore时 增加该值
+         */
         private int ignoredPrimaries = 0;
 
         public UnassignedShards(RoutingNodes nodes) {
@@ -822,6 +906,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         }
 
         public void sort(Comparator<ShardRouting> comparator) {
+            // 确保此对象是允许修改的
             nodes.ensureMutable();
             CollectionUtil.timSort(unassigned, comparator);
         }
@@ -864,6 +949,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
          * @see #ignored()
          * @see UnassignedIterator#removeAndIgnore(AllocationStatus, RoutingChangesObserver)
          * @see #isIgnoredEmpty()
+         * 某个分片将不会被处理
          */
         public void ignoreShard(ShardRouting shard, AllocationStatus allocationStatus, RoutingChangesObserver changes) {
             nodes.ensureMutable();
@@ -876,7 +962,9 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                                                                 currInfo.getNumFailedAllocations(), currInfo.getUnassignedTimeInNanos(),
                                                                 currInfo.getUnassignedTimeInMillis(), currInfo.isDelayed(),
                                                                 allocationStatus, currInfo.getFailedNodeIds());
+                    // 更新分片此时的 unassignedInfo
                     ShardRouting updatedShard = shard.updateUnassigned(newInfo, shard.recoverySource());
+                    // 触发观察者钩子
                     changes.unassignedInfoUpdated(shard, newInfo);
                     shard = updatedShard;
                 }
@@ -884,6 +972,9 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             ignored.add(shard);
         }
 
+        /**
+         * 该对象负责遍历此时未分配的 分片
+         */
         public class UnassignedIterator implements Iterator<ShardRouting>, ExistingShardsAllocator.UnassignedAllocationHandler {
 
             private final ListIterator<ShardRouting> iterator;
@@ -907,6 +998,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
              * Initializes the current unassigned shard and moves it from the unassigned list.
              *
              * @param existingAllocationId allocation id to use. If null, a fresh allocation id is generated.
+             *                             将当前未分配的节点从迭代器移除 并修改成初始化状态
              */
             @Override
             public ShardRouting initialize(String nodeId, @Nullable String existingAllocationId, long expectedShardSize,
@@ -923,6 +1015,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
              * that subsequent consumers of this API won't try to allocate this shard again.
              *
              * @param attempt the result of the allocation attempt
+             * @param changes 分片变化钩子
+             *                忽略某个分片 同时从迭代器移除
              */
             @Override
             public void removeAndIgnore(AllocationStatus attempt, RoutingChangesObserver changes) {
@@ -931,6 +1025,10 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                 ignoreShard(current, attempt, changes);
             }
 
+            /**
+             * 替换迭代器此时读取的对象
+             * @param shardRouting
+             */
             private void updateShardRouting(ShardRouting shardRouting) {
                 current = shardRouting;
                 iterator.set(shardRouting);
@@ -942,6 +1040,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
              * @param  unassignedInfo the new unassigned info to use
              * @param  recoverySource the new recovery source to use
              * @return the shard with unassigned info updated
+             * 更新当前节点的 未分配信息
              */
             @Override
             public ShardRouting updateUnassigned(UnassignedInfo unassignedInfo, RecoverySource recoverySource,
@@ -988,6 +1087,9 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             return ignored.isEmpty();
         }
 
+        /**
+         * 将顺序打乱
+         */
         public void shuffle() {
             nodes.ensureMutable();
             Randomness.shuffle(unassigned);
@@ -996,6 +1098,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         /**
          * Drains all unassigned shards and returns it.
          * This method will not drain ignored shards.
+         * 将内部所有未分配分片清空同时返回
          */
         public ShardRouting[] drain() {
             nodes.ensureMutable();
@@ -1166,6 +1269,9 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         };
     }
 
+    /**
+     * 补偿对象  每个对象都允许输出/输入 一些数值
+     */
     private static final class Recoveries {
         private static final Recoveries EMPTY = new Recoveries();
         private int incoming = 0;
@@ -1189,6 +1295,12 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             return incoming;
         }
 
+        /**
+         * 获取map中通过key 映射到的补偿对象 如果没有则追加映射关系
+         * @param map
+         * @param key
+         * @return
+         */
         public static Recoveries getOrAdd(Map<String, Recoveries> map, String key) {
             Recoveries recoveries = map.get(key);
             if (recoveries == null) {

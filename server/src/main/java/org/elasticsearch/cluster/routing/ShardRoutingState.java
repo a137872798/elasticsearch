@@ -23,12 +23,12 @@ package org.elasticsearch.cluster.routing;
 /**
  * Represents the current state of a {@link ShardRouting} as defined by the
  * cluster.
- * 分片路由状态
+ * 某个可路由分片此时的状态
  */
 public enum ShardRoutingState {
     /**
      * The shard is not assigned to any node.
-     * 代表当前分片没有指派到任何节点   (分片需要先指定到哪个节点么  分片是由谁来创建的呢???  感觉像是有一个中控节点完成这些操作)
+     * 代表当前分片没有指派到任何节点
      */
     UNASSIGNED((byte) 1),
     /**

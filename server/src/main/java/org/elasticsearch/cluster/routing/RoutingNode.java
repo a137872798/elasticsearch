@@ -40,25 +40,43 @@ import java.util.stream.Collectors;
 /**
  * A {@link RoutingNode} represents a cluster node associated with a single {@link DiscoveryNode} including all shards
  * that are hosted on that nodes. Each {@link RoutingNode} has a unique node id that can be used to identify the node.
+ * 代表某个可路由的node
+ * 每个可路由的节点对象上可能会包含一组分片对象 (对应ShardRouting)
  */
 public class RoutingNode implements Iterable<ShardRouting> {
 
-    private final String nodeId;
 
+    // 描述目标节点的相关信息
+    private final String nodeId;
     private final DiscoveryNode node;
 
+    /**
+     * 该节点上此时存在的各种分片 每个分片有自己的唯一id
+     */
     private final LinkedHashMap<ShardId, ShardRouting> shards; // LinkedHashMap to preserve order
 
     private final LinkedHashSet<ShardRouting> initializingShards;
 
+    /**
+     * 该节点此时正在参与重分配的分片
+     */
     private final LinkedHashSet<ShardRouting> relocatingShards;
 
+    /**
+     * 将数据分片按照索引分组
+     */
     private final HashMap<Index, LinkedHashSet<ShardRouting>> shardsByIndex;
 
     public RoutingNode(String nodeId, DiscoveryNode node, ShardRouting... shards) {
         this(nodeId, node, buildShardRoutingMap(shards));
     }
 
+    /**
+     *
+     * @param nodeId
+     * @param node
+     * @param shards 当前节点上存在的各种分片
+     */
     RoutingNode(String nodeId, DiscoveryNode node, LinkedHashMap<ShardId, ShardRouting> shards) {
         this.nodeId = nodeId;
         this.node = node;
@@ -66,6 +84,7 @@ public class RoutingNode implements Iterable<ShardRouting> {
         this.relocatingShards = new LinkedHashSet<>();
         this.initializingShards = new LinkedHashSet<>();
         this.shardsByIndex = new LinkedHashMap<>();
+        // 根据某个分片当前的状态 填充到不同的map中
         for (ShardRouting shardRouting : shards.values()) {
             if (shardRouting.initializing()) {
                 initializingShards.add(shardRouting);
@@ -123,6 +142,7 @@ public class RoutingNode implements Iterable<ShardRouting> {
     /**
      * Add a new shard to this node
      * @param shard Shard to crate on this Node
+     *              为当前节点追加一个新的分片
      */
     void add(ShardRouting shard) {
         assert invariant();
@@ -141,6 +161,11 @@ public class RoutingNode implements Iterable<ShardRouting> {
         assert invariant();
     }
 
+    /**
+     * 更新某个分片信息
+     * @param oldShard
+     * @param newShard
+     */
     void update(ShardRouting oldShard, ShardRouting newShard) {
         assert invariant();
         if (shards.containsKey(oldShard.shardId()) == false) {
@@ -171,6 +196,10 @@ public class RoutingNode implements Iterable<ShardRouting> {
         assert invariant();
     }
 
+    /**
+     * 将某个分片从当前节点移除
+     * @param shard
+     */
     void remove(ShardRouting shard) {
         assert invariant();
         ShardRouting previousValue = shards.remove(shard.shardId());
@@ -193,6 +222,7 @@ public class RoutingNode implements Iterable<ShardRouting> {
      * Determine the number of shards with a specific state
      * @param states set of states which should be counted
      * @return number of shards
+     * 返回符合这些state的所有分片的数量
      */
     public int numberOfShardsWithState(ShardRoutingState... states) {
         if (states.length == 1) {
@@ -244,6 +274,7 @@ public class RoutingNode implements Iterable<ShardRouting> {
      * @param index id of the index
      * @param states set of states which should be listed
      * @return a list of shards
+     * 找到当前节点下 某个index对应的所有分片对象(且需要满足state)
      */
     public List<ShardRouting> shardsWithState(String index, ShardRoutingState... states) {
         List<ShardRouting> shards = new ArrayList<>();

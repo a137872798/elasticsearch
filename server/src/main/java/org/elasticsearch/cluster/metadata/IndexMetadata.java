@@ -323,7 +323,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     private final ImmutableOpenMap<String, DiffableStringMap> customData;
 
     /**
-     * 这个容器的作用是???
+     * 该索引下所有分片id 对应的分配者
      */
     private final ImmutableOpenIntMap<Set<String>> inSyncAllocationIds;
 
@@ -543,6 +543,12 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         return rolloverInfos;
     }
 
+
+    /**
+     * 获取有关某个分片的所有分配者
+     * @param shardId
+     * @return
+     */
     public Set<String> inSyncAllocationIds(int shardId) {
         assert shardId >= 0 && shardId < numberOfShards;
         return inSyncAllocationIds.get(shardId);
@@ -856,6 +862,10 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         private final ImmutableOpenMap.Builder<String, MappingMetadata> mappings;
         private final ImmutableOpenMap.Builder<String, AliasMetadata> aliases;
         private final ImmutableOpenMap.Builder<String, DiffableStringMap> customMetadata;
+
+        /**
+         * 该分片下所有的分配者id
+         */
         private final ImmutableOpenIntMap.Builder<Set<String>> inSyncAllocationIds;
         private final ImmutableOpenMap.Builder<String, RolloverInfo> rolloverInfos;
         private Integer routingNumShards;
@@ -869,6 +879,10 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.rolloverInfos = ImmutableOpenMap.builder();
         }
 
+        /**
+         * 通过一个旧的索引元数据对象 填充builder
+         * @param indexMetadata
+         */
         public Builder(IndexMetadata indexMetadata) {
             this.index = indexMetadata.getIndex().getName();
             this.state = indexMetadata.state;

@@ -69,6 +69,9 @@ import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
+/**
+ * 拼接器
+ */
 public class JoinHelper {
 
     private static final Logger logger = LogManager.getLogger(JoinHelper.class);

@@ -40,6 +40,7 @@ import java.util.Objects;
  * allocation process.
  *
  * @see AllocationDecider
+ * 代表一个决定  这个决定可能是由一个 Decision生成的 也可能是多个Decision作用的结果
  */
 public abstract class Decision implements ToXContent, Writeable {
 
@@ -52,8 +53,8 @@ public abstract class Decision implements ToXContent, Writeable {
      * Creates a simple decision
      * @param type {@link Type} of the decision
      * @param label label for the Decider that produced this decision
-     * @param explanation explanation of the decision
-     * @param explanationParams additional parameters for the decision
+     * @param explanation explanation of the decision  有关该决定的解释信息
+     * @param explanationParams additional parameters for the decision  看来explanation应该是包含一些占位符的 配合param
      * @return new {@link Decision} instance
      */
     public static Decision single(Type type, @Nullable String label, @Nullable String explanation, @Nullable Object... explanationParams) {
@@ -82,6 +83,7 @@ public abstract class Decision implements ToXContent, Writeable {
     /**
      * This enumeration defines the
      * possible types of decisions
+     * 描述一个决定的结果
      */
     public enum Type implements Writeable {
         YES(1),
@@ -151,6 +153,7 @@ public abstract class Decision implements ToXContent, Writeable {
 
     /**
      * Simple class representing a single decision
+     * 单个Decision 决定的结果
      */
     public static class Single extends Decision implements ToXContentObject {
         private Type type;
@@ -270,6 +273,7 @@ public abstract class Decision implements ToXContent, Writeable {
 
     /**
      * Simple class representing a list of decisions
+     * 代表多个决定的综合结果
      */
     public static class Multi extends Decision implements ToXContentFragment {
 
@@ -285,6 +289,12 @@ public abstract class Decision implements ToXContent, Writeable {
             return this;
         }
 
+        /**
+         * 全部都是 Yes 最终才返回Yes
+         * 只要有一个No 返回No
+         * 如果没有No 且出现过THROTTLE 返回 THROTTLE
+         * @return
+         */
         @Override
         public Type type() {
             Type ret = Type.YES;

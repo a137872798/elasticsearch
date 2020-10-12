@@ -78,6 +78,7 @@ import static org.elasticsearch.cluster.routing.ShardRoutingState.RELOCATING;
  * <p>
  * These parameters are combined in a {@link WeightFunction} that allows calculation of node weights which
  * are used to re-balance shards based on global as well as per-index factors.
+ * 该对象允许将分片重新定位到不同的节点上
  */
 public class BalancedShardsAllocator implements ShardsAllocator {
 
@@ -91,17 +92,28 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         Setting.floatSetting("cluster.routing.allocation.balance.threshold", 1.0f, 0.0f,
             Property.Dynamic, Property.NodeScope);
 
+    /**
+     * 该函数可以基于 index/shard 因子计算权重值
+     */
     private volatile WeightFunction weightFunction;
+
+    /**
+     * 获取阈值信息
+     */
     private volatile float threshold;
 
     public BalancedShardsAllocator(Settings settings) {
         this(settings, new ClusterSettings(settings, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS));
     }
 
+
     @Inject
     public BalancedShardsAllocator(Settings settings, ClusterSettings clusterSettings) {
+        // 取出index 和 shard的平衡因子 初始化生成权重的对象
         setWeightFunction(INDEX_BALANCE_FACTOR_SETTING.get(settings), SHARD_BALANCE_FACTOR_SETTING.get(settings));
         setThreshold(THRESHOLD_SETTING.get(settings));
+
+        // 注册2个会动态变化的配置
         clusterSettings.addSettingsUpdateConsumer(INDEX_BALANCE_FACTOR_SETTING, SHARD_BALANCE_FACTOR_SETTING, this::setWeightFunction);
         clusterSettings.addSettingsUpdateConsumer(THRESHOLD_SETTING, this::setThreshold);
     }
@@ -114,9 +126,15 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         this.threshold = threshold;
     }
 
+    /**
+     * 根据当前分片在集群中的分配状态进行重分配
+     * @param allocation current node allocation
+     */
     @Override
     public void allocate(RoutingAllocation allocation) {
+        // 代表此时集群中所有分片都处于未分配状态
         if (allocation.routingNodes().size() == 0) {
+            // 将 unassignedInfo 修改成decide_no 状态  TODO 为什么???
             failAllocationOfNewPrimaries(allocation);
             return;
         }
@@ -143,6 +161,10 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         return new ShardAllocationDecision(allocateUnassignedDecision, moveDecision);
     }
 
+    /**
+     * 代表集群中都是为分配的分片
+     * @param allocation
+     */
     private void failAllocationOfNewPrimaries(RoutingAllocation allocation) {
         RoutingNodes routingNodes = allocation.routingNodes();
         assert routingNodes.size() == 0 : routingNodes;
@@ -150,7 +172,9 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         while (unassignedIterator.hasNext()) {
             final ShardRouting shardRouting = unassignedIterator.next();
             final UnassignedInfo unassignedInfo = shardRouting.unassignedInfo();
+            // 只会处理主分片 并且要求未分配的原因是还没有开始分配  而不是分配失败
             if (shardRouting.primary() && unassignedInfo.getLastAllocationStatus() == AllocationStatus.NO_ATTEMPT) {
+                // 更新未分配信息 同时触发Observer   (这里将所有状态修改成 DECIDERS_NO)
                 unassignedIterator.updateUnassigned(new UnassignedInfo(unassignedInfo.getReason(), unassignedInfo.getMessage(),
                         unassignedInfo.getFailure(), unassignedInfo.getNumFailedAllocations(), unassignedInfo.getUnassignedTimeInNanos(),
                         unassignedInfo.getUnassignedTimeInMillis(), unassignedInfo.isDelayed(), AllocationStatus.DECIDERS_NO,
@@ -205,6 +229,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
      * </li>
      * </ul>
      * <code>weight(node, index) = weight<sub>index</sub>(node, index) + weight<sub>node</sub>(node, index)</code>
+     * 该对象可以计算权重值
      */
     private static class WeightFunction {
 
@@ -213,6 +238,11 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         private final float theta0;
         private final float theta1;
 
+        /**
+         * 通过2个平衡因子进行初始化
+         * @param indexBalance
+         * @param shardBalance
+         */
         WeightFunction(float indexBalance, float shardBalance) {
             float sum = indexBalance + shardBalance;
             if (sum <= 0.0f) {
@@ -233,17 +263,34 @@ public class BalancedShardsAllocator implements ShardsAllocator {
 
     /**
      * A {@link Balancer}
+     * 重分配对象
      */
     public static class Balancer {
         private final Logger logger;
+        /**
+         * 将集群中所有的节点分片 包装成ModelNode
+         */
         private final Map<String, ModelNode> nodes;
         private final RoutingAllocation allocation;
+        /**
+         * 将所有分片信息 按照node划分
+         */
         private final RoutingNodes routingNodes;
         private final WeightFunction weight;
 
         private final float threshold;
+        /**
+         * 该对象内部包含了所有索引的元数据信息
+         */
         private final Metadata metadata;
+        /**
+         * 平均每个节点上有多少分片
+         */
         private final float avgShardsPerNode;
+
+        /**
+         * 该对象负责将node 排序
+         */
         private final NodeSorter sorter;
 
         public Balancer(Logger logger, RoutingAllocation allocation, WeightFunction weight, float threshold) {
@@ -729,15 +776,18 @@ public class BalancedShardsAllocator implements ShardsAllocator {
          * a shadow shard in the state {@link ShardRoutingState#INITIALIZING}
          * on the target node which we respect during the allocation / balancing
          * process. In short, this method recreates the status-quo in the cluster.
+         * 根据当前所有node 的分片信息构建一个 ModelNode map
          */
         private Map<String, ModelNode> buildModelFromAssigned() {
             Map<String, ModelNode> nodes = new HashMap<>();
             for (RoutingNode rn : routingNodes) {
                 ModelNode node = new ModelNode(rn);
                 nodes.put(rn.nodeId(), node);
+                // 将每个node下的分片填充到 modelNode中
                 for (ShardRouting shard : rn) {
                     assert rn.nodeId().equals(shard.currentNodeId());
                     /* we skip relocating shards here since we expect an initializing shard with the same id coming in */
+                    // 注意这里不会添加处于重分配状态的分片
                     if (shard.state() != RELOCATING) {
                         node.addShard(shard);
                         if (logger.isTraceEnabled()) {
@@ -752,6 +802,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         /**
          * Allocates all given shards on the minimal eligible node for the shards index
          * with respect to the weight function. All given shards must be unassigned.
+         * 为当前所有未分配的节点进行分配
          */
         private void allocateUnassigned() {
             RoutingNodes.UnassignedShards unassigned = routingNodes.unassigned();
@@ -766,13 +817,18 @@ public class BalancedShardsAllocator implements ShardsAllocator {
             /*
              * TODO: We could be smarter here and group the shards by index and then
              * use the sorter to save some iterations.
+             * 这些 decision对象共同作用的结果将会决定某个分片应该被分配到哪个节点
              */
             final AllocationDeciders deciders = allocation.deciders();
+            // 根据索引的优先级以及创建时间为索引排序
             final PriorityComparator secondaryComparator = PriorityComparator.getAllocationComparator(allocation);
+            // 该对象可以为分片排序
             final Comparator<ShardRouting> comparator = (o1, o2) -> {
+                // 主分片的优先级低
                 if (o1.primary() ^ o2.primary()) {
                     return o1.primary() ? -1 : 1;
                 }
+                // 其次比较索引的大小
                 final int indexCmp;
                 if ((indexCmp = o1.getIndexName().compareTo(o2.getIndexName())) == 0) {
                     return o1.getId() - o2.getId();
@@ -797,6 +853,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
             ShardRouting[] secondary = new ShardRouting[primary.length];
             int secondaryLength = 0;
             int primaryLength = primary.length;
+            // 将未分配的分片对象排序
             ArrayUtil.timSort(primary, comparator);
             final Set<ModelNode> throttledNodes = Collections.newSetFromMap(new IdentityHashMap<>());
             do {
@@ -1033,10 +1090,22 @@ public class BalancedShardsAllocator implements ShardsAllocator {
     }
 
     static class ModelNode implements Iterable<ModelIndex> {
+
+        /**
+         * 维护该node下所有分片对应的索引信息
+         */
         private final Map<String, ModelIndex> indices = new HashMap<>();
+
+        /**
+         * 记录该node下总计存储了多少分片  而分片具体存储在 ModelIndex中
+         */
         private int numShards = 0;
         private final RoutingNode routingNode;
 
+        /**
+         * 通过某个节点下所有的分片信息进行初始化  (包含不同shardId的数据)
+         * @param routingNode
+         */
         ModelNode(RoutingNode routingNode) {
             this.routingNode = routingNode;
         }
@@ -1070,12 +1139,17 @@ public class BalancedShardsAllocator implements ShardsAllocator {
             return -1;
         }
 
+        /**
+         * 为当前节点添加某个分片对象
+         * @param shard
+         */
         public void addShard(ShardRouting shard) {
             ModelIndex index = indices.get(shard.getIndexName());
             if (index == null) {
                 index = new ModelIndex(shard.getIndexName());
                 indices.put(index.getIndexId(), index);
             }
+            // 将分片添加到索引中
             index.addShard(shard);
             numShards++;
         }
@@ -1110,8 +1184,14 @@ public class BalancedShardsAllocator implements ShardsAllocator {
 
     }
 
+    /**
+     * 在 ModelNode中使用  对应一个索引
+     */
     static final class ModelIndex implements Iterable<ShardRouting> {
         private final String id;
+        /**
+         * 属于该索引的某个分片
+         */
         private final Set<ShardRouting> shards = new HashSet<>(4); // expect few shards of same index to be allocated on same node
         private int highestPrimary = -1;
 
@@ -1151,6 +1231,10 @@ public class BalancedShardsAllocator implements ShardsAllocator {
             shards.remove(shard);
         }
 
+        /**
+         * 在该索引下追加一个新的分片
+         * @param shard
+         */
         public void addShard(ShardRouting shard) {
             highestPrimary = -1;
             assert !shards.contains(shard) : "Shard already allocated on current node: " + shard;
@@ -1162,10 +1246,19 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         }
     }
 
+    /**
+     * 该对象基于某种规则对node 进行排序
+     */
     static final class NodeSorter extends IntroSorter {
 
+        /**
+         * 内部包含该节点上所有的分片
+         */
         final ModelNode[] modelNodes;
-        /* the nodes weights with respect to the current weight function / index */
+        /*
+        * the nodes weights with respect to the current weight function / index
+        * 每个节点有自己的权重值
+        */
         final float[] weights;
         private final WeightFunction function;
         private String index;

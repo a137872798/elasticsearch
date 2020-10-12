@@ -54,7 +54,8 @@ import static org.elasticsearch.cluster.metadata.MetadataIndexStateService.isInd
  * version of the current routing state.
  *
  * @see IndexRoutingTable
- * 路由表对象  应该是用来寻找集群中某个节点的
+ * 该对象统一管理了所有索引相关的分片
+ * 每个 IndexRoutingTable 管理了某个索引下所有的分片
  */
 public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<RoutingTable> {
 
@@ -68,7 +69,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
     /**
      * index to IndexRoutingTable map
      * ImmutableOpenMap理解为一个简单的hashMap
-     * 这里存储了集群下所有索引的路由对象
+     *
      */
     private final ImmutableOpenMap<String, IndexRoutingTable> indicesRouting;
 

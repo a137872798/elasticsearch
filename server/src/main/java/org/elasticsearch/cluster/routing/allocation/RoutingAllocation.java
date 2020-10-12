@@ -45,23 +45,48 @@ import static java.util.Collections.emptySet;
  * The {@link RoutingAllocation} keep the state of the current allocation
  * of shards and holds the {@link AllocationDeciders} which are responsible
  *  for the current routing state.
+ *  一个可分配的对象
  */
 public class RoutingAllocation {
 
+    /**
+     * 该对象决定某个分片应该分配在哪里
+     */
     private final AllocationDeciders deciders;
 
+    /**
+     * 该对象维护了集群中所有node 的分片
+     */
     private final RoutingNodes routingNodes;
 
+    /**
+     * 描述所有索引的元数据信息
+     */
     private final Metadata metadata;
 
+    /**
+     * 该对象以索引为维度维护了所有分片信息
+     */
     private final RoutingTable routingTable;
 
+    /**
+     * 集群中所有的node 对象
+     */
     private final DiscoveryNodes nodes;
 
+    /**
+     * 一组自定义的属性 实现了 Diffable接口 能够比较前后的不同
+     */
     private final ImmutableOpenMap<String, ClusterState.Custom> customs;
 
+    /**
+     * 该对象描述了集群中每个node使用的内存量
+     */
     private final ClusterInfo clusterInfo;
 
+    /**
+     * 确保某些分片不会分配到哪些节点
+     */
     private Map<ShardId, Set<String>> ignoredShardToNodes = null;
 
     private boolean ignoreDisable = false;
@@ -72,9 +97,22 @@ public class RoutingAllocation {
 
     private final long currentNanoTime;
 
+    /**
+     * 在分片发生变化时 会同步索引元数据
+     */
     private final IndexMetadataUpdater indexMetadataUpdater = new IndexMetadataUpdater();
+    /**
+     * 该对象负责检测集群中分片的变化 并维护一个changed标识
+     */
     private final RoutingNodesChangedObserver nodesChangedObserver = new RoutingNodesChangedObserver();
+    /**
+     * 该对象监控每个分片此时的恢复状态
+     */
     private final RestoreInProgressUpdater restoreInProgressUpdater = new RestoreInProgressUpdater();
+
+    /**
+     * 将3个监听分片变化的Observer合并成一个对象
+     */
     private final RoutingChangesObserver routingChangesObserver = new RoutingChangesObserver.DelegatingRoutingChangesObserver(
         nodesChangedObserver, indexMetadataUpdater, restoreInProgressUpdater
     );
@@ -180,6 +218,11 @@ public class RoutingAllocation {
         return this.debugDecision;
     }
 
+    /**
+     * 将某个分片不会分配到某个node 的关系添加到容器中
+     * @param shardId
+     * @param nodeId
+     */
     public void addIgnoreShardForNode(ShardId shardId, String nodeId) {
         if (ignoredShardToNodes == null) {
             ignoredShardToNodes = new HashMap<>();
@@ -219,6 +262,7 @@ public class RoutingAllocation {
 
     /**
      * Remove the allocation id of the provided shard from the set of in-sync shard copies
+     * 将该分片的allocationId 加入到该分片对应的update对象的 remove容器中
      */
     public void removeAllocationId(ShardRouting shardRouting) {
         indexMetadataUpdater.removeAllocationId(shardRouting);
@@ -233,6 +277,7 @@ public class RoutingAllocation {
 
     /**
      * Returns updated {@link Metadata} based on the changes that were made to the routing nodes
+     * 使用此时最新的分片路由信息更新元数据
      */
     public Metadata updateMetadataWithRoutingChanges(RoutingTable newRoutingTable) {
         return indexMetadataUpdater.applyChanges(metadata, newRoutingTable);
@@ -240,6 +285,7 @@ public class RoutingAllocation {
 
     /**
      * Returns updated {@link RestoreInProgress} based on the changes that were made to the routing nodes
+     * TODO 先忽略有关恢复数据的
      */
     public RestoreInProgress updateRestoreInfoWithRoutingChanges(RestoreInProgress restoreInProgress) {
         return restoreInProgressUpdater.applyChanges(restoreInProgress);
@@ -247,6 +293,7 @@ public class RoutingAllocation {
 
     /**
      * Returns true iff changes were made to the routing nodes
+     * 检测是否有分片发生了改变
      */
     public boolean routingNodesChanged() {
         return nodesChangedObserver.isChanged();
@@ -259,6 +306,7 @@ public class RoutingAllocation {
      * @param deciderLabel a human readable label for the AllocationDecider
      * @param reason a format string explanation of the decision
      * @param params format string parameters
+     *               为之前的决定对象 追加一些描述信息
      */
     public Decision decision(Decision decision, String deciderLabel, String reason, Object... params) {
         if (debugDecision()) {

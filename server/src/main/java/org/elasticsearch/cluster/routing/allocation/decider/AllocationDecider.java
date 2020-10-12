@@ -30,12 +30,14 @@ import org.elasticsearch.cluster.routing.allocation.decider.Decision.Type;
  * {@link AllocationDecider} is an abstract base class that allows to make
  * dynamic cluster- or index-wide shard allocation decisions on a per-node
  * basis.
+ * 这里包含了一组分配分片相关的api    默认情况下都为ALWAYS
  */
 public abstract class AllocationDecider {
     /**
      * Returns a {@link Decision} whether the given shard routing can be
      * re-balanced to the given allocation. The default is
      * {@link Decision#ALWAYS}.
+     * 检测某个分片路由是否支持重分配
      */
     public Decision canRebalance(ShardRouting shardRouting, RoutingAllocation allocation) {
         return Decision.ALWAYS;
@@ -44,6 +46,7 @@ public abstract class AllocationDecider {
     /**
      * Returns a {@link Decision} whether the given shard routing can be
      * allocated on the given node. The default is {@link Decision#ALWAYS}.
+     * 某个分片是否可以分配到某个节点上
      */
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
         return Decision.ALWAYS;

@@ -85,7 +85,6 @@ import java.util.stream.StreamSupport;
  * 由于实现了 Diffable 接口 能反映当前状态与之前状态的变化
  *
  * 一般注册中心本身是不支持扩容/缩容的 并且他们的意义就是用少数服务器维护多台服务器应用之间的一致性
- * 之后应用服务器 会注册到集群中 并确保能被集群中每个节点观测到  现在的推断就是master节点就是具备选举能力的节点
  *
  * 可以看到 ES中大部分实体 都实现了 ToXContent 接口 代表他们都支持直接与结构化形式进行输出
  */
@@ -119,6 +118,9 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
 
     public static final long UNKNOWN_VERSION = -1;
 
+    /**
+     * 相当于一个 gen  通过对比version 可以比较哪个集群状态更新   只有基于CP的实现 版本号才有意义
+     */
     private final long version;
 
     /**
@@ -126,6 +128,9 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
      */
     private final String stateUUID;
 
+    /**
+     *
+     */
     private final RoutingTable routingTable;
 
     /**
@@ -150,6 +155,7 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
     private final boolean wasReadFromDiff;
 
     // built on demand
+    // 描述当前集群下每个节点的 分片分配情况
     private volatile RoutingNodes routingNodes;
 
     /**

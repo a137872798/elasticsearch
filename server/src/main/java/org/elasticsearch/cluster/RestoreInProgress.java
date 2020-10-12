@@ -40,6 +40,8 @@ import java.util.Objects;
 
 /**
  * Meta data about restore processes that are currently executing
+ * 该对象维护所有实体此时恢复的进程
+ * 实际上就是一组bean对象
  */
 public class RestoreInProgress extends AbstractNamedDiffable<Custom> implements Custom, Iterable<RestoreInProgress.Entry> {
 
@@ -117,11 +119,18 @@ public class RestoreInProgress extends AbstractNamedDiffable<Custom> implements 
 
     /**
      * Restore metadata
+     * 描述某个数据分片恢复的进程
      */
     public static class Entry {
         private final String uuid;
         private final State state;
+        /**
+         * 该对象内部包含了快照的位置 以及id
+         */
         private final Snapshot snapshot;
+        /**
+         * 每个实体都对应一组分片的恢复状态
+         */
         private final ImmutableOpenMap<ShardId, ShardRestoreStatus> shards;
         private final List<String> indices;
 
@@ -214,7 +223,8 @@ public class RestoreInProgress extends AbstractNamedDiffable<Custom> implements 
     }
 
     /**
-     * Represents status of a restored shard
+     * Represents status of a restored shard、
+     * 记录某个分片在某个节点上的恢复状态
      */
     public static class ShardRestoreStatus {
         private State state;

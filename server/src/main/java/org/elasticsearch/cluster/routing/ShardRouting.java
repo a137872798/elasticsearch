@@ -38,8 +38,7 @@ import java.util.List;
 /**
  * {@link ShardRouting} immutably encapsulates information about shard
  * indexRoutings like id, state, version, etc.
- * 描述分片当前状态的  比如初始化/已分配  以及当分片数据丢失时恢复的方式 RecoverySource
- * 还有分片重分配后的位置  这里并没有直接体现"路由"的概念
+ * 代表某个可路由的分片 它可能此时正分配在某个node上 也可能在某个时刻会触发relocating 重分配到其他node上
  */
 public final class ShardRouting implements Writeable, ToXContentObject {
 
@@ -52,11 +51,18 @@ public final class ShardRouting implements Writeable, ToXContentObject {
      * 包含了分片id(int) 以及对应的索引信息 (该分片是针对哪个索引而言的)
      */
     private final ShardId shardId;
+
+    /**
+     * 该分片当前所在的节点
+     */
     private final String currentNodeId;
+    /**
+     * 该分片正在转移到哪个node
+     */
     private final String relocatingNodeId;
 
     /**
-     * 代表这个分片只出现在当前节点 (推测)
+     * 是否是主分片 其余分片都是副本  那么恢复数据时 也应该以主分片为基准
      */
     private final boolean primary;
     /**
@@ -74,9 +80,13 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     private final UnassignedInfo unassignedInfo;
 
     /**
-     * 分配id  还不知道是啥东西
+     * 该分片由哪个分配器调度
      */
     private final AllocationId allocationId;
+
+    /**
+     * 单实例列表
+     */
     private final transient List<ShardRouting> asList;
     /**
      * 预期的分片大小
@@ -84,7 +94,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     private final long expectedShardSize;
 
     /**
-     * 代表重新定位后的分片位置
+     * 维护了重分配后的对象
      */
     @Nullable
     private final ShardRouting targetRelocatingShard;
@@ -122,14 +132,14 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     }
 
     /**
-     * 生成重定位分片信息
+     * 生成重定位后的分片信息
      * @return
      */
     @Nullable
     private ShardRouting initializeTargetRelocatingShard() {
         // 首先确保当前分片状态处在 重定位中
         if (state == ShardRoutingState.RELOCATING) {
-            // 注意此时生成对象的 分片状态是 INIT 以及 recoverySource 是从其他节点恢复数据
+            // 注意此时生成对象的 分片状态是 INIT 以及 recoverySource 是从其他节点恢复数据  应该是代表重分配后的分片应该从当前节点拷贝数据(恢复数据)
             return new ShardRouting(shardId, relocatingNodeId, currentNodeId, primary, ShardRoutingState.INITIALIZING,
                 PeerRecoverySource.INSTANCE, unassignedInfo, AllocationId.newTargetRelocation(allocationId), expectedShardSize);
         } else {
@@ -139,7 +149,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
 
     /**
      * Creates a new unassigned shard.
-     * 生成一个未分配的分片数据
+     * 生成一个未分配的分片数据   因为此时还没有指派给某个分配器  所以 allocationId为null
      */
     public static ShardRouting newUnassigned(ShardId shardId, boolean primary, RecoverySource recoverySource,
                                              UnassignedInfo unassignedInfo) {

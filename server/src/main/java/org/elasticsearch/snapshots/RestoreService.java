@@ -600,15 +600,21 @@ public class RestoreService implements ClusterStateApplier {
         }
     }
 
+    /**
+     * 记录某个分片此时的恢复状态
+     */
     public static class RestoreInProgressUpdater extends RoutingChangesObserver.AbstractRoutingChangesObserver {
         // Map of RestoreUUID to a of changes to the shards' restore statuses
+        // key是每个恢复源的id   ShardRestoreStatus 对应此时主分片的恢复状态   只有主分片才有恢复的概念么???
         private final Map<String, Map<ShardId, ShardRestoreStatus>> shardChanges = new HashMap<>();
 
         @Override
         public void shardStarted(ShardRouting initializingShard, ShardRouting startedShard) {
             // mark snapshot as completed
+            // 某个主分片由初始状态变化为 启动状态时
             if (initializingShard.primary()) {
                 RecoverySource recoverySource = initializingShard.recoverySource();
+                // 如果要求分片从快照中恢复数据  这里直接插入一个success的status对象
                 if (recoverySource.getType() == RecoverySource.Type.SNAPSHOT) {
                     changes(recoverySource).put(
                         initializingShard.shardId(),
@@ -617,9 +623,16 @@ public class RestoreService implements ClusterStateApplier {
             }
         }
 
+        /**
+         * 如果某个分片分配失败了
+         * @param failedShard
+         * @param unassignedInfo
+         */
         @Override
         public void shardFailed(ShardRouting failedShard, UnassignedInfo unassignedInfo) {
+            // 当主分片在初始阶段启动时失败了
             if (failedShard.primary() && failedShard.initializing()) {
+                // 如果是基于快照模式
                 RecoverySource recoverySource = failedShard.recoverySource();
                 if (recoverySource.getType() == RecoverySource.Type.SNAPSHOT) {
                     // mark restore entry for this shard as failed when it's due to a file corruption. There is no need wait on retries
@@ -647,6 +660,11 @@ public class RestoreService implements ClusterStateApplier {
             }
         }
 
+        /**
+         * 当未分配信息发生变化时触发
+         * @param unassignedShard
+         * @param newUnassignedInfo
+         */
         @Override
         public void unassignedInfoUpdated(ShardRouting unassignedShard, UnassignedInfo newUnassignedInfo) {
             RecoverySource recoverySource = unassignedShard.recoverySource();

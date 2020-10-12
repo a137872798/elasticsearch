@@ -71,9 +71,15 @@ public class AllocationService {
 
     private static final Logger logger = LogManager.getLogger(AllocationService.class);
 
+    /**
+     * 内部包含了一组分配对象 能够判别某个分片是否应该分配在某个node上
+     */
     private final AllocationDeciders allocationDeciders;
     private Map<String, ExistingShardsAllocator> existingShardsAllocators;
     private final ShardsAllocator shardsAllocator;
+    /**
+     * 获取当前集群状态的服务
+     */
     private final ClusterInfoService clusterInfoService;
 
     // only for tests that use the GatewayAllocator as the unique ExistingShardsAllocator
@@ -92,6 +98,7 @@ public class AllocationService {
 
     /**
      * Inject the {@link ExistingShardsAllocator}s to use. May only be called once.
+     * 设置某种分片分配器
      */
     public void setExistingShardsAllocators(Map<String, ExistingShardsAllocator> existingShardsAllocators) {
         assert this.existingShardsAllocators == null : "cannot set allocators " + existingShardsAllocators + " twice";
@@ -104,6 +111,8 @@ public class AllocationService {
      * provided as parameter and no duplicates should be contained.
      * <p>
      * If the same instance of the {@link ClusterState} is returned, then no change has been made.</p>
+     * @param clusterState 当前集群状态 通过该对象可以获取集群中的node
+     * @param startedShards 此时待分配的各种分片
      */
     public ClusterState applyStartedShards(ClusterState clusterState, List<ShardRouting> startedShards) {
         assert assertInitialized();
@@ -502,6 +511,7 @@ public class AllocationService {
 
     /**
      * Create a mutable {@link RoutingNodes}. This is a costly operation so this must only be called once!
+     * 根据当前集群状态生成 可路由的所有node
      */
     private RoutingNodes getMutableRoutingNodes(ClusterState clusterState) {
         return new RoutingNodes(clusterState, false);

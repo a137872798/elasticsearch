@@ -121,6 +121,11 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
      * 传输层服务 通过该对象可以在节点之间建立连接 以及发送数据包
      */
     private final TransportService transportService;
+
+    /**
+     * MasterService 是要当前节点作为master时才可以使用
+     * 主要功能就是接收update请求更新集群状态 并将更新事件通知到集群中所有节点
+     */
     private final MasterService masterService;
     private final AllocationService allocationService;
     private final JoinHelper joinHelper;
@@ -1043,6 +1048,12 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         }
     }
 
+    /**
+     * 将集群变化的事件通知到所有节点
+     * @param clusterChangedEvent
+     * @param publishListener
+     * @param ackListener
+     */
     @Override
     public void publish(ClusterChangedEvent clusterChangedEvent, ActionListener<Void> publishListener, AckListener ackListener) {
         try {

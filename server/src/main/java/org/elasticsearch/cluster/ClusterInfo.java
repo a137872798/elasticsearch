@@ -37,8 +37,11 @@ import java.util.Map;
  * and a map of shard ids to shard sizes, see
  * <code>InternalClusterInfoService.shardIdentifierFromRouting(String)</code>
  * for the key used in the shardSizes map
+ * 描述集群信息
+ * 可以理解为一个简单的bean对象
  */
 public class ClusterInfo implements ToXContentFragment, Writeable {
+
     private final ImmutableOpenMap<String, DiskUsage> leastAvailableSpaceUsage;
     private final ImmutableOpenMap<String, DiskUsage> mostAvailableSpaceUsage;
     final ImmutableOpenMap<String, Long> shardSizes;

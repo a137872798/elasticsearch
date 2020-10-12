@@ -21,6 +21,7 @@ package org.elasticsearch.cluster.routing;
 
 /**
  * Records changes made to {@link RoutingNodes} during an allocation round.
+ * 某个分片变化的观察者
  */
 public interface RoutingChangesObserver {
     /**
@@ -123,6 +124,9 @@ public interface RoutingChangesObserver {
         }
     }
 
+    /**
+     * 这里将多个观察者合并成一个
+     */
     class DelegatingRoutingChangesObserver implements RoutingChangesObserver {
 
         private final RoutingChangesObserver[] routingChangesObservers;
