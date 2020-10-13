@@ -535,6 +535,10 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
         private Metadata metadata = Metadata.EMPTY_METADATA;
         private RoutingTable routingTable = RoutingTable.EMPTY_ROUTING_TABLE;
         private DiscoveryNodes nodes = DiscoveryNodes.EMPTY_NODES;
+
+        /**
+         * 当前集群下的集群块
+         */
         private ClusterBlocks blocks = ClusterBlocks.EMPTY_CLUSTER_BLOCK;
         private final ImmutableOpenMap.Builder<String, Custom> customs;
         private boolean fromDiff;

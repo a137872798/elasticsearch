@@ -185,11 +185,11 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             "allocation ids cannot be both added and removed in the same allocation round, added ids: " +
                 updates.addedAllocationIds + ", removed ids: " + updates.removedAllocationIds;
 
-        // 获取该分片之前的所有分配者
+        // 获取该分片之前的所有分配者id
         Set<String> oldInSyncAllocationIds = oldIndexMetadata.inSyncAllocationIds(shardId.id());
 
         // check if we have been force-initializing an empty primary or a stale primary
-        // 如果本次主分片从未分配设置成初始状态 同时对应的分配者id 还没有设置到 oldInSyncAllocationIds 中
+        // 如果本次主分片从未分配设置成初始状态   并且首次添加该分配者id
         if (updates.initializedPrimary != null && oldInSyncAllocationIds.isEmpty() == false &&
             oldInSyncAllocationIds.contains(updates.initializedPrimary.allocationId().getId()) == false) {
             // we're not reusing an existing in-sync allocation id to initialize a primary, which means that we're either force-allocating
@@ -225,7 +225,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             }
         } else {
             // standard path for updating in-sync ids
-            // 代表分配者id 之前已经存在于旧的元数据对象中
+            // 更新分配者id
             Set<String> inSyncAllocationIds = new HashSet<>(oldInSyncAllocationIds);
             inSyncAllocationIds.addAll(updates.addedAllocationIds);
             inSyncAllocationIds.removeAll(updates.removedAllocationIds);
@@ -282,21 +282,26 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
     /**
      * Removes allocation ids from the in-sync set for shard copies for which there is no routing entries in the routing table.
      * This method is called in AllocationService before any changes to the routing table are made.
+     * 移除掉某些已经过期的分片
      */
     public static ClusterState removeStaleIdsWithoutRoutings(ClusterState clusterState, List<StaleShard> staleShards, Logger logger) {
         Metadata oldMetadata = clusterState.metadata();
         RoutingTable oldRoutingTable = clusterState.routingTable();
         Metadata.Builder metadataBuilder = null;
         // group staleShards entries by index
+        // 将过期分片 按照索引进行分组
         for (Map.Entry<Index, List<StaleShard>> indexEntry : staleShards.stream().collect(
             Collectors.groupingBy(fs -> fs.getShardId().getIndex())).entrySet()) {
             final IndexMetadata oldIndexMetadata = oldMetadata.getIndexSafe(indexEntry.getKey());
             IndexMetadata.Builder indexMetadataBuilder = null;
             // group staleShards entries by shard id
+            // 进一步按照分片id 分组
             for (Map.Entry<ShardId, List<StaleShard>> shardEntry : indexEntry.getValue().stream().collect(
                 Collectors.groupingBy(staleShard -> staleShard.getShardId())).entrySet()) {
                 int shardNumber = shardEntry.getKey().getId();
+                // 找到这个分片id 对应的所有shard生成的 allocationId
                 Set<String> oldInSyncAllocations = oldIndexMetadata.inSyncAllocationIds(shardNumber);
+                // 通过 allocationId 进行过滤   也就是说这个id相当于是标明唯一性的东西???
                 Set<String> idsToRemove = shardEntry.getValue().stream().map(e -> e.getAllocationId()).collect(Collectors.toSet());
                 assert idsToRemove.stream().allMatch(id -> oldRoutingTable.getByAllocationId(shardEntry.getKey(), id) == null) :
                     "removing stale ids: " + idsToRemove + ", some of which have still a routing entry: " + oldRoutingTable;
@@ -309,6 +314,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                     if (indexMetadataBuilder == null) {
                         indexMetadataBuilder = IndexMetadata.builder(oldIndexMetadata);
                     }
+                    // 使用剩余的 分配者id 覆盖之前的数据
                     indexMetadataBuilder.putInSyncAllocationIds(shardNumber, remainingInSyncAllocations);
                 }
                 logger.warn("{} marking unavailable shards as stale: {}", shardEntry.getKey(), idsToRemove);

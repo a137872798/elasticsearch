@@ -118,7 +118,7 @@ public class AllocationService {
      * If the same instance of the {@link ClusterState} is returned, then no change has been made.</p>
      * @param clusterState
      * @param startedShards
-     *
+     * 将某组分片从初始状态修改成start状态
      */
     public ClusterState applyStartedShards(ClusterState clusterState, List<ShardRouting> startedShards) {
         assert assertInitialized();
@@ -152,9 +152,17 @@ public class AllocationService {
         return buildResultAndLogHealthChange(clusterState, allocation, "shards started [" + startedShardsAsString + "]");
     }
 
+    /**
+     * 根据 RoutingAllocation的最新数据 更新ClusterState
+     * @param oldState
+     * @param allocation
+     * @param reason
+     * @return
+     */
     protected ClusterState buildResultAndLogHealthChange(ClusterState oldState, RoutingAllocation allocation, String reason) {
         ClusterState newState = buildResult(oldState, allocation);
 
+        // 打印日志
         logClusterHealthStateChange(
             new ClusterStateHealth(oldState),
             new ClusterStateHealth(newState),
@@ -180,9 +188,12 @@ public class AllocationService {
         final Metadata newMetadata = allocation.updateMetadataWithRoutingChanges(newRoutingTable);
         assert newRoutingTable.validate(newMetadata); // validates the routing table is coherent with the cluster state metadata
 
+        // 更新集群状态对象
         final ClusterState.Builder newStateBuilder = ClusterState.builder(oldState)
             .routingTable(newRoutingTable)
             .metadata(newMetadata);
+
+        // 使用 restoreInProgressUpdater 处理之前监听到的各种分片变化  TODO 先忽略
         final RestoreInProgress restoreInProgress = allocation.custom(RestoreInProgress.TYPE);
         if (restoreInProgress != null) {
             RestoreInProgress updatedRestoreInProgress = allocation.updateRestoreInfoWithRoutingChanges(restoreInProgress);
@@ -212,33 +223,43 @@ public class AllocationService {
      *
      * <p>
      * If the same instance of ClusterState is returned, then no change has been made.</p>
+     * 处理失败或者过期的分片
      */
     public ClusterState applyFailedShards(final ClusterState clusterState, final List<FailedShard> failedShards,
                                           final List<StaleShard> staleShards) {
         assert assertInitialized();
+        // 代表不需要处理
         if (staleShards.isEmpty() && failedShards.isEmpty()) {
             return clusterState;
         }
+        // 移除掉过期分片  同时更新索引元数据  并更新 ClusterState中的metadata
         ClusterState tmpState = IndexMetadataUpdater.removeStaleIdsWithoutRoutings(clusterState, staleShards, logger);
 
+        // 此时的clusterState还不是最终结果  还需要剔除failed数据
         RoutingNodes routingNodes = getMutableRoutingNodes(tmpState);
         // shuffle the unassigned nodes, just so we won't have things like poison failed shards
         routingNodes.unassigned().shuffle();
         long currentNanoTime = currentNanoTime();
+        // 生成最新的 RoutingAllocation
         RoutingAllocation allocation = new RoutingAllocation(allocationDeciders, routingNodes, tmpState,
             clusterInfoService.getClusterInfo(), currentNanoTime);
 
         for (FailedShard failedShardEntry : failedShards) {
             ShardRouting shardToFail = failedShardEntry.getRoutingEntry();
+            // 获取分片相关的索引元数据
             IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shardToFail.shardId().getIndex());
+
+            // 因为尝试将分片分配到这个node失败了 所以设置一个 ignore的映射关系到容器中
             allocation.addIgnoreShardForNode(shardToFail.shardId(), shardToFail.currentNodeId());
             // failing a primary also fails initializing replica shards, re-resolve ShardRouting
+            // 定位到失败的分片对象
             ShardRouting failedShard = routingNodes.getByAllocationId(shardToFail.shardId(), shardToFail.allocationId().getId());
             if (failedShard != null) {
                 if (failedShard != shardToFail) {
                     logger.trace("{} shard routing modified in an earlier iteration (previous: {}, current: {})",
                         shardToFail.shardId(), shardToFail, failedShard);
                 }
+                // 获取失败次数
                 int failedAllocations = failedShard.unassignedInfo() != null ? failedShard.unassignedInfo().getNumFailedAllocations() : 0;
                 final Set<String> failedNodeIds;
                 if (failedShard.unassignedInfo() != null) {
@@ -252,19 +273,25 @@ public class AllocationService {
                 UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.ALLOCATION_FAILED, message,
                     failedShardEntry.getFailure(), failedAllocations + 1, currentNanoTime, System.currentTimeMillis(), false,
                     AllocationStatus.NO_ATTEMPT, failedNodeIds);
+
+                // 如果失败的分片要标记成丢弃 就添加到 update对象中
                 if (failedShardEntry.markAsStale()) {
                     allocation.removeAllocationId(failedShard);
                 }
                 logger.warn(new ParameterizedMessage("failing shard [{}]", failedShardEntry), failedShardEntry.getFailure());
+                // 涉及到一大堆状态的转换 卧槽
                 routingNodes.failShard(logger, failedShard, unassignedInfo, indexMetadata, allocation.changes());
             } else {
                 logger.trace("{} shard routing failed in an earlier iteration (routing: {})", shardToFail.shardId(), shardToFail);
             }
         }
+
+        // TODO 先忽略
         for (final ExistingShardsAllocator allocator : existingShardsAllocators.values()) {
             allocator.applyFailedShards(failedShards, allocation);
         }
 
+        // 核心就是使用 ShardsAllocator 对所有分片进行分配 (涉及init relocation rebalance)
         reroute(allocation);
         String failedShardsAsString
             = firstListElementsToCommaDelimitedString(failedShards, s -> s.getRoutingEntry().shardId().toString(), logger.isDebugEnabled());
@@ -274,6 +301,7 @@ public class AllocationService {
     /**
      * unassigned an shards that are associated with nodes that are no longer part of the cluster, potentially promoting replicas
      * if needed.
+     * 分离已死的节点
      */
     public ClusterState disassociateDeadNodes(ClusterState clusterState, boolean reroute, String reason) {
         RoutingNodes routingNodes = getMutableRoutingNodes(clusterState);
@@ -283,11 +311,15 @@ public class AllocationService {
             clusterInfoService.getClusterInfo(), currentNanoTime());
 
         // first, clear from the shards any node id they used to belong to that is now dead
+        // 某些节点会发现已经不存在于 DiscoveryNodes的 dataNodes中   触发 shardFailed
         disassociateDeadNodes(allocation);
 
+        // 只要有分片发生了变化 那么就更新集群state对象
         if (allocation.routingNodesChanged()) {
             clusterState = buildResult(clusterState, allocation);
         }
+
+        // 如果需要对剩余的分片进行重路由
         if (reroute) {
             return reroute(clusterState, reason);
         } else {
@@ -298,10 +330,13 @@ public class AllocationService {
     /**
      * Checks if the are replicas with the auto-expand feature that need to be adapted.
      * Returns an updated cluster state if changes were necessary, or the identical cluster if no changes were required.
+     * 如果启动了自适应的拓展  更新此时路由表/metadata中副本数量
      */
     public ClusterState adaptAutoExpandReplicas(ClusterState clusterState) {
         RoutingAllocation allocation = new RoutingAllocation(allocationDeciders, clusterState.getRoutingNodes(), clusterState,
             clusterInfoService.getClusterInfo(), currentNanoTime());
+
+        // key 对应合适的副本数量 value 对应有哪些索引应该存在这么多数量的副本
         final Map<Integer, List<String>> autoExpandReplicaChanges =
             AutoExpandReplicas.getAutoExpandReplicaChanges(clusterState.metadata(), allocation);
         if (autoExpandReplicaChanges.isEmpty()) {
@@ -314,9 +349,11 @@ public class AllocationService {
                 final String[] indices = entry.getValue().toArray(new String[entry.getValue().size()]);
                 // we do *not* update the in sync allocation ids as they will be removed upon the first index
                 // operation which make these copies stale
+                // 更新shards
                 routingTableBuilder.updateNumberOfReplicas(numberOfReplicas, indices);
                 metadataBuilder.updateNumberOfReplicas(numberOfReplicas, indices);
                 // update settings version for each index
+                // 更新版本号
                 for (final String index : indices) {
                     final IndexMetadata indexMetadata = metadataBuilder.get(index);
                     final IndexMetadata.Builder indexMetadataBuilder =
@@ -334,17 +371,22 @@ public class AllocationService {
 
     /**
      * Removes delay markers from unassigned shards based on current time stamp.
+     * 移除延时标识
      */
     private void removeDelayMarkers(RoutingAllocation allocation) {
+        // 迭代所有unassigned 分片
         final RoutingNodes.UnassignedShards.UnassignedIterator unassignedIterator = allocation.routingNodes().unassigned().iterator();
         final Metadata metadata = allocation.metadata();
         while (unassignedIterator.hasNext()) {
             ShardRouting shardRouting = unassignedIterator.next();
             UnassignedInfo unassignedInfo = shardRouting.unassignedInfo();
+            // 如果这个未分配信息包含延迟标识
             if (unassignedInfo.isDelayed()) {
                 final long newComputedLeftDelayNanos = unassignedInfo.getRemainingDelay(allocation.getCurrentNanoTime(),
                     metadata.getIndexSafe(shardRouting.index()).getSettings());
+                // 代表已经达到时限
                 if (newComputedLeftDelayNanos == 0) {
+                    // 更新未分配信息
                     unassignedIterator.updateUnassigned(new UnassignedInfo(unassignedInfo.getReason(), unassignedInfo.getMessage(),
                         unassignedInfo.getFailure(), unassignedInfo.getNumFailedAllocations(), unassignedInfo.getUnassignedTimeInNanos(),
                         unassignedInfo.getUnassignedTimeInMillis(), false, unassignedInfo.getLastAllocationStatus(),
@@ -356,6 +398,7 @@ public class AllocationService {
 
     /**
      * Reset failed allocation counter for unassigned shards
+     * 将每个未分配分片的 unassignedInfo的 failed数量置零
      */
     private void resetFailedAllocationCounter(RoutingAllocation allocation) {
         final RoutingNodes.UnassignedShards.UnassignedIterator unassignedIterator = allocation.routingNodes().unassigned().iterator();
@@ -389,6 +432,14 @@ public class AllocationService {
         }
     }
 
+    /**
+     * 根据一组分配相关的命令 对当前所有分片进行重路由
+     * @param clusterState
+     * @param commands
+     * @param explain
+     * @param retryFailed
+     * @return
+     */
     public CommandsResult reroute(final ClusterState clusterState, AllocationCommands commands, boolean explain, boolean retryFailed) {
         RoutingNodes routingNodes = getMutableRoutingNodes(clusterState);
         // we don't shuffle the unassigned shards here, to try and get as close as possible to
@@ -401,10 +452,12 @@ public class AllocationService {
         // we ignore disable allocation, because commands are explicit
         allocation.ignoreDisable(true);
 
+        // 将失败次数清零
         if (retryFailed) {
             resetFailedAllocationCounter(allocation);
         }
 
+        // TODO 挨个执行命令 并将返回的 Explanation 组合在一起并返回
         RoutingExplanations explanations = commands.execute(allocation, explain);
         // we revert the ignore disable flag, since when rerouting, we want the original setting to take place
         allocation.ignoreDisable(false);
@@ -418,8 +471,10 @@ public class AllocationService {
      * Reroutes the routing table based on the live nodes.
      * <p>
      * If the same instance of ClusterState is returned, then no change has been made.
+     * 对当前分片进行重分配
      */
     public ClusterState reroute(ClusterState clusterState, String reason) {
+        // 自适应调整此时的分片数量
         ClusterState fixedClusterState = adaptAutoExpandReplicas(clusterState);
 
         RoutingNodes routingNodes = getMutableRoutingNodes(fixedClusterState);
@@ -455,22 +510,34 @@ public class AllocationService {
         return false;
     }
 
+    /**
+     * 根据现有的分片信息 进行重路由
+     * @param allocation
+     */
     private void reroute(RoutingAllocation allocation) {
         assert hasDeadNodes(allocation) == false : "dead nodes should be explicitly cleaned up. See disassociateDeadNodes";
         assert AutoExpandReplicas.getAutoExpandReplicaChanges(allocation.metadata(), allocation).isEmpty() :
             "auto-expand replicas out of sync with number of nodes in the cluster";
         assert assertInitialized();
 
+        // 找到所有未分配的分片 上延时标记设为true的 unassignedInfo 并检查是否到达时限  到达的话移除标识
         removeDelayMarkers(allocation);
 
+        // 使用 ExistingShardsAllocator 进行分配
         allocateExistingUnassignedShards(allocation);  // try to allocate existing shard copies first
+        // 这里为所有分片进行重分配
         shardsAllocator.allocate(allocation);
         assert RoutingNodes.assertShardStats(allocation.routingNodes());
     }
 
+    /**
+     * 处理所有未分配的 分片
+     * @param allocation
+     */
     private void allocateExistingUnassignedShards(RoutingAllocation allocation) {
         allocation.routingNodes().unassigned().sort(PriorityComparator.getAllocationComparator(allocation)); // sort for priority ordering
 
+        // TODO 先忽略
         for (final ExistingShardsAllocator existingShardsAllocator : existingShardsAllocators.values()) {
             existingShardsAllocator.beforeAllocation(allocation);
         }
@@ -478,15 +545,18 @@ public class AllocationService {
         final RoutingNodes.UnassignedShards.UnassignedIterator primaryIterator = allocation.routingNodes().unassigned().iterator();
         while (primaryIterator.hasNext()) {
             final ShardRouting shardRouting = primaryIterator.next();
+            // 找到未分配的主分片  并使用ExistingShardsAllocator
             if (shardRouting.primary()) {
                 getAllocatorForShard(shardRouting, allocation).allocateUnassigned(shardRouting, allocation, primaryIterator);
             }
         }
 
+        // TODO 先忽略
         for (final ExistingShardsAllocator existingShardsAllocator : existingShardsAllocators.values()) {
             existingShardsAllocator.afterPrimariesBeforeReplicas(allocation);
         }
 
+        // 故技重施  不过这次针对的是副本
         final RoutingNodes.UnassignedShards.UnassignedIterator replicaIterator = allocation.routingNodes().unassigned().iterator();
         while (replicaIterator.hasNext()) {
             final ShardRouting shardRouting = replicaIterator.next();
@@ -496,20 +566,28 @@ public class AllocationService {
         }
     }
 
+    /**
+     * 分离已死的节点
+     * @param allocation
+     */
     private void disassociateDeadNodes(RoutingAllocation allocation) {
         for (Iterator<RoutingNode> it = allocation.routingNodes().mutableIterator(); it.hasNext(); ) {
             RoutingNode node = it.next();
+            // 当某个节点已经不存在于 dataNodes列表时  这个节点被认为是已死的节点
             if (allocation.nodes().getDataNodes().containsKey(node.nodeId())) {
                 // its a live node, continue
                 continue;
             }
             // now, go over all the shards routing on the node, and fail them
+            // 生成某个节点的所有分片
             for (ShardRouting shardRouting : node.copyShards()) {
                 final IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shardRouting.index());
+                // 获取超时时间 如果存在 就生成一个延迟对象
                 boolean delayed = INDEX_DELAYED_NODE_LEFT_TIMEOUT_SETTING.get(indexMetadata.getSettings()).nanos() > 0;
                 UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.NODE_LEFT, "node_left [" + node.nodeId() + "]",
                     null, 0, allocation.getCurrentNanoTime(), System.currentTimeMillis(), delayed, AllocationStatus.NO_ATTEMPT,
                     Collections.emptySet());
+                // 将它的所有分片都标记成失败
                 allocation.routingNodes().failShard(logger, shardRouting, unassignedInfo, indexMetadata, allocation.changes());
             }
             // its a dead node, remove it, note, its important to remove it *after* we apply failed shard
@@ -585,6 +663,12 @@ public class AllocationService {
         return AllocateUnassignedDecision.NOT_TAKEN;
     }
 
+    /**
+     * 这里根据当前分片的索引名 找到了一个特殊的分配器
+     * @param shardRouting
+     * @param routingAllocation
+     * @return
+     */
     private ExistingShardsAllocator getAllocatorForShard(ShardRouting shardRouting, RoutingAllocation routingAllocation) {
         assert assertInitialized();
         final String allocatorName = ExistingShardsAllocator.EXISTING_SHARDS_ALLOCATOR_SETTING.get(

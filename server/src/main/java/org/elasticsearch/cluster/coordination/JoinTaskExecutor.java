@@ -46,15 +46,25 @@ import java.util.stream.Collectors;
 
 import static org.elasticsearch.gateway.GatewayService.STATE_NOT_RECOVERED_BLOCK;
 
+/**
+ * 可以将一组任务批量执行
+ */
 public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecutor.Task> {
 
+    /**
+     * 该对象提供了分配分片的api
+     */
     private final AllocationService allocationService;
 
     private final Logger logger;
+
     private final RerouteService rerouteService;
 
     public static class Task {
 
+        /**
+         * 该任务是由哪个节点发来的
+         */
         private final DiscoveryNode node;
         private final String reason;
 
@@ -76,10 +86,20 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
             return node != null ? node + " " + reason : reason;
         }
 
+        /**
+         * 代表该任务是尝试将目标节点变成master节点
+         *
+         * @return
+         */
         public boolean isBecomeMasterTask() {
             return reason.equals(BECOME_MASTER_TASK_REASON);
         }
 
+        /**
+         * 表明某次选举结束了
+         *
+         * @return
+         */
         public boolean isFinishElectionTask() {
             return reason.equals(FINISH_ELECTION_TASK_REASON);
         }
@@ -94,6 +114,14 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         this.rerouteService = rerouteService;
     }
 
+    /**
+     * 批量执行一组任务 并返回结果
+     *
+     * @param currentState
+     * @param joiningNodes
+     * @return ClusterTasksResult 中包含每个任务的结果
+     * @throws Exception
+     */
     @Override
     public ClusterTasksResult<Task> execute(ClusterState currentState, List<Task> joiningNodes) throws Exception {
         final ClusterTasksResult.Builder<Task> results = ClusterTasksResult.builder();
@@ -102,9 +130,13 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         boolean nodesChanged = false;
         ClusterState.Builder newState;
 
+        // 如果此时只有一个任务  且任务代表某个选举结束了  直接生成成功结果
         if (joiningNodes.size() == 1 && joiningNodes.get(0).isFinishElectionTask()) {
             return results.successes(joiningNodes).build(currentState);
+            // 此时还没有选出 master节点 并且某个任务是将此节点变成master节点
         } else if (currentNodes.getMasterNode() == null && joiningNodes.stream().anyMatch(Task::isBecomeMasterTask)) {
+
+            // 如果本次task中 出现了 becomeMaster 那么同时还必须出现 finishElection
             assert joiningNodes.stream().anyMatch(Task::isFinishElectionTask)
                 : "becoming a master but election is not finished " + joiningNodes;
             // use these joins to try and become the master.
@@ -183,9 +215,9 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
                         .clearVotingConfigExclusions();
                     newVotingConfigExclusions.forEach(coordMetadataBuilder::addVotingConfigExclusion);
                     Metadata newMetadata = Metadata.builder(currentState.metadata())
-                                                    .coordinationMetadata(coordMetadataBuilder.build()).build();
+                        .coordinationMetadata(coordMetadataBuilder.build()).build();
                     return results.build(allocationService.adaptAutoExpandReplicas(newState.nodes(nodesBuilder)
-                                                                                            .metadata(newMetadata).build()));
+                        .metadata(newMetadata).build()));
                 }
             }
 
@@ -197,17 +229,28 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         }
     }
 
+    /**
+     * 代表本次任务中存在将当前节点变成master节点的任务
+     *
+     * @param currentState
+     * @param joiningNodes
+     * @return
+     */
     protected ClusterState.Builder becomeMasterAndTrimConflictingNodes(ClusterState currentState, List<Task> joiningNodes) {
         assert currentState.nodes().getMasterNodeId() == null : currentState;
         DiscoveryNodes currentNodes = currentState.nodes();
         DiscoveryNodes.Builder nodesBuilder = DiscoveryNodes.builder(currentNodes);
+        // 将本地节点修改成master节点
         nodesBuilder.masterNodeId(currentState.nodes().getLocalNodeId());
 
         for (final Task joinTask : joiningNodes) {
+            // 忽略2个选举相关的任务
             if (joinTask.isBecomeMasterTask() || joinTask.isFinishElectionTask()) {
                 // noop
             } else {
+                // 该任务是由哪个节点发出的
                 final DiscoveryNode joiningNode = joinTask.node();
+                // TODO 这个node 为什么移除了 这样集群中的node不就减少了么
                 final DiscoveryNode nodeWithSameId = nodesBuilder.get(joiningNode.getId());
                 if (nodeWithSameId != null && nodeWithSameId.equals(joiningNode) == false) {
                     logger.debug("removing existing node [{}], which conflicts with incoming join from [{}]", nodeWithSameId, joiningNode);
@@ -225,9 +268,11 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
 
         // now trim any left over dead nodes - either left there when the previous master stepped down
         // or removed by us above
-        ClusterState tmpState = ClusterState.builder(currentState).nodes(nodesBuilder).blocks(ClusterBlocks.builder()
-            .blocks(currentState.blocks())
-            .removeGlobalBlock(NoMasterBlockService.NO_MASTER_BLOCK_ID))
+        ClusterState tmpState = ClusterState.builder(currentState).nodes(nodesBuilder).blocks(
+                // 将之前的集群块 剔除掉不满足条件的对象后 更新到clusterState中
+                ClusterBlocks.builder()
+                .blocks(currentState.blocks())
+                .removeGlobalBlock(NoMasterBlockService.NO_MASTER_BLOCK_ID))
             .build();
         logger.trace("becomeMasterAndTrimConflictingNodes: {}", tmpState.nodes());
         allocationService.cleanCaches();
@@ -257,8 +302,9 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
      * Ensures that all indices are compatible with the given node version. This will ensure that all indices in the given metadata
      * will not be created with a newer version of elasticsearch as well as that all indices are newer or equal to the minimum index
      * compatibility version.
-     * @see Version#minimumIndexCompatibilityVersion()
+     *
      * @throws IllegalStateException if any index is incompatible with the given version
+     * @see Version#minimumIndexCompatibilityVersion()
      */
     public static void ensureIndexCompatibility(final Version nodeVersion, Metadata metadata) {
         Version supportedIndexVersion = nodeVersion.minimumIndexCompatibilityVersion();
@@ -276,14 +322,18 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         }
     }
 
-    /** ensures that the joining node has a version that's compatible with all current nodes*/
+    /**
+     * ensures that the joining node has a version that's compatible with all current nodes
+     */
     public static void ensureNodesCompatibility(final Version joiningNodeVersion, DiscoveryNodes currentNodes) {
         final Version minNodeVersion = currentNodes.getMinNodeVersion();
         final Version maxNodeVersion = currentNodes.getMaxNodeVersion();
         ensureNodesCompatibility(joiningNodeVersion, minNodeVersion, maxNodeVersion);
     }
 
-    /** ensures that the joining node has a version that's compatible with a given version range */
+    /**
+     * ensures that the joining node has a version that's compatible with a given version range
+     */
     public static void ensureNodesCompatibility(Version joiningNodeVersion, Version minClusterNodeVersion, Version maxClusterNodeVersion) {
         assert minClusterNodeVersion.onOrBefore(maxClusterNodeVersion) : minClusterNodeVersion + " > " + maxClusterNodeVersion;
         if (joiningNodeVersion.isCompatible(maxClusterNodeVersion) == false) {
@@ -309,7 +359,7 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         }
     }
 
-    public static Collection<BiConsumer<DiscoveryNode,ClusterState>> addBuiltInJoinValidators(
+    public static Collection<BiConsumer<DiscoveryNode, ClusterState>> addBuiltInJoinValidators(
         Collection<BiConsumer<DiscoveryNode, ClusterState>> onJoinValidators) {
         final Collection<BiConsumer<DiscoveryNode, ClusterState>> validators = new ArrayList<>();
         validators.add((node, state) -> {

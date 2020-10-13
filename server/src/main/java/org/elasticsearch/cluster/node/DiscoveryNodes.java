@@ -704,6 +704,11 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
         }
 
 
+        /**
+         * 指定当前集群中的master节点
+         * @param masterNodeId
+         * @return
+         */
         public Builder masterNodeId(String masterNodeId) {
             this.masterNodeId = masterNodeId;
             return this;

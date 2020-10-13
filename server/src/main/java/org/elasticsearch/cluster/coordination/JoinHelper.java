@@ -85,8 +85,18 @@ public class JoinHelper {
         Setting.timeSetting("cluster.join.timeout",
             TimeValue.timeValueMillis(60000), TimeValue.timeValueMillis(1), Setting.Property.NodeScope);
 
+    /**
+     * 该对象作为CP中的master节点 对外提供更新集群信息的api 同时会将最新信息发布到集群其他节点上
+     */
     private final MasterService masterService;
+    /**
+     * 负责节点间的通信工作
+     */
     private final TransportService transportService;
+
+    /**
+     * 该对象可以一次性执行多个task 对象
+     */
     private final JoinTaskExecutor joinTaskExecutor;
 
     @Nullable // if using single-node discovery

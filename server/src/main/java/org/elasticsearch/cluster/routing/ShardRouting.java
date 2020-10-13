@@ -461,6 +461,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
 
     /**
      * Reinitializes a replica shard, giving it a fresh allocation id
+     * 将当前已经处于init状态的分片更新 这里会使用一个新的分配id
      */
     public ShardRouting reinitializeReplicaShard() {
         assert state == ShardRoutingState.INITIALIZING : this;
@@ -490,6 +491,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
      * Make the active shard primary unless it's not primary
      *
      * @throws IllegalShardRoutingStateException if shard is already a primary
+     * 将某个副本对象升级成主分片
      */
     public ShardRouting moveActiveReplicaToPrimary() {
         assert active(): "expected an active shard " + this;

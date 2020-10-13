@@ -38,6 +38,7 @@ import java.util.Objects;
 /**
  * A simple {@link AllocationCommand} composite managing several
  * {@link AllocationCommand} implementations
+ * 代表需要进行重分配的指令
  */
 public class AllocationCommands implements ToXContentFragment {
     private final List<AllocationCommand> commands = new ArrayList<>();

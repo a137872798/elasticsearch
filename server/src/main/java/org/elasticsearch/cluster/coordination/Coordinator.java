@@ -127,6 +127,10 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
      * 主要功能就是接收update请求更新集群状态 并将更新事件通知到集群中所有节点
      */
     private final MasterService masterService;
+
+    /**
+     * 该对象负责为分片分配 节点 还包含根据节点负载重分配分片等能力
+     */
     private final AllocationService allocationService;
     private final JoinHelper joinHelper;
     private final NodeRemovalClusterStateTaskExecutor nodeRemovalExecutor;

@@ -464,6 +464,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
          * @param numberOfReplicas the number of replicas
          * @param indices          the indices to update the number of replicas for
          * @return the builder
+         * 更新某些索引推荐的副本数量
          */
         public Builder updateNumberOfReplicas(final int numberOfReplicas, final String[] indices) {
             if (indicesRouting == null) {
@@ -483,6 +484,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
                 }
                 if (currentNumberOfReplicas < numberOfReplicas) {
                     // now, add "empty" ones
+                    // 为每个shards 都增加一个新的shard
                     for (int i = 0; i < (numberOfReplicas - currentNumberOfReplicas); i++) {
                         builder.addReplica();
                     }

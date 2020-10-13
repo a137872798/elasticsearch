@@ -28,14 +28,15 @@ public interface ClusterStateTaskExecutor<T> {
     /**
      * Update the cluster state based on the current state and the given tasks. Return the *same instance* if no state
      * should be changed.
-     * @param currentState 当前集群状态
-     * @param tasks 当前待处理的一组任务
+     * @param currentState
+     * @param tasks
+     * 通过一组任务对象来更新当前集群状态
      */
     ClusterTasksResult<T> execute(ClusterState currentState, List<T> tasks) throws Exception;
 
     /**
      * indicates whether this executor should only run if the current node is master
-     * 当前任务是否只能在主节点执行
+     * 这个executor是否只能在master节点执行
      */
     default boolean runOnlyOnMaster() {
         return true;
@@ -59,6 +60,7 @@ public interface ClusterStateTaskExecutor<T> {
      * Note that the tasks given are not necessarily the same as those that will be passed to {@link #execute(ClusterState, List)}.
      * but are guaranteed to be a subset of them. This method can be called multiple times with different lists before execution.
      * This allows groupd task description but the submitting source.
+     * 将一组任务的描述信息拼接起来
      */
     default String describeTasks(List<T> tasks) {
         return String.join(", ", tasks.stream().map(t -> (CharSequence)t.toString()).filter(t -> t.length() > 0)::iterator);

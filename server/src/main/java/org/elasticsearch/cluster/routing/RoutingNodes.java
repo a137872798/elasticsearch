@@ -387,7 +387,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      *
      * Since replicas could possibly be on nodes with a older version of ES than
      * the primary is, this will return replicas on the highest version of ES.
-     *
+     * 找到某个分片id 对应的一个处于活跃状态的分片对象
      */
     public ShardRouting activeReplicaWithHighestVersion(ShardId shardId) {
         // It's possible for replicaNodeVersion to be null, when disassociating dead nodes
@@ -568,7 +568,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             routingChangesObserver.relocationCompleted(relocationSourceShard);
 
             // if this is a primary shard with ongoing replica recoveries, reinitialize them as their recovery source changed
-            // 如果这个分片是一个主分片
+            // 如果是主分片从 init变成start 要重启所有 副本
             if (startedShard.primary()) {
                 // 找到某个shardId 对应的所有分片 包含所有副本
                 List<ShardRouting> assignedShards = assignedShards(startedShard.shardId());
@@ -582,14 +582,18 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                             // 找到source 分片
                             ShardRouting sourceShard = getByAllocationId(routing.shardId(), routing.allocationId().getRelocationId());
                             // cancel relocation and start relocation to same node again
-                            // 从重分配状态进入到start状态
+                            // 以下2步将  某个调用relocation的副本分片还原
+                            // 将之前打算重分配的分片 还原成start状态
                             ShardRouting startedReplica = cancelRelocation(sourceShard);
+                            // 将这个打算重分配的分片移除
                             remove(routing);
                             routingChangesObserver.shardFailed(routing,
                                 new UnassignedInfo(UnassignedInfo.Reason.REINITIALIZED, "primary changed"));
+                            // 重新为某个分片重分配
                             relocateShard(startedReplica, sourceShard.relocatingNodeId(),
                                 sourceShard.getExpectedShardSize(), routingChangesObserver);
                         } else {
+                            // 普通的副本 重新生成分配id
                             ShardRouting reinitializedReplica = reinitReplica(routing);
                             routingChangesObserver.initializedReplicaReinitialized(routing, reinitializedReplica);
                         }
@@ -611,7 +615,10 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * - If shard is a relocating replica, this promotes the replica relocation target to a full initializing replica, removing the
      *   relocation source information. This is possible as peer recovery is always done from the primary.
      * - If shard is a (primary or replica) relocation target, this also clears the relocation information on the source shard.
-     *
+     * @param failedShard 分配失败的分片
+     * @param unassignedInfo 分配失败的信息
+     * @param indexMetadata 本次分配失败的分片对应的索引描述信息
+     * 标记某个分片处理失败  TODO 还需要梳理
      */
     public void failShard(Logger logger, ShardRouting failedShard, UnassignedInfo unassignedInfo, IndexMetadata indexMetadata,
                           RoutingChangesObserver routingChangesObserver) {
@@ -626,15 +633,19 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         logger.debug("{} failing shard {} with unassigned info ({})", failedShard.shardId(), failedShard, unassignedInfo.shortSummary());
 
         // if this is a primary, fail initializing replicas first (otherwise we move RoutingNodes into an inconsistent state)
+        // 如果分配失败的是一个主分片   那么所有副本要跟着修改
         if (failedShard.primary()) {
+            // 先找到这个分片id 下所有已经分配的 分片副本
             List<ShardRouting> assignedShards = assignedShards(failedShard.shardId());
             if (assignedShards.isEmpty() == false) {
                 // copy list to prevent ConcurrentModificationException
                 for (ShardRouting routing : new ArrayList<>(assignedShards)) {
+                    // TODO 为什么只处理初始状态的分片呢 如果副本已经在使用阶段会怎么样
                     if (!routing.primary() && routing.initializing()) {
                         // re-resolve replica as earlier iteration could have changed source/target of replica relocation
                         ShardRouting replicaShard = getByAllocationId(routing.shardId(), routing.allocationId().getId());
                         assert replicaShard != null : "failed to re-resolve " + routing + " when failing replicas";
+                        // 因为主分片处理失败 所以这些副本都要更新成失败
                         UnassignedInfo primaryFailedUnassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.PRIMARY_FAILED,
                             "primary failed while replica initializing", null, 0, unassignedInfo.getUnassignedTimeInNanos(),
                             unassignedInfo.getUnassignedTimeInMillis(), false, AllocationStatus.NO_ATTEMPT, Collections.emptySet());
@@ -644,53 +655,67 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             }
         }
 
+        // 如果这个失败的副本正好处在 重分配的情况
         if (failedShard.relocating()) {
             // find the shard that is initializing on the target node
+            // 找到即将分配到target节点的分片对象
             ShardRouting targetShard = getByAllocationId(failedShard.shardId(), failedShard.allocationId().getRelocationId());
             assert targetShard.isRelocationTargetOf(failedShard);
             if (failedShard.primary()) {
                 logger.trace("{} is removed due to the failure/cancellation of the source shard", targetShard);
                 // cancel and remove target shard
+                // 因为主分片分配失败了 所以本次 relocate分片也不需要
                 remove(targetShard);
                 routingChangesObserver.shardFailed(targetShard, unassignedInfo);
             } else {
                 logger.trace("{}, relocation source failed / cancelled, mark as initializing without relocation source", targetShard);
                 // promote to initializing shard without relocation source and ensure that removed relocation source
                 // is not added back as unassigned shard
+                // 将这个分片变成了一个普通的分片  这样不就相当于直接完成relocate了么
                 removeRelocationSource(targetShard);
                 routingChangesObserver.relocationSourceRemoved(targetShard);
             }
         }
 
         // fail actual shard
+        // 如果这个分片处于初始化状态
         if (failedShard.initializing()) {
             if (failedShard.relocatingNodeId() == null) {
                 if (failedShard.primary()) {
                     // promote active replica to primary if active replica exists (only the case for shadow replicas)
+                    // 主分片降级成副本  副本升级成主分片
                     unassignPrimaryAndPromoteActiveReplicaIfExists(failedShard, unassignedInfo, routingChangesObserver);
                 } else {
                     // initializing shard that is not relocation target, just move to unassigned
+                    // 如果只是普通的副本 直接转移到 unassigned
                     moveToUnassigned(failedShard, unassignedInfo);
                 }
+            // 代表这是一个relocate 中的 target分片
             } else {
                 // The shard is a target of a relocating shard. In that case we only need to remove the target shard and cancel the source
                 // relocation. No shard is left unassigned
                 logger.trace("{} is a relocation target, resolving source to cancel relocation ({})", failedShard,
                     unassignedInfo.shortSummary());
+                // 找到源分片
                 ShardRouting sourceShard = getByAllocationId(failedShard.shardId(),
                     failedShard.allocationId().getRelocationId());
                 assert sourceShard.isRelocationSourceOf(failedShard);
                 logger.trace("{}, resolved source to [{}]. canceling relocation ... ({})", failedShard.shardId(), sourceShard,
                     unassignedInfo.shortSummary());
+                // 回复成普通分片
                 cancelRelocation(sourceShard);
+                // 将target分片移除
                 remove(failedShard);
             }
         } else {
+            // 如果这个失败的分片此时处于活跃状态
             assert failedShard.active();
             if (failedShard.primary()) {
                 // promote active replica to primary if active replica exists
+                // 主分片降级成副本  副本升级成主分片
                 unassignPrimaryAndPromoteActiveReplicaIfExists(failedShard, unassignedInfo, routingChangesObserver);
             } else {
+                // 重分配就变成start 否则就移除
                 if (failedShard.relocating()) {
                     remove(failedShard);
                 } else {
@@ -703,14 +728,25 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             " was matched but wasn't removed";
     }
 
+    /**
+     * 某个处于init状态 且分配失败的主分片
+     * @param failedShard
+     * @param unassignedInfo
+     * @param routingChangesObserver
+     */
     private void unassignPrimaryAndPromoteActiveReplicaIfExists(ShardRouting failedShard, UnassignedInfo unassignedInfo,
                                                                 RoutingChangesObserver routingChangesObserver) {
         assert failedShard.primary();
+        // 找到某个活跃的副本对象
         ShardRouting activeReplica = activeReplicaWithHighestVersion(failedShard.shardId());
+        // 如果这个分配失败的主分片此时没有任何活跃的副本
         if (activeReplica == null) {
+            // 将当前分片变成 unassigned
             moveToUnassigned(failedShard, unassignedInfo);
         } else {
+            // 如果存在副本  将主分片降级成副本分片
             movePrimaryToUnassignedAndDemoteToReplica(failedShard, unassignedInfo);
+            // 将副本升级成主分片
             promoteReplicaToPrimary(activeReplica, routingChangesObserver);
         }
     }
@@ -767,10 +803,12 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      *
      * @param replicaShard the replica shard to be promoted to primary
      * @return             the resulting primary shard
+     * 卧槽 主分片应该才是最新的吧
      */
     private ShardRouting promoteActiveReplicaShardToPrimary(ShardRouting replicaShard) {
         assert replicaShard.active() : "non-active shard cannot be promoted to primary: " + replicaShard;
         assert replicaShard.primary() == false : "primary shard cannot be promoted to primary: " + replicaShard;
+        // 将副本更新成主分片后 更新assigned
         ShardRouting primaryShard = replicaShard.moveActiveReplicaToPrimary();
         updateAssigned(replicaShard, primaryShard);
         return primaryShard;
@@ -791,7 +829,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             if (shard.primary()) {
                 inactivePrimaryCount--;
             }
-            // 如果移除的是某个relocating source分片
+            // 如果移除的是某个relocating分片
         } else if (shard.relocating()) {
             shard = cancelRelocation(shard);
         }
@@ -805,6 +843,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     /**
      * Removes relocation source of an initializing non-primary shard. This allows the replica shard to continue recovery from
      * the primary even though its non-primary relocation source has failed.
+     * 只是把它作为一个普通的分片
      */
     private ShardRouting removeRelocationSource(ShardRouting shard) {
         assert shard.isRelocationTarget() : "only relocation target shards can have their relocation source removed (" + shard + ")";
@@ -847,10 +886,16 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         assert false : "No shard found to remove";
     }
 
+    /**
+     * 某个副本原本处于 init状态 当他的主分片由init变成start时 需要更新 副本分片
+     * @param shard  待更新的副本分片
+     * @return
+     */
     private ShardRouting reinitReplica(ShardRouting shard) {
         assert shard.primary() == false : "shard must be a replica: " + shard;
         assert shard.initializing() : "can only reinitialize an initializing replica: " + shard;
         assert shard.isRelocationTarget() == false : "replication target cannot be reinitialized: " + shard;
+        // 主要就是重新生成了一个 分配id
         ShardRouting reinitializedShard = shard.reinitializeReplicaShard();
         updateAssigned(shard, reinitializedShard);
         return reinitializedShard;
@@ -877,6 +922,12 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         shardsWithMatchingShardId.set(previousShardIndex, newShard);
     }
 
+    /**
+     * 将某个失败的分片 从assigned移动到 unassigned
+     * @param shard
+     * @param unassignedInfo
+     * @return
+     */
     private ShardRouting moveToUnassigned(ShardRouting shard, UnassignedInfo unassignedInfo) {
         assert shard.unassigned() == false : "only assigned shards can be moved to unassigned (" + shard + ")";
         remove(shard);
@@ -888,11 +939,13 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     /**
      * Moves assigned primary to unassigned and demotes it to a replica.
      * Used in conjunction with {@link #promoteActiveReplicaShardToPrimary} when an active replica is promoted to primary.
+     * 将某个分配失败的主分片变成 unassigned
      */
     private ShardRouting movePrimaryToUnassignedAndDemoteToReplica(ShardRouting shard, UnassignedInfo unassignedInfo) {
         assert shard.unassigned() == false : "only assigned shards can be moved to unassigned (" + shard + ")";
         assert shard.primary() : "only primary can be demoted to replica (" + shard + ")";
         remove(shard);
+        // 将主分片降级成了副本
         ShardRouting unassigned = shard.moveToUnassigned(unassignedInfo).moveUnassignedFromPrimary();
         unassignedShards.add(unassigned);
         return unassigned;

@@ -222,7 +222,7 @@ public class RoutingAllocation {
     }
 
     /**
-     * 将某个分片不会分配到某个node 的关系添加到容器中
+     * 将某个分片不会分配到某个node 的关系添加到容器中   一般是尝试将某个分片分配到该节点失败时触发
      * @param shardId
      * @param nodeId
      */

@@ -103,18 +103,26 @@ public final class AutoExpandReplicas {
         return Math.min(maxReplicas, numDataNodes-1);
     }
 
+    /**
+     * 获取此时期望的副本数量
+     * @param indexMetadata
+     * @param allocation
+     * @return
+     */
     private OptionalInt getDesiredNumberOfReplicas(IndexMetadata indexMetadata, RoutingAllocation allocation) {
         if (enabled) {
             int numMatchingDataNodes = 0;
             // Only start using new logic once all nodes are migrated to 7.6.0, avoiding disruption during an upgrade
             if (allocation.nodes().getMinNodeVersion().onOrAfter(Version.V_7_6_0)) {
                 for (ObjectCursor<DiscoveryNode> cursor : allocation.nodes().getDataNodes().values()) {
+                    // 检测某个节点是否应该存在该索引的分片
                     Decision decision = allocation.deciders().shouldAutoExpandToNode(indexMetadata, cursor.value, allocation);
                     if (decision.type() != Decision.Type.NO) {
                         numMatchingDataNodes ++;
                     }
                 }
             } else {
+                // TODO 忽略旧代码
                 numMatchingDataNodes = allocation.nodes().getDataNodes().size();
             }
 
@@ -144,13 +152,16 @@ public final class AutoExpandReplicas {
      * Returns a map of updates, which maps the indices to be updated to the desired number of replicas.
      * The map has the desired number of replicas as key and the indices to update as value, as this allows the result
      * of this method to be directly applied to RoutingTable.Builder#updateNumberOfReplicas.
+     * key 对应合适的副本数量  value对应此时
      */
     public static Map<Integer, List<String>> getAutoExpandReplicaChanges(Metadata metadata, RoutingAllocation allocation) {
         Map<Integer, List<String>> nrReplicasChanged = new HashMap<>();
 
         for (final IndexMetadata indexMetadata : metadata) {
+            // 此时处于开启阶段 或者处于关闭阶段的同时还开启了校验
             if (indexMetadata.getState() == IndexMetadata.State.OPEN || isIndexVerifiedBeforeClosed(indexMetadata)) {
                 AutoExpandReplicas autoExpandReplicas = SETTING.get(indexMetadata.getSettings());
+                // 获取预计的副本数
                 autoExpandReplicas.getDesiredNumberOfReplicas(indexMetadata, allocation).ifPresent(numberOfReplicas -> {
                     if (numberOfReplicas != indexMetadata.getNumberOfReplicas()) {
                         nrReplicasChanged.computeIfAbsent(numberOfReplicas, ArrayList::new).add(indexMetadata.getIndex().getName());

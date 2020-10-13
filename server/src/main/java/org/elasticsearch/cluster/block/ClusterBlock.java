@@ -33,15 +33,24 @@ import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Objects;
 
+/**
+ * 集群块  集群是被划分成多个块么
+ */
 public class ClusterBlock implements Writeable, ToXContentFragment {
 
     private int id;
     private @Nullable String uuid;
     private String description;
+    /**
+     * 这个集群块下具备哪些功能
+     */
     private EnumSet<ClusterBlockLevel> levels;
     private boolean retryable;
     private boolean disableStatePersistence = false;
     private boolean allowReleaseResources;
+    /**
+     * HTTP 结果码
+     */
     private RestStatus status;
 
     public ClusterBlock(StreamInput in) throws IOException {

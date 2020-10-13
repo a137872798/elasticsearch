@@ -323,7 +323,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     private final ImmutableOpenMap<String, DiffableStringMap> customData;
 
     /**
-     * 该索引下所有分片id 对应的分配者
+     * 该索引下所有分片id 对应的分配者id
      */
     private final ImmutableOpenIntMap<Set<String>> inSyncAllocationIds;
 
@@ -545,7 +545,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
 
     /**
-     * 获取有关某个分片的所有分配者
+     * 获取有关某个分片的所有分配者id
      * @param shardId
      * @return
      */

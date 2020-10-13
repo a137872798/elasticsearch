@@ -25,6 +25,7 @@ import org.elasticsearch.common.Nullable;
 
 /**
  * A class representing a failed shard.
+ * 代表一个处理失败的分片
  */
 public class FailedShard {
     private final ShardRouting routingEntry;

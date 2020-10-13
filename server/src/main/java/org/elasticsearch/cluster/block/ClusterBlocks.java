@@ -44,14 +44,21 @@ import static java.util.stream.Collectors.toSet;
 
 /**
  * Represents current cluster level blocks to block dirty operations done against the cluster.
+ * 集群块
  */
 public class ClusterBlocks extends AbstractDiffable<ClusterBlocks> {
     public static final ClusterBlocks EMPTY_CLUSTER_BLOCK = new ClusterBlocks(emptySet(), ImmutableOpenMap.of());
 
+    /**
+     * 内部存储了一组集群块
+     */
     private final Set<ClusterBlock> global;
 
     private final ImmutableOpenMap<String, Set<ClusterBlock>> indicesBlocks;
 
+    /**
+     * 将集群块 按照类型划分
+     */
     private final EnumMap<ClusterBlockLevel, ImmutableLevelHolder> levelHolders;
 
     ClusterBlocks(Set<ClusterBlock> global, ImmutableOpenMap<String, Set<ClusterBlock>> indicesBlocks) {

@@ -22,6 +22,9 @@ package org.elasticsearch.cluster.block;
 
 import java.util.EnumSet;
 
+/**
+ * 集群中的节点被分成几种不同的角色 每个角色的职责不同
+ */
 public enum ClusterBlockLevel {
     READ,
     WRITE,

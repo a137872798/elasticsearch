@@ -23,6 +23,7 @@ import org.elasticsearch.index.shard.ShardId;
 
 /**
  * A class that represents a stale shard copy.
+ * 代表一个过期的分片
  */
 public class StaleShard {
     private final ShardId shardId;

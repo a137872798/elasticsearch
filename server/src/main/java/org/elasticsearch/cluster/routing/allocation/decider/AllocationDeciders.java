@@ -173,6 +173,13 @@ public class AllocationDeciders extends AllocationDecider {
         return ret;
     }
 
+    /**
+     * 该分片是否应该存在该索引相关的分片
+     * @param indexMetadata
+     * @param node
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision shouldAutoExpandToNode(IndexMetadata indexMetadata, DiscoveryNode node, RoutingAllocation allocation) {
         Decision.Multi ret = new Decision.Multi();
