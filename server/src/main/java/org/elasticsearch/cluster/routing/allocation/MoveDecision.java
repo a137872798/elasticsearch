@@ -34,6 +34,7 @@ import java.util.Objects;
 /**
  * Represents a decision to move a started shard, either because it is no longer allowed to remain on its current node
  * or because moving it to another node will form a better cluster balance.
+ * 描述有关某个分片将被怎样移动的结果
  */
 public final class MoveDecision extends AbstractAllocationDecision {
     /** a constant representing no decision taken */
@@ -96,8 +97,8 @@ public final class MoveDecision extends AbstractAllocationDecision {
      *
      * @param canRemainDecision the decision for whether the shard is allowed to remain on its current node
      * @param allocationDecision the {@link AllocationDecision} for moving the shard to another node
-     * @param assignedNode the node where the shard should move to
-     * @param nodeDecisions the node-level decisions that comprised the final decision, non-null iff explain is true
+     * @param assignedNode the node where the shard should move to     移动的目标节点
+     * @param nodeDecisions the node-level decisions that comprised the final decision, non-null iff explain is true   针对每个参考节点结果
      * @return the {@link MoveDecision} for moving the shard to another node
      */
     public static MoveDecision cannotRemain(Decision canRemainDecision, AllocationDecision allocationDecision, DiscoveryNode assignedNode,

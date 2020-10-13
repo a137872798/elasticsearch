@@ -1580,6 +1580,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * @param numTargetShards the number of target shards
      */
     public static Set<ShardId> selectRecoverFromShards(int shardId, IndexMetadata sourceIndexMetadata, int numTargetShards) {
+        // resize元数据的分片数量超过此时正在使用的分片数量
         if (sourceIndexMetadata.getNumberOfShards() > numTargetShards) {
             return selectShrinkShards(shardId, sourceIndexMetadata, numTargetShards);
         } else if (sourceIndexMetadata.getNumberOfShards() < numTargetShards) {
@@ -1595,6 +1596,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * @param sourceIndexMetadata the source index metadata
      * @param numTargetShards the total number of shards in the target index
      * @return a set of shard IDs to shrink into the given shard ID.
+     *
      */
     public static Set<ShardId> selectShrinkShards(int shardId, IndexMetadata sourceIndexMetadata, int numTargetShards) {
         if (shardId >= numTargetShards) {

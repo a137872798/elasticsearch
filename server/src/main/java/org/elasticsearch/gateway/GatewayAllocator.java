@@ -55,6 +55,9 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
+/**
+ * 默认情况下使用的应该就是这个类
+ */
 public class GatewayAllocator implements ExistingShardsAllocator {
 
     public static final String ALLOCATOR_NAME = "gateway_allocator";
@@ -106,6 +109,11 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         return count;
     }
 
+    /**
+     * 当某些分片从初始状态修改为启动状态时触发
+     * @param startedShards
+     * @param allocation
+     */
     @Override
     public void applyStartedShards(final List<ShardRouting> startedShards, final RoutingAllocation allocation) {
         for (ShardRouting startedShard : startedShards) {

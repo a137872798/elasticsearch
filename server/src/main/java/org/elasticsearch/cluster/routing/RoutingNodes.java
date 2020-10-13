@@ -93,6 +93,9 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
     private int inactiveShardCount = 0;
 
+    /**
+     * 此时正在移动中的分片数量
+     */
     private int relocatingShards = 0;
 
     /**
@@ -479,8 +482,9 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * Moves a shard from unassigned to initialize state
      *
      * @param existingAllocationId allocation id to use. If null, a fresh allocation id is generated.
+     * @param expectedSize 该分片预期会使用的大小
      * @return                     the initialized shard
-     * 将某个未分配的分片修改成初始化状态
+     * 将某个未分配的分片修改成初始化状态 同时设置到该对象中
      */
     public ShardRouting initializeShard(ShardRouting unassignedShard, String nodeId, @Nullable String existingAllocationId,
                                         long expectedSize, RoutingChangesObserver routingChangesObserver) {
@@ -502,18 +506,30 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * Relocate a shard to another node, adding the target initializing
      * shard as well as assigning it.
      *
+     * @param nodeId  移动到哪个目标节点
      * @return pair of source relocating and target initializing shards.
+     * 移动某个分片
      */
     public Tuple<ShardRouting,ShardRouting> relocateShard(ShardRouting startedShard, String nodeId, long expectedShardSize,
                                                           RoutingChangesObserver changes) {
         ensureMutable();
         relocatingShards++;
+
+        // !!! 注意此时source 还没有被移除   source从started 转换成了 relocating状态  同时生成了一个target分片  它处于 init状态
+
+        // 源分片的 currentNodeId, relocationId  与target的正好相反
         ShardRouting source = startedShard.relocate(nodeId, expectedShardSize);
         ShardRouting target = source.getTargetRelocatingShard();
+
+        // 用source 替换 startedShard
         updateAssigned(startedShard, source);
+        // 在目标节点上增加一个新的分片
         node(target.currentNodeId()).add(target);
+        // 将新分片设置到 assignedShards 中
         assignedShardsAdd(target);
+        // TODO
         addRecovery(target);
+        // 触发相关钩子
         changes.relocationStarted(startedShard, target);
         return Tuple.tuple(source, target);
     }
@@ -527,13 +543,18 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * recovery source changes
      *
      * @return the started shard
+     * 将某个处于初始状态的分片转换成启动
      */
     public ShardRouting startShard(Logger logger, ShardRouting initializingShard, RoutingChangesObserver routingChangesObserver) {
         ensureMutable();
         ShardRouting startedShard = started(initializingShard);
         logger.trace("{} marked shard as started (routing: {})", initializingShard.shardId(), initializingShard);
+
+        // 触发观察者钩子
         routingChangesObserver.shardStarted(initializingShard, startedShard);
 
+
+        // 如果这个分片是由重分配创建的shard 那么它的 relocating 指向的就是source Node
         if (initializingShard.relocatingNodeId() != null) {
             // relocation target has been started, remove relocation source
             RoutingNode relocationSourceNode = node(initializingShard.relocatingNodeId());
@@ -541,19 +562,27 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             assert relocationSourceShard.isRelocationSourceOf(initializingShard);
             assert relocationSourceShard.getTargetRelocatingShard() == initializingShard : "relocation target mismatch, expected: "
                 + initializingShard + " but was: " + relocationSourceShard.getTargetRelocatingShard();
+
+            // 这里移除了relocating的分片 同时修改成start后 又重新加入到了node中
             remove(relocationSourceShard);
             routingChangesObserver.relocationCompleted(relocationSourceShard);
 
             // if this is a primary shard with ongoing replica recoveries, reinitialize them as their recovery source changed
+            // 如果这个分片是一个主分片
             if (startedShard.primary()) {
+                // 找到某个shardId 对应的所有分片 包含所有副本
                 List<ShardRouting> assignedShards = assignedShards(startedShard.shardId());
                 // copy list to prevent ConcurrentModificationException
                 for (ShardRouting routing : new ArrayList<>(assignedShards)) {
+                    // 找到处于初始状态的所有副本
                     if (routing.initializing() && routing.primary() == false) {
+                        // 如果是某次 relocating的目标分片
                         if (routing.isRelocationTarget()) {
                             // find the relocation source
+                            // 找到source 分片
                             ShardRouting sourceShard = getByAllocationId(routing.shardId(), routing.allocationId().getRelocationId());
                             // cancel relocation and start relocation to same node again
+                            // 从重分配状态进入到start状态
                             ShardRouting startedReplica = cancelRelocation(sourceShard);
                             remove(routing);
                             routingChangesObserver.shardFailed(routing,
@@ -698,9 +727,11 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * Mark a shard as started and adjusts internal statistics.
      *
      * @return the started shard
+     * 将某个分片标记成启动状态
      */
     private ShardRouting started(ShardRouting shard) {
         assert shard.initializing() : "expected an initializing shard " + shard;
+        // 初始状态的shard 有2种 一种是真的还未启动的分片 一种是之前启动 但是进入了relocating状态 这时会在target节点上创建一个 init的分片 它的relocatingNodeId 指向source节点
         if (shard.relocatingNodeId() == null) {
             // if this is not a target shard for relocation, we need to update statistics
             inactiveShardCount--;
@@ -708,6 +739,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                 inactivePrimaryCount--;
             }
         }
+        // TODO
         removeRecovery(shard);
         ShardRouting startedShard = shard.moveToStarted();
         updateAssigned(shard, startedShard);
@@ -720,9 +752,11 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * Cancels a relocation of a shard that shard must relocating.
      *
      * @return the shard after cancelling relocation
+     * 某个正在重分配的分片 在target节点上的分片转换成start状态时 之前的relocating分片就要移除 就会触发该方法
      */
     private ShardRouting cancelRelocation(ShardRouting shard) {
         relocatingShards--;
+        // 分片又变回了 start状态 并且更新assigned容器
         ShardRouting cancelledShard = shard.cancelRelocation();
         updateAssigned(shard, cancelledShard);
         return cancelledShard;
@@ -757,11 +791,13 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             if (shard.primary()) {
                 inactivePrimaryCount--;
             }
+            // 如果移除的是某个relocating source分片
         } else if (shard.relocating()) {
             shard = cancelRelocation(shard);
         }
         assignedShardsRemove(shard);
         if (shard.initializing()) {
+            // TODO
             removeRecovery(shard);
         }
     }
@@ -820,6 +856,11 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         return reinitializedShard;
     }
 
+    /**
+     * 更新旧分片
+     * @param oldShard
+     * @param newShard
+     */
     private void updateAssigned(ShardRouting oldShard, ShardRouting newShard) {
         assert oldShard.shardId().equals(newShard.shardId()) :
             "can only update " + oldShard + " by shard with same shard id but was " + newShard;
@@ -828,6 +869,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         assert oldShard.currentNodeId().equals(newShard.currentNodeId()) : "shard to update " + oldShard +
             " can only update " + oldShard + " by shard assigned to same node but was " + newShard;
         node(oldShard.currentNodeId()).update(oldShard, newShard);
+
+        // 更新assignedShards 的分片内容
         List<ShardRouting> shardsWithMatchingShardId = assignedShards.computeIfAbsent(oldShard.shardId(), k -> new ArrayList<>());
         int previousShardIndex = shardsWithMatchingShardId.indexOf(oldShard);
         assert previousShardIndex >= 0 : "shard to update " + oldShard + " does not exist in list of assigned shards";
@@ -1236,6 +1279,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * the first node, then the first shard of the second node, etc. until one shard from each node has been returned.
      * The iterator then resumes on the first node by returning the second shard and continues until all shards from
      * all the nodes have been returned.
+     * 返回一个迭代所有节点分片的迭代器
      */
     public Iterator<ShardRouting> nodeInterleavedShardIterator() {
         final Queue<Iterator<ShardRouting>> queue = new ArrayDeque<>();

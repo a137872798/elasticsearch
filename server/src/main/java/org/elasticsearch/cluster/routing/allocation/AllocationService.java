@@ -66,6 +66,7 @@ import static org.elasticsearch.cluster.routing.UnassignedInfo.INDEX_DELAYED_NOD
  * {@link AllocationService} keeps {@link AllocationDeciders} to choose nodes
  * for shard allocation. This class also manages new nodes joining the cluster
  * and rerouting of shards.
+ * 分配服务 该对象决定了分片该分配到哪个节点 并且在合适的时机会将集群内的分片进行重分配 确保每个节点的负载能力尽可能接近
  */
 public class AllocationService {
 
@@ -76,6 +77,10 @@ public class AllocationService {
      */
     private final AllocationDeciders allocationDeciders;
     private Map<String, ExistingShardsAllocator> existingShardsAllocators;
+
+    /**
+     * 该对象定义了分配的逻辑 配合 AllocationDeciders 使用
+     */
     private final ShardsAllocator shardsAllocator;
     /**
      * 获取当前集群状态的服务
@@ -111,27 +116,37 @@ public class AllocationService {
      * provided as parameter and no duplicates should be contained.
      * <p>
      * If the same instance of the {@link ClusterState} is returned, then no change has been made.</p>
-     * @param clusterState 当前集群状态 通过该对象可以获取集群中的node
-     * @param startedShards 此时待分配的各种分片
+     * @param clusterState
+     * @param startedShards
+     *
      */
     public ClusterState applyStartedShards(ClusterState clusterState, List<ShardRouting> startedShards) {
         assert assertInitialized();
         if (startedShards.isEmpty()) {
             return clusterState;
         }
+        // 将ClusterState中的 routingTable对象 转换成以node为单位存储分片的 RoutingNodes对象
         RoutingNodes routingNodes = getMutableRoutingNodes(clusterState);
         // shuffle the unassigned nodes, just so we won't have things like poison failed shards
         routingNodes.unassigned().shuffle();
+
+        // 通过相关信息生成 RoutingAllocation对象
         RoutingAllocation allocation = new RoutingAllocation(allocationDeciders, routingNodes, clusterState,
             clusterInfoService.getClusterInfo(), currentNanoTime());
         // as starting a primary relocation target can reinitialize replica shards, start replicas first
         startedShards = new ArrayList<>(startedShards);
         startedShards.sort(Comparator.comparing(ShardRouting::primary));
+
+        // 将所有分片修改成启动状态
         applyStartedShards(allocation, startedShards);
+
+        // TODO 先忽略这种增强逻辑
         for (final ExistingShardsAllocator allocator : existingShardsAllocators.values()) {
             allocator.applyStartedShards(startedShards, allocation);
         }
         assert RoutingNodes.assertShardStats(allocation.routingNodes());
+
+        // 生成格式化字符串
         String startedShardsAsString
             = firstListElementsToCommaDelimitedString(startedShards, s -> s.shardId().toString(), logger.isDebugEnabled());
         return buildResultAndLogHealthChange(clusterState, allocation, "shards started [" + startedShardsAsString + "]");
@@ -149,10 +164,19 @@ public class AllocationService {
         return newState;
     }
 
+    /**
+     * 更新此时的集群对象
+     * @param oldState
+     * @param allocation
+     * @return
+     */
     private ClusterState buildResult(ClusterState oldState, RoutingAllocation allocation) {
         final RoutingTable oldRoutingTable = oldState.routingTable();
         final RoutingNodes newRoutingNodes = allocation.routingNodes();
+        // 通过此时最新的 RoutingNodes 反向生成最新的路由表
         final RoutingTable newRoutingTable = new RoutingTable.Builder().updateNodes(oldRoutingTable.version(), newRoutingNodes).build();
+
+        // allocation 本身会记录所有分片的变化  这时根据这些变化的分片 去更新metadata
         final Metadata newMetadata = allocation.updateMetadataWithRoutingChanges(newRoutingTable);
         assert newRoutingTable.validate(newMetadata); // validates the routing table is coherent with the cluster state metadata
 
@@ -494,6 +518,11 @@ public class AllocationService {
         }
     }
 
+    /**
+     * 将目标分片转换成启动状态 同时触发监听器
+     * @param routingAllocation
+     * @param startedShardEntries
+     */
     private void applyStartedShards(RoutingAllocation routingAllocation, List<ShardRouting> startedShardEntries) {
         assert startedShardEntries.isEmpty() == false : "non-empty list of started shard entries expected";
         RoutingNodes routingNodes = routingAllocation.routingNodes();

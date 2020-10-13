@@ -452,15 +452,20 @@ public class DiskThresholdDecider extends AllocationDecider {
     /**
      * Returns the expected shard size for the given shard or the default value provided if not enough information are available
      * to estimate the shards size.
+     * @param clusterInfo 记录了当前集群下每个node 占用的内存
+     * @param metadata 有关索引的元数据信息
+     * @param routingTable 将所有分片信息按照索引进行管理
      */
     public static long getExpectedShardSize(ShardRouting shard, long defaultValue, ClusterInfo clusterInfo, Metadata metadata,
                                             RoutingTable routingTable) {
         final IndexMetadata indexMetadata = metadata.getIndexSafe(shard.index());
+        // TODO 先忽略
         if (indexMetadata.getResizeSourceIndex() != null && shard.active() == false &&
             shard.recoverySource().getType() == RecoverySource.Type.LOCAL_SHARDS) {
             // in the shrink index case we sum up the source index shards since we basically make a copy of the shard in
             // the worst case
             long targetShardSize = 0;
+            // 获取有关resize相关的索引
             final Index mergeSourceIndex = indexMetadata.getResizeSourceIndex();
             final IndexMetadata sourceIndexMeta = metadata.index(mergeSourceIndex);
             if (sourceIndexMeta != null) {

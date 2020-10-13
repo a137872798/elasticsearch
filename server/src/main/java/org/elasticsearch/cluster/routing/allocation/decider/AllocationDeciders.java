@@ -46,7 +46,7 @@ public class AllocationDeciders extends AllocationDecider {
     }
 
     /**
-     * 结果会受到多个分配器的影响
+     * 某个分片是否支持rebalance
      * @param shardRouting
      * @param allocation
      * @return
@@ -111,6 +111,13 @@ public class AllocationDeciders extends AllocationDecider {
 
     // 以下的几个方法逻辑都是类似的
 
+    /**
+     * 某个分片能否在某个节点上继续保留  当处理有关分片迁移的时候需要调用的方法
+     * @param shardRouting
+     * @param node
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canRemain(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
         if (allocation.shouldIgnoreShardForNode(shardRouting.shardId(), node.nodeId())) {
@@ -140,6 +147,13 @@ public class AllocationDeciders extends AllocationDecider {
         return ret;
     }
 
+    /**
+     * 当前索引能否分配在该node上
+     * @param indexMetadata
+     * @param node
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(IndexMetadata indexMetadata, RoutingNode node, RoutingAllocation allocation) {
         Decision.Multi ret = new Decision.Multi();
@@ -205,6 +219,12 @@ public class AllocationDeciders extends AllocationDecider {
         return ret;
     }
 
+    /**
+     * 检测能否将某个分片设置到 某个节点
+     * @param node
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(RoutingNode node, RoutingAllocation allocation) {
         Decision.Multi ret = new Decision.Multi();
@@ -224,6 +244,11 @@ public class AllocationDeciders extends AllocationDecider {
         return ret;
     }
 
+    /**
+     * 检测此时是否可以进行重平衡
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canRebalance(RoutingAllocation allocation) {
         Decision.Multi ret = new Decision.Multi();

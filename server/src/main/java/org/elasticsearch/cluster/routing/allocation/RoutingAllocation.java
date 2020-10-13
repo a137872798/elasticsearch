@@ -93,6 +93,9 @@ public class RoutingAllocation {
 
     private DebugMode debugDecision = DebugMode.OFF;
 
+    /**
+     * 代表此时正在进行某种大规模操作
+     */
     private boolean hasPendingAsyncFetch = false;
 
     private final long currentNanoTime;

@@ -91,7 +91,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             + "] and startedShard.allocationId [" + startedShard.allocationId().getId() + "] have to have the same";
         Updates updates = changes(startedShard.shardId());
 
-        // 增加本次分配相关的分配者id
+        // 增加本次分配相关的分配者id    分配者id 会在分片进入init状态时就分配 所以此时肯定有值
         updates.addedAllocationIds.add(startedShard.allocationId().getId());
         // TODO 如果当前变化的是主分片 同时恢复模式是从磁盘中恢复 推测这种场景使用的是一个特殊的分配id 稍后要将该id 移除
         if (startedShard.primary()
@@ -375,7 +375,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
          */
         private boolean increaseTerm; // whether primary term should be increased
         /**
-         * 该分片id对应的所有分片是由谁来分配的
+         * 某次变动的分片相关的分配者id
          */
         private Set<String> addedAllocationIds = new HashSet<>(); // allocation ids that should be added to the in-sync set
         private Set<String> removedAllocationIds = new HashSet<>(); // allocation ids that should be removed from the in-sync set

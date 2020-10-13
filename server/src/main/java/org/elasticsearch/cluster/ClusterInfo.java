@@ -39,11 +39,16 @@ import java.util.Map;
  * for the key used in the shardSizes map
  * 描述集群信息
  * 可以理解为一个简单的bean对象
+ * 集群信息对象是由谁创建的
  */
 public class ClusterInfo implements ToXContentFragment, Writeable {
 
     private final ImmutableOpenMap<String, DiskUsage> leastAvailableSpaceUsage;
     private final ImmutableOpenMap<String, DiskUsage> mostAvailableSpaceUsage;
+
+    /**
+     * 记录每个分片的大小
+     */
     final ImmutableOpenMap<String, Long> shardSizes;
     public static final ClusterInfo EMPTY = new ClusterInfo();
     final ImmutableOpenMap<ShardRouting, String> routingToDataPath;

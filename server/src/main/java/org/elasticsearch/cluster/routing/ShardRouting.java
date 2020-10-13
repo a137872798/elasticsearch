@@ -139,7 +139,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     private ShardRouting initializeTargetRelocatingShard() {
         // 首先确保当前分片状态处在 重定位中
         if (state == ShardRoutingState.RELOCATING) {
-            // 注意此时生成对象的 分片状态是 INIT 以及 recoverySource 是从其他节点恢复数据  应该是代表重分配后的分片应该从当前节点拷贝数据(恢复数据)
+            // 重定位后的节点 relocatingNodeId currentNodeId 发生了交换
             return new ShardRouting(shardId, relocatingNodeId, currentNodeId, primary, ShardRoutingState.INITIALIZING,
                 PeerRecoverySource.INSTANCE, unassignedInfo, AllocationId.newTargetRelocation(allocationId), expectedShardSize);
         } else {
@@ -404,6 +404,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
      *
      * @param existingAllocationId allocation id to use. If null, a fresh allocation id is generated.
      *                             将当前分片更新成初始状态
+     *                             注意从 未分配状态到初始状态 relocatingNodeId 为null
      */
     public ShardRouting initialize(String nodeId, @Nullable String existingAllocationId, long expectedShardSize) {
         assert state == ShardRoutingState.UNASSIGNED : this;
@@ -423,7 +424,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     /**
      * Relocate the shard to another node.
      *
-     * @param relocatingNodeId id of the node to relocate the shard
+     * @param relocatingNodeId id of the node to relocate the shard  移动的目标节点
      */
     public ShardRouting relocate(String relocatingNodeId, long expectedShardSize) {
         assert state == ShardRoutingState.STARTED : "current shard has to be started in order to be relocated " + this;
@@ -434,6 +435,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     /**
      * Cancel relocation of a shard. The shards state must be set
      * to <code>RELOCATING</code>.
+     * 代表从relocating的状态结束   TODO 这里又转换回了 started状态  难道 relocating指的是副本拷贝么
      */
     public ShardRouting cancelRelocation() {
         assert state == ShardRoutingState.RELOCATING : this;
