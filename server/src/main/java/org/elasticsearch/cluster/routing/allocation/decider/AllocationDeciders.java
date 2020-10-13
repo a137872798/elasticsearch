@@ -53,6 +53,8 @@ public class AllocationDeciders extends AllocationDecider {
      */
     @Override
     public Decision canRebalance(ShardRouting shardRouting, RoutingAllocation allocation) {
+        // 如果处于debug模式 只要携带信息的都必须加入
+        // 如果处于非debug模式  1检测到no直接返回 2检查到ALWAYS忽略(因为这个yes不包含详细信息)
         Decision.Multi ret = new Decision.Multi();
         for (AllocationDecider allocationDecider : allocations) {
             Decision decision = allocationDecider.canRebalance(shardRouting, allocation);
@@ -72,6 +74,13 @@ public class AllocationDeciders extends AllocationDecider {
         return ret;
     }
 
+    /**
+     * 决定能否将分片分配到某个node
+     * @param shardRouting
+     * @param node
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
         // 如果该分配对象本身不支持将某个分片设置到该node上 直接返回结果
@@ -169,6 +178,12 @@ public class AllocationDeciders extends AllocationDecider {
         return ret;
     }
 
+    /**
+     * 检测是否允许为某个分片进行分配
+     * @param shardRouting
+     * @param allocation  包含索引的元数据 作为分配的参考
+     * @return
+     */
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingAllocation allocation) {
         Decision.Multi ret = new Decision.Multi();
@@ -176,9 +191,11 @@ public class AllocationDeciders extends AllocationDecider {
             Decision decision = allocationDecider.canAllocate(shardRouting, allocation);
             // short track if a NO is returned.
             if (decision == Decision.NO) {
+                // 如果不需要打印详细信息 直接返回NO 就可以
                 if (!allocation.debugDecision()) {
                     return decision;
                 } else {
+                    // 将结果合并 并在之后打印详细信息
                     ret.add(decision);
                 }
             } else {
@@ -256,6 +273,7 @@ public class AllocationDeciders extends AllocationDecider {
 
     private void addDecision(Decision.Multi ret, Decision decision, RoutingAllocation allocation) {
         // We never add ALWAYS decisions and only add YES decisions when requested by debug mode (since Multi default is YES).
+        // 非成功情况 且需要打印日志 添加到ret中
         if (decision != Decision.ALWAYS
             && (allocation.getDebugMode() == RoutingAllocation.DebugMode.ON || decision.type() != Decision.Type.YES)) {
             ret.add(decision);

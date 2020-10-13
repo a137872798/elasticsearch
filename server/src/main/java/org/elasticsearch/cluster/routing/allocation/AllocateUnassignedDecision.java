@@ -38,6 +38,7 @@ import java.util.Objects;
 
 /**
  * Represents the allocation decision by an allocator for an unassigned shard.
+ * 代表为 某个未分配的分片分配结果  除此之外还有针对之前已经分配过的分片进行重分配的结果
  */
 public class AllocateUnassignedDecision extends AbstractAllocationDecision {
     /** a constant representing a shard decision where no decision was taken */
@@ -46,6 +47,7 @@ public class AllocateUnassignedDecision extends AbstractAllocationDecision {
     /**
      * a map of cached common no/throttle decisions that don't need explanations,
      * this helps prevent unnecessary object allocations for the non-explain API case
+     * 针对没有描述信息的分配结果一开始就缓存了
      */
     private static final Map<AllocationStatus, AllocateUnassignedDecision> CACHED_DECISIONS;
     static {
@@ -63,6 +65,9 @@ public class AllocateUnassignedDecision extends AbstractAllocationDecision {
         CACHED_DECISIONS = Collections.unmodifiableMap(cachedDecisions);
     }
 
+    /**
+     * 本次决定的分配结果
+     */
     @Nullable
     private final AllocationStatus allocationStatus;
     @Nullable
@@ -71,6 +76,16 @@ public class AllocateUnassignedDecision extends AbstractAllocationDecision {
     private final long remainingDelayInMillis;
     private final long configuredDelayInMillis;
 
+    /**
+     *
+     * @param allocationStatus  描述分配状态的 当本次decision是yes时 为null
+     * @param assignedNode   本次倾向于分配的节点
+     * @param allocationId
+     * @param nodeDecisions   尝试分配到每个node的结果
+     * @param reuseStore
+     * @param remainingDelayInMillis
+     * @param configuredDelayInMillis
+     */
     private AllocateUnassignedDecision(AllocationStatus allocationStatus,
                                        DiscoveryNode assignedNode,
                                        String allocationId,
@@ -159,6 +174,7 @@ public class AllocateUnassignedDecision extends AbstractAllocationDecision {
 
     /**
      * Creates a {@link AllocateUnassignedDecision} from the given {@link Decision} and the assigned node, if any.
+     * 根据参数信息生成一个为某个未分配分配尝试分配的结果描述对象
      */
     public static AllocateUnassignedDecision fromDecision(Decision decision, @Nullable DiscoveryNode assignedNode,
                                                           @Nullable List<NodeAllocationResult> nodeDecisions) {

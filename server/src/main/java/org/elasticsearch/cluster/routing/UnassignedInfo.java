@@ -142,6 +142,7 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
     public enum AllocationStatus implements Writeable {
         /**
          * The shard was denied allocation to a node because the allocation deciders all returned a NO decision
+         * 代表本次认为无法分配
          */
         DECIDERS_NO((byte) 0),
         /**

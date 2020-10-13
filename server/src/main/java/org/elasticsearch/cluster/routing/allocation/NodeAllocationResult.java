@@ -38,6 +38,7 @@ import static org.elasticsearch.cluster.routing.allocation.AbstractAllocationDec
 
 /**
  * This class represents the shard allocation decision and its explanation for a single node.
+ * 描述某个分片尝试分配到某个 node时的决策结果
  */
 public class NodeAllocationResult implements ToXContentObject, Writeable, Comparable<NodeAllocationResult> {
 
@@ -50,6 +51,10 @@ public class NodeAllocationResult implements ToXContentObject, Writeable, Compar
     @Nullable
     private final ShardStoreInfo shardStoreInfo;
     private final AllocationDecision nodeDecision;
+
+    /**
+     * 是否允许分配的决策
+     */
     @Nullable
     private final Decision canAllocateDecision;
     private final int weightRanking;
@@ -70,6 +75,12 @@ public class NodeAllocationResult implements ToXContentObject, Writeable, Compar
         this.weightRanking = weightRanking;
     }
 
+    /**
+     *
+     * @param node
+     * @param decision
+     * @param weightRanking 这个result在本次分片尝试分配的所有node下的权重排序 也可以理解成优先级排序
+     */
     public NodeAllocationResult(DiscoveryNode node, Decision decision, int weightRanking) {
         this.node = node;
         this.shardStoreInfo = null;
