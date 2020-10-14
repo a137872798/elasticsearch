@@ -27,10 +27,14 @@ import java.io.IOException;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * 请求加入到集群
+ */
 public class JoinRequest extends TransportRequest {
 
     /**
      * The sending (i.e. joining) node.
+     * 当前哪个节点想要加入到集群
      */
     private final DiscoveryNode sourceNode;
 
@@ -38,6 +42,7 @@ public class JoinRequest extends TransportRequest {
      * The minimum term for which the joining node will accept any cluster state publications. If the joining node is in a strictly greater
      * term than the master it wants to join then the master must enter a new term and hold another election. Doesn't necessarily match
      * {@link JoinRequest#optionalJoin}.
+     * TODO term不是必须要一致才可以么
      */
     private final long minimumTerm;
 
@@ -46,6 +51,7 @@ public class JoinRequest extends TransportRequest {
      * That's ok, the sender likely discovered that the master we voted for lost the election and now we're trying to join the winner. Once
      * the sender has successfully joined the master, the lack of a vote in its term causes another election (see
      * {@link Publication#onMissingJoin(DiscoveryNode)}).
+     * 描述具体的join信息
      */
     private final Optional<Join> optionalJoin;
 

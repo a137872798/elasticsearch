@@ -70,7 +70,7 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 /**
- * 拼接器
+ * 这个join应该是加入的意思  代表着某个 节点加入到这个集群中  也就是理解为master节点发现了某个节点
  */
 public class JoinHelper {
 
@@ -102,8 +102,14 @@ public class JoinHelper {
     @Nullable // if using single-node discovery
     private final TimeValue joinTimeout;
 
+    /**
+     * 存放了集群中其他节点的joiner请求
+     */
     private final Set<Tuple<DiscoveryNode, JoinRequest>> pendingOutgoingJoins = Collections.synchronizedSet(new HashSet<>());
 
+    /**
+     * 记录最近一次失败的join
+     */
     private AtomicReference<FailedJoinAttempt> lastFailedJoinAttempt = new AtomicReference<>();
 
     JoinHelper(Settings settings, AllocationService allocationService, MasterService masterService,

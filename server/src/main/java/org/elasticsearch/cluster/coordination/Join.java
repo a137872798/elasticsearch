@@ -33,6 +33,8 @@ import java.io.IOException;
  * information about the current state of the node that provided the vote, so that
  * the receiver of the vote can determine if it has a more up-to-date state than the
  * source node.
+ * 代表一次join的操作
+ * 这个term为什么会有偏差啊  照理说应该要term完全匹配才行吧
  */
 public class Join implements Writeable {
     private final DiscoveryNode sourceNode;

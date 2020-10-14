@@ -39,18 +39,31 @@ import java.util.function.BiFunction;
  * A {@link BatchedRerouteService} is a {@link RerouteService} that batches together reroute requests to avoid unnecessary extra reroutes.
  * This component only does meaningful work on the elected master node. Reroute requests will fail with a {@link NotMasterException} on
  * other nodes.
+ * 什么是reroute服务 在JoinTaskExecutor.execute中如果master节点发生了变化 会调用该服务
+ * 将多个reroute请求合并成一次  但是reroute的逻辑还是由外部设置
  */
 public class BatchedRerouteService implements RerouteService {
     private static final Logger logger = LogManager.getLogger(BatchedRerouteService.class);
 
     private static final String CLUSTER_UPDATE_TASK_SOURCE = "cluster_reroute";
 
+    /**
+     * 集群服务对象
+     */
     private final ClusterService clusterService;
+
+    /**
+     * 该对象定义了 reroute的逻辑
+     */
     private final BiFunction<ClusterState, String, ClusterState> reroute;
 
     private final Object mutex = new Object();
-    @Nullable // null if no reroute is currently pending
+    @Nullable // null if no reroute is currently pending   如果当前有囤积的reroute任务 该值不为null 否则该值为null
     private List<ActionListener<ClusterState>> pendingRerouteListeners;
+
+    /**
+     * 当前囤积的所有任务中 最高的优先级
+     */
     private Priority pendingTaskPriority = Priority.LANGUID;
 
     /**
@@ -68,13 +81,16 @@ public class BatchedRerouteService implements RerouteService {
     public final void reroute(String reason, Priority priority, ActionListener<ClusterState> listener) {
         final List<ActionListener<ClusterState>> currentListeners;
         synchronized (mutex) {
+            // 代表有囤积的reroute任务
             if (pendingRerouteListeners != null) {
+                // 如果优先级还比当前囤积的任务低 那么直接追加到list就好
                 if (priority.sameOrAfter(pendingTaskPriority)) {
                     logger.trace("already has pending reroute at priority [{}], adding [{}] with priority [{}] to batch",
                         pendingTaskPriority, reason, priority);
                     pendingRerouteListeners.add(listener);
                     return;
                 } else {
+                    // 将任务设置到了最前面 同时更新最大的优先级
                     logger.trace("already has pending reroute at priority [{}], promoting batch to [{}] and adding [{}]",
                         pendingTaskPriority, priority, reason);
                     currentListeners = new ArrayList<>(1 + pendingRerouteListeners.size());
@@ -85,6 +101,7 @@ public class BatchedRerouteService implements RerouteService {
                     pendingTaskPriority = priority;
                 }
             } else {
+                // 如果首次添加任务 那么设置到list中
                 logger.trace("no pending reroute, scheduling reroute [{}] at priority [{}]", reason, priority);
                 currentListeners = new ArrayList<>(1);
                 currentListeners.add(listener);
@@ -93,15 +110,22 @@ public class BatchedRerouteService implements RerouteService {
             }
         }
         try {
+            // 通过集群服务来批量提交任务  该任务完成时 还会发布到集群所有节点上
             clusterService.submitStateUpdateTask(CLUSTER_UPDATE_TASK_SOURCE + "(" + reason + ")",
                 new ClusterStateUpdateTask(priority) {
 
+                    /**
+                     * 该任务执行的逻辑
+                     * @param currentState
+                     * @return
+                     */
                     @Override
                     public ClusterState execute(ClusterState currentState) {
                         final boolean currentListenersArePending;
                         synchronized (mutex) {
                             assert currentListeners.isEmpty() == (pendingRerouteListeners != currentListeners)
                                 : "currentListeners=" + currentListeners + ", pendingRerouteListeners=" + pendingRerouteListeners;
+                            // 本次数据已经发生变动了 忽略本次执行 因为之后就会有一个最新的任务被添加
                             currentListenersArePending = pendingRerouteListeners == currentListeners;
                             if (currentListenersArePending) {
                                 pendingRerouteListeners = null;
@@ -116,6 +140,10 @@ public class BatchedRerouteService implements RerouteService {
                         }
                     }
 
+                    /**
+                     * 在执行任务的过程中发现当前节点不再是master节点时触发
+                     * @param source
+                     */
                     @Override
                     public void onNoLongerMaster(String source) {
                         synchronized (mutex) {
@@ -123,10 +151,16 @@ public class BatchedRerouteService implements RerouteService {
                                 pendingRerouteListeners = null;
                             }
                         }
+                        // 那么当前囤积的任务就无法继续执行了  以异常形式触发所有监听器
                         ActionListener.onFailure(currentListeners, new NotMasterException("delayed reroute [" + reason + "] cancelled"));
                         // no big deal, the new master will reroute again
                     }
 
+                    /**
+                     * 当某个任务执行失败时
+                     * @param source
+                     * @param e
+                     */
                     @Override
                     public void onFailure(String source, Exception e) {
                         synchronized (mutex) {
@@ -146,6 +180,12 @@ public class BatchedRerouteService implements RerouteService {
                             new ElasticsearchException("delayed reroute [" + reason + "] failed", e));
                     }
 
+                    /**
+                     * 当处理成功时 使用最新的state触发所有监听器
+                     * @param source
+                     * @param oldState
+                     * @param newState
+                     */
                     @Override
                     public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
                         ActionListener.onResponse(currentListeners, newState);

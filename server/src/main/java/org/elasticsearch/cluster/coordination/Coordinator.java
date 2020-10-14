@@ -132,6 +132,10 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
      * 该对象负责为分片分配 节点 还包含根据节点负载重分配分片等能力
      */
     private final AllocationService allocationService;
+
+    /**
+     * 该对象负责管理请求加入到集群的节点
+     */
     private final JoinHelper joinHelper;
     private final NodeRemovalClusterStateTaskExecutor nodeRemovalExecutor;
     private final Supplier<CoordinationState.PersistedState> persistedStateSupplier;
