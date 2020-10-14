@@ -34,7 +34,7 @@ import java.util.Locale;
 import java.util.Objects;
 
 /**
- * 集群块  集群是被划分成多个块么
+ * 描述集群被阻塞
  */
 public class ClusterBlock implements Writeable, ToXContentFragment {
 
@@ -42,7 +42,7 @@ public class ClusterBlock implements Writeable, ToXContentFragment {
     private @Nullable String uuid;
     private String description;
     /**
-     * 这个集群块下具备哪些功能
+     * 阻塞级别
      */
     private EnumSet<ClusterBlockLevel> levels;
     private boolean retryable;

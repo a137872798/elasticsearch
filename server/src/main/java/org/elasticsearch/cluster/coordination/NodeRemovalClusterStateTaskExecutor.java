@@ -30,14 +30,23 @@ import org.elasticsearch.persistent.PersistentTasksCustomMetadata;
 
 import java.util.List;
 
+/**
+ * 该对象用于处理 从集群中移除节点的task
+ */
 public class NodeRemovalClusterStateTaskExecutor implements ClusterStateTaskExecutor<NodeRemovalClusterStateTaskExecutor.Task>,
     ClusterStateTaskListener {
 
+    /**
+     * 分配服务 主要是为分片 决定分配的node
+     */
     private final AllocationService allocationService;
     private final Logger logger;
 
     public static class Task {
 
+        /**
+         * 准备从集群移除的node
+         */
         private final DiscoveryNode node;
         private final String reason;
 
@@ -67,8 +76,16 @@ public class NodeRemovalClusterStateTaskExecutor implements ClusterStateTaskExec
         this.logger = logger;
     }
 
+    /**
+     * 执行移除任务
+     * @param currentState
+     * @param tasks
+     * @return
+     * @throws Exception
+     */
     @Override
     public ClusterTasksResult<Task> execute(final ClusterState currentState, final List<Task> tasks) throws Exception {
+        // 先根据当前集群中的节点生成 DiscoveryNodes
         final DiscoveryNodes.Builder remainingNodesBuilder = DiscoveryNodes.builder(currentState.nodes());
         boolean removed = false;
         for (final Task task : tasks) {
@@ -80,20 +97,24 @@ public class NodeRemovalClusterStateTaskExecutor implements ClusterStateTaskExec
             }
         }
 
+        // 代表有节点被移除
         if (!removed) {
             // no nodes to remove, keep the current cluster state
             return ClusterTasksResult.<Task>builder().successes(tasks).build(currentState);
         }
 
+        // 更新集群状态
         final ClusterState remainingNodesClusterState = remainingNodesClusterState(currentState, remainingNodesBuilder);
-
+        // 将每个任务的执行情况 以及最新的集群状态合成 taskResult
         return getTaskClusterTasksResult(currentState, tasks, remainingNodesClusterState);
     }
 
     protected ClusterTasksResult<Task> getTaskClusterTasksResult(ClusterState currentState, List<Task> tasks,
                                                                  ClusterState remainingNodesClusterState) {
+        // 随着某些node的移除 不再需要维护他们的持久化任务
         ClusterState ptasksDisassociatedState = PersistentTasksCustomMetadata.disassociateDeadNodes(remainingNodesClusterState);
         final ClusterTasksResult.Builder<Task> resultBuilder = ClusterTasksResult.<Task>builder().successes(tasks);
+        // 将分配到这些节点上的分片重新分配到其他节点
         return resultBuilder.build(allocationService.disassociateDeadNodes(ptasksDisassociatedState, true, describeTasks(tasks)));
     }
 

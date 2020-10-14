@@ -52,6 +52,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+/**
+ * 将一组 格式化字符串转换成 TransportAddress
+ */
 public class SeedHostsResolver extends AbstractLifecycleComponent implements ConfiguredHostsResolver, SeedHostsProvider.HostsResolver {
     public static final Setting<Integer> DISCOVERY_SEED_RESOLVER_MAX_CONCURRENT_RESOLVERS_SETTING =
         Setting.intSetting("discovery.seed_resolver.max_concurrent_resolvers", 10, 0, Setting.Property.NodeScope);
@@ -61,13 +64,25 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
     private static final Logger logger = LogManager.getLogger(SeedHostsResolver.class);
 
     private final Settings settings;
+
+    /**
+     * 代表此时正在解析中
+     */
     private final AtomicBoolean resolveInProgress = new AtomicBoolean();
     private final TransportService transportService;
     private final SeedHostsProvider hostsProvider;
+
+    /**
+     * 解析使用的线程池
+     */
     private final SetOnce<ExecutorService> executorService = new SetOnce<>();
     private final TimeValue resolveTimeout;
     private final String nodeName;
     private final int concurrentConnects;
+
+    /**
+     * 被该对象管理的线程 通过调用cancel 可以触发所有线程的打断逻辑
+     */
     private final CancellableThreads cancellableThreads = new CancellableThreads();
 
     public SeedHostsResolver(String nodeName, Settings settings, TransportService transportService,

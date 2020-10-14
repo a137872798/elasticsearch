@@ -225,7 +225,7 @@ public final class PersistentTasksCustomMetadata extends AbstractNamedDiffable<M
      * @param clusterState The clusterstate
      * @return If no changes the argument {@code clusterState} is returned else
      *          a copy with the modified tasks
-     *          从ClusterState中 去除有关持久化任务的元数据信息
+     *          当某些节点从集群中被移除时 就不再需要维护他们的持久化了
      */
     public static ClusterState disassociateDeadNodes(ClusterState clusterState) {
         PersistentTasksCustomMetadata tasks = getPersistentTasksCustomMetadata(clusterState);

@@ -28,6 +28,8 @@ import java.io.IOException;
 /**
  * Represents the action of requesting a join vote (see {@link Join}) from a node.
  * The source node represents the node that is asking for join votes.
+ * 某个选举成功的节点会发起一个 startJoin的请求 其余集群中的节点感知到这个请求会 后发起一个join请求 加入到集群
+ * 这个套路跟kafka好像
  */
 public class StartJoinRequest extends TransportRequest {
 

@@ -34,8 +34,13 @@ import java.util.Set;
  * of cancellation.
  *
  * Cancellation policy: This class does not support external interruption via <code>Thread#interrupt()</code>. Always use #cancel() instead.
+ * 通过该对象执行的线程 可以感知到外部的打断 同时抛出异常
  */
 public class CancellableThreads {
+
+    /**
+     * 此时正在执行任务的线程
+     */
     private final Set<Thread> threads = new HashSet<>();
     // needs to be volatile as it is also read outside of synchronized blocks.
     private volatile boolean cancelled = false;
@@ -50,6 +55,11 @@ public class CancellableThreads {
         checkForCancel(null);
     }
 
+
+    /**
+     * 每当新增一个需要管理的线程时 就会检测当前对象是否处于关闭状态
+     * @param beforeCancelException  如果发现此时处于关闭状态 那么处理该异常
+     */
     private void checkForCancel(Exception beforeCancelException) {
         if (isCancelled()) {
             final String reason;
@@ -71,6 +81,7 @@ public class CancellableThreads {
     }
 
     private synchronized boolean add() {
+        // 确保此时不是cancel
         checkForCancel();
         threads.add(Thread.currentThread());
         // capture and clean the interrupted thread before we start, so we can identify
@@ -97,36 +108,46 @@ public class CancellableThreads {
      * causing the call to prematurely return.
      *
      * @param interruptible code to run
+     *                      执行一个可中断的对象
      */
     public void executeIO(IOInterruptible interruptible) throws IOException {
+        // 代表线程在加入前是 被中断状态  在调用add后会恢复成普通状态 这样就可以再次感知到线程被打断并触发对应异常
         boolean wasInterrupted = add();
         boolean cancelledByExternalInterrupt = false;
         RuntimeException runtimeException = null;
         IOException ioException = null;
 
         try {
+            // 执行可中断对象
             interruptible.run();
         } catch (InterruptedException | ThreadInterruptedException e) {
             // ignore, this interrupt has been triggered by us in #cancel()...
             assert cancelled : "Interruption via Thread#interrupt() is unsupported. Use CancellableThreads#cancel() instead";
             // we can only reach here if assertions are disabled. If we reach this code and cancelled is false, this means that we've
             // been interrupted externally (which we don't support).
+
+            // 感知到被打断 但是本对象没有被关闭 那么就是由外部触发的打断
             cancelledByExternalInterrupt = !cancelled;
         } catch (RuntimeException t) {
             runtimeException = t;
         } catch (IOException e) {
             ioException = e;
         } finally {
+            // 从容器中移除
             remove();
         }
         // we are now out of threads collection so we can't be interrupted any more by this class
         // restore old flag and see if we need to fail
+        // 如果之前线程已经被标识成打断状态 恢复之前的标识
         if (wasInterrupted) {
             Thread.currentThread().interrupt();
         } else {
             // clear the flag interrupted flag as we are checking for failure..
+            // 如果在加入后发生了中断 需要清除这个标识
             Thread.interrupted();
         }
+
+        // 检查是否被关闭 返回包装后的异常
         checkForCancel(ioException != null ? ioException : runtimeException);
         if (ioException != null) {
             // if we're not canceling, we throw the original exception
@@ -150,6 +171,7 @@ public class CancellableThreads {
     }
 
     /** cancel all current running operations. Future calls to {@link #checkForCancel()} will be failed with the given reason */
+    // 将当前对象设置成关闭状态 同时打断所有运行中的线程
     public synchronized void cancel(String reason) {
         if (cancelled) {
             // we were already cancelled, make sure we don't interrupt threads twice

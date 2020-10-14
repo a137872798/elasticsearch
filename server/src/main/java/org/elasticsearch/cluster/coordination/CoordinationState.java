@@ -38,6 +38,7 @@ import java.util.Set;
 /**
  * The core class of the cluster state coordination algorithm, directly implementing the
  * <a href="https://github.com/elastic/elasticsearch-formal-models/blob/master/ZenWithTerms/tla/ZenWithTerms.tla">formal model</a>
+ * 描述此时的协调状态
  */
 public class CoordinationState {
 
@@ -515,6 +516,11 @@ public class CoordinationState {
             return sourceNode.isMasterNode() && nodes.put(sourceNode.getId(), sourceNode) == null;
         }
 
+        /**
+         * 代表收到某个节点的请求
+         * @param join
+         * @return
+         */
         public boolean addJoinVote(Join join) {
             final boolean added = addVote(join.getSourceNode());
             if (added) {

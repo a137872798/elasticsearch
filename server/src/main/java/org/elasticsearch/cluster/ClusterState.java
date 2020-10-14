@@ -129,7 +129,7 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
     private final String stateUUID;
 
     /**
-     *
+     * 以索引为单位 管理所有分片对象
      */
     private final RoutingTable routingTable;
 

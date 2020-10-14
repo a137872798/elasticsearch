@@ -28,8 +28,18 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
 
+/**
+ * 获取集群中其他节点
+ */
 public class PeersRequest extends TransportRequest {
+
+    /**
+     * 发起请求的节点
+     */
     private final DiscoveryNode sourceNode;
+    /**
+     * 此时集群中已知的节点
+     */
     private final List<DiscoveryNode> knownPeers;
 
     public PeersRequest(DiscoveryNode sourceNode, List<DiscoveryNode> knownPeers) {

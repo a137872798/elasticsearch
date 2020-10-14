@@ -43,6 +43,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * randomly at reasonably high frequency and backing off (linearly) until one of them succeeds. We also place an upper bound on the backoff
  * so that if elections are failing due to a network partition that lasts for a long time then when the partition heals there is an election
  * attempt reasonably quickly.
+ *
+ * 该对象会提供定时触发选举的对象
  */
 public class ElectionSchedulerFactory {
 
@@ -106,6 +108,7 @@ public class ElectionSchedulerFactory {
      *
      * @param gracePeriod       An initial period to wait before attempting the first election.
      * @param scheduledRunnable The action to run each time an election should be attempted.
+     *                          在一定的延时后触发一次选举
      */
     public Releasable startElectionScheduler(TimeValue gracePeriod, Runnable scheduledRunnable) {
         final ElectionScheduler scheduler = new ElectionScheduler();
@@ -138,10 +141,23 @@ public class ElectionSchedulerFactory {
             '}';
     }
 
+    /**
+     * 选举触发器
+     */
     private class ElectionScheduler implements Releasable {
         private final AtomicBoolean isClosed = new AtomicBoolean();
+
+        /**
+         * 代表第几次触发  一个对象会被复用多次???
+         */
         private final AtomicLong attempt = new AtomicLong();
 
+
+        /**
+         * 在一定的时间间隔后触发一次选举
+         * @param gracePeriod
+         * @param scheduledRunnable
+         */
         void scheduleNextElection(final TimeValue gracePeriod, final Runnable scheduledRunnable) {
             if (isClosed.get()) {
                 logger.debug("{} not scheduling election", this);
@@ -165,6 +181,7 @@ public class ElectionSchedulerFactory {
                         logger.debug("{} not starting election", this);
                     } else {
                         logger.debug("{} starting election", this);
+                        // 先开启下一次定时 同时执行本次任务
                         scheduleNextElection(duration, scheduledRunnable);
                         scheduledRunnable.run();
                     }

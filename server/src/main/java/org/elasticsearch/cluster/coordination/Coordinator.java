@@ -134,19 +134,54 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     private final AllocationService allocationService;
 
     /**
-     * 该对象负责管理请求加入到集群的节点
+     * 该对象负责处理加入集群的逻辑
      */
     private final JoinHelper joinHelper;
+    /**
+     * 处理节点从集群移除的请求
+     */
     private final NodeRemovalClusterStateTaskExecutor nodeRemovalExecutor;
+
+    /**
+     * TODO 从实现类中可以看到 LUCENE???
+     */
     private final Supplier<CoordinationState.PersistedState> persistedStateSupplier;
+
+    /**
+     * 针对非master节点 采用的阻塞策略
+     */
     private final NoMasterBlockService noMasterBlockService;
     final Object mutex = new Object(); // package-private to allow tests to call methods that assert that the mutex is held
+
+    /**
+     * 当前节点的协调状态
+     */
     private final SetOnce<CoordinationState> coordinationState = new SetOnce<>(); // initialized on start-up (see doStart)
+
+    /**
+     * 当前集群状态
+     */
     private volatile ClusterState applierState; // the state that should be exposed to the cluster state applier
 
+    /**
+     * 什么玩意???  可以往其他节点发请求 其他节点会将集群此时所有已知的节点地址返回
+     */
     private final PeerFinder peerFinder;
+
+    /**
+     * 该对象负责往目标节点发送preVote请求
+     */
     private final PreVoteCollector preVoteCollector;
+
+    /**
+     * 生成选举的浮动时间
+     */
     private final Random random;
+
+    /**
+     * 该对象提供了创建选举触发器实例的逻辑
+     * 每经过多少时间 就要在集群内发起一次新的选举
+     */
     private final ElectionSchedulerFactory electionSchedulerFactory;
     private final SeedHostsResolver configuredHostsResolver;
     private final TimeValue publishTimeout;

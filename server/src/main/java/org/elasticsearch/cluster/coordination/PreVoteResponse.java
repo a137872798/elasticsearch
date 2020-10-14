@@ -26,6 +26,9 @@ import org.elasticsearch.transport.TransportResponse;
 import java.io.IOException;
 import java.util.Objects;
 
+/**
+ * 当接收到预投票请求时返回的结果
+ */
 public class PreVoteResponse extends TransportResponse {
     private final long currentTerm;
     private final long lastAcceptedTerm;

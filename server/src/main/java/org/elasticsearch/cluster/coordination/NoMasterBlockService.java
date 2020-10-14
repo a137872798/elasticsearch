@@ -28,8 +28,17 @@ import org.elasticsearch.rest.RestStatus;
 
 import java.util.EnumSet;
 
+/**
+ * 由于不是master节点 导致某些操作被阻塞
+ */
 public class NoMasterBlockService {
+
+    /**
+     * 非master节点的blockId 都是2
+     */
     public static final int NO_MASTER_BLOCK_ID = 2;
+
+    // 代表2种阻塞类型
     public static final ClusterBlock NO_MASTER_BLOCK_WRITES = new ClusterBlock(NO_MASTER_BLOCK_ID, "no master", true, false, false,
         RestStatus.SERVICE_UNAVAILABLE, EnumSet.of(ClusterBlockLevel.WRITE, ClusterBlockLevel.METADATA_WRITE));
     public static final ClusterBlock NO_MASTER_BLOCK_ALL = new ClusterBlock(NO_MASTER_BLOCK_ID, "no master", true, true, false,
@@ -39,10 +48,15 @@ public class NoMasterBlockService {
         new Setting<>("cluster.no_master_block", "write", NoMasterBlockService::parseNoMasterBlock,
             Property.Dynamic, Property.NodeScope);
 
+
+    /**
+     * 当前节点不是master时 会阻塞哪些操作
+     */
     private volatile ClusterBlock noMasterBlock;
 
     public NoMasterBlockService(Settings settings, ClusterSettings clusterSettings) {
         this.noMasterBlock = NO_MASTER_BLOCK_SETTING.get(settings);
+        // 监听配置的变化
         clusterSettings.addSettingsUpdateConsumer(NO_MASTER_BLOCK_SETTING, this::setNoMasterBlock);
     }
 

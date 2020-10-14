@@ -52,6 +52,9 @@ import java.util.stream.Collectors;
 
 import static java.util.Collections.emptyList;
 
+/**
+ * 该对象可以发现集群中的其他节点
+ */
 public abstract class PeerFinder {
 
     private static final Logger logger = LogManager.getLogger(PeerFinder.class);
@@ -67,18 +70,45 @@ public abstract class PeerFinder {
         Setting.timeSetting("discovery.request_peers_timeout",
             TimeValue.timeValueMillis(3000), TimeValue.timeValueMillis(1), Setting.Property.NodeScope);
 
+    /**
+     * 每隔多少时间查询一次其他节点  算是心跳么???
+     */
     private final TimeValue findPeersInterval;
     private final TimeValue requestPeersTimeout;
 
     private final Object mutex = new Object();
     private final TransportService transportService;
+
+    /**
+     * 该节点单独将连接到 master节点的逻辑抽取出来
+     */
     private final TransportAddressConnector transportAddressConnector;
+
+    /**
+     * 解析域名对象
+     */
     private final ConfiguredHostsResolver configuredHostsResolver;
 
     private volatile long currentTerm;
+
+    /**
+     * 应该是代表此时该节点不需要被集群发现
+     */
     private boolean active;
+
+    /**
+     * 最近一次发送Peers请求返回过来的集群中存在的节点
+     */
     private DiscoveryNodes lastAcceptedNodes;
+
+    /**
+     * 集群中其他节点都被包装成 Peer
+     */
     private final Map<TransportAddress, Peer> peersByAddress = new LinkedHashMap<>();
+
+    /**
+     * 集群中的 master节点
+     */
     private Optional<DiscoveryNode> leader = Optional.empty();
     private volatile List<TransportAddress> lastResolvedAddresses = emptyList();
 
@@ -90,11 +120,15 @@ public abstract class PeerFinder {
         this.transportAddressConnector = transportAddressConnector;
         this.configuredHostsResolver = configuredHostsResolver;
 
+        // 注册请求获取其他节点的处理器   当收到 peer请求时 将此时 peersByAddress 存储的所有节点作为结果返回
         transportService.registerRequestHandler(REQUEST_PEERS_ACTION_NAME, Names.GENERIC, false, false,
             PeersRequest::new,
             (request, channel, task) -> channel.sendResponse(handlePeersRequest(request)));
     }
 
+    /**
+     * 将一组节点激活
+     */
     public void activate(final DiscoveryNodes lastAcceptedNodes) {
         logger.trace("activating with {}", lastAcceptedNodes);
 
@@ -103,6 +137,7 @@ public abstract class PeerFinder {
             active = true;
             this.lastAcceptedNodes = lastAcceptedNodes;
             leader = Optional.empty();
+            // 与此时集群中其他节点建立连接
             handleWakeUp(); // return value discarded: there are no known peers, so none can be disconnected
         }
 
@@ -135,18 +170,29 @@ public abstract class PeerFinder {
         return true;
     }
 
+    /**
+     * 处理一个获取其他节点信息的请求对象
+     * @param peersRequest
+     * @return
+     */
     PeersResponse handlePeersRequest(PeersRequest peersRequest) {
         synchronized (mutex) {
             assert peersRequest.getSourceNode().equals(getLocalNode()) == false;
             final List<DiscoveryNode> knownPeers;
             if (active) {
                 assert leader.isPresent() == false : leader;
+                // 如果发起请求的是一个主节点 那么开始探测
                 if (peersRequest.getSourceNode().isMasterNode()) {
+                    // 这里就是将 地址包装成 Peer对象 并存储到容器中
                     startProbe(peersRequest.getSourceNode().getAddress());
                 }
+                // 集群中其他的节点信息 也存储到容器中
                 peersRequest.getKnownPeers().stream().map(DiscoveryNode::getAddress).forEach(this::startProbe);
+
+                // 将此时已知的集群中所有节点返回
                 knownPeers = getFoundPeersUnderLock();
             } else {
+                // 如果当前节点处于失活状态 返回一个空列表
                 assert leader.isPresent() || lastAcceptedNodes == null;
                 knownPeers = emptyList();
             }
@@ -224,6 +270,11 @@ public abstract class PeerFinder {
             .map(Peer::getDiscoveryNode).filter(Objects::nonNull).distinct().collect(Collectors.toList());
     }
 
+    /**
+     * 将某个节点对应的地址 包装成 peer对象  并建立连接
+     * @param transportAddress
+     * @return
+     */
     private Peer createConnectingPeer(TransportAddress transportAddress) {
         Peer peer = new Peer(transportAddress);
         peer.establishConnection();
@@ -231,6 +282,7 @@ public abstract class PeerFinder {
     }
 
     /**
+     * 与
      * @return whether any peers were removed due to disconnection
      */
     private boolean handleWakeUp() {
@@ -287,6 +339,10 @@ public abstract class PeerFinder {
         return peersRemoved;
     }
 
+    /**
+     * 开始探测
+     * @param transportAddress  发起 peersRequest的节点
+     */
     protected void startProbe(TransportAddress transportAddress) {
         assert holdsLock() : "PeerFinder mutex not held";
         if (active == false) {
@@ -299,12 +355,24 @@ public abstract class PeerFinder {
             return;
         }
 
+        // 将source节点包装成 Peer对象并存储
         peersByAddress.computeIfAbsent(transportAddress, this::createConnectingPeer);
     }
 
+    /**
+     * 代表集群中某个节点
+     */
     private class Peer {
         private final TransportAddress transportAddress;
+
+        /**
+         * 这个节点只会设置master节点
+         */
         private SetOnce<DiscoveryNode> discoveryNode = new SetOnce<>();
+
+        /**
+         * 代表该对象正向 discoveryNode 发送peer请求
+         */
         private volatile boolean peersRequestInFlight;
 
         Peer(TransportAddress transportAddress) {
@@ -316,9 +384,14 @@ public abstract class PeerFinder {
             return discoveryNode.get();
         }
 
+        /**
+         * 与目标节点建立连接
+         * @return
+         */
         boolean handleWakeUp() {
             assert holdsLock() : "PeerFinder mutex not held";
 
+            // 当前节点处于失活状态也返回true 但是不进行连接
             if (active == false) {
                 return true;
             }
@@ -340,12 +413,17 @@ public abstract class PeerFinder {
             return false;
         }
 
+        /**
+         * 建立与目标节点的连接
+         */
         void establishConnection() {
             assert holdsLock() : "PeerFinder mutex not held";
             assert getDiscoveryNode() == null : "unexpectedly connected to " + getDiscoveryNode();
             assert active;
 
             logger.trace("{} attempting connection", this);
+
+            // 该对象封装了连接到master的逻辑  TODO  传入的地址不一定是master地址 那么会怎么处理
             transportAddressConnector.connectToRemoteMasterNode(transportAddress, new ActionListener<DiscoveryNode>() {
                 @Override
                 public void onResponse(DiscoveryNode remoteNode) {
@@ -375,6 +453,9 @@ public abstract class PeerFinder {
             });
         }
 
+        /**
+         * 当连接到master节点时 触发
+         */
         private void requestPeers() {
             assert holdsLock() : "PeerFinder mutex not held";
             assert peersRequestInFlight == false : "PeersRequest already in flight";
@@ -391,6 +472,7 @@ public abstract class PeerFinder {
             logger.trace("{} requesting peers", this);
             peersRequestInFlight = true;
 
+            // 此时已知的集群中的节点
             final List<DiscoveryNode> knownNodes = getFoundPeersUnderLock();
 
             final TransportResponseHandler<PeersResponse> peersResponseHandler = new TransportResponseHandler<PeersResponse>() {
@@ -410,6 +492,7 @@ public abstract class PeerFinder {
 
                         peersRequestInFlight = false;
 
+                        // 这里又在探测???
                         response.getMasterNode().map(DiscoveryNode::getAddress).ifPresent(PeerFinder.this::startProbe);
                         response.getKnownPeers().stream().map(DiscoveryNode::getAddress).forEach(PeerFinder.this::startProbe);
                     }
@@ -432,6 +515,8 @@ public abstract class PeerFinder {
                     return Names.GENERIC;
                 }
             };
+
+            // 向master节点发送 获取集群中其他节点的请求
             transportService.sendRequest(discoveryNode, REQUEST_PEERS_ACTION_NAME,
                 new PeersRequest(getLocalNode(), knownNodes),
                 TransportRequestOptions.builder().withTimeout(requestPeersTimeout).build(),
