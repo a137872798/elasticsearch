@@ -78,6 +78,10 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
     private final SetOnce<ExecutorService> executorService = new SetOnce<>();
     private final TimeValue resolveTimeout;
     private final String nodeName;
+
+    /**
+     * 可以并发解析么
+     */
     private final int concurrentConnects;
 
     /**
@@ -103,6 +107,11 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
         return DISCOVERY_SEED_RESOLVER_TIMEOUT_SETTING.get(settings);
     }
 
+    /**
+     * 将一组格式化地址 转换成 TransportAddress  这些地址不包含当前服务器已经绑定的地址
+     * @param hosts
+     * @return
+     */
     @Override
     public List<TransportAddress> resolveHosts(final List<String> hosts) {
         Objects.requireNonNull(hosts);
@@ -110,6 +119,7 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
             throw new IllegalArgumentException("resolve timeout must be non-negative but was [" + resolveTimeout + "]");
         }
         // create tasks to submit to the executor service; we will wait up to resolveTimeout for these tasks to complete
+        // 这里包装成回调函数 实际上还没有进行解析
         final List<Callable<TransportAddress[]>> callables =
             hosts
                 .stream()
@@ -117,6 +127,7 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
                 .collect(Collectors.toList());
         final SetOnce<List<Future<TransportAddress[]>>> futures = new SetOnce<>();
         try {
+            // 并发执行解析
             cancellableThreads.execute(() ->
                 futures.set(executorService.get().invokeAll(callables, resolveTimeout.nanos(), TimeUnit.NANOSECONDS)));
         } catch (CancellableThreads.ExecutionCancelledException e) {
@@ -124,6 +135,8 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
         }
         final List<TransportAddress> transportAddresses = new ArrayList<>();
         final Set<TransportAddress> localAddresses = new HashSet<>();
+
+        // 将当前服务器绑定的所有地址设置到list中
         localAddresses.add(transportService.boundAddress().publishAddress());
         localAddresses.addAll(Arrays.asList(transportService.boundAddress().boundAddresses()));
         // ExecutorService#invokeAll guarantees that the futures are returned in the iteration order of the tasks so we can associate the
@@ -131,14 +144,17 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
         final Iterator<String> it = hosts.iterator();
         for (final Future<TransportAddress[]> future : futures.get()) {
             assert future.isDone();
+            // 原始的 格式化字符串
             final String hostname = it.next();
             if (!future.isCancelled()) {
                 try {
+                    // 对应解析出来的结果
                     final TransportAddress[] addresses = future.get();
                     logger.trace("resolved host [{}] to {}", hostname, addresses);
                     for (int addressId = 0; addressId < addresses.length; addressId++) {
                         final TransportAddress address = addresses[addressId];
                         // no point in pinging ourselves
+                        // 只添加还未出现的地址
                         if (localAddresses.contains(address) == false) {
                             transportAddresses.add(address);
                         }
@@ -158,6 +174,9 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
         return Collections.unmodifiableList(transportAddresses);
     }
 
+    /**
+     * 当该组件启动时先触发该方法  就是设置线程池对象
+     */
     @Override
     protected void doStart() {
         logger.debug("using max_concurrent_resolvers [{}], resolver timeout [{}]", concurrentConnects, resolveTimeout);
@@ -168,6 +187,7 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
 
     @Override
     protected void doStop() {
+        // 关闭正在解析的线程
         cancellableThreads.cancel("stopping SeedHostsResolver");
         ThreadPool.terminate(executorService.get(), 10, TimeUnit.SECONDS);
     }
@@ -176,6 +196,9 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
     protected void doClose() {
     }
 
+    /**
+     * @param consumer Consumer for the resolved list. May not be called if an error occurs or if another resolution attempt is in
+     */
     @Override
     public void resolveConfiguredHosts(Consumer<List<TransportAddress>> consumer) {
         if (lifecycle.started() == false) {
@@ -197,6 +220,7 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
                         return;
                     }
 
+                    // 该对象传入一个 Resolver 会解析出一组地址 并用consumer 处理这组地址
                     List<TransportAddress> providedAddresses = hostsProvider.getSeedAddresses(SeedHostsResolver.this);
 
                     consumer.accept(providedAddresses);

@@ -28,6 +28,7 @@ public interface Diff<T> extends Writeable {
 
     /**
      * Applies difference to the specified part and returns the resulted part
+     * 将之前的数据 拼上不同的部分 还原出此时最新的数据
      */
     T apply(T part);
 }

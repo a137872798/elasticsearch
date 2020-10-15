@@ -112,6 +112,9 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
     private final Settings settings;
 
+    /**
+     * 代表集群中只有一个节点
+     */
     private final boolean singleNodeDiscovery;
     /**
      * 使用的选举策略
@@ -154,7 +157,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     final Object mutex = new Object(); // package-private to allow tests to call methods that assert that the mutex is held
 
     /**
-     * 当前节点的协调状态
+     * 内部存储了当前节点 选举策略 以及持久化状态
      */
     private final SetOnce<CoordinationState> coordinationState = new SetOnce<>(); // initialized on start-up (see doStart)
 
@@ -183,12 +186,32 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
      * 每经过多少时间 就要在集群内发起一次新的选举
      */
     private final ElectionSchedulerFactory electionSchedulerFactory;
+
+    /**
+     * 主机地址解析器
+     */
     private final SeedHostsResolver configuredHostsResolver;
     private final TimeValue publishTimeout;
     private final TimeValue publishInfoTimeout;
+
+    /**
+     * 该对象处理有关发布/提交的请求
+     */
     private final PublicationTransportHandler publicationHandler;
+
+    /**
+     * 该对象检查当前节点是否还是leader 节点
+     */
     private final LeaderChecker leaderChecker;
+
+    /**
+     * 定期检查 follower对象
+     */
     private final FollowersChecker followersChecker;
+
+    /**
+     * 该对象会感知集群的状态变化
+     */
     private final ClusterApplier clusterApplier;
     private final Collection<BiConsumer<DiscoveryNode, ClusterState>> onJoinValidators;
     @Nullable
@@ -196,20 +219,40 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     @Nullable
     private Releasable prevotingRound;
     private long maxTermSeen;
+
+    /**
+     * 这个是更新配置对象么
+     */
     private final Reconfigurator reconfigurator;
+
+    /**
+     * 集群引导服务
+     */
     private final ClusterBootstrapService clusterBootstrapService;
+
+    /**
+     * 滞后探测器
+     */
     private final LagDetector lagDetector;
+    /**
+     * 将失败信息格式化
+     */
     private final ClusterFormationFailureHelper clusterFormationFailureHelper;
 
     private Mode mode;
     private Optional<DiscoveryNode> lastKnownLeader;
     private Optional<Join> lastJoin;
+
+    /**
+     * 该对象在初始化时对应 InitialJoinAccumulator 此时拒绝任何join请求
+     */
     private JoinHelper.JoinAccumulator joinAccumulator;
     private Optional<CoordinatorPublication> currentPublication = Optional.empty();
 
     /**
      * @param nodeName The name of the node, used to name the {@link java.util.concurrent.ExecutorService} of the {@link SeedHostsResolver}.
      * @param onJoinValidators A collection of join validators to restrict which nodes may join the cluster.
+     *                         在构造函数中只是做了一些赋值操作
      */
     public Coordinator(String nodeName, Settings settings, ClusterSettings clusterSettings, TransportService transportService,
                        NamedWriteableRegistry namedWriteableRegistry, AllocationService allocationService, MasterService masterService,
@@ -220,9 +263,14 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         this.transportService = transportService;
         this.masterService = masterService;
         this.allocationService = allocationService;
+        // 追加2个检测版本是否兼容的钩子
         this.onJoinValidators = JoinTaskExecutor.addBuiltInJoinValidators(onJoinValidators);
+
+        // 代表集群中只有一个节点
         this.singleNodeDiscovery = DiscoveryModule.isSingleNodeDiscovery(settings);
         this.electionStrategy = electionStrategy;
+
+        // 生成处理join流程相关的组件
         this.joinHelper = new JoinHelper(settings, allocationService, masterService, transportService,
             this::getCurrentTerm, this::getStateForMasterService, this::handleJoinRequest, this::joinLeaderInTerm, this.onJoinValidators,
             rerouteService);
@@ -713,18 +761,36 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         }
     }
 
+    /**
+     * 整个中枢对象 通过该函数启动
+     */
     @Override
     protected void doStart() {
+        // 确保单线程执行
         synchronized (mutex) {
+            // 应该是获取之前有关集群信息的持久化数据
             CoordinationState.PersistedState persistedState = persistedStateSupplier.get();
+            // TODO 有没有可能多个节点的选举策略不一样
             coordinationState.set(new CoordinationState(getLocalNode(), persistedState, electionStrategy));
+
+            // 从持久化数据中获取当前任期
             peerFinder.setCurrentTerm(getCurrentTerm());
+
+            // 初始化地址解析对象内部的线程池
             configuredHostsResolver.start();
+
+            // 获取之前持久化的最近一次集群数据  (每次某个节点重启时肯定是根据之前持久化的数据尝试恢复)
             final ClusterState lastAcceptedState = coordinationState.get().getLastAcceptedState();
+
+            // TODO
             if (lastAcceptedState.metadata().clusterUUIDCommitted()) {
                 logger.info("cluster UUID [{}]", lastAcceptedState.metadata().clusterUUID());
             }
+
+            // 获取持久化数据中 描述最后一次选举的相关配置  也就是本次选举有多少节点参与
             final VotingConfiguration votingConfiguration = lastAcceptedState.getLastCommittedConfiguration();
+
+            // 在单节点集群下 如果votingConfiguration.nodeIds >=2 那么无法完成选举动作 处于异常状态
             if (singleNodeDiscovery &&
                 votingConfiguration.isEmpty() == false &&
                 votingConfiguration.hasQuorum(Collections.singleton(getLocalNode().getId())) == false) {

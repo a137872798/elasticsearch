@@ -27,6 +27,7 @@ import java.io.IOException;
 /**
  * Response to a {@link PublishRequest}, carrying the term and version of the request.
  * Typically wrapped in a {@link PublishWithJoinResponse}.
+ * 代表一个发布的结果
  */
 public class PublishResponse implements Writeable {
 

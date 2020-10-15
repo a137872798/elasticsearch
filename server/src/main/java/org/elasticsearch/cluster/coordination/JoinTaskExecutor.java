@@ -322,6 +322,7 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
      *
      * @throws IllegalStateException if any index is incompatible with the given version
      * @see Version#minimumIndexCompatibilityVersion()
+     * 检测索引是否兼容   主要就是看lucene的版本
      */
     public static void ensureIndexCompatibility(final Version nodeVersion, Metadata metadata) {
         Version supportedIndexVersion = nodeVersion.minimumIndexCompatibilityVersion();
@@ -341,6 +342,7 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
 
     /**
      * ensures that the joining node has a version that's compatible with all current nodes
+     * 主要是确保join的节点与当前节点的版本兼容
      */
     public static void ensureNodesCompatibility(final Version joiningNodeVersion, DiscoveryNodes currentNodes) {
         final Version minNodeVersion = currentNodes.getMinNodeVersion();
@@ -376,6 +378,11 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         }
     }
 
+    /**
+     * 在基础上追加2个校验器
+     * @param onJoinValidators
+     * @return
+     */
     public static Collection<BiConsumer<DiscoveryNode, ClusterState>> addBuiltInJoinValidators(
         Collection<BiConsumer<DiscoveryNode, ClusterState>> onJoinValidators) {
         final Collection<BiConsumer<DiscoveryNode, ClusterState>> validators = new ArrayList<>();

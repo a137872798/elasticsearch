@@ -187,6 +187,7 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
 
     /**
      * Returns a stream of all nodes, with master nodes at the front
+     * 将master节点排在其他节点前面 并返回
      */
     public Stream<DiscoveryNode> mastersFirstStream() {
         return Stream.concat(StreamSupport.stream(masterNodes.spliterator(), false).map(cur -> cur.value),

@@ -26,6 +26,9 @@ import org.elasticsearch.transport.TransportRequest;
 
 import java.io.IOException;
 
+/**
+ * 该请求会携带source节点的 term/version
+ */
 abstract class TermVersionRequest extends TransportRequest implements Writeable {
     protected final DiscoveryNode sourceNode;
     protected final long term;

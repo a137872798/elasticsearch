@@ -51,9 +51,16 @@ public class ClusterFormationFailureHelper {
         Setting.timeSetting("discovery.cluster_formation_warning_timeout",
             TimeValue.timeValueMillis(10000), TimeValue.timeValueMillis(1), Setting.Property.NodeScope);
 
+    /**
+     * 生成格式化输出的日志信息
+     */
     private final Supplier<ClusterFormationState> clusterFormationStateSupplier;
     private final ThreadPool threadPool;
     private final TimeValue clusterFormationWarningTimeout;
+
+    /**
+     * 定期执行该函数
+     */
     private final Runnable logLastFailedJoinAttempt;
     @Nullable // if no warning is scheduled
     private volatile WarningScheduler warningScheduler;
@@ -72,6 +79,7 @@ public class ClusterFormationFailureHelper {
 
     public void start() {
         assert warningScheduler == null;
+        // 启动警告对象
         warningScheduler = new WarningScheduler();
         warningScheduler.scheduleNextWarning();
     }
@@ -116,6 +124,9 @@ public class ClusterFormationFailureHelper {
         }
     }
 
+    /**
+     * 内部信息每隔一段时间将会输出
+     */
     static class ClusterFormationState {
         private final Settings settings;
         private final ClusterState clusterState;

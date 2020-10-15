@@ -57,6 +57,9 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
+/**
+ * 有关发布操作的传输层处理器
+ */
 public class PublicationTransportHandler {
 
     private static final Logger logger = LogManager.getLogger(PublicationTransportHandler.class);
@@ -64,10 +67,23 @@ public class PublicationTransportHandler {
     public static final String PUBLISH_STATE_ACTION_NAME = "internal:cluster/coordination/publish_state";
     public static final String COMMIT_STATE_ACTION_NAME = "internal:cluster/coordination/commit_state";
 
+    /**
+     * 传输层服务对象
+     */
     private final TransportService transportService;
+    /**
+     * 该对象注册了 某些class 通过什么reader对象可以解析数据 反序列化
+     */
     private final NamedWriteableRegistry namedWriteableRegistry;
+
+    /**
+     * 该对象会根据 发布请求生成对应的响应结果
+     */
     private final Function<PublishRequest, PublishWithJoinResponse> handlePublishRequest;
 
+    /**
+     * 记录最后一次看到的集群状态
+     */
     private AtomicReference<ClusterState> lastSeenClusterState = new AtomicReference<>();
 
     // the master needs the original non-serialized state as the cluster state contains some volatile information that we
@@ -75,16 +91,33 @@ public class PublicationTransportHandler {
     // because it's mostly just debugging info that would unnecessarily blow up CS updates (I think there was one in
     // snapshot code).
     // TODO: look into these and check how to get rid of them
+    // 当某个节点将发布请求发送给自己时 设置这个变量  只要收到结果 就将该值置空 记得请求发往本节点时 走的是 DirectChannel
     private AtomicReference<PublishRequest> currentPublishRequestToSelf = new AtomicReference<>();
 
+    /**
+     * 收到了几次集群状态
+     */
     private final AtomicLong fullClusterStateReceivedCount = new AtomicLong();
+    /**
+     * 收到几次不兼容的集群状态
+     */
     private final AtomicLong incompatibleClusterStateDiffReceivedCount = new AtomicLong();
+    /**
+     * 几次兼容的集群状态
+     */
     private final AtomicLong compatibleClusterStateDiffReceivedCount = new AtomicLong();
     // -> no need to put a timeout on the options here, because we want the response to eventually be received
     //  and not log an error if it arrives after the timeout
     private final TransportRequestOptions stateRequestOptions = TransportRequestOptions.builder()
         .withType(TransportRequestOptions.Type.STATE).build();
 
+    /**
+     *
+     * @param transportService
+     * @param namedWriteableRegistry
+     * @param handlePublishRequest
+     * @param handleApplyCommit  该对象处理commit请求
+     */
     public PublicationTransportHandler(TransportService transportService, NamedWriteableRegistry namedWriteableRegistry,
                                        Function<PublishRequest, PublishWithJoinResponse> handlePublishRequest,
                                        BiConsumer<ApplyCommitRequest, ActionListener<Void>> handleApplyCommit) {
@@ -92,6 +125,7 @@ public class PublicationTransportHandler {
         this.namedWriteableRegistry = namedWriteableRegistry;
         this.handlePublishRequest = handlePublishRequest;
 
+        // 注册有关 发布和提交的请求处理器
         transportService.registerRequestHandler(PUBLISH_STATE_ACTION_NAME, ThreadPool.Names.GENERIC, false, false,
             BytesTransportRequest::new, (request, channel, task) -> channel.sendResponse(handleIncomingPublishRequest(request)));
 
@@ -100,6 +134,11 @@ public class PublicationTransportHandler {
             (request, channel, task) -> handleApplyCommit.accept(request, transportCommitCallback(channel)));
     }
 
+    /**
+     * 生成一个虚拟的监听器 实际逻辑通过转发给channel对象
+     * @param channel
+     * @return
+     */
     private ActionListener<Void> transportCommitCallback(TransportChannel channel) {
         return new ActionListener<Void>() {
 
@@ -141,10 +180,19 @@ public class PublicationTransportHandler {
 
     }
 
+
+    /**
+     * 当获取到一个集群的变化事件时
+     * @param clusterChangedEvent
+     * @return
+     */
     public PublicationContext newPublicationContext(ClusterChangedEvent clusterChangedEvent) {
+
+        // 此时集群中的所有节点
         final DiscoveryNodes nodes = clusterChangedEvent.state().nodes();
         final ClusterState newState = clusterChangedEvent.state();
         final ClusterState previousState = clusterChangedEvent.previousState();
+        // TODO 先前描述阻塞相关的信息中 只要有一个 不能将状态持久化 就要将不同版本对应的集群数据都写入
         final boolean sendFullVersion = clusterChangedEvent.previousState().getBlocks().disableStatePersistence();
         final Map<Version, BytesReference> serializedStates = new HashMap<>();
         final Map<Version, BytesReference> serializedDiffs = new HashMap<>();
@@ -157,12 +205,21 @@ public class PublicationTransportHandler {
             nodes, sendFullVersion, serializedStates, serializedDiffs);
 
         return new PublicationContext() {
+
+            /**
+             * 将发布请求发往某个node
+             * @param destination
+             * @param publishRequest
+             * @param originalListener
+             */
             @Override
             public void sendPublishRequest(DiscoveryNode destination, PublishRequest publishRequest,
                                            ActionListener<PublishWithJoinResponse> originalListener) {
                 assert publishRequest.getAcceptedState() == clusterChangedEvent.state() : "state got switched on us";
                 assert transportService.getThreadPool().getThreadContext().isSystemContext();
                 final ActionListener<PublishWithJoinResponse> responseActionListener;
+
+                // TODO 为什么可以发布给自己啊 卧槽
                 if (destination.equals(nodes.getLocalNode())) {
                     // if publishing to self, use original request instead (see currentPublishRequestToSelf for explanation)
                     final PublishRequest previousRequest = currentPublishRequestToSelf.getAndSet(publishRequest);
@@ -170,6 +227,11 @@ public class PublicationTransportHandler {
                     // and the new publication started before the previous one completed (which fails anyhow because of higher current term)
                     assert previousRequest == null || previousRequest.getAcceptedState().term() < publishRequest.getAcceptedState().term();
                     responseActionListener = new ActionListener<PublishWithJoinResponse>() {
+
+                        /**
+                         * 收到响应结果时 将currentPublishRequestToSelf置空
+                         * @param publishWithJoinResponse
+                         */
                         @Override
                         public void onResponse(PublishWithJoinResponse publishWithJoinResponse) {
                             currentPublishRequestToSelf.compareAndSet(publishRequest, null); // only clean-up our mess
@@ -185,6 +247,7 @@ public class PublicationTransportHandler {
                 } else {
                     responseActionListener = originalListener;
                 }
+                // 如果本次要求发送全版本数据 或者发往一个新节点 都只能发送全量数据
                 if (sendFullVersion || !previousState.nodes().nodeExists(destination)) {
                     logger.trace("sending full cluster state version {} to {}", newState.version(), destination);
                     PublicationTransportHandler.this.sendFullClusterState(newState, serializedStates, destination, responseActionListener);
@@ -195,6 +258,12 @@ public class PublicationTransportHandler {
                 }
             }
 
+            /**
+             * 提交跟发布啥关系
+             * @param destination
+             * @param applyCommitRequest
+             * @param responseActionListener
+             */
             @Override
             public void sendApplyCommit(DiscoveryNode destination, ApplyCommitRequest applyCommitRequest,
                                         ActionListener<TransportResponse.Empty> responseActionListener) {
@@ -226,12 +295,22 @@ public class PublicationTransportHandler {
         };
     }
 
+    /**
+     * 通过传输层将请求 发往目标节点
+     * @param clusterState
+     * @param bytes
+     * @param node
+     * @param responseActionListener
+     * @param sendDiffs
+     * @param serializedStates
+     */
     private void sendClusterStateToNode(ClusterState clusterState, BytesReference bytes, DiscoveryNode node,
                                         ActionListener<PublishWithJoinResponse> responseActionListener, boolean sendDiffs,
                                         Map<Version, BytesReference> serializedStates) {
         try {
             final BytesTransportRequest request = new BytesTransportRequest(bytes, node.getVersion());
             final Consumer<TransportException> transportExceptionHandler = exp -> {
+                // 当尝试发送部分数据失败时 选择发送全量数据
                 if (sendDiffs && exp.unwrapCause() instanceof IncompatibleClusterStateVersionException) {
                     logger.debug("resending full cluster state to node {} reason {}", node, exp.getDetailedMessage());
                     sendFullClusterState(clusterState, serializedStates, node, responseActionListener);
@@ -270,13 +349,25 @@ public class PublicationTransportHandler {
         }
     }
 
+    /**
+     *
+     * @param clusterState
+     * @param previousState
+     * @param discoveryNodes
+     * @param sendFullVersion   存在多少个版本的node 就要生成多少数据流
+     * @param serializedStates   每个版本对应的clusterState都是全量数据
+     * @param serializedDiffs   每个版本对应的clusterState都是增量数据
+     */
     private static void buildDiffAndSerializeStates(ClusterState clusterState, ClusterState previousState, DiscoveryNodes discoveryNodes,
                                                     boolean sendFullVersion, Map<Version, BytesReference> serializedStates,
                                                     Map<Version, BytesReference> serializedDiffs) {
         Diff<ClusterState> diff = null;
+        // 遍历此时集群中所有的节点
         for (DiscoveryNode node : discoveryNodes) {
             try {
+                // 如果发送所有版本 就要检查所有node.version   否则就是只检查新增节点的版本
                 if (sendFullVersion || !previousState.nodes().nodeExists(node)) {
+                    // 发现了之前没使用过的版本 加入数据
                     if (serializedStates.containsKey(node.getVersion()) == false) {
                         serializedStates.put(node.getVersion(), serializeFullClusterState(clusterState, node.getVersion()));
                     }
@@ -285,6 +376,7 @@ public class PublicationTransportHandler {
                     if (diff == null) {
                         diff = clusterState.diff(previousState);
                     }
+                    // 真的之前就存在的node 只写入增量数据
                     if (serializedDiffs.containsKey(node.getVersion()) == false) {
                         serializedDiffs.put(node.getVersion(), serializeDiffClusterState(diff, node.getVersion()));
                     }
@@ -295,6 +387,13 @@ public class PublicationTransportHandler {
         }
     }
 
+    /**
+     * 通过传输层将结果发往目标节点
+     * @param clusterState
+     * @param serializedStates
+     * @param node
+     * @param responseActionListener
+     */
     private void sendFullClusterState(ClusterState clusterState, Map<Version, BytesReference> serializedStates,
                                       DiscoveryNode node, ActionListener<PublishWithJoinResponse> responseActionListener) {
         BytesReference bytes = serializedStates.get(node.getVersion());
@@ -319,6 +418,14 @@ public class PublicationTransportHandler {
         sendClusterStateToNode(clusterState, bytes, node, responseActionListener, true, serializedStates);
     }
 
+
+    /**
+     * 将集群状态 以及版本号信息写入到一个数据流中
+     * @param clusterState
+     * @param nodeVersion
+     * @return
+     * @throws IOException
+     */
     public static BytesReference serializeFullClusterState(ClusterState clusterState, Version nodeVersion) throws IOException {
         final BytesStreamOutput bStream = new BytesStreamOutput();
         try (StreamOutput stream = CompressorFactory.COMPRESSOR.streamOutput(bStream)) {
@@ -339,7 +446,14 @@ public class PublicationTransportHandler {
         return bStream.bytes();
     }
 
+    /**
+     * 处理发布请求
+     * @param request
+     * @return
+     * @throws IOException
+     */
     private PublishWithJoinResponse handleIncomingPublishRequest(BytesTransportRequest request) throws IOException {
+        // 根据数据量长度判断是否采用了压缩算法
         final Compressor compressor = CompressorFactory.compressor(request.bytes());
         StreamInput in = request.bytes().streamInput();
         try {
@@ -349,9 +463,11 @@ public class PublicationTransportHandler {
             in = new NamedWriteableAwareStreamInput(in, namedWriteableRegistry);
             in.setVersion(request.version());
             // If true we received full cluster state - otherwise diffs
+            // 如果是true 代表接收到的是全量数据
             if (in.readBoolean()) {
                 final ClusterState incomingState;
                 try {
+                    // 通过数据流还原整个集群状态   因为集群状态本身是一个大对象 所以通常会采用压缩算法
                     incomingState = ClusterState.readFrom(in, transportService.getLocalNode());
                 } catch (Exception e){
                     logger.warn("unexpected error while deserializing an incoming cluster state", e);
@@ -360,10 +476,13 @@ public class PublicationTransportHandler {
                 fullClusterStateReceivedCount.incrementAndGet();
                 logger.debug("received full cluster state version [{}] with size [{}]", incomingState.version(),
                     request.bytes().length());
+
+                // 根据接收到的集群状态 生成res对象
                 final PublishWithJoinResponse response = acceptState(incomingState);
                 lastSeenClusterState.set(incomingState);
                 return response;
             } else {
+                // 根据最近一次获取的集群状态对象 配合增量数据 得到最终结果
                 final ClusterState lastSeen = lastSeenClusterState.get();
                 if (lastSeen == null) {
                     logger.debug("received diff for but don't have any local cluster state - requesting full state");
@@ -372,6 +491,7 @@ public class PublicationTransportHandler {
                 } else {
                     ClusterState incomingState;
                     try {
+                        // 获取变化的数据
                         Diff<ClusterState> diff = ClusterState.readDiffFrom(in, lastSeen.nodes().getLocalNode());
                         incomingState = diff.apply(lastSeen); // might throw IncompatibleClusterStateVersionException
                     } catch (IncompatibleClusterStateVersionException e) {
@@ -384,6 +504,7 @@ public class PublicationTransportHandler {
                     compatibleClusterStateDiffReceivedCount.incrementAndGet();
                     logger.debug("received diff cluster state version [{}] with uuid [{}], diff size [{}]",
                         incomingState.version(), incomingState.stateUUID(), request.bytes().length());
+                    // 同样通过 handlePublishRequest 生成结果
                     final PublishWithJoinResponse response = acceptState(incomingState);
                     lastSeenClusterState.compareAndSet(lastSeen, incomingState);
                     return response;
@@ -394,9 +515,16 @@ public class PublicationTransportHandler {
         }
     }
 
+    /**
+     * 接收到某个集群状态后 生成结果对象
+     * @param incomingState
+     * @return
+     */
     private PublishWithJoinResponse acceptState(ClusterState incomingState) {
         // if the state is coming from the current node, use original request instead (see currentPublishRequestToSelf for explanation)
+        // 当本节点是 master节点时   TODO 发布代表着什么
         if (transportService.getLocalNode().equals(incomingState.nodes().getMasterNode())) {
+            // TODO 发布自己的请求???
             final PublishRequest publishRequest = currentPublishRequestToSelf.get();
             if (publishRequest == null || publishRequest.getAcceptedState().stateUUID().equals(incomingState.stateUUID()) == false) {
                 throw new IllegalStateException("publication to self failed for " + publishRequest);

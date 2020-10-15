@@ -39,10 +39,16 @@ import java.util.Set;
 import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 
+/**
+ * 发布对象
+ */
 public abstract class Publication {
 
     protected final Logger logger = LogManager.getLogger(getClass());
 
+    /**
+     * 代表本次发布相关的所有目标节点
+     */
     private final List<PublicationTarget> publicationTargets;
     private final PublishRequest publishRequest;
     private final AckListener ackListener;
@@ -50,9 +56,18 @@ public abstract class Publication {
     private final long startTime;
 
     private Optional<ApplyCommitRequest> applyCommitRequest; // set when state is committed
+
+    // 代表本次发布动作完成或关闭
     private boolean isCompleted; // set when publication is completed
     private boolean cancelled; // set when publication is cancelled
 
+
+    /**
+     *
+     * @param publishRequest  该对象内部clusterState中的所有node 都是发送的目标
+     * @param ackListener
+     * @param currentTimeSupplier
+     */
     public Publication(PublishRequest publishRequest, AckListener ackListener, LongSupplier currentTimeSupplier) {
         this.publishRequest = publishRequest;
         this.ackListener = ackListener;
@@ -63,6 +78,10 @@ public abstract class Publication {
         publishRequest.getAcceptedState().getNodes().mastersFirstStream().forEach(n -> publicationTargets.add(new PublicationTarget(n)));
     }
 
+    /**
+     * 针对这组失败的节点 触发  PublicationTarget.onFaultyNode 钩子
+     * @param faultyNodes
+     */
     public void start(Set<DiscoveryNode> faultyNodes) {
         logger.trace("publishing {} to {}", publishRequest, publicationTargets);
 
@@ -73,6 +92,10 @@ public abstract class Publication {
         publicationTargets.forEach(PublicationTarget::sendPublishRequest);
     }
 
+    /**
+     * 处于某种原因关闭该对象
+     * @param reason
+     */
     public void cancel(String reason) {
         if (isCompleted) {
             return;
@@ -80,12 +103,15 @@ public abstract class Publication {
 
         assert cancelled == false;
         cancelled = true;
+        // 代表在提交请求设置前 已经被关闭
         if (applyCommitRequest.isPresent() == false) {
             logger.debug("cancel: [{}] cancelled before committing (reason: {})", this, reason);
             // fail all current publications
             final Exception e = new ElasticsearchException("publication cancelled before committing: " + reason);
+            // 找到所有target对象 都设置成失败
             publicationTargets.stream().filter(PublicationTarget::isActive).forEach(pt -> pt.setFailed(e));
         }
+        // cancel 也会触发complete
         onPossibleCompletion();
     }
 
@@ -110,6 +136,7 @@ public abstract class Publication {
             return;
         }
 
+        // 在未关闭的情况下 如果所有target都是活跃状态 无法触发completion
         if (cancelled == false) {
             for (final PublicationTarget target : publicationTargets) {
                 if (target.isActive()) {
@@ -150,6 +177,9 @@ public abstract class Publication {
         return publishRequest.getAcceptedState();
     }
 
+    /**
+     * 提交失败时触发
+     */
     private void onPossibleCommitFailure() {
         if (applyCommitRequest.isPresent()) {
             onPossibleCompletion();
@@ -206,6 +236,9 @@ public abstract class Publication {
         }
     }
 
+    /**
+     * 代表一个发布过程此时正处的阶段
+     */
     enum PublicationTargetState {
         NOT_STARTED,
         FAILED,
@@ -215,8 +248,14 @@ public abstract class Publication {
         APPLIED_COMMIT,
     }
 
+    /**
+     * 代表一个发布请求的目标节点
+     */
     class PublicationTarget {
         private final DiscoveryNode discoveryNode;
+        /**
+         * 是否正在等待ack信息中
+         */
         private boolean ackIsPending = true;
         private PublicationTargetState state = PublicationTargetState.NOT_STARTED;
 
@@ -288,6 +327,10 @@ public abstract class Publication {
             ackOnce(e);
         }
 
+        /**
+         * 将失败信息发送到目标节点上
+         * @param faultyNode
+         */
         void onFaultyNode(DiscoveryNode faultyNode) {
             if (isActive() && discoveryNode.equals(faultyNode)) {
                 logger.debug("onFaultyNode: [{}] is faulty, failing target in publication {}", faultyNode, Publication.this);
@@ -300,6 +343,10 @@ public abstract class Publication {
             return discoveryNode;
         }
 
+        /**
+         * 代表以失败方式接收到了某个回复消息
+         * @param e
+         */
         private void ackOnce(Exception e) {
             if (ackIsPending) {
                 ackIsPending = false;

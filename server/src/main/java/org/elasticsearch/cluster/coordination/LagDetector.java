@@ -43,6 +43,7 @@ import static org.elasticsearch.common.util.concurrent.ConcurrentCollections.new
  * A publication can succeed and complete before all nodes have applied the published state and acknowledged it; however we need every node
  * eventually either to apply the published state (or a later state) or be removed from the cluster. This component achieves this by
  * removing any lagging nodes from the cluster after a timeout.
+ * 该对象负责检测集群中哪些节点的数据滞后了
  */
 public class LagDetector {
 
@@ -67,10 +68,16 @@ public class LagDetector {
         this.localNodeSupplier = localNodeSupplier;
     }
 
+    /**
+     * 开始对一组node 进行追踪
+     * @param discoveryNodes
+     */
     public void setTrackedNodes(final Iterable<DiscoveryNode> discoveryNodes) {
         final Set<DiscoveryNode> discoveryNodeSet = new HashSet<>();
         discoveryNodes.forEach(discoveryNodeSet::add);
         discoveryNodeSet.remove(localNodeSupplier.get());
+
+        // 为当前集群中除了local节点外的其他节点创建 NodeAppliedStateTracker
         appliedStateTrackersByNode.keySet().retainAll(discoveryNodeSet);
         discoveryNodeSet.forEach(node -> appliedStateTrackersByNode.putIfAbsent(node, new NodeAppliedStateTracker(node)));
     }
@@ -79,6 +86,11 @@ public class LagDetector {
         appliedStateTrackersByNode.clear();
     }
 
+    /**
+     * 为 tracker对象设置version
+     * @param discoveryNode
+     * @param appliedVersion
+     */
     public void setAppliedVersion(final DiscoveryNode discoveryNode, final long appliedVersion) {
         final NodeAppliedStateTracker nodeAppliedStateTracker = appliedStateTrackersByNode.get(discoveryNode);
         if (nodeAppliedStateTracker == null) {
@@ -89,7 +101,12 @@ public class LagDetector {
         }
     }
 
+    /**
+     * 只有version小于入参的 tracker才需要检测是否发生了lag
+     * @param version
+     */
     public void startLagDetector(final long version) {
+        // 找到所有tracker中 version小于入参的
         final List<NodeAppliedStateTracker> laggingTrackers
             = appliedStateTrackersByNode.values().stream().filter(t -> t.appliedVersionLessThan(version)).collect(Collectors.toList());
 
@@ -125,6 +142,9 @@ public class LagDetector {
         return Collections.unmodifiableSet(appliedStateTrackersByNode.keySet());
     }
 
+    /**
+     * 该对象会检测 node节点是否发生了滞后
+     */
     private class NodeAppliedStateTracker {
         private final DiscoveryNode discoveryNode;
         private final AtomicLong appliedVersion = new AtomicLong();
@@ -151,6 +171,7 @@ public class LagDetector {
         }
 
         void checkForLag(final long version) {
+            // 当前对象已经过时
             if (appliedStateTrackersByNode.get(discoveryNode) != this) {
                 logger.trace("{} no longer active when checking version {}", this, version);
                 return;
@@ -162,6 +183,7 @@ public class LagDetector {
                 return;
             }
 
+            // 当前version 过低 使用onLag函数处理
             logger.warn(
                 "node [{}] is lagging at cluster state version [{}], although publication of cluster state version [{}] completed [{}] ago",
                 discoveryNode, appliedVersion, version, clusterStateApplicationTimeout);

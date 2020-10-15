@@ -56,9 +56,20 @@ public class CoordinationState {
     private boolean startedJoinSinceLastReboot;
     private boolean electionWon;
     private long lastPublishedVersion;
+
+    /**
+     * 在初始化阶段 由最新一次持久化的数据中获得 记录最后一次选举有哪些node加入
+     */
     private VotingConfiguration lastPublishedConfiguration;
     private VoteCollection publishVotes;
 
+
+    /**
+     *
+     * @param localNode
+     * @param persistedState  集群信息的持久化数据
+     * @param electionStrategy   采用的选举策略
+     */
     public CoordinationState(DiscoveryNode localNode, PersistedState persistedState, ElectionStrategy electionStrategy) {
         this.localNode = localNode;
 

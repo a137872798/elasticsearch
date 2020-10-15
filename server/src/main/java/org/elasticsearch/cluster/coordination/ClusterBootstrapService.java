@@ -54,6 +54,9 @@ import static java.util.Collections.unmodifiableSet;
 import static org.elasticsearch.discovery.DiscoveryModule.DISCOVERY_SEED_PROVIDERS_SETTING;
 import static org.elasticsearch.discovery.SettingsBasedSeedHostsProvider.DISCOVERY_SEED_HOSTS_SETTING;
 
+/**
+ * 集群引导服务
+ */
 public class ClusterBootstrapService {
 
     public static final Setting<List<String>> INITIAL_MASTER_NODES_SETTING =
@@ -66,6 +69,10 @@ public class ClusterBootstrapService {
     static final String BOOTSTRAP_PLACEHOLDER_PREFIX = "{bootstrap-placeholder}-";
 
     private static final Logger logger = LogManager.getLogger(ClusterBootstrapService.class);
+
+    /**
+     * 引导程序需要的参数
+     */
     private final Set<String> bootstrapRequirements;
     @Nullable // null if discoveryIsConfigured()
     private final TimeValue unconfiguredBootstrapTimeout;
@@ -78,6 +85,7 @@ public class ClusterBootstrapService {
     public ClusterBootstrapService(Settings settings, TransportService transportService,
                                    Supplier<Iterable<DiscoveryNode>> discoveredNodesSupplier, BooleanSupplier isBootstrappedSupplier,
                                    Consumer<VotingConfiguration> votingConfigurationConsumer) {
+        // 如果当前集群仅包含一个node
         if (DiscoveryModule.isSingleNodeDiscovery(settings)) {
             if (INITIAL_MASTER_NODES_SETTING.exists(settings)) {
                 throw new IllegalArgumentException("setting [" + INITIAL_MASTER_NODES_SETTING.getKey() +
@@ -91,6 +99,7 @@ public class ClusterBootstrapService {
             bootstrapRequirements = Collections.singleton(Node.NODE_NAME_SETTING.get(settings));
             unconfiguredBootstrapTimeout = null;
         } else {
+            // 找到所有初始状态的node
             final List<String> initialMasterNodes = INITIAL_MASTER_NODES_SETTING.get(settings);
             bootstrapRequirements = unmodifiableSet(new LinkedHashSet<>(initialMasterNodes));
             if (bootstrapRequirements.size() != initialMasterNodes.size()) {

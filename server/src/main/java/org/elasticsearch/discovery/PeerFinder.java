@@ -89,6 +89,9 @@ public abstract class PeerFinder {
      */
     private final ConfiguredHostsResolver configuredHostsResolver;
 
+    /**
+     * 当前节点对应的集群任期
+     */
     private volatile long currentTerm;
 
     /**

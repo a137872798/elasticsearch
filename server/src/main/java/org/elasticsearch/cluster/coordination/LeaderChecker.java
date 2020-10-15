@@ -83,8 +83,15 @@ public class LeaderChecker {
     private final TimeValue leaderCheckTimeout;
     private final int leaderCheckRetryCount;
     private final TransportService transportService;
+
+    /**
+     * 当leader节点不再是leader节点时触发   如果leader节点掉线了 实际上他就不可能再是leader节点了  ES集群会重新发起选举
+     */
     private final Consumer<Exception> onLeaderFailure;
 
+    /**
+     * 此刻最新的 leader检查对象   每当需要检测的leader节点变化时 就会替换 CheckScheduler
+     */
     private AtomicReference<CheckScheduler> currentChecker = new AtomicReference<>();
 
     private volatile DiscoveryNodes discoveryNodes;
@@ -96,12 +103,15 @@ public class LeaderChecker {
         this.transportService = transportService;
         this.onLeaderFailure = onLeaderFailure;
 
+        // 注册检测leader请求处理器
         transportService.registerRequestHandler(LEADER_CHECK_ACTION_NAME, Names.SAME, false, false, LeaderCheckRequest::new,
             (request, channel, task) -> {
                 handleLeaderCheck(request);
+                // 处理请求后 返回一个ack信息
                 channel.sendResponse(Empty.INSTANCE);
             });
 
+        // 注册一个监控连接变化的监听器+
         transportService.addConnectionListener(new TransportConnectionListener() {
             @Override
             public void onNodeDisconnected(DiscoveryNode node, Transport.Connection connection) {
@@ -119,6 +129,7 @@ public class LeaderChecker {
      * Starts and / or stops a leader checker for the given leader. Should only be called after successfully joining this leader.
      *
      * @param leader the node to be checked as leader, or null if checks should be disabled
+     *               将入参作为新的leader 节点
      */
     void updateLeader(@Nullable final DiscoveryNode leader) {
         assert transportService.getLocalNode().equals(leader) == false;
@@ -128,11 +139,13 @@ public class LeaderChecker {
         } else {
             checkScheduler = null;
         }
+        // 关闭前一个checker对象
         CheckScheduler previousChecker = currentChecker.getAndSet(checkScheduler);
         if (previousChecker != null) {
             previousChecker.close();
         }
         if (checkScheduler != null) {
+            // 启动该对象
             checkScheduler.handleWakeUp();
         }
     }
@@ -151,14 +164,20 @@ public class LeaderChecker {
         return discoveryNodes.isLocalNodeElectedMaster();
     }
 
+    /**
+     * 处理 检查leader的请求  只要没抛出异常 实际上就是检测成功了
+     * @param request
+     */
     private void handleLeaderCheck(LeaderCheckRequest request) {
         final DiscoveryNodes discoveryNodes = this.discoveryNodes;
         assert discoveryNodes != null;
 
+        // 非master节点无法检查
         if (discoveryNodes.isLocalNodeElectedMaster() == false) {
             logger.debug("rejecting leader check on non-master {}", request);
             throw new CoordinationStateRejectedException(
                 "rejecting leader check from [" + request.getSender() + "] sent to a node that is no longer the master");
+            // 如果发送请求的节点不存在与当前集群中  返回异常
         } else if (discoveryNodes.nodeExists(request.getSender()) == false) {
             logger.debug("rejecting leader check from removed node: {}", request);
             throw new CoordinationStateRejectedException(
@@ -168,6 +187,10 @@ public class LeaderChecker {
         }
     }
 
+    /**
+     * 当通往某个节点的连接被断开时 通过ConnecitonListener 触发该函数
+     * @param discoveryNode
+     */
     private void handleDisconnectedNode(DiscoveryNode discoveryNode) {
         CheckScheduler checkScheduler = currentChecker.get();
         if (checkScheduler != null) {
@@ -177,10 +200,22 @@ public class LeaderChecker {
         }
     }
 
+
+    /**
+     * 定时检查器
+     */
     private class CheckScheduler implements Releasable {
 
         private final AtomicBoolean isClosed = new AtomicBoolean();
+
+        /**
+         * 从最后一次成功到现在失败了多少次
+         */
         private final AtomicLong failureCountSinceLastSuccess = new AtomicLong();
+
+        /**
+         * 此时集群中的leader 节点
+         */
         private final DiscoveryNode leader;
 
         CheckScheduler(final DiscoveryNode leader) {
@@ -196,6 +231,9 @@ public class LeaderChecker {
             }
         }
 
+        /**
+         * 启动检测逻辑
+         */
         void handleWakeUp() {
             if (isClosed.get()) {
                 logger.trace("closed check scheduler woken up, doing nothing");
@@ -204,6 +242,7 @@ public class LeaderChecker {
 
             logger.trace("checking {} with [{}] = {}", leader, LEADER_CHECK_TIMEOUT_SETTING.getKey(), leaderCheckTimeout);
 
+            // 定期检测leader节点 是否在集群中还作为leader
             transportService.sendRequest(leader, LEADER_CHECK_ACTION_NAME, new LeaderCheckRequest(transportService.getLocalNode()),
                 TransportRequestOptions.builder().withTimeout(leaderCheckTimeout).withType(Type.PING).build(),
 
@@ -251,6 +290,7 @@ public class LeaderChecker {
 
                         logger.debug(new ParameterizedMessage("{} consecutive failures (limit [{}] is {}) with leader [{}]",
                             failureCount, LEADER_CHECK_RETRY_COUNT_SETTING.getKey(), leaderCheckRetryCount, leader), exp);
+                        // 失败也会开启下次检测  看来只能在 onFailed 中做处理了
                         scheduleNextWakeUp();
                     }
 
@@ -261,6 +301,10 @@ public class LeaderChecker {
                 });
         }
 
+        /**
+         * 在探测leader节点的过程中出现了异常 比如leader节点已经发生了更替  或者与leader节点的连接已断开
+         * @param e
+         */
         void leaderFailed(Exception e) {
             if (isClosed.compareAndSet(false, true)) {
                 transportService.getThreadPool().generic().execute(new Runnable() {
@@ -279,7 +323,12 @@ public class LeaderChecker {
             }
         }
 
+        /**
+         * 当与某个节点断开连接时 触发函数
+         * @param discoveryNode
+         */
         void handleDisconnectedNode(DiscoveryNode discoveryNode) {
+            // 代表与leader节点断开连接
             if (discoveryNode.equals(leader)) {
                 logger.debug("leader [{}] disconnected", leader);
                 leaderFailed(new NodeDisconnectedException(discoveryNode, "disconnected"));

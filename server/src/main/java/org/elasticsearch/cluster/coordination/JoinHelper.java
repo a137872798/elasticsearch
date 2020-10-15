@@ -426,6 +426,9 @@ public class JoinHelper {
         }
     }
 
+    /**
+     * 累加器接口定义了主节点收到join请求时 如何处理他们累加的逻辑
+     */
     interface JoinAccumulator {
         void handleJoinRequest(DiscoveryNode sender, JoinCallback joinCallback);
 
@@ -448,6 +451,9 @@ public class JoinHelper {
         }
     }
 
+    /**
+     * 在初始状态下拒绝 join请求
+     */
     static class InitialJoinAccumulator implements JoinAccumulator {
         @Override
         public void handleJoinRequest(DiscoveryNode sender, JoinCallback joinCallback) {

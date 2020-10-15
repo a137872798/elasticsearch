@@ -44,6 +44,9 @@ import org.elasticsearch.transport.TransportService;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
 
+/**
+ * 包含握手逻辑的连接器
+ */
 public class HandshakingTransportAddressConnector implements TransportAddressConnector {
 
     private static final Logger logger = LogManager.getLogger(HandshakingTransportAddressConnector.class);

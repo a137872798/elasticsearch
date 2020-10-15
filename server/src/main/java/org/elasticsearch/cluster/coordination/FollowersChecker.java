@@ -60,6 +60,7 @@ import static org.elasticsearch.common.util.concurrent.ConcurrentCollections.new
  * follower has failed the leader will remove it from the cluster. We are fairly lenient, possibly allowing multiple checks to fail before
  * considering a follower to be faulty, to allow for a brief network partition or a long GC cycle to occur without triggering the removal of
  * a node and the consequent shard reallocation.
+ * 该对象与  LeaderChecker 相对 检测节点是否还是follower
  */
 public class FollowersChecker {
 
@@ -87,14 +88,29 @@ public class FollowersChecker {
     private final TimeValue followerCheckTimeout;
     private final int followerCheckRetryCount;
     private final BiConsumer<DiscoveryNode, String> onNodeFailure;
+
+    /**
+     * 该函数会处理检测 follower的请求 如果没有抛出异常就代表此时节点是follower
+     */
     private final Consumer<FollowerCheckRequest> handleRequestAndUpdateState;
 
     private final Object mutex = new Object(); // protects writes to this state; read access does not need sync
+
+    /**
+     * 针对集群中的不同节点 都有对应的检测器
+     */
     private final Map<DiscoveryNode, FollowerChecker> followerCheckers = newConcurrentMap();
+
+    /**
+     * 某个节点不再是follower时会移动到这个容器中
+     */
     private final Set<DiscoveryNode> faultyNodes = new HashSet<>();
 
     private final TransportService transportService;
 
+    /**
+     * 如果该对象的任期与请求的任期一致 可以直接参考该对象的 mode  这样就可以跳过handleRequestAndUpdateState
+     */
     private volatile FastResponseState fastResponseState;
 
     public FollowersChecker(Settings settings, TransportService transportService,
@@ -126,12 +142,16 @@ public class FollowersChecker {
     public void setCurrentNodes(DiscoveryNodes discoveryNodes) {
         synchronized (mutex) {
             final Predicate<DiscoveryNode> isUnknownNode = n -> discoveryNodes.nodeExists(n) == false;
+
+            // 当某些节点已经不再属于最新的 DiscoveryNodes 时 将他们移除
             followerCheckers.keySet().removeIf(isUnknownNode);
+            // 同时 faultyNodes 也不再维护这些node
             faultyNodes.removeIf(isUnknownNode);
 
+            // 将discoveryNodes 中master节点排在第一个后 触发forEach
             discoveryNodes.mastersFirstStream().forEach(discoveryNode -> {
-                if (discoveryNode.equals(discoveryNodes.getLocalNode()) == false
-                    && followerCheckers.containsKey(discoveryNode) == false
+                if (discoveryNode.equals(discoveryNodes.getLocalNode()) == false  // 忽略本节点
+                    && followerCheckers.containsKey(discoveryNode) == false    // 只处理新增节点
                     && faultyNodes.contains(discoveryNode) == false) {
 
                     final FollowerChecker followerChecker = new FollowerChecker(discoveryNode);
@@ -159,15 +179,23 @@ public class FollowersChecker {
         fastResponseState = new FastResponseState(term, mode);
     }
 
+    /**
+     * 处理外部访问该节点  并检测是否还是follower的请求
+     * @param request
+     * @param transportChannel
+     * @throws IOException
+     */
     private void handleFollowerCheck(FollowerCheckRequest request, TransportChannel transportChannel) throws IOException {
         FastResponseState responder = this.fastResponseState;
 
+        // 此时节点是 follower 并且  term 与请求一致  此时可以返回结果
         if (responder.mode == Mode.FOLLOWER && responder.term == request.term) {
             logger.trace("responding to {} on fast path", request);
             transportChannel.sendResponse(Empty.INSTANCE);
             return;
         }
 
+        // 忽略 过期请求
         if (request.term < responder.term) {
             throw new CoordinationStateRejectedException("rejecting " + request + " since local state is " + this);
         }
@@ -239,8 +267,15 @@ public class FollowersChecker {
         }
     }
 
+    /**
+     * 快速响应状态是什么鬼
+     */
     static class FastResponseState {
         final long term;
+
+        /**
+         * 代表节点的角色   候选人  follower leader
+         */
         final Mode mode;
 
         FastResponseState(final long term, final Mode mode) {
@@ -259,6 +294,7 @@ public class FollowersChecker {
 
     /**
      * A checker for an individual follower.
+     * 每个对象检测一个node是否 还是follower
      */
     private class FollowerChecker {
         private final DiscoveryNode discoveryNode;
@@ -268,6 +304,10 @@ public class FollowersChecker {
             this.discoveryNode = discoveryNode;
         }
 
+        /**
+         * 如果这个对象已经从容器中被替换 就代表这个对象此时已经失效
+         * @return
+         */
         private boolean running() {
             return this == followerCheckers.get(discoveryNode);
         }
@@ -303,6 +343,7 @@ public class FollowersChecker {
 
                         failureCountSinceLastSuccess = 0;
                         logger.trace("{} check successful", FollowerChecker.this);
+                        // 只要正常返回结果 代表node还是follower 节点
                         scheduleNextWakeUp();
                     }
 
@@ -340,6 +381,10 @@ public class FollowersChecker {
                 });
         }
 
+        /**
+         * 当出现某种原因导致 这个节点不再是follower节点 注意如果断开连接也会触发该方法
+         * @param reason
+         */
         void failNode(String reason) {
             transportService.getThreadPool().generic().execute(new Runnable() {
                 @Override

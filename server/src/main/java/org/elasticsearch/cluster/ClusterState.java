@@ -719,7 +719,7 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
     }
 
     /**
-     * 描述当前状态与之前状态的变化
+     * 描述当前状态与之前状态的变化   也可以理解为增量数据
      */
     private static class ClusterStateDiff implements Diff<ClusterState> {
 
