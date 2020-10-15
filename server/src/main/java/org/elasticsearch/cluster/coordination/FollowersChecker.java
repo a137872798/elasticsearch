@@ -138,6 +138,7 @@ public class FollowersChecker {
 
     /**
      * Update the set of known nodes, starting to check any new ones and stopping checking any previously-known-but-now-unknown ones.
+     * 代表此时不知道集群中任何一个节点
      */
     public void setCurrentNodes(DiscoveryNodes discoveryNodes) {
         synchronized (mutex) {

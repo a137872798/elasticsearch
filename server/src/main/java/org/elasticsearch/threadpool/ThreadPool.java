@@ -565,7 +565,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
      * {@link System#nanoTime()} and {@link System#currentTimeMillis()}.
      *
      * The values are updated at a specified interval.
-     * 用于缓存当前时间的线程
+     * 用于缓存当前时间的线程  可能是获取系统时间会造成一定的开销 而ES中存在大量需要获取当前时间的场景 所以使用这个对象减少对系统的负担
      */
     static class CachedTimeThread extends Thread {
 

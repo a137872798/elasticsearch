@@ -82,6 +82,15 @@ public class ClusterBootstrapService {
     private final Consumer<VotingConfiguration> votingConfigurationConsumer;
     private final AtomicBoolean bootstrappingPermitted = new AtomicBoolean(true);
 
+
+    /**
+     *
+     * @param settings
+     * @param transportService
+     * @param discoveredNodesSupplier 对应 Coordinator::getFoundPeers
+     * @param isBootstrappedSupplier
+     * @param votingConfigurationConsumer
+     */
     public ClusterBootstrapService(Settings settings, TransportService transportService,
                                    Supplier<Iterable<DiscoveryNode>> discoveredNodesSupplier, BooleanSupplier isBootstrappedSupplier,
                                    Consumer<VotingConfiguration> votingConfigurationConsumer) {
@@ -153,10 +162,12 @@ public class ClusterBootstrapService {
     }
 
     void scheduleUnconfiguredBootstrap() {
+        // 当超时时间还没有配置时 无法启动定时任务
         if (unconfiguredBootstrapTimeout == null) {
             return;
         }
 
+        // 非master节点不允许调用该方法
         if (transportService.getLocalNode().isMasterNode() == false) {
             return;
         }
@@ -167,6 +178,7 @@ public class ClusterBootstrapService {
         transportService.getThreadPool().scheduleUnlessShuttingDown(unconfiguredBootstrapTimeout, Names.GENERIC, new Runnable() {
             @Override
             public void run() {
+                // 获取此时从 PeerFinder中发现的所有节点
                 final Set<DiscoveryNode> discoveredNodes = getDiscoveredNodes();
                 logger.debug("performing best-effort cluster bootstrapping with {}", discoveredNodes);
                 startBootstrap(discoveredNodes, emptyList());
@@ -184,6 +196,12 @@ public class ClusterBootstrapService {
             StreamSupport.stream(discoveredNodesSupplier.get().spliterator(), false)).collect(Collectors.toSet());
     }
 
+
+    /**
+     *
+     * @param discoveryNodes  针对此时集群中所有发现的节点 发起引导
+     * @param unsatisfiedRequirements
+     */
     private void startBootstrap(Set<DiscoveryNode> discoveryNodes, List<String> unsatisfiedRequirements) {
         assert discoveryNodes.stream().allMatch(DiscoveryNode::isMasterNode) : discoveryNodes;
         assert unsatisfiedRequirements.size() < discoveryNodes.size() : discoveryNodes + " smaller than " + unsatisfiedRequirements;
@@ -198,6 +216,11 @@ public class ClusterBootstrapService {
         return nodeId.startsWith(BOOTSTRAP_PLACEHOLDER_PREFIX);
     }
 
+
+    /**
+     * 进行引导工作
+     * @param votingConfiguration
+     */
     private void doBootstrap(VotingConfiguration votingConfiguration) {
         assert transportService.getLocalNode().isMasterNode();
 

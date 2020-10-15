@@ -40,7 +40,7 @@ import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 
 /**
- * 发布对象
+ * 每个节点会对外发布自己
  */
 public abstract class Publication {
 
@@ -52,6 +52,10 @@ public abstract class Publication {
     private final List<PublicationTarget> publicationTargets;
     private final PublishRequest publishRequest;
     private final AckListener ackListener;
+
+    /**
+     * 该函数负责获取当前时间戳
+     */
     private final LongSupplier currentTimeSupplier;
     private final long startTime;
 
@@ -75,6 +79,7 @@ public abstract class Publication {
         startTime = currentTimeSupplier.getAsLong();
         applyCommitRequest = Optional.empty();
         publicationTargets = new ArrayList<>(publishRequest.getAcceptedState().getNodes().getNodes().size());
+        // 注意这里发布的节点也包含了自身
         publishRequest.getAcceptedState().getNodes().mastersFirstStream().forEach(n -> publicationTargets.add(new PublicationTarget(n)));
     }
 
@@ -321,6 +326,10 @@ public abstract class Publication {
             ackOnce(null);
         }
 
+        /**
+         * 本次发布任务因为某个异常而停止
+         * @param e
+         */
         void setFailed(Exception e) {
             assert state != PublicationTargetState.APPLIED_COMMIT : state + " -> " + PublicationTargetState.FAILED;
             state = PublicationTargetState.FAILED;

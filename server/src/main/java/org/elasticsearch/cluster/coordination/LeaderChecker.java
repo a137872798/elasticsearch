@@ -94,6 +94,9 @@ public class LeaderChecker {
      */
     private AtomicReference<CheckScheduler> currentChecker = new AtomicReference<>();
 
+    /**
+     * 当前可以观测到的集群中所有的节点
+     */
     private volatile DiscoveryNodes discoveryNodes;
 
     LeaderChecker(final Settings settings, final TransportService transportService, final Consumer<Exception> onLeaderFailure) {

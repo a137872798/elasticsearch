@@ -115,11 +115,16 @@ import static org.elasticsearch.snapshots.SnapshotUtils.filterIndices;
  * At the end of the successful restore process {@code RestoreService} calls {@link #cleanupRestoreState(ClusterChangedEvent)},
  * which removes {@link RestoreInProgress} when all shards are completed. In case of
  * restore failure a normal recovery fail-over process kicks in.
+ *
+ * 恢复服务会监听集群状态的变化
  */
 public class RestoreService implements ClusterStateApplier {
 
     private static final Logger logger = LogManager.getLogger(RestoreService.class);
 
+    /**
+     * 有关无法修改的配置
+     */
     private static final Set<String> UNMODIFIABLE_SETTINGS = unmodifiableSet(newHashSet(
             SETTING_NUMBER_OF_SHARDS,
             SETTING_VERSION_CREATED,
@@ -128,6 +133,7 @@ public class RestoreService implements ClusterStateApplier {
             IndexSettings.INDEX_SOFT_DELETES_SETTING.getKey()));
 
     // It's OK to change some settings, but we shouldn't allow simply removing them
+    // 有关 unremovable相关的配置
     private static final Set<String> UNREMOVABLE_SETTINGS;
 
     static {
@@ -139,10 +145,17 @@ public class RestoreService implements ClusterStateApplier {
         UNREMOVABLE_SETTINGS = unmodifiableSet(unremovable);
     }
 
+
     private final ClusterService clusterService;
 
+    /**
+     * 存储服务 用于存储数据 一种恢复数据的策略就是从本地文件恢复
+     */
     private final RepositoriesService repositoriesService;
 
+    /**
+     * 该服务能够为分片分配相关的节点
+     */
     private final AllocationService allocationService;
 
     private final MetadataCreateIndexService createIndexService;
@@ -161,6 +174,7 @@ public class RestoreService implements ClusterStateApplier {
         this.allocationService = allocationService;
         this.createIndexService = createIndexService;
         this.metadataIndexUpgradeService = metadataIndexUpgradeService;
+        // 将自己注册到集群服务对象上 这样就可以监听集群的变化
         clusterService.addStateApplier(this);
         this.clusterSettings = clusterSettings;
         this.cleanRestoreStateTaskExecutor = new CleanRestoreStateTaskExecutor();
@@ -725,6 +739,9 @@ public class RestoreService implements ClusterStateApplier {
         return null;
     }
 
+    /**
+     * 该对象可以处理一组任务
+     */
     static class CleanRestoreStateTaskExecutor implements ClusterStateTaskExecutor<CleanRestoreStateTaskExecutor.Task>,
         ClusterStateTaskListener {
 

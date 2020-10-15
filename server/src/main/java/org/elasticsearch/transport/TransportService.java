@@ -510,7 +510,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      *
      * @param connection       the connection to a specific node
      * @param handshakeTimeout handshake timeout
-     * @param clusterNamePredicate cluster name validation predicate  代表只有符合条件的集群才会处理这个请求
+     * @param clusterNamePredicate cluster name validation predicate  代表只有符合条件的集群才会处理这个请求  默认情况下就是集群名必须相同
      * @param listener         action listener to notify
      * @throws IllegalStateException if the handshake failed
      * 当建立与某个node的connection 时 需要在一次探测 也就是握手请求
@@ -527,6 +527,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
                 new ActionListener<>() {
                     @Override
                     public void onResponse(HandshakeResponse response) {
+                        // 当集群名不符合条件 或者版本不兼容时 触发异常
                         if (clusterNamePredicate.test(response.clusterName) == false) {
                             listener.onFailure(new IllegalStateException("handshake with [" + node + "] failed: remote cluster name ["
                                 + response.clusterName.value() + "] does not match " + clusterNamePredicate));

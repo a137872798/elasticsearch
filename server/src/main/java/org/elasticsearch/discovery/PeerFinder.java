@@ -53,7 +53,7 @@ import java.util.stream.Collectors;
 import static java.util.Collections.emptyList;
 
 /**
- * 该对象可以发现集群中的其他节点
+ * 在 Coordinator处于候选者阶段的时候 会通过该对象探测集群中的其他节点
  */
 public abstract class PeerFinder {
 
@@ -71,7 +71,7 @@ public abstract class PeerFinder {
             TimeValue.timeValueMillis(3000), TimeValue.timeValueMillis(1), Setting.Property.NodeScope);
 
     /**
-     * 每隔多少时间查询一次其他节点  算是心跳么???
+     * 每隔多少时间查询一次其他节点
      */
     private final TimeValue findPeersInterval;
     private final TimeValue requestPeersTimeout;
@@ -95,7 +95,7 @@ public abstract class PeerFinder {
     private volatile long currentTerm;
 
     /**
-     * 应该是代表此时该节点不需要被集群发现
+     * 该组件此时暂停使用
      */
     private boolean active;
 
@@ -105,7 +105,7 @@ public abstract class PeerFinder {
     private DiscoveryNodes lastAcceptedNodes;
 
     /**
-     * 集群中其他节点都被包装成 Peer
+     * 当需要探测某个地址时 加入到该容器
      */
     private final Map<TransportAddress, Peer> peersByAddress = new LinkedHashMap<>();
 
@@ -123,20 +123,21 @@ public abstract class PeerFinder {
         this.transportAddressConnector = transportAddressConnector;
         this.configuredHostsResolver = configuredHostsResolver;
 
-        // 注册请求获取其他节点的处理器   当收到 peer请求时 将此时 peersByAddress 存储的所有节点作为结果返回
         transportService.registerRequestHandler(REQUEST_PEERS_ACTION_NAME, Names.GENERIC, false, false,
             PeersRequest::new,
             (request, channel, task) -> channel.sendResponse(handlePeersRequest(request)));
     }
 
     /**
-     * 将一组节点激活
+     * 探测一组目标节点
+     * @param lastAcceptedNodes 最近一次集群中存在的所有节点
      */
     public void activate(final DiscoveryNodes lastAcceptedNodes) {
         logger.trace("activating with {}", lastAcceptedNodes);
 
         synchronized (mutex) {
             assert assertInactiveWithNoKnownPeers();
+            // 首先激活这个组件
             active = true;
             this.lastAcceptedNodes = lastAcceptedNodes;
             leader = Optional.empty();
@@ -174,7 +175,7 @@ public abstract class PeerFinder {
     }
 
     /**
-     * 处理一个获取其他节点信息的请求对象
+     * 当本节点作为 master节点时 接受其他节点的探测请求
      * @param peersRequest
      * @return
      */
@@ -184,15 +185,22 @@ public abstract class PeerFinder {
             final List<DiscoveryNode> knownPeers;
             if (active) {
                 assert leader.isPresent() == false : leader;
+                // TODO  先忽略主节点的情况
                 // 如果发起请求的是一个主节点 那么开始探测
                 if (peersRequest.getSourceNode().isMasterNode()) {
                     // 这里就是将 地址包装成 Peer对象 并存储到容器中
                     startProbe(peersRequest.getSourceNode().getAddress());
                 }
+                /**
+                 * 如果是一个普通的节点连接到 master节点后  会向master发起探测请求
+                 * 可以想象一个场景  接受请求的是一个master节点 同时req中还携带了 source节点目前已知的所有master.address
+                 * 当master节点获取到地址信息后   选择往这些地址发送探测请求
+                 * 这样master节点也会尝试连接到 其他master节点
+                 */
                 // 集群中其他的节点信息 也存储到容器中
                 peersRequest.getKnownPeers().stream().map(DiscoveryNode::getAddress).forEach(this::startProbe);
 
-                // 将此时已知的集群中所有节点返回
+                // 将此时已知的集群中所有节点返回  不过这些连接鉴别是否是 master(通过异步移除 可能会存在脏数据)
                 knownPeers = getFoundPeersUnderLock();
             } else {
                 // 如果当前节点处于失活状态 返回一个空列表
@@ -285,12 +293,12 @@ public abstract class PeerFinder {
     }
 
     /**
-     * 与
-     * @return whether any peers were removed due to disconnection
+     * @return whether any peers were removed due to disconnection   返回true代表有某个连接断开了
      */
     private boolean handleWakeUp() {
         assert holdsLock() : "PeerFinder mutex not held";
 
+        // 只要有一个 peer满足条件 就会返回true
         final boolean peersRemoved = peersByAddress.values().removeIf(Peer::handleWakeUp);
 
         if (active == false) {
@@ -299,6 +307,7 @@ public abstract class PeerFinder {
         }
 
         logger.trace("probing master nodes from cluster state: {}", lastAcceptedNodes);
+        // 这里只探测master节点
         for (ObjectCursor<DiscoveryNode> discoveryNodeObjectCursor : lastAcceptedNodes.getMasterNodes().values()) {
             startProbe(discoveryNodeObjectCursor.value.getAddress());
         }
@@ -343,7 +352,7 @@ public abstract class PeerFinder {
     }
 
     /**
-     * 开始探测
+     * 向某个节点发起探测
      * @param transportAddress  发起 peersRequest的节点
      */
     protected void startProbe(TransportAddress transportAddress) {
@@ -353,6 +362,7 @@ public abstract class PeerFinder {
             return;
         }
 
+        // 如果探测的节点地址与节点地址一致 就不需要探测了 本次是一个无意义的操作
         if (transportAddress.equals(getLocalNode().getAddress())) {
             logger.trace("startProbe({}) not probing local node", transportAddress);
             return;
@@ -363,18 +373,18 @@ public abstract class PeerFinder {
     }
 
     /**
-     * 代表集群中某个节点
+     * 将某个master节点包装成Peer对象
      */
     private class Peer {
         private final TransportAddress transportAddress;
 
         /**
-         * 这个节点只会设置master节点
+         * 当目标地址确实对应一个master节点时 设置
          */
         private SetOnce<DiscoveryNode> discoveryNode = new SetOnce<>();
 
         /**
-         * 代表该对象正向 discoveryNode 发送peer请求
+         * 代表该对象正向 master节点 发送peer请求
          */
         private volatile boolean peersRequestInFlight;
 
@@ -388,13 +398,13 @@ public abstract class PeerFinder {
         }
 
         /**
-         * 与目标节点建立连接
-         * @return
+         * 是否需要丢弃连接
+         * @return 返回true 代表连接需要被丢弃
          */
         boolean handleWakeUp() {
             assert holdsLock() : "PeerFinder mutex not held";
 
-            // 当前节点处于失活状态也返回true 但是不进行连接
+            // 因为该组件此时处于停用状态 所以不需要保持连接
             if (active == false) {
                 return true;
             }
@@ -402,7 +412,9 @@ public abstract class PeerFinder {
             final DiscoveryNode discoveryNode = getDiscoveryNode();
             // may be null if connection not yet established
 
+            // 如果node还没有初始化 也就没有连接需要被丢弃 返回false
             if (discoveryNode != null) {
+                // 如果在 ConnectionManager中维护了某个node的连接 就代表已经连接上目标节点 发送peer请求 同时返回false
                 if (transportService.nodeConnected(discoveryNode)) {
                     if (peersRequestInFlight == false) {
                         requestPeers();
@@ -426,7 +438,7 @@ public abstract class PeerFinder {
 
             logger.trace("{} attempting connection", this);
 
-            // 该对象封装了连接到master的逻辑  TODO  传入的地址不一定是master地址 那么会怎么处理
+            // 只有当目标节点确实是master节点时才会触发 onResponse
             transportAddressConnector.connectToRemoteMasterNode(transportAddress, new ActionListener<DiscoveryNode>() {
                 @Override
                 public void onResponse(DiscoveryNode remoteNode) {
@@ -446,6 +458,10 @@ public abstract class PeerFinder {
                     onFoundPeersUpdated();
                 }
 
+                /**
+                 * 因为这个节点不是master节点 所以从peersByAddress 中移除
+                 * @param e
+                 */
                 @Override
                 public void onFailure(Exception e) {
                     logger.debug(() -> new ParameterizedMessage("{} connection failed", Peer.this), e);
@@ -475,7 +491,7 @@ public abstract class PeerFinder {
             logger.trace("{} requesting peers", this);
             peersRequestInFlight = true;
 
-            // 此时已知的集群中的节点
+            // 此时集群中所有已知的 master节点
             final List<DiscoveryNode> knownNodes = getFoundPeersUnderLock();
 
             final TransportResponseHandler<PeersResponse> peersResponseHandler = new TransportResponseHandler<PeersResponse>() {
@@ -495,7 +511,6 @@ public abstract class PeerFinder {
 
                         peersRequestInFlight = false;
 
-                        // 这里又在探测???
                         response.getMasterNode().map(DiscoveryNode::getAddress).ifPresent(PeerFinder.this::startProbe);
                         response.getKnownPeers().stream().map(DiscoveryNode::getAddress).forEach(PeerFinder.this::startProbe);
                     }

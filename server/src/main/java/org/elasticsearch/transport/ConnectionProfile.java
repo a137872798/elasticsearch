@@ -100,7 +100,7 @@ public final class ConnectionProfile {
     /**
      * Builds a connection profile that is dedicated to a single channel type. Allows passing connection and
      * handshake timeouts and compression settings.
-     * 只创建某个类型的丽娜姐  并且连接数为1
+     * 只创建某个类型的连接  并且连接数为1
      */
     public static ConnectionProfile buildSingleChannelProfile(TransportRequestOptions.Type channelType, @Nullable TimeValue connectTimeout,
                                                               @Nullable TimeValue handshakeTimeout, @Nullable TimeValue pingInterval,

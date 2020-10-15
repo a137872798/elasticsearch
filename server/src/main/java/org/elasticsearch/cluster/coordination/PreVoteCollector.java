@@ -65,7 +65,6 @@ public class PreVoteCollector {
     private final ElectionStrategy electionStrategy;
 
     // Tuple for simple atomic updates. null until the first call to `update()`.
-    // 某次预投票中 被选为master的节点
     private volatile Tuple<DiscoveryNode, PreVoteResponse> state; // DiscoveryNode component is null if there is currently no known leader.
 
     PreVoteCollector(final TransportService transportService, final Runnable startElection, final LongConsumer updateMaxTermSeen,
@@ -106,6 +105,12 @@ public class PreVoteCollector {
         return state.v1();
     }
 
+
+    /**
+     * 更新当前集群中的leader节点 如果当前节点原本是leader 变成了candidate 那么将leader置空
+     * @param preVoteResponse
+     * @param leader
+     */
     public void update(final PreVoteResponse preVoteResponse, @Nullable final DiscoveryNode leader) {
         logger.trace("updating with preVoteResponse={}, leader={}", preVoteResponse, leader);
         state = new Tuple<>(leader, preVoteResponse);

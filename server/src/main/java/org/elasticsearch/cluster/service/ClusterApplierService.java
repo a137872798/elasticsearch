@@ -71,7 +71,7 @@ import java.util.stream.Stream;
 import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
 
 /**
- * 有关集群状态变化的逻辑处理都交由该对象处理  ClusterService 则充当一个中枢对象
+ * 有关集群状态变化的逻辑处理都交由该对象处理
  */
 public class ClusterApplierService extends AbstractLifecycleComponent implements ClusterApplier {
     private static final Logger logger = LogManager.getLogger(ClusterApplierService.class);
@@ -174,6 +174,10 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         this.nodeConnectionsService = nodeConnectionsService;
     }
 
+    /**
+     * 当 Coordinator 首次启动时 通过localNode和相关配置初始化 clusterState 会触发该函数
+     * @param initialState the initial state to set
+     */
     @Override
     public void setInitialState(ClusterState initialState) {
         if (lifecycle.started()) {
@@ -485,6 +489,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         final ClusterState newClusterState;
         try {
             try (Releasable ignored = stopWatch.timing("running task [" + task.source + ']')) {
+                // 获取此时最新的集群状态
                 newClusterState = task.apply(previousClusterState);
             }
         } catch (Exception e) {

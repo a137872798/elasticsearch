@@ -38,15 +38,25 @@ import java.util.Objects;
  * Information about successfully completed restore operation.
  * <p>
  * Returned as part of {@link org.elasticsearch.action.admin.cluster.snapshots.restore.RestoreSnapshotResponse}
+ * 代表一次restore的操作结果
  */
 public class RestoreInfo implements ToXContentObject, Writeable {
 
     private String name;
 
+    /**
+     * 本次涉及到恢复的所有索引
+     */
     private List<String> indices;
 
+    /**
+     * 总计涉及到多少个分片 每个索引可以对应多个主分片 同时每个主分片还可以拥有副本分片
+     */
     private int totalShards;
 
+    /**
+     * 总计有多少个分片被成功处理了
+     */
     private int successfulShards;
 
     RestoreInfo() {}

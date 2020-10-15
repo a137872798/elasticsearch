@@ -116,6 +116,10 @@ public class LagDetector {
             logger.debug("starting lag detector for version {}: {}", version, laggingTrackers);
 
             threadPool.scheduleUnlessShuttingDown(clusterStateApplicationTimeout, Names.GENERIC, new Runnable() {
+
+                /**
+                 * 当appliedStateTrackersByNode被置空后 就不再需要检测了
+                 */
                 @Override
                 public void run() {
                     laggingTrackers.forEach(t -> t.checkForLag(version));

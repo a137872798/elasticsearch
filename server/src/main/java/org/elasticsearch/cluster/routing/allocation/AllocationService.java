@@ -629,6 +629,9 @@ public class AllocationService {
         return System.nanoTime();
     }
 
+    /**
+     * TODO  existingShardsAllocators 相关的先忽略
+     */
     public void cleanCaches() {
         assert assertInitialized();
         existingShardsAllocators.values().forEach(ExistingShardsAllocator::cleanCaches);

@@ -54,7 +54,6 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
 
     /**
      * 这里有关投票的动作被分为了  accepted 和 commited
-     * TODO 推测不同的操作有自己的 选举群  比如根据节点角色 判断某个节点参与某种操作的选举
      */
     private final VotingConfiguration lastCommittedConfiguration;
 

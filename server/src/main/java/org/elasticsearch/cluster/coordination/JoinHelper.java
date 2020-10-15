@@ -479,6 +479,10 @@ public class JoinHelper {
         }
     }
 
+
+    /**
+     * 在当前节点转变成候选人时  JoinAccumulator 也会变成对应的实现类
+     */
     class CandidateJoinAccumulator implements JoinAccumulator {
 
         private final Map<DiscoveryNode, JoinCallback> joinRequestAccumulator = new HashMap<>();

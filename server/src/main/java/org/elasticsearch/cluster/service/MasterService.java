@@ -95,6 +95,7 @@ public class MasterService extends AbstractLifecycleComponent {
 
     /**
      * 用于获取当前集群状态的对象
+     * 对应 Coordinator::getStateForMasterService
      */
     private java.util.function.Supplier<ClusterState> clusterStateSupplier;
 

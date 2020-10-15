@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * so that if elections are failing due to a network partition that lasts for a long time then when the partition heals there is an election
  * attempt reasonably quickly.
  *
- * 该对象会提供定时触发选举的对象
+ * 定期触发选举任务
  */
 public class ElectionSchedulerFactory {
 

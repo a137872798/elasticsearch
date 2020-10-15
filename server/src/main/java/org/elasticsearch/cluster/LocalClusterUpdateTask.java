@@ -26,6 +26,7 @@ import java.util.List;
 
 /**
  * Used to apply state updates on nodes that are not necessarily master
+ * 该任务可以在集群中任意一个节点执行 (不仅仅是master节点)
  */
 public abstract class LocalClusterUpdateTask implements ClusterStateTaskConfig, ClusterStateTaskExecutor<LocalClusterUpdateTask>,
     ClusterStateTaskListener {
@@ -40,6 +41,12 @@ public abstract class LocalClusterUpdateTask implements ClusterStateTaskConfig, 
         this.priority = priority;
     }
 
+    /**
+     * 根据当前集群的状态 生成一个结果
+     * @param currentState
+     * @return
+     * @throws Exception
+     */
     public abstract ClusterTasksResult<LocalClusterUpdateTask> execute(ClusterState currentState) throws Exception;
 
     @Override
