@@ -218,6 +218,10 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     private Releasable electionScheduler;
     @Nullable
     private Releasable prevotingRound;
+
+    /**
+     * 某次选举中在预投票过程中接受到的最大term
+     */
     private long maxTermSeen;
 
     /**
@@ -241,6 +245,9 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
     private Mode mode;
     private Optional<DiscoveryNode> lastKnownLeader;
+    /**
+     * 最近一次发起的join请求 代表在集群中发现任期更新了 需要加入到最新的集群中
+     */
     private Optional<Join> lastJoin;
 
     /**
@@ -456,18 +463,26 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         }
     }
 
+    /**
+     * 当发送预投票请求时  目标节点会通过req 触发该函数
+     * 这时返回的res 又会在源节点上触发该函数
+     * @param term
+     */
     private void updateMaxTermSeen(final long term) {
         synchronized (mutex) {
             maxTermSeen = Math.max(maxTermSeen, term);
             final long currentTerm = getCurrentTerm();
+            // 如果当前节点是master节点  并且收到了比当前更大的任期 代表发生了脑裂
             if (mode == Mode.LEADER && maxTermSeen > currentTerm) {
                 // Bump our term. However if there is a publication in flight then doing so would cancel the publication, so don't do that
                 // since we check whether a term bump is needed at the end of the publication too.
+                // TODO 如果此时正处于发布状态 该节点很快就会意识到自己过期了 所以不需要处理
                 if (publicationInProgress()) {
                     logger.debug("updateMaxTermSeen: maxTermSeen = {} > currentTerm = {}, enqueueing term bump", maxTermSeen, currentTerm);
                 } else {
                     try {
                         logger.debug("updateMaxTermSeen: maxTermSeen = {} > currentTerm = {}, bumping term", maxTermSeen, currentTerm);
+                        // 这里还不知道要将请求发往哪里
                         ensureTermAtLeast(getLocalNode(), maxTermSeen);
                         startElection();
                     } catch (Exception e) {
@@ -479,16 +494,21 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         }
     }
 
+    /**
+     * 在满足了预投票的要求后 开始选举
+     */
     private void startElection() {
         synchronized (mutex) {
             // The preVoteCollector is only active while we are candidate, but it does not call this method with synchronisation, so we have
             // to check our mode again here.
             if (mode == Mode.CANDIDATE) {
+                // 忽略选举失败的情况
                 if (localNodeMayWinElection(getLastAcceptedState()) == false) {
                     logger.trace("skip election as local node may not win it: {}", getLastAcceptedState().coordinationMetadata());
                     return;
                 }
 
+                // 向所有节点发出 startJoin请求  这里将任期+1  startJoin的请求是某个通过预投票的候选者发往集群其他节点的
                 final StartJoinRequest startJoinRequest
                     = new StartJoinRequest(getLocalNode(), Math.max(getCurrentTerm(), maxTermSeen) + 1);
                 logger.debug("starting election with {}", startJoinRequest);
@@ -543,15 +563,23 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         return Optional.empty();
     }
 
+    /**
+     * 将join请求发送到 目标任期下的 leader节点
+     * @param startJoinRequest
+     * @return
+     */
     private Join joinLeaderInTerm(StartJoinRequest startJoinRequest) {
         synchronized (mutex) {
             logger.debug("joinLeaderInTerm: for [{}] with term {}", startJoinRequest.getSourceNode(), startJoinRequest.getTerm());
+            // 生成描述join动作的对象
             final Join join = coordinationState.get().handleStartJoin(startJoinRequest);
             lastJoin = Optional.of(join);
+            // 更新任期后 在处理Peer请求时 也能返回最新的任期
             peerFinder.setCurrentTerm(getCurrentTerm());
             if (mode != Mode.CANDIDATE) {
                 becomeCandidate("joinLeaderInTerm"); // updates followersChecker and preVoteCollector
             } else {
+                // 更新当前节点在集群中被感知到的任期
                 followersChecker.updateFastResponseState(getCurrentTerm(), mode);
                 preVoteCollector.update(getPreVoteResponse(), null);
             }
@@ -560,17 +588,24 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
 
+    /**
+     * 当收到某个节点发来的join请求 触发该方法
+     * @param joinRequest
+     * @param joinCallback
+     */
     private void handleJoinRequest(JoinRequest joinRequest, JoinHelper.JoinCallback joinCallback) {
         assert Thread.holdsLock(mutex) == false;
         assert getLocalNode().isMasterNode() : getLocalNode() + " received a join but is not master-eligible";
         logger.trace("handleJoinRequest: as {}, handling {}", mode, joinRequest);
 
+        // 忽略单节点集群
         if (singleNodeDiscovery && joinRequest.getSourceNode().equals(getLocalNode()) == false) {
             joinCallback.onFailure(new IllegalStateException("cannot join node with [" + DiscoveryModule.DISCOVERY_TYPE_SETTING.getKey() +
                 "] set to [" + DiscoveryModule.SINGLE_NODE_DISCOVERY_TYPE  + "] discovery"));
             return;
         }
 
+        // 此时作为leader节点 在接受到join请求后 就尝试与这些节点建立连接
         transportService.connectToNode(joinRequest.getSourceNode(), ActionListener.wrap(ignore -> {
             final ClusterState stateForJoinValidation = getStateForMasterService();
 
@@ -1424,6 +1459,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                         if (prevotingRound != null) {
                             prevotingRound.close();
                         }
+                        // 针对从 peerFinder收集到的node 开始选举  预投票是发往集群中除了当前节点外其他所有节点
                         prevotingRound = preVoteCollector.start(lastAcceptedState, getDiscoveredNodes());
                     }
                 }

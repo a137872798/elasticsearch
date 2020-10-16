@@ -69,10 +69,7 @@ import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
-/**
- * 这个join应该是加入的意思  代表着某个 节点加入到这个集群中  也就是理解为master节点发现了某个节点
- * 在这里可以看到相关的action   (join,validateJoin,startJoin)
- */
+
 public class JoinHelper {
 
     private static final Logger logger = LogManager.getLogger(JoinHelper.class);
@@ -177,10 +174,10 @@ public class JoinHelper {
         transportService.registerRequestHandler(START_JOIN_ACTION_NAME, Names.GENERIC, false, false,
             StartJoinRequest::new,
             (request, channel, task) -> {
-                // 往指定的节点发送一个join请求
                 final DiscoveryNode destination = request.getSourceNode();
+                // 收到start_join 请求后 回复一个join请求
                 sendJoinRequest(destination, currentTermSupplier.getAsLong(), Optional.of(joinLeaderInTerm.apply(request)));
-                // 这里才刚发送一个join请求 为什么又立即发送一个响应结果
+                // 这个res 代表成功收到了startJoin请求
                 channel.sendResponse(Empty.INSTANCE);
             });
 
@@ -293,6 +290,7 @@ public class JoinHelper {
 
     /**
      * 往目标节点发送一个 join的请求
+     * 流程是这样 首先某个通过预投票的节点 会向所有节点发送一个startJoin请求 之后 每个节点会返回一个join请求
      * @param destination
      * @param term
      * @param optionalJoin
@@ -304,7 +302,7 @@ public class JoinHelper {
         final JoinRequest joinRequest = new JoinRequest(transportService.getLocalNode(), term, optionalJoin);
         final Tuple<DiscoveryNode, JoinRequest> dedupKey = Tuple.tuple(destination, joinRequest);
 
-        // 加入成功代表首次往该节点上发送注册请求  加入失败代表之前已经发送过join请求  并且还未收到结果
+        // 加入成功代表首次往该节点上发送join请求  加入失败代表之前已经发送过join请求  并且还未收到结果
         if (pendingOutgoingJoins.add(dedupKey)) {
             logger.debug("attempting to join {} with {}", destination, joinRequest);
             transportService.sendRequest(destination, JOIN_ACTION_NAME, joinRequest,
@@ -344,7 +342,7 @@ public class JoinHelper {
     }
 
     /**
-     * startJoin 是master发往其他节点 还是相反 ???
+     * 某个候选者通过了预投票阶段后 会往此时集群中已知的所有节点发起startJoin请求
      * @param startJoinRequest
      * @param destination
      */

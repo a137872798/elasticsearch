@@ -178,8 +178,10 @@ public class CoordinationState {
      * @param startJoinRequest The startJoinRequest, specifying the node requesting the join.
      * @return A Join that should be sent to the target node of the join.
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
+     * 处理 startJoin请求
      */
     public Join handleStartJoin(StartJoinRequest startJoinRequest) {
+        // 既然要发起一个join请求 那么任期必须比该节点此时捕获到的要高
         if (startJoinRequest.getTerm() <= getCurrentTerm()) {
             logger.debug("handleStartJoin: ignoring [{}] as term provided is not greater than current term [{}]",
                 startJoinRequest, getCurrentTerm());
@@ -201,6 +203,7 @@ public class CoordinationState {
             logger.debug("handleStartJoin: discarding {}: {}", joinVotes, reason);
         }
 
+        // 此时更新之前旧的集群信息的任期
         persistedState.setCurrentTerm(startJoinRequest.getTerm());
         assert getCurrentTerm() == startJoinRequest.getTerm();
         lastPublishedVersion = 0;
@@ -528,7 +531,7 @@ public class CoordinationState {
         }
 
         /**
-         * 代表收到某个节点的请求
+         * 获取某个节点发出的投票请求
          * @param join
          * @return
          */

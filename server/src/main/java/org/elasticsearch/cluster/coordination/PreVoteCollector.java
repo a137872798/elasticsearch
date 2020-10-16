@@ -59,14 +59,22 @@ public class PreVoteCollector {
     private final Runnable startElection;
 
     /**
-     * 处理预投票请求对应的 term
+     * 该函数的主要作用就是当某个节点是leader节点时 检测集群中是否有更高的term 有的话就代表发生了脑裂
      */
     private final LongConsumer updateMaxTermSeen;
     private final ElectionStrategy electionStrategy;
 
     // Tuple for simple atomic updates. null until the first call to `update()`.
+    // 该对象代表某轮选举中 本节点推崇的leader节点
     private volatile Tuple<DiscoveryNode, PreVoteResponse> state; // DiscoveryNode component is null if there is currently no known leader.
 
+    /**
+     *
+     * @param transportService
+     * @param startElection  开始选举的函数
+     * @param updateMaxTermSeen   更新当前集群最大term的函数
+     * @param electionStrategy
+     */
     PreVoteCollector(final TransportService transportService, final Runnable startElection, final LongConsumer updateMaxTermSeen,
                      final ElectionStrategy electionStrategy) {
         this.transportService = transportService;
@@ -117,7 +125,7 @@ public class PreVoteCollector {
     }
 
     /**
-     * 处理预投票请求 并将结果返回
+     * 预投票请求是集群中某个节点发给除了当前节点外其他所有节点  并且申请自己成为 leader节点
      * @param request
      * @return
      */
@@ -163,7 +171,7 @@ public class PreVoteCollector {
     private class PreVotingRound implements Releasable {
 
         /**
-         * 对每个节点发起的 预投票结果都会存储在这里
+         * 在某一轮发起的预投票请求中  每个节点的res都会保存在这里
          */
         private final Map<DiscoveryNode, PreVoteResponse> preVotesReceived = newConcurrentMap();
         private final AtomicBoolean electionStarted = new AtomicBoolean();
@@ -237,17 +245,19 @@ public class PreVoteCollector {
             preVotesReceived.put(sender, response);
 
             // create a fake VoteCollection based on the pre-votes and check if there is an election quorum
+            // 每当收到一次预投票的响应结果时 就会生成一个投票箱对象
+            // 并将之前及本次所有插入的结果(preVotesReceived内部的数据) 插入到投票箱中 检测是否满足预投票条件
             final VoteCollection voteCollection = new VoteCollection();
             final DiscoveryNode localNode = clusterState.nodes().getLocalNode();
 
-            // 本地投票结果???
+            // 获取本节点推崇的leader节点 以及打算返给其他节点的res对象
             final PreVoteResponse localPreVoteResponse = getPreVoteResponse();
 
             preVotesReceived.forEach((node, preVoteResponse) -> voteCollection.addJoinVote(
                 new Join(node, localNode, preVoteResponse.getCurrentTerm(),
                 preVoteResponse.getLastAcceptedTerm(), preVoteResponse.getLastAcceptedVersion())));
 
-            // 代表此时还不满足选举的条件
+            // 代表此时还不满足选举的条件  还没有产生选举的结果 本次处理结束
             if (electionStrategy.isElectionQuorum(clusterState.nodes().getLocalNode(), localPreVoteResponse.getCurrentTerm(),
                 localPreVoteResponse.getLastAcceptedTerm(), localPreVoteResponse.getLastAcceptedVersion(),
                 clusterState.getLastCommittedConfiguration(), clusterState.getLastAcceptedConfiguration(), voteCollection) == false) {
