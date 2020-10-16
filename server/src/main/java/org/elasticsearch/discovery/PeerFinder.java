@@ -148,6 +148,10 @@ public abstract class PeerFinder {
         onFoundPeersUpdated(); // trigger a check for a quorum already
     }
 
+    /**
+     * 当已经确定集群中的leader节点时 会触发该方法
+     * @param leader
+     */
     public void deactivate(DiscoveryNode leader) {
         final boolean peersRemoved;
         synchronized (mutex) {

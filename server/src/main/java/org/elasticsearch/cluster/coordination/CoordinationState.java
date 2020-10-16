@@ -53,7 +53,14 @@ public class CoordinationState {
 
     // transient state
     private VoteCollection joinVotes;
+
+    /**
+     * 标记此时收到了startJoin 请求 已经进入了join阶段
+     */
     private boolean startedJoinSinceLastReboot;
+    /**
+     * 当收到 startJoin 请求时 的代表本次选举已经失败了
+     */
     private boolean electionWon;
     private long lastPublishedVersion;
 
@@ -181,7 +188,7 @@ public class CoordinationState {
      * 处理 startJoin请求
      */
     public Join handleStartJoin(StartJoinRequest startJoinRequest) {
-        // 既然要发起一个join请求 那么任期必须比该节点此时捕获到的要高
+        // 既然要发起一个join请求 那么任期必须比该节点此时的要高
         if (startJoinRequest.getTerm() <= getCurrentTerm()) {
             logger.debug("handleStartJoin: ignoring [{}] as term provided is not greater than current term [{}]",
                 startJoinRequest, getCurrentTerm());
@@ -191,6 +198,7 @@ public class CoordinationState {
 
         logger.debug("handleStartJoin: leaving term [{}] due to {}", getCurrentTerm(), startJoinRequest);
 
+        // TODO
         if (joinVotes.isEmpty() == false) {
             final String reason;
             if (electionWon == false) {
@@ -223,6 +231,7 @@ public class CoordinationState {
      * @param join The Join received.
      * @return true iff this instance does not already have a join vote from the given source node for this term
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
+     * 当收到其他节点发来的join请求时 触发
      */
     public boolean handleJoin(Join join) {
         assert join.targetMatches(localNode) : "handling join " + join + " for the wrong node " + localNode;
@@ -265,8 +274,10 @@ public class CoordinationState {
             throw new CoordinationStateRejectedException("rejecting join since this node has not received its initial configuration yet");
         }
 
+        // 将当前的join请求加入到投票箱中
         boolean added = joinVotes.addJoinVote(join);
         boolean prevElectionWon = electionWon;
+        // 每当接受到一个新的join 请求时 都要根据此时最新的joinVotes 检测是否完成选举   也就是极端情况可能会有多个node 同时通过预投票 并通过startJoin采集票数
         electionWon = isElectionQuorum(joinVotes);
         assert !prevElectionWon || electionWon : // we cannot go from won to not won
             "locaNode= " + localNode + ", join=" + join + ", joinVotes=" + joinVotes;
@@ -286,8 +297,10 @@ public class CoordinationState {
      * @param clusterState The cluster state to publish.
      * @return A PublishRequest to publish the given cluster state
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
+     * 基于当前的集群状态 生成一个发布状态的请求对象
      */
     public PublishRequest handleClientValue(ClusterState clusterState) {
+        // 选举失败的节点不具备发布的资格
         if (electionWon == false) {
             logger.debug("handleClientValue: ignored request as election not won");
             throw new CoordinationStateRejectedException("election not won");
@@ -296,6 +309,8 @@ public class CoordinationState {
             logger.debug("handleClientValue: cannot start publishing next value before accepting previous one");
             throw new CoordinationStateRejectedException("cannot start publishing next value before accepting previous one");
         }
+
+        // 当任期不匹配时 不能发布数据
         if (clusterState.term() != getCurrentTerm()) {
             logger.debug("handleClientValue: ignored request due to term mismatch " +
                     "(expected: [term {} version >{}], actual: [term {} version {}])",
@@ -324,8 +339,10 @@ public class CoordinationState {
         assert clusterState.getLastCommittedConfiguration().equals(getLastCommittedConfiguration()) :
             "last committed configuration should not change";
 
+        // 将当前集群的数据标记成最近一次发布的属性
         lastPublishedVersion = clusterState.version();
         lastPublishedConfiguration = clusterState.getLastAcceptedConfiguration();
+        // 发布同样只需要超过半数成功就可以
         publishVotes = new VoteCollection();
 
         logger.trace("handleClientValue: processing request for version [{}] and term [{}]", lastPublishedVersion, getCurrentTerm());
@@ -339,15 +356,19 @@ public class CoordinationState {
      * @param publishRequest The publish request received.
      * @return A PublishResponse which can be sent back to the sender of the PublishRequest.
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
+     * 当收到 master节点的发布请求时触发  在调用该方法之前已经更新过当前节点的任期了
      */
     public PublishResponse handlePublishRequest(PublishRequest publishRequest) {
         final ClusterState clusterState = publishRequest.getAcceptedState();
+        // 所以此时如果任期不匹配 抛出异常
         if (clusterState.term() != getCurrentTerm()) {
             logger.debug("handlePublishRequest: ignored publish request due to term mismatch (expected: [{}], actual: [{}])",
                 getCurrentTerm(), clusterState.term());
             throw new CoordinationStateRejectedException("incoming term " + clusterState.term() + " does not match current term " +
                 getCurrentTerm());
         }
+
+        // 版本号匹配失败的时候抛出异常
         if (clusterState.term() == getLastAcceptedTerm() && clusterState.version() <= getLastAcceptedVersion()) {
             logger.debug("handlePublishRequest: ignored publish request due to version mismatch (expected: >[{}], actual: [{}])",
                 getLastAcceptedVersion(), clusterState.version());
@@ -357,9 +378,11 @@ public class CoordinationState {
 
         logger.trace("handlePublishRequest: accepting publish request for version [{}] and term [{}]",
             clusterState.version(), clusterState.term());
+        // 为集群状态信息做持久化
         persistedState.setLastAcceptedState(clusterState);
         assert getLastAcceptedState() == clusterState;
 
+        // 将此时集群中的 term version作为结果返回
         return new PublishResponse(clusterState.term(), clusterState.version());
     }
 
@@ -371,18 +394,25 @@ public class CoordinationState {
      * @return An optional ApplyCommitRequest which, if present, may be broadcast to all peers, indicating that this publication
      * has been accepted at a quorum of peers and is therefore committed.
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
+     * 当master节点收到某个节点返回的publishRes时 触发该方法
      */
     public Optional<ApplyCommitRequest> handlePublishResponse(DiscoveryNode sourceNode, PublishResponse publishResponse) {
+
+        // 非master节点不应该处理该请求
         if (electionWon == false) {
             logger.debug("handlePublishResponse: ignored response as election not won");
             throw new CoordinationStateRejectedException("election not won");
         }
+
+        // 在发布时使用的任期 与当前任期不一致的情况下 已经无法处理这个res了
         if (publishResponse.getTerm() != getCurrentTerm()) {
             logger.debug("handlePublishResponse: ignored publish response due to term mismatch (expected: [{}], actual: [{}])",
                 getCurrentTerm(), publishResponse.getTerm());
             throw new CoordinationStateRejectedException("incoming term " + publishResponse.getTerm()
                 + " does not match current term " + getCurrentTerm());
         }
+
+        // 版本号发生变化时 也拒绝处理res
         if (publishResponse.getVersion() != lastPublishedVersion) {
             logger.debug("handlePublishResponse: ignored publish response due to version mismatch (expected: [{}], actual: [{}])",
                 lastPublishedVersion, publishResponse.getVersion());
@@ -392,6 +422,8 @@ public class CoordinationState {
 
         logger.trace("handlePublishResponse: accepted publish response for version [{}] and term [{}] from [{}]",
             publishResponse.getVersion(), publishResponse.getTerm(), sourceNode);
+
+        // 代表发布成功 将结果加入到投票箱中
         publishVotes.addVote(sourceNode);
         if (isPublishQuorum(publishVotes)) {
             logger.trace("handlePublishResponse: value committed for version [{}] and term [{}]",
@@ -479,6 +511,7 @@ public class CoordinationState {
          * Sets a new last accepted cluster state.
          * After a successful call to this method, {@link #getLastAcceptedState()} should return the last cluster state that was set.
          * The value returned by {@link #getCurrentTerm()} should not be influenced by calls to this method.
+         * 更新此时从master节点收到的最新的集群数据
          */
         void setLastAcceptedState(ClusterState clusterState);
 
@@ -523,10 +556,16 @@ public class CoordinationState {
      */
     public static class VoteCollection {
 
+        /**
+         * 此时已经投票的所有节点
+         */
         private final Map<String, DiscoveryNode> nodes;
         private final Set<Join> joins;
 
         public boolean addVote(DiscoveryNode sourceNode) {
+            // 确保此时参与的节点必须是master节点
+            // master是不是有2层含义  一层是针对所有node 只有role包含master的node 才能参与投票
+            // 还有一层就是针对 所有参与投票的节点(master就是leader)
             return sourceNode.isMasterNode() && nodes.put(sourceNode.getId(), sourceNode) == null;
         }
 

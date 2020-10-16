@@ -72,6 +72,10 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
 
     private final String nodeName;
     private final String nodeId;
+
+    /**
+     * 鉴别2个node是否相同的属性
+     */
     private final String ephemeralId;
     private final String hostName;
     private final String hostAddress;

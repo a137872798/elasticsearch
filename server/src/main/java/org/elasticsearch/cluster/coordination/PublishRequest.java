@@ -29,6 +29,9 @@ import java.util.Objects;
  */
 public class PublishRequest {
 
+    /**
+     * 将此时最新的集群状态 发布到集群中
+     */
     private final ClusterState acceptedState;
 
     public PublishRequest(ClusterState acceptedState) {

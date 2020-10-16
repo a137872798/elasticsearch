@@ -381,7 +381,7 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
 
         /**
          * 也就是决定选择是否生效  (同意的节点数超过nodeIds的2分之1)   就是投票箱的意思
-         * @param votes
+         * @param votes  已经投票的节点
          * @return
          */
         public boolean hasQuorum(Collection<String> votes) {

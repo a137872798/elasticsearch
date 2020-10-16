@@ -274,6 +274,7 @@ public class LeaderChecker {
                             return;
                         }
 
+                        // 由于连接导致的失败 代表leader节点下线了
                         if (exp instanceof ConnectTransportException || exp.getCause() instanceof ConnectTransportException) {
                             logger.debug(new ParameterizedMessage(
                                 "leader [{}] disconnected during check", leader), exp);
@@ -281,6 +282,7 @@ public class LeaderChecker {
                             return;
                         }
 
+                        // 这些情况应该就是 目标节点不再是leader节点了
                         long failureCount = failureCountSinceLastSuccess.incrementAndGet();
                         if (failureCount >= leaderCheckRetryCount) {
                             logger.debug(new ParameterizedMessage(
@@ -293,7 +295,6 @@ public class LeaderChecker {
 
                         logger.debug(new ParameterizedMessage("{} consecutive failures (limit [{}] is {}) with leader [{}]",
                             failureCount, LEADER_CHECK_RETRY_COUNT_SETTING.getKey(), leaderCheckRetryCount, leader), exp);
-                        // 失败也会开启下次检测  看来只能在 onFailed 中做处理了
                         scheduleNextWakeUp();
                     }
 

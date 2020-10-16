@@ -85,6 +85,7 @@ public abstract class Publication {
 
     /**
      * 针对这组失败的节点 触发  PublicationTarget.onFaultyNode 钩子
+     * 并且针对所有 target对象发送 publishRequest
      * @param faultyNodes
      */
     public void start(Set<DiscoveryNode> faultyNodes) {
@@ -248,6 +249,9 @@ public abstract class Publication {
         NOT_STARTED,
         FAILED,
         SENT_PUBLISH_REQUEST,
+        /**
+         * 代表至少已经接受到某个发布响应结果 但是还没有达到半数以上
+         */
         WAITING_FOR_QUORUM,
         SENT_APPLY_COMMIT,
         APPLIED_COMMIT,
@@ -262,6 +266,10 @@ public abstract class Publication {
          * 是否正在等待ack信息中
          */
         private boolean ackIsPending = true;
+
+        /**
+         * 描述此时往目标节点发布数据的状态
+         */
         private PublicationTargetState state = PublicationTargetState.NOT_STARTED;
 
         PublicationTarget(DiscoveryNode discoveryNode) {
@@ -281,19 +289,29 @@ public abstract class Publication {
                 '}';
         }
 
+        /**
+         * 往目标节点发送一个发布请求
+         */
         void sendPublishRequest() {
             if (isFailed()) {
                 return;
             }
             assert state == PublicationTargetState.NOT_STARTED : state + " -> " + PublicationTargetState.SENT_PUBLISH_REQUEST;
+
+            // 更新成发布中的状态
             state = PublicationTargetState.SENT_PUBLISH_REQUEST;
             Publication.this.sendPublishRequest(discoveryNode, publishRequest, new PublishResponseHandler());
             assert publicationCompletedIffAllTargetsInactiveOrCancelled();
         }
 
+        /**
+         * 处理某次收到的发布结果
+         * @param publishResponse
+         */
         void handlePublishResponse(PublishResponse publishResponse) {
             assert isWaitingForQuorum() : this;
             logger.trace("handlePublishResponse: handling [{}] from [{}])", publishResponse, discoveryNode);
+            // TODO
             if (applyCommitRequest.isPresent()) {
                 sendApplyCommit();
             } else {
@@ -386,6 +404,9 @@ public abstract class Publication {
             return state == PublicationTargetState.FAILED;
         }
 
+        /**
+         * 该对象负责处理发布的结果
+         */
         private class PublishResponseHandler implements ActionListener<PublishWithJoinResponse> {
 
             @Override
@@ -396,6 +417,7 @@ public abstract class Publication {
                     return;
                 }
 
+                // 代表发送的目标节点  在本轮选举中为当前节点投了一票
                 if (response.getJoin().isPresent()) {
                     final Join join = response.getJoin().get();
                     assert discoveryNode.equals(join.getSourceNode());

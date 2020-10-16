@@ -47,7 +47,7 @@ import java.util.stream.Collectors;
 import static org.elasticsearch.gateway.GatewayService.STATE_NOT_RECOVERED_BLOCK;
 
 /**
- * 可以将一组任务批量执行
+ * 该对象定义了 如果处理 由joinRequest包装起来的 join对象
  */
 public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecutor.Task> {
 
@@ -60,10 +60,13 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
 
     private final RerouteService rerouteService;
 
+    /**
+     * 每个task 对应一个 join 请求
+     */
     public static class Task {
 
         /**
-         * 该任务是由哪个节点发来的
+         * 发起join请求的节点
          */
         private final DiscoveryNode node;
         private final String reason;
@@ -118,7 +121,7 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
      * 批量执行一组任务 并返回结果
      *
      * @param currentState
-     * @param joiningNodes
+     * @param joiningNodes  每个join请求都会被封装成这个对象
      * @return ClusterTasksResult 中包含每个任务的结果
      * @throws Exception
      */
@@ -133,7 +136,7 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         // 如果此时只有一个任务  且任务代表某个选举结束了  直接生成成功结果
         if (joiningNodes.size() == 1 && joiningNodes.get(0).isFinishElectionTask()) {
             return results.successes(joiningNodes).build(currentState);
-            // 此时还没有选出 master节点 并且某个任务是将此节点变成master节点
+        //  代表此时集群中还没有旧的leader节点  并且 本次joinTask中有表明当前节点晋升成master节点的任务
         } else if (currentNodes.getMasterNode() == null && joiningNodes.stream().anyMatch(Task::isBecomeMasterTask)) {
 
             // 如果本次task中 出现了 becomeMaster 那么同时还必须出现 finishElection
@@ -145,12 +148,13 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
             // 去除已经无效的节点  同时将自身修改为 master节点
             newState = becomeMasterAndTrimConflictingNodes(currentState, joiningNodes);
             nodesChanged = true;
-            // 非master节点无法处理相关任务
+
+            // TODO
         } else if (currentNodes.isLocalNodeElectedMaster() == false) {
             logger.trace("processing node joins, but we are not the master. current master: {}", currentNodes.getMasterNode());
             throw new NotMasterException("Node [" + currentNodes.getLocalNode() + "] not master for join request");
         } else {
-            // 此时代表是 master节点
+            // TODO
             newState = ClusterState.builder(currentState);
         }
 
@@ -162,12 +166,12 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         Version minClusterNodeVersion = newState.nodes().getMinNodeVersion();
         Version maxClusterNodeVersion = newState.nodes().getMaxNodeVersion();
         // we only enforce major version transitions on a fully formed clusters
-        // 代表没有未恢复的blocks
+        // TODO
         final boolean enforceMajorVersion = currentState.getBlocks().hasGlobalBlock(STATE_NOT_RECOVERED_BLOCK) == false;
         // processing any joins
         Map<String, String> joiniedNodeNameIds = new HashMap<>();
 
-        // 这里也没有执行任务
+        // 当检测完兼容性时 task已经处理完了
         for (final Task joinTask : joiningNodes) {
             if (joinTask.isBecomeMasterTask() || joinTask.isFinishElectionTask()) {
                 // noop
@@ -201,11 +205,12 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         }
 
         if (nodesChanged) {
-            // 使用reroute服务进行重路由
+            // 因为master节点发生了变化 所以要进行重路由
             rerouteService.reroute("post-join reroute", Priority.HIGH, ActionListener.wrap(
                 r -> logger.trace("post-join reroute completed"),
                 e -> logger.debug("post-join reroute failed", e)));
 
+            // TODO 如果投选本次节点的某个节点 是上一任期的 master节点
             if (joiniedNodeNameIds.isEmpty() == false) {
                 // 找到一组不参与选举的对象
                 Set<CoordinationMetadata.VotingConfigExclusion> currentVotingConfigExclusions = currentState.getVotingConfigExclusions();
@@ -243,7 +248,7 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
     }
 
     /**
-     * 代表本次任务中存在将当前节点变成master节点的任务
+     * 做一些无效节点检测 以及解除 NoMasterBlock 限制
      *
      * @param currentState
      * @param joiningNodes
@@ -253,7 +258,7 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         assert currentState.nodes().getMasterNodeId() == null : currentState;
         DiscoveryNodes currentNodes = currentState.nodes();
         DiscoveryNodes.Builder nodesBuilder = DiscoveryNodes.builder(currentNodes);
-        // 将本地节点修改成master节点
+        // 将本地节点修改成master节点  果然master节点就代表leader节点
         nodesBuilder.masterNodeId(currentState.nodes().getLocalNodeId());
 
         for (final Task joinTask : joiningNodes) {
@@ -263,13 +268,14 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
             } else {
                 // 该任务是由哪个节点发出的
                 final DiscoveryNode joiningNode = joinTask.node();
-                // TODO 这个node 为什么移除了 这样集群中的node不就减少了么
                 final DiscoveryNode nodeWithSameId = nodesBuilder.get(joiningNode.getId());
+                // 代表节点id相同 但是ephemeralId 不同  这样的节点会被移除
                 if (nodeWithSameId != null && nodeWithSameId.equals(joiningNode) == false) {
                     logger.debug("removing existing node [{}], which conflicts with incoming join from [{}]", nodeWithSameId, joiningNode);
                     nodesBuilder.remove(nodeWithSameId.getId());
                 }
                 final DiscoveryNode nodeWithSameAddress = currentNodes.findByAddress(joiningNode.getAddress());
+                // 通过节点地址也排查一遍冲突的node
                 if (nodeWithSameAddress != null && nodeWithSameAddress.equals(joiningNode) == false) {
                     logger.debug("removing existing node [{}], which conflicts with incoming join from [{}]", nodeWithSameAddress,
                         joiningNode);
@@ -281,11 +287,10 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
 
         // now trim any left over dead nodes - either left there when the previous master stepped down
         // or removed by us above
+        // 因为此时已经变成master节点了 所以将之前的 NoMasterBlock对象移除
         ClusterState tmpState = ClusterState.builder(currentState).nodes(nodesBuilder).blocks(
-                // 将之前的集群块 剔除掉不满足条件的对象后 更新到clusterState中
                 ClusterBlocks.builder()
                 .blocks(currentState.blocks())
-                // 这里移除掉所有非master的 block
                 .removeGlobalBlock(NoMasterBlockService.NO_MASTER_BLOCK_ID))
             .build();
         logger.trace("becomeMasterAndTrimConflictingNodes: {}", tmpState.nodes());

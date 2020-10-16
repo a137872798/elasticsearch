@@ -83,6 +83,7 @@ public class PublicationTransportHandler {
 
     /**
      * 记录最后一次看到的集群状态
+     * 每当收到一个 publish请求时 就会更新该字段
      */
     private AtomicReference<ClusterState> lastSeenClusterState = new AtomicReference<>();
 
@@ -91,7 +92,7 @@ public class PublicationTransportHandler {
     // because it's mostly just debugging info that would unnecessarily blow up CS updates (I think there was one in
     // snapshot code).
     // TODO: look into these and check how to get rid of them
-    // 当某个节点将发布请求发送给自己时 设置这个变量  只要收到结果 就将该值置空 记得请求发往本节点时 走的是 DirectChannel
+    // 当某个节点将发布请求发送给自己时 设置这个变量  只要收到结果 就将该值置空  发往远端时集群状态可能会采用压缩算法 如果直接发往本地 只要存储就可以了 使用时再取出来
     private AtomicReference<PublishRequest> currentPublishRequestToSelf = new AtomicReference<>();
 
     /**
@@ -182,7 +183,7 @@ public class PublicationTransportHandler {
 
 
     /**
-     * 当获取到一个集群的变化事件时
+     * 将这个集群的变化事件发布出去
      * @param clusterChangedEvent
      * @return
      */
@@ -219,7 +220,7 @@ public class PublicationTransportHandler {
                 assert transportService.getThreadPool().getThreadContext().isSystemContext();
                 final ActionListener<PublishWithJoinResponse> responseActionListener;
 
-                // TODO 为什么可以发布给自己啊 卧槽
+                // 发布的目标就是将集群最新的状态 通知给集群中所有节点  但是只要满足 > 1/2 的条件此时就认为发布成功了  并且自身也算在内
                 if (destination.equals(nodes.getLocalNode())) {
                     // if publishing to self, use original request instead (see currentPublishRequestToSelf for explanation)
                     final PublishRequest previousRequest = currentPublishRequestToSelf.getAndSet(publishRequest);
@@ -319,6 +320,10 @@ public class PublicationTransportHandler {
                     responseActionListener.onFailure(exp);
                 }
             };
+
+            /**
+             * 该对象负责接收 publish的结果 应该就是增加投票箱票数  当publish 发布到超过半数节点时 代表写入成功
+             */
             final TransportResponseHandler<PublishWithJoinResponse> publishWithJoinResponseHandler =
                 new TransportResponseHandler<PublishWithJoinResponse>() {
 
@@ -447,7 +452,7 @@ public class PublicationTransportHandler {
     }
 
     /**
-     * 处理发布请求
+     * 收到发布请求代表集群中的master节点此时更新了集群状态 并通知到其他节点
      * @param request
      * @return
      * @throws IOException
@@ -522,10 +527,10 @@ public class PublicationTransportHandler {
      */
     private PublishWithJoinResponse acceptState(ClusterState incomingState) {
         // if the state is coming from the current node, use original request instead (see currentPublishRequestToSelf for explanation)
-        // 当本节点是 master节点时   TODO 发布代表着什么
+        // 在发布过程中 还会发送给自己
         if (transportService.getLocalNode().equals(incomingState.nodes().getMasterNode())) {
-            // TODO 发布自己的请求???
             final PublishRequest publishRequest = currentPublishRequestToSelf.get();
+            // 只有master节点将请求发往本地时 才会设置该标识
             if (publishRequest == null || publishRequest.getAcceptedState().stateUUID().equals(incomingState.stateUUID()) == false) {
                 throw new IllegalStateException("publication to self failed for " + publishRequest);
             } else {

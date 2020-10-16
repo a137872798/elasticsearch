@@ -291,8 +291,8 @@ public class JoinHelper {
     /**
      * 往目标节点发送一个 join的请求
      * 流程是这样 首先某个通过预投票的节点 会向所有节点发送一个startJoin请求 之后 每个节点会返回一个join请求
-     * @param destination
-     * @param term
+     * @param destination  通过预投票的节点
+     * @param term  本地任期
      * @param optionalJoin
      */
     public void sendJoinRequest(DiscoveryNode destination, long term, Optional<Join> optionalJoin) {
@@ -394,6 +394,7 @@ public class JoinHelper {
 
     /**
      * 处理join任务相关的监听器
+     * 这里包装了callback 以解耦
      */
     static class JoinTaskListener implements ClusterStateTaskListener {
         private final JoinTaskExecutor.Task task;
@@ -435,6 +436,9 @@ public class JoinHelper {
     }
 
 
+    /**
+     * 当前节点角色转变成 leader后 内部的累加器也会更改
+     */
     class LeaderJoinAccumulator implements JoinAccumulator {
         @Override
         public void handleJoinRequest(DiscoveryNode sender, JoinCallback joinCallback) {
@@ -483,9 +487,17 @@ public class JoinHelper {
      */
     class CandidateJoinAccumulator implements JoinAccumulator {
 
+        /**
+         * 该对象存储了在 候选阶段收到的所有join请求
+         */
         private final Map<DiscoveryNode, JoinCallback> joinRequestAccumulator = new HashMap<>();
         boolean closed;
 
+        /**
+         * 当某个参与选举的节点
+         * @param sender
+         * @param joinCallback
+         */
         @Override
         public void handleJoinRequest(DiscoveryNode sender, JoinCallback joinCallback) {
             assert closed == false : "CandidateJoinAccumulator closed";
@@ -495,12 +507,19 @@ public class JoinHelper {
             }
         }
 
+        /**
+         * 由于当前角色发生了变化 所以之前采集到的数据就可以丢弃了
+         * @param newMode
+         */
         @Override
         public void close(Mode newMode) {
             assert closed == false : "CandidateJoinAccumulator closed";
             closed = true;
+            // 代表这个节点采集了足够的票数 并成功晋升成leader
             if (newMode == Mode.LEADER) {
                 final Map<JoinTaskExecutor.Task, ClusterStateTaskListener> pendingAsTasks = new LinkedHashMap<>();
+
+                // 将本次选举时 该节点的所有支持者抽取出来生成task 对象
                 joinRequestAccumulator.forEach((key, value) -> {
                     final JoinTaskExecutor.Task task = new JoinTaskExecutor.Task(key, "elect leader");
                     pendingAsTasks.put(task, new JoinTaskListener(task, value));
@@ -508,6 +527,7 @@ public class JoinHelper {
 
                 final String stateUpdateSource = "elected-as-master ([" + pendingAsTasks.size() + "] nodes joined)";
 
+                // 同时插入 变成leader节点 和 完成选举的任务
                 pendingAsTasks.put(JoinTaskExecutor.newBecomeMasterTask(), (source, e) -> {
                 });
                 pendingAsTasks.put(JoinTaskExecutor.newFinishElectionTask(), (source, e) -> {
@@ -515,6 +535,7 @@ public class JoinHelper {
                 masterService.submitStateUpdateTasks(stateUpdateSource, pendingAsTasks, ClusterStateTaskConfig.build(Priority.URGENT),
                     joinTaskExecutor);
             } else {
+                // 如果节点没有变成leader 以失败方式触发回调
                 assert newMode == Mode.FOLLOWER : newMode;
                 joinRequestAccumulator.values().forEach(joinCallback -> joinCallback.onFailure(
                     new CoordinationStateRejectedException("became follower")));

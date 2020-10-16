@@ -165,7 +165,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
     private static final NamedDiffableValueSerializer<Custom> CUSTOM_VALUE_SERIALIZER = new NamedDiffableValueSerializer<>(Custom.class);
 
     /**
-     * 代表这个元数据是针对哪个集群   如果集群本身任期发生变化 该值会改变么???
+     * 不同的集群 uuid不同
      */
     private final String clusterUUID;
     private final boolean clusterUUIDCommitted;

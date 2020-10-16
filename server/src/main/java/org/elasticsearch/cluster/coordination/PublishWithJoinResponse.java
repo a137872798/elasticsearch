@@ -28,10 +28,13 @@ import java.util.Optional;
 /**
  * Response to a {@link PublishRequest}. Encapsulates both a {@link PublishResponse}
  * and an optional {@link Join}.
- * 发布 and join结果
  */
 public class PublishWithJoinResponse extends TransportResponse {
     private final PublishResponse publishResponse;
+
+    /**
+     * 如果设置了该值代表收到publish的节点   在本次选举过程中为leader贡献了票
+     */
     private final Optional<Join> optionalJoin;
 
     public PublishWithJoinResponse(PublishResponse publishResponse, Optional<Join> optionalJoin) {
