@@ -793,15 +793,23 @@ public class MasterService extends AbstractLifecycleComponent {
             this.countDown = new CountDown(countDown + 1); // we also wait for onCommit to be called
         }
 
+
+        /**
+         * 代表pub成功  也就是通知到达半数节点
+         * @param commitTime the time it took to commit the cluster state
+         */
         @Override
         public void onCommit(TimeValue commitTime) {
+            // 获取pub超时时间
             TimeValue ackTimeout = ackedTaskListener.ackTimeout();
             if (ackTimeout == null) {
                 ackTimeout = TimeValue.ZERO;
             }
             final TimeValue timeLeft = TimeValue.timeValueNanos(Math.max(0, ackTimeout.nanos() - commitTime.nanos()));
+            // 发生超时
             if (timeLeft.nanos() == 0L) {
                 onTimeout();
+            // 如果所有node都发布成功 触发该方法
             } else if (countDown.countDown()) {
                 finish();
             } else {
@@ -831,6 +839,9 @@ public class MasterService extends AbstractLifecycleComponent {
             }
         }
 
+        /**
+         * 当所有node 都提交成功时触发该方法
+         */
         private void finish() {
             logger.trace("all expected nodes acknowledged cluster_state update (version: {})", clusterStateVersion);
             if (ackTimeoutCallback != null) {

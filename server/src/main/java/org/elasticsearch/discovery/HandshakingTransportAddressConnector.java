@@ -72,10 +72,10 @@ public class HandshakingTransportAddressConnector implements TransportAddressCon
 
 
     /**
-     * 连接到远端的 master节点
      *
      * @param transportAddress
      * @param listener  当连接到的节点在当前集群 且是master节点时 才触发onResponse钩子 其余情况属于异常
+     *                  这里的master节点  代表的是 roles 包含master的节点
      */
     @Override
     public void connectToRemoteMasterNode(TransportAddress transportAddress, ActionListener<DiscoveryNode> listener) {
@@ -95,9 +95,9 @@ public class HandshakingTransportAddressConnector implements TransportAddressCon
 
                 logger.trace("[{}] opening probe connection", thisConnectionAttempt);
 
-                // 创建于该节点的连接
+                // 创建与该节点的连接   也就是在集群中 每个master节点都是与其他节点连接的
                 transportService.openConnection(targetNode,
-                    // 生成channel的描述信息
+                    // 生成channel的描述信息   因为一个connection包含多个channel 这里根据指令类型负载到不同的channel上
                     ConnectionProfile.buildSingleChannelProfile(Type.REG, probeConnectTimeout, probeHandshakeTimeout,
                         TimeValue.MINUS_ONE, null),
                     // 当生成连接时 会触发该监听器
@@ -122,10 +122,12 @@ public class HandshakingTransportAddressConnector implements TransportAddressCon
                                         // 如果目标节点就是当前节点 或者不是master节点 都认为失败了
                                         if (remoteNode.equals(transportService.getLocalNode())) {
                                             listener.onFailure(new ConnectTransportException(remoteNode, "local node found"));
+
+                                        // 不包含 master role的节点不在考虑范围内
                                         } else if (remoteNode.isMasterNode() == false) {
                                             listener.onFailure(new ConnectTransportException(remoteNode, "non-master-eligible node found"));
                                         } else {
-                                            // 这里又连接了一次 此时会触发不同的钩子函数
+                                            // 这里又连接了一次 此时会触发不同的钩子函数  这里没有将连接断开 也就是会保持长连接  (集群中每个节点都与其他节点保持长连接)
                                             transportService.connectToNode(remoteNode, new ActionListener<>() {
                                                 @Override
                                                 public void onResponse(Void ignored) {

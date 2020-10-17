@@ -128,6 +128,7 @@ public class ClusterConnectionManager implements ConnectionManager {
      */
     @Override
     public void openConnection(DiscoveryNode node, ConnectionProfile connectionProfile, ActionListener<Transport.Connection> listener) {
+        // 某些未设置的信息 使用default中的数据
         ConnectionProfile resolvedProfile = ConnectionProfile.resolveConnectionProfile(connectionProfile, defaultProfile);
         internalOpenConnection(node, resolvedProfile, listener);
     }

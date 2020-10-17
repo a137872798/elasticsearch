@@ -28,6 +28,7 @@ import java.io.IOException;
  * A master node sends this request to its peers to inform them that it could commit the
  * cluster state with the given term and version. Peers that have accepted the given cluster
  * state will then consider it as committed and proceed to apply the state locally.
+ * 当master节点发布了一个 publish 请求 并且收到超过半数赞同票时 创建该对象
  */
 public class ApplyCommitRequest extends TermVersionRequest {
 

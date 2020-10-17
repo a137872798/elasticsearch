@@ -407,7 +407,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
         for (int i = 0; i < numConnections; ++i) {
             try {
-                // 生成连接到目标节点的channel
+                // 生成连接到目标节点的channel   因为使用了事件循环模型 所以这里不会阻塞
                 TcpChannel channel = initiateChannel(node);
                 logger.trace(() -> new ParameterizedMessage("Tcp transport channel opened: {}", channel));
                 channels.add(channel);

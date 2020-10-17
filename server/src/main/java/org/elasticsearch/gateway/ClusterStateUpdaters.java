@@ -137,6 +137,7 @@ public class ClusterStateUpdaters {
     }
 
     public static ClusterState hideStateIfNotRecovered(ClusterState state) {
+        // 这里移除了一些 block
         if (state.blocks().hasGlobalBlock(STATE_NOT_RECOVERED_BLOCK)) {
             final ClusterBlocks.Builder blocks = ClusterBlocks.builder().blocks(state.blocks());
             blocks.removeGlobalBlock(Metadata.CLUSTER_READ_ONLY_BLOCK);

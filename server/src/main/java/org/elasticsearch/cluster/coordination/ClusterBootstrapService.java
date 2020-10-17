@@ -71,7 +71,7 @@ public class ClusterBootstrapService {
     private static final Logger logger = LogManager.getLogger(ClusterBootstrapService.class);
 
     /**
-     * 引导程序需要的参数
+     * 集群中所有role 包含master的节点
      */
     private final Set<String> bootstrapRequirements;
     @Nullable // null if discoveryIsConfigured()
@@ -108,13 +108,14 @@ public class ClusterBootstrapService {
             bootstrapRequirements = Collections.singleton(Node.NODE_NAME_SETTING.get(settings));
             unconfiguredBootstrapTimeout = null;
         } else {
-            // 找到所有初始状态的node
+            // 找到所有 role包含 Master的节点   也就是参与选举的节点一开始就是确定的
             final List<String> initialMasterNodes = INITIAL_MASTER_NODES_SETTING.get(settings);
             bootstrapRequirements = unmodifiableSet(new LinkedHashSet<>(initialMasterNodes));
             if (bootstrapRequirements.size() != initialMasterNodes.size()) {
                 throw new IllegalArgumentException(
                     "setting [" + INITIAL_MASTER_NODES_SETTING.getKey() + "] contains duplicates: " + initialMasterNodes);
             }
+            // 获取集群启动的超时时间
             unconfiguredBootstrapTimeout = discoveryIsConfigured(settings) ? null : UNCONFIGURED_BOOTSTRAP_TIMEOUT_SETTING.get(settings);
         }
 
@@ -162,12 +163,12 @@ public class ClusterBootstrapService {
     }
 
     void scheduleUnconfiguredBootstrap() {
-        // 当超时时间还没有配置时 无法启动定时任务
+        // 如果没有配置 启动集群的超时时间 直接返回
         if (unconfiguredBootstrapTimeout == null) {
             return;
         }
 
-        // 非master节点不允许调用该方法
+        // node 必须携带 master的role
         if (transportService.getLocalNode().isMasterNode() == false) {
             return;
         }
@@ -178,7 +179,7 @@ public class ClusterBootstrapService {
         transportService.getThreadPool().scheduleUnlessShuttingDown(unconfiguredBootstrapTimeout, Names.GENERIC, new Runnable() {
             @Override
             public void run() {
-                // 获取此时从 PeerFinder中发现的所有节点
+                // 对应 peerFinder.getFoundPeers()    在某个节点刚启动时  peer对象中还没有任何节点
                 final Set<DiscoveryNode> discoveredNodes = getDiscoveredNodes();
                 logger.debug("performing best-effort cluster bootstrapping with {}", discoveredNodes);
                 startBootstrap(discoveredNodes, emptyList());

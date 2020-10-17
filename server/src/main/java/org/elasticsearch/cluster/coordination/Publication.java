@@ -59,6 +59,9 @@ public abstract class Publication {
     private final LongSupplier currentTimeSupplier;
     private final long startTime;
 
+    /**
+     * 准备往确认的节点发送commit请求
+     */
     private Optional<ApplyCommitRequest> applyCommitRequest; // set when state is committed
 
     // 代表本次发布动作完成或关闭
@@ -100,6 +103,7 @@ public abstract class Publication {
 
     /**
      * 处于某种原因关闭该对象
+     * 比如master节点降级成 candidate
      * @param reason
      */
     public void cancel(String reason) {
@@ -109,15 +113,15 @@ public abstract class Publication {
 
         assert cancelled == false;
         cancelled = true;
-        // 代表在提交请求设置前 已经被关闭
+        // 代表此时还没有 达到半数节点回应 pub请求   该方法与到达半数时的方法并发执行了怎么办 ???
         if (applyCommitRequest.isPresent() == false) {
             logger.debug("cancel: [{}] cancelled before committing (reason: {})", this, reason);
             // fail all current publications
             final Exception e = new ElasticsearchException("publication cancelled before committing: " + reason);
-            // 找到所有target对象 都设置成失败
+            // 立即关闭所有节点对应的对象
             publicationTargets.stream().filter(PublicationTarget::isActive).forEach(pt -> pt.setFailed(e));
         }
-        // cancel 也会触发complete
+        // 代表本对象完成任务
         onPossibleCompletion();
     }
 
@@ -142,7 +146,7 @@ public abstract class Publication {
             return;
         }
 
-        // 在未关闭的情况下 如果所有target都是活跃状态 无法触发completion
+        // 只要还有某个target处于 active 状态  无法执行任务
         if (cancelled == false) {
             for (final PublicationTarget target : publicationTargets) {
                 if (target.isActive()) {
@@ -151,10 +155,12 @@ public abstract class Publication {
             }
         }
 
+        // 代表此时pubRes 还没有超过半数
         if (applyCommitRequest.isPresent() == false) {
             logger.debug("onPossibleCompletion: [{}] commit failed", this);
             assert isCompleted == false;
             isCompleted = true;
+            // 触发钩子
             onCompletion(false);
             return;
         }
@@ -253,6 +259,10 @@ public abstract class Publication {
          * 代表至少已经接受到某个发布响应结果 但是还没有达到半数以上
          */
         WAITING_FOR_QUORUM,
+        /**
+         * 当超过半数的follower 发送了pubRes时
+         * 由 master节点向他们发送 commit请求
+         */
         SENT_APPLY_COMMIT,
         APPLIED_COMMIT,
     }
@@ -311,15 +321,22 @@ public abstract class Publication {
         void handlePublishResponse(PublishResponse publishResponse) {
             assert isWaitingForQuorum() : this;
             logger.trace("handlePublishResponse: handling [{}] from [{}])", publishResponse, discoveryNode);
-            // TODO
+            // 当收到超过半数节点的 publishRes 时  生成一个commitReq 对象 并且会设置到该字段中
+            // 之后能收到 pub的请求 必然是在isWaitingForQuorum 阶段  所以不需要走
+            // publicationTargets.stream().filter(PublicationTarget::isWaitingForQuorum)
+            //                            .forEach(PublicationTarget::sendApplyCommit); 的判断逻辑
             if (applyCommitRequest.isPresent()) {
                 sendApplyCommit();
             } else {
                 try {
                     Publication.this.handlePublishResponse(discoveryNode, publishResponse).ifPresent(applyCommit -> {
+                        // 只有第一次会设置 applyCommitRequest
                         assert applyCommitRequest.isPresent() == false;
                         applyCommitRequest = Optional.of(applyCommit);
+
+                        // 代表从发起publish 任务 到超过半数节点认同 总计花费多少时间
                         ackListener.onCommit(TimeValue.timeValueMillis(currentTimeSupplier.getAsLong() - startTime));
+                        // 找到所有刚确认pub的节点  发送 applyCommit请求
                         publicationTargets.stream().filter(PublicationTarget::isWaitingForQuorum)
                             .forEach(PublicationTarget::sendApplyCommit);
                     });
@@ -330,6 +347,9 @@ public abstract class Publication {
             }
         }
 
+        /**
+         * 当此时pub 满足半数条件时 开始向之前确认的节点 发送commit请求
+         */
         void sendApplyCommit() {
             assert state == PublicationTargetState.WAITING_FOR_QUORUM : state + " -> " + PublicationTargetState.SENT_APPLY_COMMIT;
             state = PublicationTargetState.SENT_APPLY_COMMIT;
@@ -449,6 +469,9 @@ public abstract class Publication {
 
         }
 
+        /**
+         * 该对象负责处理 commit的响应结果
+         */
         private class ApplyCommitResponseHandler implements ActionListener<TransportResponse.Empty> {
 
             @Override

@@ -425,9 +425,13 @@ public class CoordinationState {
 
         // 代表发布成功 将结果加入到投票箱中
         publishVotes.addVote(sourceNode);
+
+        // 代表此时已经有超过半数的节点 更新了集群最新的信息
+        // 超过半数后 每个publishRes 都可以生成一个 commitReq
         if (isPublishQuorum(publishVotes)) {
             logger.trace("handlePublishResponse: value committed for version [{}] and term [{}]",
                 publishResponse.getVersion(), publishResponse.getTerm());
+            // 这里生成了一个提交请求
             return Optional.of(new ApplyCommitRequest(localNode, publishResponse.getTerm(), publishResponse.getVersion()));
         }
 
@@ -439,8 +443,10 @@ public class CoordinationState {
      *
      * @param applyCommit The ApplyCommitRequest received.
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
+     * 处理收到的commit请求
      */
     public void handleCommit(ApplyCommitRequest applyCommit) {
+        // 代表在收到该请求前 任期已经发生变化 之前的leader已经失效了 忽略结果
         if (applyCommit.getTerm() != getCurrentTerm()) {
             logger.debug("handleCommit: ignored commit request due to term mismatch " +
                     "(expected: [term {} version {}], actual: [term {} version {}])",
@@ -520,6 +526,9 @@ public class CoordinationState {
          * After a successful call to this method, {@link #getLastAcceptedState()} should return the last cluster state that was set,
          * with the last committed configuration now corresponding to the last accepted configuration, and the cluster uuid, if set,
          * marked as committed.
+         * 主要就是为之前持久化的集群状态 设置一个 accepted的标识位    只有确保接收到commit请求  之前的clusterState才能生效
+         * 这种情况就是为了避免 在每个节点收到 pub的过程中 leader节点失效  所以在超过半数节点确认ack 并且此时leader能够正常处理的这个状态下 需要一个通知 就是commit
+         * 那么如果 节点没有收到commit 会怎么样呢
          */
         default void markLastAcceptedStateAsCommitted() {
             final ClusterState lastAcceptedState = getLastAcceptedState();

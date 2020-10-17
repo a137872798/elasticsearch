@@ -65,7 +65,7 @@ public class PreVoteCollector {
     private final ElectionStrategy electionStrategy;
 
     // Tuple for simple atomic updates. null until the first call to `update()`.
-    // 该对象代表某轮选举中 本节点推崇的leader节点
+    // 该对象作为一个响应结果的缓存
     private volatile Tuple<DiscoveryNode, PreVoteResponse> state; // DiscoveryNode component is null if there is currently no known leader.
 
     /**
@@ -115,7 +115,7 @@ public class PreVoteCollector {
 
 
     /**
-     * 更新当前集群中的leader节点 如果当前节点原本是leader 变成了candidate 那么将leader置空
+     * 更新针对其他节点 preVote 的返回结果
      * @param preVoteResponse
      * @param leader
      */
@@ -139,12 +139,12 @@ public class PreVoteCollector {
         final DiscoveryNode leader = state.v1();
         final PreVoteResponse response = state.v2();
 
-        // 代表此时还没有设置认可的master 返回一个空对象
+        // 当收到预投票请求时 如果此时该节点不知道集群中的leader节点 那么直接返回res 该对象包含了当前节点记录的集群快照的 term version 等
         if (leader == null) {
             return response;
         }
 
-        // 本次收到重复请求  返回结果
+        // 代表本次预投票请求发到了自己这
         if (leader.equals(request.getSourceNode())) {
             // This is a _rare_ case where our leader has detected a failure and stepped down, but we are still a follower. It's possible
             // that the leader lost its quorum, but while we're still a follower we will not offer joins to any other node so there is no
@@ -154,7 +154,7 @@ public class PreVoteCollector {
             return response;
         }
 
-        // 已经设置master节点的情况下 不允许收到新的请求
+        // 代表没有通过预投票 其他节点还认为leader节点存活  
         throw new CoordinationStateRejectedException("rejecting " + request + " as there is already a leader");
     }
 

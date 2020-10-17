@@ -34,6 +34,12 @@ public class PreVoteResponse extends TransportResponse {
     private final long lastAcceptedTerm;
     private final long lastAcceptedVersion;
 
+    /**
+     *
+     * @param currentTerm  对应 PersistedState.getCurrentTerm()
+     * @param lastAcceptedTerm   对应 PersistedState.getLastAcceptedState().term()  这2个term之前有什么不同
+     * @param lastAcceptedVersion
+     */
     public PreVoteResponse(long currentTerm, long lastAcceptedTerm, long lastAcceptedVersion) {
         this.currentTerm = currentTerm;
         this.lastAcceptedTerm = lastAcceptedTerm;

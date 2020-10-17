@@ -130,6 +130,7 @@ public class PublicationTransportHandler {
         transportService.registerRequestHandler(PUBLISH_STATE_ACTION_NAME, ThreadPool.Names.GENERIC, false, false,
             BytesTransportRequest::new, (request, channel, task) -> channel.sendResponse(handleIncomingPublishRequest(request)));
 
+        // 处理commit 请求
         transportService.registerRequestHandler(COMMIT_STATE_ACTION_NAME, ThreadPool.Names.GENERIC, false, false,
             ApplyCommitRequest::new,
             (request, channel, task) -> handleApplyCommit.accept(request, transportCommitCallback(channel)));
@@ -260,7 +261,7 @@ public class PublicationTransportHandler {
             }
 
             /**
-             * 提交跟发布啥关系
+             * 当超过半数的节点 认为pub成功时 会向每个返回ack的节点发送 commit请求
              * @param destination
              * @param applyCommitRequest
              * @param responseActionListener

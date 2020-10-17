@@ -164,7 +164,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     private final SetOnce<CoordinationState> coordinationState = new SetOnce<>(); // initialized on start-up (see doStart)
 
     /**
-     * 当前集群状态   在该对象重启时 仅包含localNode
+     * 当前集群状态   在该对象重启时 仅包含localNode  相当于是一层缓存  因为集群状态会持久化到文件中
      */
     private volatile ClusterState applierState; // the state that should be exposed to the cluster state applier
 
@@ -388,17 +388,24 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         }
     }
 
+    /**
+     * 处理接收到的 commit 请求
+     * @param applyCommitRequest
+     * @param applyListener
+     */
     private void handleApplyCommit(ApplyCommitRequest applyCommitRequest, ActionListener<Void> applyListener) {
         synchronized (mutex) {
             logger.trace("handleApplyCommit: applying commit {}", applyCommitRequest);
 
             coordinationState.get().handleCommit(applyCommitRequest);
+            // 好像是移除了一些 block 还没明白
             final ClusterState committedState = hideStateIfNotRecovered(coordinationState.get().getLastAcceptedState());
             applierState = mode == Mode.CANDIDATE ? clusterStateWithNoMasterBlock(committedState) : committedState;
             if (applyCommitRequest.getSourceNode().equals(getLocalNode())) {
                 // master node applies the committed state at the end of the publication process, not here.
                 applyListener.onResponse(null);
             } else {
+                // 更新集群状态的任务被异步化了 在执行任务时 就是与新观测到的节点建立连接 与旧的节点断开连接
                 clusterApplier.onNewClusterState(applyCommitRequest.toString(), () -> applierState,
                     new ClusterApplyListener() {
 
@@ -741,18 +748,20 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         logger.debug("{}: coordinator becoming CANDIDATE in term {} (was {}, lastKnownLeader was [{}])",
             method, getCurrentTerm(), mode, lastKnownLeader);
 
+        // 初始状态下 mode为null
         if (mode != Mode.CANDIDATE) {
             final Mode prevMode = mode;
             // 将当前节点的角色变成候选者
             mode = Mode.CANDIDATE;
-            // 在节点首次启动时 还没有开启发布任务
-            // 如果至少发布过一次 那么就会初始化发布任务  此时如果变回了候选者 那么就会终止对外发布的任务
+            // 可能当前节点之前是 master 因为某种原因变成了candidate  并且此时正在往外部发送 pub请求 这里就要提前关闭
             cancelActivePublication("become candidate: " + method);
+
+            // 其余joinAccumulator.close 都是noop 所以不用看
             joinAccumulator.close(mode);
-            // 关闭之前的join结果采集器  同时将当前对象修改成在候选者场景下 处理join请求的采集器
+            // 将该对象修改成 candidate角色对应的
             joinAccumulator = joinHelper.new CandidateJoinAccumulator();
 
-            // 此时开始探测之前记录的集群中的节点   这里初步操作就是找到所有master节点并发送探测请求 非master节点的探测将被忽略
+            // 通过之前持久化的集群中的状态来
             peerFinder.activate(coordinationState.get().getLastAcceptedState().nodes());
 
             // 该对象启动后 会定期执行joinHelper::logLastFailedJoinAttempt   也就是定期打印设置到 JoinHelper内部的失败的join
@@ -782,6 +791,11 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             }
         }
 
+        // 在当前节点变成candidate的时候 代表此时该节点不知道集群中哪个是leader节点 那么在预投票节点 收到其他节点的 preVote请求时 就可以直接返回结果
+        /**
+         * 预投票的核心作用就是避免某个节点与leader的连接无效  但是其他节点与leader节点还是正常通信 这样会白白开启一轮选举
+         * 如果该节点是断线后又重连 那么能够通过preVote加入到集群么??? 以及数据之间的同步应该怎么做
+         */
         preVoteCollector.update(getPreVoteResponse(), null);
     }
 
@@ -903,7 +917,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
 
     /**
-     * 基于当前term 以及最后一次集群中的节点生成一个 res 对象
+     * 该对象是负责处理其他节点的preVote请求的
      * @return
      */
     private PreVoteResponse getPreVoteResponse() {
@@ -1462,7 +1476,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 在当前节点变成候选者时 停止对外发布的动作
+     * 在当前节点变成候选者时 停止对外发布的动作  发布任务指的就是将clusterState的变化通知到其他节点
      * @param reason
      */
     private void cancelActivePublication(String reason) {
@@ -1514,6 +1528,9 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             }
         }
 
+        /**
+         * 当集群这种观测到的节点发生变化时
+         */
         @Override
         protected void onFoundPeersUpdated() {
             synchronized (mutex) {
@@ -1642,6 +1659,11 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                                ListenableFuture<Void> localNodeAckEvent, AckListener ackListener, ActionListener<Void> publishListener) {
             super(publishRequest,
                 new AckListener() {
+
+                    /**
+                     * 当从发起某个 pub请求 到超过半数节点成功处理时 触发该方法
+                     * @param commitTime the time it took to commit the cluster state  总计消耗了多少时间
+                     */
                     @Override
                     public void onCommit(TimeValue commitTime) {
                         ackListener.onCommit(commitTime);
@@ -1731,9 +1753,8 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
 
         /**
-         * 代表本次发布任务已经中止
-         * 每次将当前节点修改成候选者时 就会停止向外部发布的任务
-         * @param committed
+         * 发布任务结束
+         * @param committed  任务结束时 发送pubRes的节点是否超过半数 如果没到半数代表本次发布任务是失败的
          */
         @Override
         protected void onCompletion(boolean committed) {
@@ -1847,7 +1868,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
          * 处理由某个节点返回的 publish 结果对象
          * @param sourceNode
          * @param publishResponse
-         * @return
+         * @return  当此时master节点 收到超过半数的赞同票时 每次收到publishRes 都会返回一个新的commitReq
          */
         @Override
         protected Optional<ApplyCommitRequest> handlePublishResponse(DiscoveryNode sourceNode,
