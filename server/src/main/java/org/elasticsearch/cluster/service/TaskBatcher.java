@@ -81,6 +81,7 @@ public abstract class TaskBatcher {
             // 因为是针对Object类型 所以无法用普通的基于 equals的hashMap  只能使用 "==" 的 IdentityHashMap
             IdentityHashMap::new));
 
+        // 因为插入和执行任务存在并发问题 需要一个执行任务的锁
         synchronized (tasksPerBatchingKey) {
             // 以 batchingKey 作为key 存储该批任务
             LinkedHashSet<BatchedTask> existingTasks = tasksPerBatchingKey.computeIfAbsent(firstTask.batchingKey,
@@ -157,6 +158,7 @@ public abstract class TaskBatcher {
 
             // 按照source 对任务进行分组   首先决定是否是同一批任务通过 batchingKey 来决定 之后任务本身可能按照不同的source创建
             final Map<String, List<BatchedTask>> processTasksBySource = new HashMap<>();
+            // 在执行任务时可能刚好有新的任务插入 所以这里加锁
             synchronized (tasksPerBatchingKey) {
                 LinkedHashSet<BatchedTask> pending = tasksPerBatchingKey.remove(updateTask.batchingKey);
                 if (pending != null) {
@@ -211,6 +213,7 @@ public abstract class TaskBatcher {
         /**
          * the object that is used as batching key
          * 用于标注当前任务属于哪个批次
+         * 一般是使用 executor 进行分组的
          */
         protected final Object batchingKey;
         /**

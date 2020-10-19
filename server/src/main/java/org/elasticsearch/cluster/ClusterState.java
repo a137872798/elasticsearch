@@ -119,7 +119,7 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
     public static final long UNKNOWN_VERSION = -1;
 
     /**
-     * 相当于一个 gen  通过对比version 可以比较哪个集群状态更新   只有基于CP的实现 版本号才有意义
+     * 每当集群状态发生变化时 就会+1
      */
     private final long version;
 

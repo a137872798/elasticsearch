@@ -212,7 +212,7 @@ public class CoordinationState {
 
         logger.debug("handleStartJoin: leaving term [{}] due to {}", getCurrentTerm(), startJoinRequest);
 
-        // TODO
+        // joinVotes 填充了数据应该就代表本节点也正好发起了startJoin请求   之后该容器将会被清空 所以这里打印日志
         if (joinVotes.isEmpty() == false) {
             final String reason;
             if (electionWon == false) {
@@ -231,7 +231,7 @@ public class CoordinationState {
         lastPublishedVersion = 0;
         lastPublishedConfiguration = getLastAcceptedConfiguration();
         startedJoinSinceLastReboot = true;
-        // 收到startJoin请求的节点 在本次选举中已经失败了
+        // 收到startJoin请求的节点 在本次选举中已经失败了 所以重置相关属性
         electionWon = false;
         joinVotes = new VoteCollection();
         publishVotes = new VoteCollection();
@@ -313,7 +313,7 @@ public class CoordinationState {
     /**
      * May be called in order to prepare publication of the given cluster state
      *
-     * @param clusterState The cluster state to publish.
+     * @param clusterState The cluster state to publish.  这个对象是在当前节点作为leader后接收各种join请求 生成的
      * @return A PublishRequest to publish the given cluster state
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
      * 基于当前的集群状态 生成一个发布状态的请求对象
@@ -324,6 +324,7 @@ public class CoordinationState {
             logger.debug("handleClientValue: ignored request as election not won");
             throw new CoordinationStateRejectedException("election not won");
         }
+        // 这里只是看到 当本节点变成leader节点时这2个值肯定是一致的
         if (lastPublishedVersion != getLastAcceptedVersion()) {
             logger.debug("handleClientValue: cannot start publishing next value before accepting previous one");
             throw new CoordinationStateRejectedException("cannot start publishing next value before accepting previous one");
@@ -350,6 +351,7 @@ public class CoordinationState {
             logger.debug("handleClientValue: only allow reconfiguration while not already reconfiguring");
             throw new CoordinationStateRejectedException("only allow reconfiguration while not already reconfiguring");
         }
+        // TODO
         if (joinVotesHaveQuorumFor(clusterState.getLastAcceptedConfiguration()) == false) {
             logger.debug("handleClientValue: only allow reconfiguration if joinVotes have quorum for new config");
             throw new CoordinationStateRejectedException("only allow reconfiguration if joinVotes have quorum for new config");
@@ -361,7 +363,7 @@ public class CoordinationState {
         // 将当前集群的数据标记成最近一次发布的属性
         lastPublishedVersion = clusterState.version();
         lastPublishedConfiguration = clusterState.getLastAcceptedConfiguration();
-        // 发布同样只需要超过半数成功就可以
+        // 在发布过程中 会设置 publishVotes
         publishVotes = new VoteCollection();
 
         logger.trace("handleClientValue: processing request for version [{}] and term [{}]", lastPublishedVersion, getCurrentTerm());

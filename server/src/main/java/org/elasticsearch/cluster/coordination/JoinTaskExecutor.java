@@ -118,10 +118,10 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
     }
 
     /**
-     * 批量执行一组任务 并返回结果
+     * 处理join任务
      *
      * @param currentState
-     * @param joiningNodes  每个join请求都会被封装成这个对象
+     * @param joiningNodes  可能旧的clusterState中不包含这个节点  那么在本次处理中会node加入到clusterState中 并将最新的clusterState发布到其他节点上
      * @return ClusterTasksResult 中包含每个任务的结果
      * @throws Exception
      */
@@ -133,10 +133,11 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         boolean nodesChanged = false;
         ClusterState.Builder newState;
 
-        // 如果此时只有一个任务  且任务代表某个选举结束了  直接生成成功结果
+        // TODO 如果一个join就能结束选举工作 那应该是单节点环境 忽略这条逻辑 可以看到它既不需要更新clusterState 也不需要publish到其他节点
         if (joiningNodes.size() == 1 && joiningNodes.get(0).isFinishElectionTask()) {
             return results.successes(joiningNodes).build(currentState);
-        //  代表此时集群中还没有旧的leader节点  并且 本次joinTask中有表明当前节点晋升成master节点的任务
+        //  在满足某些条件时 masterId 会被置空
+        //  本节点竞选leader成功时 会将集群中的leader修改为当前节点
         } else if (currentNodes.getMasterNode() == null && joiningNodes.stream().anyMatch(Task::isBecomeMasterTask)) {
 
             // 如果本次task中 出现了 becomeMaster 那么同时还必须出现 finishElection
@@ -145,16 +146,16 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
             // use these joins to try and become the master.
             // Note that we don't have to do any validation of the amount of joining nodes - the commit
             // during the cluster state publishing guarantees that we have enough
-            // 去除已经无效的节点  同时将自身修改为 master节点
+            // 移除与本次join冲突的node   同时将自身修改为 master节点  因为同一个node 可能它的版本或者啥的发生了变化 那么之前记录的信息就需要被移除掉
             newState = becomeMasterAndTrimConflictingNodes(currentState, joiningNodes);
             nodesChanged = true;
 
-            // TODO
+            // 不是leader节点 不允许走下面的分支   也就是只有leader节点 能通过batch处理 之前选举时收到的join请求
         } else if (currentNodes.isLocalNodeElectedMaster() == false) {
             logger.trace("processing node joins, but we are not the master. current master: {}", currentNodes.getMasterNode());
             throw new NotMasterException("Node [" + currentNodes.getLocalNode() + "] not master for join request");
         } else {
-            // TODO
+            // 基于当前集群state 生成一个新的构建器   进入到这里应该是代表以leaderAccumulator 处理新收到的join请求
             newState = ClusterState.builder(currentState);
         }
 
@@ -171,11 +172,10 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         // processing any joins
         Map<String, String> joiniedNodeNameIds = new HashMap<>();
 
-        // 当检测完兼容性时 task已经处理完了
         for (final Task joinTask : joiningNodes) {
             if (joinTask.isBecomeMasterTask() || joinTask.isFinishElectionTask()) {
                 // noop
-                // 如果这个任务对应的node 已经不存在于集群中了 忽略
+            // 该节点已经记录在clusterState中了 不需要更新集群状态
             } else if (currentNodes.nodeExists(joinTask.node())) {
                 logger.debug("received a join request for an existing node [{}]", joinTask.node());
             } else {
@@ -189,14 +189,18 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
                     // we do this validation quite late to prevent race conditions between nodes joining and importing dangling indices
                     // we have to reject nodes that don't support all indices we have in this cluster
                     ensureIndexCompatibility(node.getVersion(), currentState.getMetadata());
+
+                    // 通过校验后代表本节点可以加入到最新的集群中
                     nodesBuilder.add(node);
                     nodesChanged = true;
                     minClusterNodeVersion = Version.min(minClusterNodeVersion, node.getVersion());
                     maxClusterNodeVersion = Version.max(maxClusterNodeVersion, node.getVersion());
+                    // 该节点属于可以参与选举的节点
                     if (node.isMasterNode()) {
                         joiniedNodeNameIds.put(node.getName(), node.getId());
                     }
                 } catch (IllegalArgumentException | IllegalStateException e) {
+                    // 代表某个节点处理失败了   一开始join的时候直接检测不就好了
                     results.failure(joinTask, e);
                     continue;
                 }
@@ -204,19 +208,23 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
             results.success(joinTask);
         }
 
+
+        // 本次集群状态发生了变化 (收到了一个之前不存在与集群中的node的join请求 或者是本次晋升成了leader) 都要通知到集群中所有节点
+        // 当节点的兼容性没有通过时 会返回失败信息给发送端
         if (nodesChanged) {
-            // 因为master节点发生了变化 所以要进行重路由
+            // TODO 因为master节点发生了变化 所以要进行重路由
             rerouteService.reroute("post-join reroute", Priority.HIGH, ActionListener.wrap(
                 r -> logger.trace("post-join reroute completed"),
                 e -> logger.debug("post-join reroute failed", e)));
 
-            // TODO 如果投选本次节点的某个节点 是上一任期的 master节点
             if (joiniedNodeNameIds.isEmpty() == false) {
                 // 找到一组不参与选举的对象
                 Set<CoordinationMetadata.VotingConfigExclusion> currentVotingConfigExclusions = currentState.getVotingConfigExclusions();
+
                 Set<CoordinationMetadata.VotingConfigExclusion> newVotingConfigExclusions = currentVotingConfigExclusions.stream()
                     .map(e -> {
                         // Update nodeId in VotingConfigExclusion when a new node with excluded node name joins
+                        // 代表不通过id 而是name 进行匹配么
                         if (CoordinationMetadata.VotingConfigExclusion.MISSING_VALUE_MARKER.equals(e.getNodeId()) &&
                             joiniedNodeNameIds.containsKey(e.getNodeName())) {
                             return new CoordinationMetadata.VotingConfigExclusion(joiniedNodeNameIds.get(e.getNodeName()), e.getNodeName());
@@ -225,15 +233,15 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
                         }
                     }).collect(Collectors.toSet());
 
+                // 因为某些 exclusion需要通过name来匹配  这时新的节点名字匹配上了 就要追加到原来的配置中
                 // if VotingConfigExclusions did get updated
-                // 代表需要更新 VotingConfigExclusion配置
                 if (newVotingConfigExclusions.equals(currentVotingConfigExclusions) == false) {
                     CoordinationMetadata.Builder coordMetadataBuilder = CoordinationMetadata.builder(currentState.coordinationMetadata())
                         .clearVotingConfigExclusions();
                     newVotingConfigExclusions.forEach(coordMetadataBuilder::addVotingConfigExclusion);
                     Metadata newMetadata = Metadata.builder(currentState.metadata())
                         .coordinationMetadata(coordMetadataBuilder.build()).build();
-                    // 根据新的配置 触发自适应副本分配
+                    // 更新clusterState 并返回结果
                     return results.build(allocationService.adaptAutoExpandReplicas(newState.nodes(nodesBuilder)
                         .metadata(newMetadata).build()));
                 }
@@ -248,7 +256,8 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
     }
 
     /**
-     * 做一些无效节点检测 以及解除 NoMasterBlock 限制
+     * 本次发起join请求的node是最新的 如果它与之前的clusterState中某些node冲突 那么移除掉
+     * 以及解除 NoMasterBlock 限制
      *
      * @param currentState
      * @param joiningNodes
@@ -258,7 +267,7 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         assert currentState.nodes().getMasterNodeId() == null : currentState;
         DiscoveryNodes currentNodes = currentState.nodes();
         DiscoveryNodes.Builder nodesBuilder = DiscoveryNodes.builder(currentNodes);
-        // 将本地节点修改成master节点  果然master节点就代表leader节点
+        // 将本地节点修改成leader节点
         nodesBuilder.masterNodeId(currentState.nodes().getLocalNodeId());
 
         for (final Task joinTask : joiningNodes) {
@@ -266,10 +275,10 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
             if (joinTask.isBecomeMasterTask() || joinTask.isFinishElectionTask()) {
                 // noop
             } else {
-                // 该任务是由哪个节点发出的
+                // 找到对应节点
                 final DiscoveryNode joiningNode = joinTask.node();
                 final DiscoveryNode nodeWithSameId = nodesBuilder.get(joiningNode.getId());
-                // 代表节点id相同 但是ephemeralId 不同  这样的节点会被移除
+                // 代表节点id相同 但是ephemeralId 不同   应该是代表节点重启过吧  但是此时收到该节点的join 就代表认同此时的信息
                 if (nodeWithSameId != null && nodeWithSameId.equals(joiningNode) == false) {
                     logger.debug("removing existing node [{}], which conflicts with incoming join from [{}]", nodeWithSameId, joiningNode);
                     nodesBuilder.remove(nodeWithSameId.getId());
@@ -294,7 +303,8 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
                 .removeGlobalBlock(NoMasterBlockService.NO_MASTER_BLOCK_ID))
             .build();
         logger.trace("becomeMasterAndTrimConflictingNodes: {}", tmpState.nodes());
-        // TODO 清理缓存
+
+        // TODO  下面3个跟选举没有直接关系 先忽略
         allocationService.cleanCaches();
         // 更新持久化任务的元数据
         tmpState = PersistentTasksCustomMetadata.disassociateDeadNodes(tmpState);
@@ -302,6 +312,10 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         return ClusterState.builder(allocationService.disassociateDeadNodes(tmpState, false, "removed dead nodes on election"));
     }
 
+    /**
+     * 非leader节点 可能处理 join回调
+     * @return
+     */
     @Override
     public boolean runOnlyOnMaster() {
         // we validate that we are allowed to change the cluster state during cluster state processing

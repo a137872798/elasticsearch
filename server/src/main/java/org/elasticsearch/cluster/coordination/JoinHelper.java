@@ -97,7 +97,7 @@ public class JoinHelper {
      */
     private final JoinTaskExecutor joinTaskExecutor;
 
-    @Nullable // if using single-node discovery    在单节点环境下不会设置该值
+    @Nullable // if using single-node discovery    一轮选举的时间
     private final TimeValue joinTimeout;
 
     /**
@@ -131,7 +131,7 @@ public class JoinHelper {
                Collection<BiConsumer<DiscoveryNode, ClusterState>> joinValidators, RerouteService rerouteService) {
         this.masterService = masterService;
         this.transportService = transportService;
-        // 代表集群是单节点模式
+        // 一轮选举的等待时间
         this.joinTimeout = DiscoveryModule.isSingleNodeDiscovery(settings) ? null : JOIN_TIMEOUT_SETTING.get(settings);
 
         // 该对象现在会通过 currentTermSupplier获取最新的任期
@@ -166,7 +166,7 @@ public class JoinHelper {
 
         };
 
-        // 在传输层注册请求处理器
+        // 在传输层注册请求处理器   这个join的ack信息不是立即返回的 而是要等到 选举结束
         transportService.registerRequestHandler(JOIN_ACTION_NAME, ThreadPool.Names.GENERIC, false, false, JoinRequest::new,
             (request, channel, task) -> joinHandler.accept(request, transportJoinCallback(request, channel)));
 
@@ -303,19 +303,23 @@ public class JoinHelper {
         final JoinRequest joinRequest = new JoinRequest(transportService.getLocalNode(), term, optionalJoin);
         final Tuple<DiscoveryNode, JoinRequest> dedupKey = Tuple.tuple(destination, joinRequest);
 
-        // 加入成功代表首次往该节点上发送join请求  加入失败代表之前已经发送过join请求  并且还未收到结果
+        // 加入成功代表首次往该节点上发送join请求  加入失败代表在这轮join中已经为该节点投过一票了
         if (pendingOutgoingJoins.add(dedupKey)) {
             logger.debug("attempting to join {} with {}", destination, joinRequest);
             transportService.sendRequest(destination, JOIN_ACTION_NAME, joinRequest,
                 TransportRequestOptions.builder().withTimeout(joinTimeout).build(),
 
-                // 处理收到的ack信息
                 new TransportResponseHandler<Empty>() {
                     @Override
                     public Empty read(StreamInput in) {
                         return Empty.INSTANCE;
                     }
 
+                    /**
+                     * 只有当本轮选举结束 才会收到ack信息 针对选举的节点成功leader的场景 因为leader变化 必然会触发publish到集群中
+                     * 并且等待所有节点都处理完事件后 才会触发监听器  进而把ack信息返回
+                     * @param response
+                     */
                     @Override
                     public void handleResponse(Empty response) {
                         // 操作后使得可以继续往同一节点发送请求
@@ -324,6 +328,11 @@ public class JoinHelper {
                         lastFailedJoinAttempt.set(null);
                     }
 
+                    /**
+                     * 当支持的节点选举失败时 会以异常方式触发该方法
+                     * 当支持的节点选举成功 但是校验失败时 还是会以异常方式触发 先忽略这种异常吧 校验失败的节点本身就不应该参与选举啊
+                     * @param exp
+                     */
                     @Override
                     public void handleException(TransportException exp) {
                         pendingOutgoingJoins.remove(dedupKey);
@@ -405,10 +414,14 @@ public class JoinHelper {
      * 这里包装了callback 以解耦
      */
     static class JoinTaskListener implements ClusterStateTaskListener {
+
+        /**
+         * 该对象内部包含了发送join请求的节点
+         */
         private final JoinTaskExecutor.Task task;
 
         /**
-         * 将处理逻辑转接到 channel上
+         * 调用该函数时 就是将选举的结果通知到发出join请求的节点
          */
         private final JoinCallback joinCallback;
 
@@ -448,8 +461,16 @@ public class JoinHelper {
      * 当前节点角色转变成 leader后 内部的累加器也会更改
      */
     class LeaderJoinAccumulator implements JoinAccumulator {
+
+        /**
+         * 当本节点已经变成leader节点时 继续收到join请求 会直接进行处理 这套逻辑与 candidate的close是一样的
+         * @param sender
+         * @param joinCallback
+         */
         @Override
         public void handleJoinRequest(DiscoveryNode sender, JoinCallback joinCallback) {
+            // 采用批处理最大的原因是 每个通过join的节点都会加入到最新的 clusterState中 并且会触发publish方法 该方法的处理比较复杂 通过批处理可以将一批更新任务一起执行
+            // 尽可能只发布一个最新的clusterState
             final JoinTaskExecutor.Task task = new JoinTaskExecutor.Task(sender, "join existing leader");
             masterService.submitStateUpdateTask("node-join", task, ClusterStateTaskConfig.build(Priority.URGENT),
                 joinTaskExecutor, new JoinTaskListener(task, joinCallback));
@@ -461,9 +482,6 @@ public class JoinHelper {
         }
     }
 
-    /**
-     * 在初始状态下拒绝 join请求
-     */
     static class InitialJoinAccumulator implements JoinAccumulator {
         @Override
         public void handleJoinRequest(DiscoveryNode sender, JoinCallback joinCallback) {
@@ -516,8 +534,8 @@ public class JoinHelper {
         }
 
         /**
-         * 由于当前角色发生了变化 所以之前采集到的数据就可以丢弃了
-         * @param newMode
+         * 可以通过 callback对象将结果返回给发送 join请求的节点了
+         * @param newMode  本次参与选举的节点最后决定的角色
          */
         @Override
         public void close(Mode newMode) {
@@ -530,20 +548,22 @@ public class JoinHelper {
                 // 将本次选举时 该节点的所有支持者抽取出来生成task 对象
                 joinRequestAccumulator.forEach((key, value) -> {
                     final JoinTaskExecutor.Task task = new JoinTaskExecutor.Task(key, "elect leader");
+                    // 这个value 就是callback 适配成了 JoinTaskListener
                     pendingAsTasks.put(task, new JoinTaskListener(task, value));
                 });
 
                 final String stateUpdateSource = "elected-as-master ([" + pendingAsTasks.size() + "] nodes joined)";
 
-                // 同时插入 变成leader节点 和 完成选举的任务
+                // 本节点变成leader时 需要插入2个特殊的任务
                 pendingAsTasks.put(JoinTaskExecutor.newBecomeMasterTask(), (source, e) -> {
                 });
                 pendingAsTasks.put(JoinTaskExecutor.newFinishElectionTask(), (source, e) -> {
                 });
+                // 在处理过程中 未通过校验的node 会发送失败信息回给join节点 通过校验的节点会正常返回ack信息 并且如果集群状态发生了变化 会触发钩子
                 masterService.submitStateUpdateTasks(stateUpdateSource, pendingAsTasks, ClusterStateTaskConfig.build(Priority.URGENT),
                     joinTaskExecutor);
             } else {
-                // 如果节点没有变成leader 以失败方式触发回调
+                // 该节点变成了follower时 返回异常信息
                 assert newMode == Mode.FOLLOWER : newMode;
                 joinRequestAccumulator.values().forEach(joinCallback -> joinCallback.onFailure(
                     new CoordinationStateRejectedException("became follower")));

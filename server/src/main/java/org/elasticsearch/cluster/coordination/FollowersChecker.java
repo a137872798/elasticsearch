@@ -125,6 +125,7 @@ public class FollowersChecker {
         followerCheckTimeout = FOLLOWER_CHECK_TIMEOUT_SETTING.get(settings);
         followerCheckRetryCount = FOLLOWER_CHECK_RETRY_COUNT_SETTING.get(settings);
 
+        // 该对象在初始阶段时 使用一个默认的响应结果
         updateFastResponseState(0, Mode.CANDIDATE);
         transportService.registerRequestHandler(FOLLOWER_CHECK_ACTION_NAME, Names.SAME, false, false, FollowerCheckRequest::new,
             (request, transportChannel, task) -> handleFollowerCheck(request, transportChannel));
@@ -189,14 +190,14 @@ public class FollowersChecker {
     private void handleFollowerCheck(FollowerCheckRequest request, TransportChannel transportChannel) throws IOException {
         FastResponseState responder = this.fastResponseState;
 
-        // 此时节点是 follower 并且  term 与请求一致  此时可以返回结果
+        // 当前节点此时确实是 follower时 直接返回ack信息
         if (responder.mode == Mode.FOLLOWER && responder.term == request.term) {
             logger.trace("responding to {} on fast path", request);
             transportChannel.sendResponse(Empty.INSTANCE);
             return;
         }
 
-        // 忽略 过期请求
+        // TODO 探测的任期太旧意味着什么
         if (request.term < responder.term) {
             throw new CoordinationStateRejectedException("rejecting " + request + " since local state is " + this);
         }
@@ -206,6 +207,7 @@ public class FollowersChecker {
             protected void doRun() throws IOException {
                 logger.trace("responding to {} on slow path", request);
                 try {
+                    // 这里就是多了一步处理 因为此时在IO线程中 所以会将处理逻辑转发到业务线程
                     handleRequestAndUpdateState.accept(request);
                 } catch (Exception e) {
                     transportChannel.sendResponse(e);
@@ -269,7 +271,7 @@ public class FollowersChecker {
     }
 
     /**
-     * 快速响应状态是什么鬼
+     * 因为CP中某个节点状态一旦确认下来 任期 mode都不会变化   所以采用单例模式
      */
     static class FastResponseState {
         final long term;
@@ -344,7 +346,7 @@ public class FollowersChecker {
 
                         failureCountSinceLastSuccess = 0;
                         logger.trace("{} check successful", FollowerChecker.this);
-                        // 只要正常返回结果 代表node还是follower 节点
+                        // 递归执行检测任务
                         scheduleNextWakeUp();
                     }
 

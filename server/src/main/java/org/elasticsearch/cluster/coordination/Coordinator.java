@@ -226,7 +226,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     private Releasable prevotingRound;
 
     /**
-     * 某次选举中在预投票过程中接受到的最大term
+     * 此时从集群中探测到的最大任期
      */
     private long maxTermSeen;
 
@@ -304,6 +304,8 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         this.publishInfoTimeout = PUBLISH_INFO_TIMEOUT_SETTING.get(settings);
         this.random = random;
         this.electionSchedulerFactory = new ElectionSchedulerFactory(settings, random, transportService.getThreadPool());
+
+        // 只有在预投票阶段需要执行 updateMaxTermSeen
         this.preVoteCollector = new PreVoteCollector(transportService, this::startElection, this::updateMaxTermSeen, electionStrategy);
         configuredHostsResolver = new SeedHostsResolver(nodeName, settings, transportService, seedHostsProvider);
 
@@ -360,11 +362,12 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 检测当前节点是否是 follower节点
+     * 当前节点不是 follower时  通过该函数处理 FollowerCheckRequest 请求
      * @param followerCheckRequest
      */
     void onFollowerCheckRequest(FollowerCheckRequest followerCheckRequest) {
         synchronized (mutex) {
+            // 探测端的term 是可能比接收端要大的
             ensureTermAtLeast(followerCheckRequest.getSender(), followerCheckRequest.getTerm());
 
             if (getCurrentTerm() != followerCheckRequest.getTerm()) {
@@ -522,8 +525,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 当发送预投票请求时  目标节点会通过req 触发该函数
-     * 这时返回的res 又会在源节点上触发该函数
+     * 处于预投票req/res前要先执行该函数
      * @param term
      */
     private void updateMaxTermSeen(final long term) {
@@ -540,11 +542,13 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                 } else {
                     try {
                         logger.debug("updateMaxTermSeen: maxTermSeen = {} > currentTerm = {}, bumping term", maxTermSeen, currentTerm);
-                        // 这里还不知道要将请求发往哪里
+                        // 模拟从自身收到一个 startJoin请求 并且在处理join时 会自动将自己变成candidate
                         ensureTermAtLeast(getLocalNode(), maxTermSeen);
+                        // 因为此时已经变成了 candidate 可以向集群中其他节点发送startJoin请求
                         startElection();
                     } catch (Exception e) {
                         logger.warn(new ParameterizedMessage("failed to bump term to {}", maxTermSeen), e);
+                        // 处理失败时至少要将自己修改成candidate
                         becomeCandidate("updateMaxTermSeen");
                     }
                 }
@@ -616,15 +620,14 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
 
     /**
+     * 有些探测请求中 有可能对端的term 比当前节点大  那么模拟从探测节点收到startJoin请求 这样就可以共用加入集群的请求了
      * @param sourceNode  目标任期对应的master(leader)节点
      * @param targetTerm  目标任期
      * @return
      */
     private Optional<Join> ensureTermAtLeast(DiscoveryNode sourceNode, long targetTerm) {
         assert Thread.holdsLock(mutex) : "Coordinator mutex not held";
-        // 每当接收到更新的任期对应的master节点时 就会更新本地缓存的leader
         if (getCurrentTerm() < targetTerm) {
-            // 这里模拟了一个 leader节点要求当前节点为它投票的请求
             return Optional.of(joinLeaderInTerm(new StartJoinRequest(sourceNode, targetTerm)));
         }
         return Optional.empty();
@@ -650,13 +653,13 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
             // 在 startJoin的阶段 可以将除了通过预投票的其余节点强制修改成 候选节点   也就是预投票阶段就是检测是否是master节点无效了
             // 当然任期不合法的情况 会在handleStartJoin中提前抛出异常
+            // 每个落后的节点在与其他节点交互时 收到了更新的任期 就会模拟一个startJoin请求 并进行处理 这时如果当前节点不是candidate 那么就会降级成candidate
             if (mode != Mode.CANDIDATE) {
                 becomeCandidate("joinLeaderInTerm"); // updates followersChecker and preVoteCollector
             } else {
-                // TODO
-                // 当前节点如果是 leader 或者也检测到leader节点失效而降级成candidate
+                // 当前节点作为候选者 收到了其他候选者的startJoin请求
                 followersChecker.updateFastResponseState(getCurrentTerm(), mode);
-                // 集群中已经确认leader无效了 将其置为null 使得更多的preVote可以通过
+                // 更新preVote返回的最新任期
                 preVoteCollector.update(getPreVoteResponse(), null);
             }
             return join;
@@ -681,7 +684,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             return;
         }
 
-        // 备选节点会连接到发送join请求的节点
+        // 备选节点会连接到发送join请求的节点  因为之前在发送startJoin时已经建立了连接所以这里会直接触发监听器
         transportService.connectToNode(joinRequest.getSourceNode(), ActionListener.wrap(ignore -> {
             // 收到join请求后 这里为 clusterState追加了 noMasterBlock
             final ClusterState stateForJoinValidation = getStateForMasterService();
@@ -730,6 +733,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
     /**
      * 当本节点还没有变成leader节点时 并且收到了一个join请求 触发该方法
+     * TODO 本节点不一定非要candidate才能触发该方法  为leader时也有可能触发该方法
      * @param joinRequest
      * @param joinCallback
      */
@@ -737,17 +741,18 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         // 目前看到在处理startJoin请求时 一定会产生一个join
         final Optional<Join> optionalJoin = joinRequest.getOptionalJoin();
         synchronized (mutex) {
-            // 如果对端的任期更高尝试更新
+            // 如果对端的任期更高尝试更新  主要就是检测脑裂的逻辑
             updateMaxTermSeen(joinRequest.getTerm());
 
             final CoordinationState coordState = coordinationState.get();
 
             final boolean prevElectionWon = coordState.electionWon();
 
-            // 处理本次join请求内部的join   当票数足够时  会将coordinationState中的win修改成true
+            // 处理本次joinReq内部的join   当票数足够时  会将coordinationState中的win修改成true
             optionalJoin.ifPresent(this::handleJoin);
 
-            // 将join请求存储到 accumulator中
+            // 将join请求存储到 accumulator中    这些join请求的回调没有立即触发 而是先存储在accumulator中
+            // 当收到足够的join请求 accumulator 会变成 LeaderAccumulator
             joinAccumulator.handleJoinRequest(joinRequest.getSourceNode(), joinCallback);
 
             // 如果此时发现当前节点已经获取了足够的选票 晋升成leader
@@ -828,7 +833,8 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
         mode = Mode.LEADER;
         // 因为follower是不能变成leader的所以这里一定是 candidate
-        // 处理之前存储的join 同时将本节点暴露给集群中的其他节点 其他节点就会自动变成follower
+        // 在每轮选举中 发出join请求时 callback都没有直接触发 而是等待该节点变成了leader后 或者follower后触发close 这时会回调之前的callback通知其他节点选举完成
+        // 之后成为master的节点会通知其他节点
         joinAccumulator.close(mode);
         // 将累加器更新成 LeaderJoinAccumulator
         joinAccumulator = joinHelper.new LeaderJoinAccumulator();
@@ -836,12 +842,14 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         // 更新已知的leader节点
         lastKnownLeader = Optional.of(getLocalNode());
 
-        // 停止对外探测
+        // 停止对外探测 但是还是接收其他节点的 PeerReq
         peerFinder.deactivate(getLocalNode());
         // 因为选举阶段已经结束了 所以不需要再打印 失败的join信息了
         clusterFormationFailureHelper.stop();
+
+        // 因为选举已经完成  关闭定时器 和预投票   只有当选举结果产生(也就是当前节点转换成leader/follower) 或者当前节点能感知到的节点已经不足半数时 才会关闭选举任务
         closePrevotingAndElectionScheduler();
-        // 因为当前节点是leader节点 设置结果到  preVoteCollector 中
+        // 因为当前节点是leader节点 设置结果到  preVoteCollector 中  这样其他节点发送preVote时 本节点不予通过
         preVoteCollector.update(getPreVoteResponse(), getLocalNode());
 
         assert leaderChecker.leader() == null : leaderChecker.leader();
@@ -1312,7 +1320,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             // 先假设 join的任期与当前节点的任期一样 这样不会返回join 无法递归出发handleJoin
             ensureTermAtLeast(getLocalNode(), join.getTerm()).ifPresent(this::handleJoin);
 
-            // 当此时节点竞选成功 但是mode还没有变成leader
+            // 当此时节点竞选成功 走这个逻辑
             if (coordinationState.get().electionWon()) {
                 // If we have already won the election then the actual join does not matter for election purposes, so swallow any exception
                 // 这里等同于 coordinationState.get().handleJoin(join) 不过捕获了异常  返回true代表join请求被正常处理 false代表目标节点的join请求不符合条件
@@ -1408,16 +1416,16 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 将集群变化的事件通知到所有节点  比如当前节点晋升成了master节点
-     * @param clusterChangedEvent
-     * @param publishListener
-     * @param ackListener
+     * 将集群变化的事件通知到所有节点  比如当前节点晋升成了master节点  又或者 集群下感知到了新的node并加入到clusterState (通过join请求感知到)
+     * @param clusterChangedEvent  存储了集群的前后状态 以及新增的node
+     * @param publishListener  当任务完成时往future中设置结果
+     * @param ackListener  桥接到一组 Ack监听器上 可能为空列表 这样就是NOOP
      */
     @Override
     public void publish(ClusterChangedEvent clusterChangedEvent, ActionListener<Void> publishListener, AckListener ackListener) {
         try {
             synchronized (mutex) {
-                // 如果当前节点不是leader节点 或者当前节点的任期 不一致 是没有发布到集群的权力的
+                // 如果当前节点不是leader节点 或者当前节点的任期 不一致 是没有发布的权力的
                 if (mode != Mode.LEADER || getCurrentTerm() != clusterChangedEvent.state().term()) {
                     logger.debug(() -> new ParameterizedMessage("[{}] failed publication as node is no longer master for term {}",
                         clusterChangedEvent.source(), clusterChangedEvent.state().term()));
@@ -1426,7 +1434,8 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                     return;
                 }
 
-                // 当前正在处理一个发布事件 无法继续发布
+                // 当前正在处理一个发布事件 无法继续发布  这样不对啊 那后来收到的join请求不都无法正常执行了么
+                // TODO join在一轮中会进行重试么  一轮中可以通知到多个节点么
                 if (currentPublication.isPresent()) {
                     assert false : "[" + currentPublication.get() + "] in progress, cannot start new publication";
                     logger.warn(() -> new ParameterizedMessage("[{}] failed publication as already publication in progress",
@@ -1443,17 +1452,21 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                 assert getLocalNode().equals(clusterState.getNodes().get(getLocalNode().getId())) :
                     getLocalNode() + " should be in published " + clusterState;
 
-                // 基于要发布的内容 创建一个上下文对象
+                // 基于要发布的内容 创建一个上下文对象 该对象已经定义了publish/commit 怎么处理
                 final PublicationTransportHandler.PublicationContext publicationContext =
                     publicationHandler.newPublicationContext(clusterChangedEvent);
 
-                // 将此时最新的集群状态包装成req 对象并发往集群中的其他节点
+                // 将此时最新的集群状态包装成req对象
                 final PublishRequest publishRequest = coordinationState.get().handleClientValue(clusterState);
+
+                // 生成一个包含完整发布逻辑的对象
                 final CoordinatorPublication publication = new CoordinatorPublication(publishRequest, publicationContext,
                     new ListenableFuture<>(), ackListener, publishListener);
+
+                // 当此时要执行一个发布任务时 就会设置到这个属性中 也就是在短时间内不能连续的处理发布任务   那么更新就无法被及时处理了啊???
                 currentPublication = Optional.of(publication);
 
-                // 将此时集群中所有可观测到的节点设置到2个checker对象中
+                // 获取此时即将要发布的集群节点  应该是还没有持久化的 照理说要通过半数节点认同才能进行持久化
                 final DiscoveryNodes publishNodes = publishRequest.getAcceptedState().nodes();
                 leaderChecker.setCurrentNodes(publishNodes);
                 followersChecker.setCurrentNodes(publishNodes);
@@ -1672,10 +1685,14 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 每当要执行一次发布动作就会生成一个该对象
+     * 每当要执行一次发布动作就会生成一个该对象  同时该对象内部的PublicationContext 定义了处理请求的逻辑
      */
     class CoordinatorPublication extends Publication {
 
+
+        /**
+         * 发布请求本身 包含了最新的集群状态
+         */
         private final PublishRequest publishRequest;
 
         /**
@@ -1704,6 +1721,15 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         private final List<Join> receivedJoins = new ArrayList<>();
         private boolean receivedJoinsProcessed;
 
+
+        /**
+         * 在处理因为join导致的 clusterState更新 并发起发布请求的场景下   publishListener 对应一个future对象 publish就是在阻塞等待future的结果
+         * @param publishRequest
+         * @param publicationContext
+         * @param localNodeAckEvent
+         * @param ackListener    桥接到一组ACK监听器 可能是一个空列表
+         * @param publishListener
+         */
         CoordinatorPublication(PublishRequest publishRequest, PublicationTransportHandler.PublicationContext publicationContext,
                                ListenableFuture<Void> localNodeAckEvent, AckListener ackListener, ActionListener<Void> publishListener) {
             super(publishRequest,
@@ -1753,6 +1779,9 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             this.ackListener = ackListener;
             this.publishListener = publishListener;
 
+            /**
+             * 发布有一个超时时间 超过时间时 会关闭本次发布任务
+             */
             this.timeoutHandler = singleNodeDiscovery ? null : transportService.getThreadPool().schedule(new Runnable() {
                 @Override
                 public void run() {
@@ -1767,6 +1796,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                 }
             }, publishTimeout, Names.GENERIC);
 
+            // 打印日志的不管
             this.infoTimeoutHandler = transportService.getThreadPool().schedule(new Runnable() {
                 @Override
                 public void run() {
@@ -1802,8 +1832,8 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
 
         /**
-         * 发布任务结束
-         * @param committed  任务结束时 发送pubRes的节点是否超过半数 如果没到半数代表本次发布任务是失败的
+         * 当发布任务完全结束时触发  可能执行成功也可能执行失败
+         * @param committed  代表产生了 commit对象
          */
         @Override
         protected void onCompletion(boolean committed) {

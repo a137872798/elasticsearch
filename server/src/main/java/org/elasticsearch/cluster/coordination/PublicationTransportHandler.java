@@ -184,7 +184,7 @@ public class PublicationTransportHandler {
 
 
     /**
-     * 将这个集群的变化事件发布出去
+     * 根据本次集群的变化 生成一个发布的上下文对象 该对象定义了如何发送请求 以及处理的逻辑
      * @param clusterChangedEvent
      * @return
      */
@@ -194,7 +194,7 @@ public class PublicationTransportHandler {
         final DiscoveryNodes nodes = clusterChangedEvent.state().nodes();
         final ClusterState newState = clusterChangedEvent.state();
         final ClusterState previousState = clusterChangedEvent.previousState();
-        // TODO 先前描述阻塞相关的信息中 只要有一个 不能将状态持久化 就要将不同版本对应的集群数据都写入
+        // TODO 先前描述阻塞相关的信息中 只要有一个不支持持久化 就要将所有版本的数据都发送出去
         final boolean sendFullVersion = clusterChangedEvent.previousState().getBlocks().disableStatePersistence();
         final Map<Version, BytesReference> serializedStates = new HashMap<>();
         final Map<Version, BytesReference> serializedDiffs = new HashMap<>();
@@ -203,6 +203,7 @@ public class PublicationTransportHandler {
         // sadly this is not water tight as it may that a failed diff based publishing to a node
         // will cause a full serialization based on an older version, which may fail after the
         // change has been committed.
+        // 准备好要发送的数据
         buildDiffAndSerializeStates(clusterChangedEvent.state(), clusterChangedEvent.previousState(),
             nodes, sendFullVersion, serializedStates, serializedDiffs);
 
@@ -359,7 +360,7 @@ public class PublicationTransportHandler {
      *
      * @param clusterState
      * @param previousState
-     * @param discoveryNodes
+     * @param discoveryNodes  最新的集群状态中对应的所有node
      * @param sendFullVersion   存在多少个版本的node 就要生成多少数据流
      * @param serializedStates   每个版本对应的clusterState都是全量数据
      * @param serializedDiffs   每个版本对应的clusterState都是增量数据
@@ -371,18 +372,19 @@ public class PublicationTransportHandler {
         // 遍历此时集群中所有的节点
         for (DiscoveryNode node : discoveryNodes) {
             try {
-                // 如果发送所有版本 就要检查所有node.version   否则就是只检查新增节点的版本
+                // 1 代表需要发送所有版本的clusterState信息
+                // 2 这个node在之前的clusterState中不存在 (新增的)
                 if (sendFullVersion || !previousState.nodes().nodeExists(node)) {
-                    // 发现了之前没使用过的版本 加入数据
+                    // 将这个版本下的clusterState 转换成数据流
                     if (serializedStates.containsKey(node.getVersion()) == false) {
                         serializedStates.put(node.getVersion(), serializeFullClusterState(clusterState, node.getVersion()));
                     }
                 } else {
                     // will send a diff
+                    // 实际上这里还是发送了一个完整的diff对象 跟上面没太大区别 数据流还是很大
                     if (diff == null) {
                         diff = clusterState.diff(previousState);
                     }
-                    // 真的之前就存在的node 只写入增量数据
                     if (serializedDiffs.containsKey(node.getVersion()) == false) {
                         serializedDiffs.put(node.getVersion(), serializeDiffClusterState(diff, node.getVersion()));
                     }

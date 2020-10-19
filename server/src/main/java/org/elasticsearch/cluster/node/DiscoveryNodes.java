@@ -63,6 +63,9 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
     private final ImmutableOpenMap<String, DiscoveryNode> masterNodes;
     private final ImmutableOpenMap<String, DiscoveryNode> ingestNodes;
 
+    /**
+     * 在某轮选举中 本节点收到超过半数的join请求时 会在处理批任务中将本节点设置为master节点
+     */
     private final String masterNodeId;
     private final String localNodeId;
     private final Version minNonClientNodeVersion;

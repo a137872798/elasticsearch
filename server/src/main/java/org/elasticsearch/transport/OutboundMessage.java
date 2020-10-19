@@ -159,6 +159,7 @@ abstract class OutboundMessage extends NetworkMessage {
         private static byte setStatus(boolean compress, boolean isHandshake, Writeable message) {
             byte status = 0;
             status = TransportStatus.setResponse(status);
+            // 如果发送的是异常对象 在status会打上标记 这样对端接收时就知道触发 handleRes 还是 handleException
             if (message instanceof RemoteTransportException) {
                 status = TransportStatus.setError(status);
             }

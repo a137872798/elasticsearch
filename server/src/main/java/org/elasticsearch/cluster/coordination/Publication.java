@@ -40,7 +40,7 @@ import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 
 /**
- * 每个节点会对外发布自己
+ * 每当clusterState 发生变化时 会发布到其他所有的节点
  */
 public abstract class Publication {
 
@@ -71,9 +71,9 @@ public abstract class Publication {
 
     /**
      *
-     * @param publishRequest  该对象内部clusterState中的所有node 都是发送的目标
+     * @param publishRequest
      * @param ackListener
-     * @param currentTimeSupplier
+     * @param currentTimeSupplier  提供当前时间的函数
      */
     public Publication(PublishRequest publishRequest, AckListener ackListener, LongSupplier currentTimeSupplier) {
         this.publishRequest = publishRequest;
@@ -104,6 +104,7 @@ public abstract class Publication {
     /**
      * 处于某种原因关闭该对象
      * 比如master节点降级成 candidate
+     * 又或者 发布任务超时
      * @param reason
      */
     public void cancel(String reason) {
@@ -113,7 +114,7 @@ public abstract class Publication {
 
         assert cancelled == false;
         cancelled = true;
-        // 代表此时还没有 达到半数节点回应 pub请求   该方法与到达半数时的方法并发执行了怎么办 ???
+        // 此时还不满足 commit条件
         if (applyCommitRequest.isPresent() == false) {
             logger.debug("cancel: [{}] cancelled before committing (reason: {})", this, reason);
             // fail all current publications
@@ -141,12 +142,15 @@ public abstract class Publication {
         return applyCommitRequest.isPresent();
     }
 
+    /**
+     * 代表本次发布任务完成 可能以成功形式完成 也可能是被关闭
+     */
     private void onPossibleCompletion() {
         if (isCompleted) {
             return;
         }
 
-        // 只要还有某个target处于 active 状态  无法执行任务
+        // 在被手动关闭的情况下 只要还有一个target 处于活跃状态 就无法执行 completion
         if (cancelled == false) {
             for (final PublicationTarget target : publicationTargets) {
                 if (target.isActive()) {
@@ -155,7 +159,7 @@ public abstract class Publication {
             }
         }
 
-        // 代表此时pubRes 还没有超过半数
+        // 此时还没有满足commit条件
         if (applyCommitRequest.isPresent() == false) {
             logger.debug("onPossibleCompletion: [{}] commit failed", this);
             assert isCompleted == false;
@@ -165,6 +169,7 @@ public abstract class Publication {
             return;
         }
 
+        // 以满足commit的情况触发钩子
         assert isCompleted == false;
         isCompleted = true;
         onCompletion(true);
