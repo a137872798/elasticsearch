@@ -210,7 +210,7 @@ public class PublicationTransportHandler {
         return new PublicationContext() {
 
             /**
-             * 将发布请求发往某个node
+             * 将发布请求发往某个node  这里的node应该包含非master role的节点
              * @param destination
              * @param publishRequest
              * @param originalListener
@@ -225,10 +225,13 @@ public class PublicationTransportHandler {
                 // 发布的目标就是将集群最新的状态 通知给集群中所有节点  但是只要满足 > 1/2 的条件此时就认为发布成功了  并且自身也算在内
                 if (destination.equals(nodes.getLocalNode())) {
                     // if publishing to self, use original request instead (see currentPublishRequestToSelf for explanation)
+                    // 直接将数据存储在本地 这样在处理时就不用解析数据包了
                     final PublishRequest previousRequest = currentPublishRequestToSelf.getAndSet(publishRequest);
                     // we might override an in-flight publication to self in case where we failed as master and became master again,
                     // and the new publication started before the previous one completed (which fails anyhow because of higher current term)
                     assert previousRequest == null || previousRequest.getAcceptedState().term() < publishRequest.getAcceptedState().term();
+
+                    // 就是在原有监听器上追加了一层移除currentPublishRequestToSelf 的逻辑
                     responseActionListener = new ActionListener<PublishWithJoinResponse>() {
 
                         /**
@@ -311,6 +314,7 @@ public class PublicationTransportHandler {
                                         ActionListener<PublishWithJoinResponse> responseActionListener, boolean sendDiffs,
                                         Map<Version, BytesReference> serializedStates) {
         try {
+            // 当传输的是一个数据流时 使用该对象
             final BytesTransportRequest request = new BytesTransportRequest(bytes, node.getVersion());
             final Consumer<TransportException> transportExceptionHandler = exp -> {
                 // 当尝试发送部分数据失败时 选择发送全量数据
@@ -373,7 +377,7 @@ public class PublicationTransportHandler {
         for (DiscoveryNode node : discoveryNodes) {
             try {
                 // 1 代表需要发送所有版本的clusterState信息
-                // 2 这个node在之前的clusterState中不存在 (新增的)
+                // 2 这个node在之前的clusterState中不存在 (新增的节点 换句话说那个节点之前还没有关于这个clusterState的任何信息 所以反而需要发送全量数据 反向操作牛啊)
                 if (sendFullVersion || !previousState.nodes().nodeExists(node)) {
                     // 将这个版本下的clusterState 转换成数据流
                     if (serializedStates.containsKey(node.getVersion()) == false) {
@@ -381,7 +385,6 @@ public class PublicationTransportHandler {
                     }
                 } else {
                     // will send a diff
-                    // 实际上这里还是发送了一个完整的diff对象 跟上面没太大区别 数据流还是很大
                     if (diff == null) {
                         diff = clusterState.diff(previousState);
                     }
@@ -455,7 +458,7 @@ public class PublicationTransportHandler {
     }
 
     /**
-     * 收到发布请求代表集群中的master节点此时更新了集群状态 并通知到其他节点
+     * 处理从leader节点接受到的最新的集群状态
      * @param request
      * @return
      * @throws IOException
@@ -495,6 +498,7 @@ public class PublicationTransportHandler {
                 if (lastSeen == null) {
                     logger.debug("received diff for but don't have any local cluster state - requesting full state");
                     incompatibleClusterStateDiffReceivedCount.incrementAndGet();
+                    // 对端会捕获这个异常 并使用全量数据再发送一次请求
                     throw new IncompatibleClusterStateVersionException("have no local cluster state");
                 } else {
                     ClusterState incomingState;
@@ -530,7 +534,7 @@ public class PublicationTransportHandler {
      */
     private PublishWithJoinResponse acceptState(ClusterState incomingState) {
         // if the state is coming from the current node, use original request instead (see currentPublishRequestToSelf for explanation)
-        // 在发布过程中 还会发送给自己
+        // 代表本次pub请求是发送给自己 取出之前存入的 currentPublishRequestToSelf
         if (transportService.getLocalNode().equals(incomingState.nodes().getMasterNode())) {
             final PublishRequest publishRequest = currentPublishRequestToSelf.get();
             // 只有master节点将请求发往本地时 才会设置该标识
@@ -540,6 +544,7 @@ public class PublicationTransportHandler {
                 return handlePublishRequest.apply(publishRequest);
             }
         }
+        // 否则包裹一个req对象 并处理
         return handlePublishRequest.apply(new PublishRequest(incomingState));
     }
 }

@@ -377,11 +377,11 @@ public class CoordinationState {
      * @param publishRequest The publish request received.
      * @return A PublishResponse which can be sent back to the sender of the PublishRequest.
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
-     * 当收到 master节点的发布请求时触发  在调用该方法之前已经更新过当前节点的任期了
+     * 当收到 master节点的发布请求时触发
      */
     public PublishResponse handlePublishRequest(PublishRequest publishRequest) {
         final ClusterState clusterState = publishRequest.getAcceptedState();
-        // 所以此时如果任期不匹配 抛出异常
+        // 在调用该方法之前已经更新过当前节点的任期了 所以此时如果任期不匹配 抛出异常
         if (clusterState.term() != getCurrentTerm()) {
             logger.debug("handlePublishRequest: ignored publish request due to term mismatch (expected: [{}], actual: [{}])",
                 getCurrentTerm(), clusterState.term());

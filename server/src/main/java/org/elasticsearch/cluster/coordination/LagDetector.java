@@ -87,7 +87,7 @@ public class LagDetector {
     }
 
     /**
-     * 为 tracker对象设置version
+     * 目标节点对应的clusterState版本信息
      * @param discoveryNode
      * @param appliedVersion
      */
@@ -151,6 +151,9 @@ public class LagDetector {
      */
     private class NodeAppliedStateTracker {
         private final DiscoveryNode discoveryNode;
+        /**
+         * 目标节点此时的版本号   每当某个节点成为leader时 向其他节点发布了集群的最新信息并成功 收到ack时 就会将探测节点的版本号同步
+         */
         private final AtomicLong appliedVersion = new AtomicLong();
 
         NodeAppliedStateTracker(final DiscoveryNode discoveryNode) {

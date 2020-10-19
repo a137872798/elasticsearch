@@ -155,6 +155,7 @@ public abstract class PeerFinder {
 
     /**
      * 当已经确定集群中的leader节点时 不再保持与其他节点的连接 但是允许被其他节点探测到 也就是不主动建立连接 允许被动的连接
+     * 总共2个地方调用 分别是becomeLeader/becomeFollower  也就是当前节点确定了 本轮的leader时 不再对外暴露其他节点信息
      * @param leader
      */
     public void deactivate(DiscoveryNode leader) {

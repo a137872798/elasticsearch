@@ -139,7 +139,7 @@ public class FollowersChecker {
 
     /**
      * Update the set of known nodes, starting to check any new ones and stopping checking any previously-known-but-now-unknown ones.
-     * 代表此时不知道集群中任何一个节点
+     * 更新此时要检测的所有节点  这里包含了 leader节点
      */
     public void setCurrentNodes(DiscoveryNodes discoveryNodes) {
         synchronized (mutex) {
@@ -152,8 +152,9 @@ public class FollowersChecker {
 
             // 将discoveryNodes 中master节点排在第一个后 触发forEach
             discoveryNodes.mastersFirstStream().forEach(discoveryNode -> {
-                if (discoveryNode.equals(discoveryNodes.getLocalNode()) == false  // 忽略本节点
-                    && followerCheckers.containsKey(discoveryNode) == false    // 只处理新增节点
+                // 检测除了本节点外的其他节点是否为 follower
+                if (discoveryNode.equals(discoveryNodes.getLocalNode()) == false
+                    && followerCheckers.containsKey(discoveryNode) == false
                     && faultyNodes.contains(discoveryNode) == false) {
 
                     final FollowerChecker followerChecker = new FollowerChecker(discoveryNode);
@@ -182,7 +183,7 @@ public class FollowersChecker {
     }
 
     /**
-     * 处理外部访问该节点  并检测是否还是follower的请求
+     * 处理外部访问该节点  并检测是否还是follower的请求     此时本节点还可能是leader/candidate节点
      * @param request
      * @param transportChannel
      * @throws IOException
@@ -197,7 +198,7 @@ public class FollowersChecker {
             return;
         }
 
-        // TODO 探测的任期太旧意味着什么
+        // TODO 探测的任期太旧意味着  对端的节点已经集群脱节了
         if (request.term < responder.term) {
             throw new CoordinationStateRejectedException("rejecting " + request + " since local state is " + this);
         }
@@ -326,6 +327,7 @@ public class FollowersChecker {
                 return;
             }
 
+            // 当前节点的任期和node信息
             final FollowerCheckRequest request = new FollowerCheckRequest(fastResponseState.term, transportService.getLocalNode());
             logger.trace("handleWakeUp: checking {} with {}", discoveryNode, request);
 

@@ -82,7 +82,7 @@ public abstract class Publication {
         startTime = currentTimeSupplier.getAsLong();
         applyCommitRequest = Optional.empty();
         publicationTargets = new ArrayList<>(publishRequest.getAcceptedState().getNodes().getNodes().size());
-        // 注意这里发布的节点也包含了自身
+        // 注意这里发布的节点包含非master节点
         publishRequest.getAcceptedState().getNodes().mastersFirstStream().forEach(n -> publicationTargets.add(new PublicationTarget(n)));
     }
 
@@ -95,8 +95,10 @@ public abstract class Publication {
         logger.trace("publishing {} to {}", publishRequest, publicationTargets);
 
         for (final DiscoveryNode faultyNode : faultyNodes) {
+            // 每当往某个节点发送错误消息时 顺带检测能否提前结束pub任务 因为往其他节点发送本身是一个比较重的操作 当失败的节点数已经确定超过半数时 可以提前结束任务
             onFaultyNode(faultyNode);
         }
+        // 在faultyNodes为空的时候 就有检测这个的必要了  如果一开始票数就是达不到要求的就可以直接结束pub任务 而不浪费时间
         onPossibleCommitFailure();
         publicationTargets.forEach(PublicationTarget::sendPublishRequest);
     }
@@ -127,7 +129,9 @@ public abstract class Publication {
     }
 
     public void onFaultyNode(DiscoveryNode faultyNode) {
+        // 这会触发ackListener
         publicationTargets.forEach(t -> t.onFaultyNode(faultyNode));
+        // 顺带检测是否已经通知到所有节点上了
         onPossibleCompletion();
     }
 
@@ -195,9 +199,10 @@ public abstract class Publication {
     }
 
     /**
-     * 提交失败时触发
+     * 这里是在检测失败的节点是否已经达到1/2了 如果达到了就没有必要继续发送pub请求了 可以提前结束
      */
     private void onPossibleCommitFailure() {
+        // 如果已经生成了commit 对象 可以检测是否完成任务
         if (applyCommitRequest.isPresent()) {
             onPossibleCompletion();
             return;
@@ -205,6 +210,7 @@ public abstract class Publication {
 
         final CoordinationState.VoteCollection possiblySuccessfulNodes = new CoordinationState.VoteCollection();
         for (PublicationTarget publicationTarget : publicationTargets) {
+            // 这里将还未发送publish请求的节点 或者说还不能明确会失败的节点先加入到 投票箱中
             if (publicationTarget.mayCommitInFuture()) {
                 possiblySuccessfulNodes.addVote(publicationTarget.discoveryNode);
             } else {
@@ -212,6 +218,7 @@ public abstract class Publication {
             }
         }
 
+        // 如果此时票数不够 会将所有活跃节点以失败状态结束 并触发本对象的onComplete
         if (isPublishQuorum(possiblySuccessfulNodes) == false) {
             logger.debug("onPossibleCommitFailure: non-failed nodes {} do not form a quorum, so {} cannot succeed",
                 possiblySuccessfulNodes, this);
@@ -274,6 +281,7 @@ public abstract class Publication {
 
     /**
      * 代表一个发布请求的目标节点
+     * 为什么不排除掉非master节点啊     也就是同步数据是全范围 而选举仅master节点范围???  那么发送join请求的节点也应该是全节点???
      */
     class PublicationTarget {
         private final DiscoveryNode discoveryNode;
@@ -305,9 +313,10 @@ public abstract class Publication {
         }
 
         /**
-         * 往目标节点发送一个发布请求
+         * 当发布任务启动时 会往集群中所有节点发送pub请求
          */
         void sendPublishRequest() {
+            // 如果在执行任务前已经判断pub无法成功了 也就是无法满足半数节点 那么会提前将任务设置成失败 也就不需要发送数据了
             if (isFailed()) {
                 return;
             }
@@ -315,6 +324,7 @@ public abstract class Publication {
 
             // 更新成发布中的状态
             state = PublicationTargetState.SENT_PUBLISH_REQUEST;
+            // 发送逻辑由子类实现
             Publication.this.sendPublishRequest(discoveryNode, publishRequest, new PublishResponseHandler());
             assert publicationCompletedIffAllTargetsInactiveOrCancelled();
         }
@@ -380,13 +390,14 @@ public abstract class Publication {
         }
 
         /**
-         * 将失败信息发送到目标节点上
+         * 直接用异常信息通知监听器
          * @param faultyNode
          */
         void onFaultyNode(DiscoveryNode faultyNode) {
             if (isActive() && discoveryNode.equals(faultyNode)) {
                 logger.debug("onFaultyNode: [{}] is faulty, failing target in publication {}", faultyNode, Publication.this);
                 setFailed(new ElasticsearchException("faulty node"));
+                // 判断能否提前结束任务
                 onPossibleCommitFailure();
             }
         }
@@ -400,6 +411,7 @@ public abstract class Publication {
          * @param e
          */
         private void ackOnce(Exception e) {
+            // 只有确保请求发出去的情况 再失败时才会触发ack的钩子 如果请求还没发出去由其他 原因得知这个node不可靠 那么不需要触发ack
             if (ackIsPending) {
                 ackIsPending = false;
                 ackListener.onNodeAck(discoveryNode, e);
@@ -434,6 +446,10 @@ public abstract class Publication {
          */
         private class PublishResponseHandler implements ActionListener<PublishWithJoinResponse> {
 
+            /**
+             *
+             * @param response
+             */
             @Override
             public void onResponse(PublishWithJoinResponse response) {
                 if (isFailed()) {

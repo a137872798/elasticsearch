@@ -33,7 +33,7 @@ public class PublishWithJoinResponse extends TransportResponse {
     private final PublishResponse publishResponse;
 
     /**
-     * 如果设置了该值代表收到publish的节点   在本次选举过程中为leader贡献了票
+     * 如果该节点本轮支持的node晋升成了leader 那么在处理publish请求时 就会返回join
      */
     private final Optional<Join> optionalJoin;
 

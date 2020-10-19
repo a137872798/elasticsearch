@@ -208,6 +208,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
     /**
      * 定期检查 follower对象
+     * 只有在某个节点成为leader后 并在publish时根据此时最新的clusterState 才会检测这些节点
      */
     private final FollowersChecker followersChecker;
 
@@ -236,12 +237,13 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     private final Reconfigurator reconfigurator;
 
     /**
-     *
+     * 这个对象是在启动节点时没有传入有关配置时 尝试从其他节点获取的对象 可以先忽略 与选举本身无密切关系
      */
     private final ClusterBootstrapService clusterBootstrapService;
 
     /**
      * 滞后探测器
+     * 该对象同followerChecker对象一样 也是首先要求当前节点是leader节点 并且每次在publish时 更新要检测的节点列表 因为在触发publish时 入参是此时集群中最新的node信息
      */
     private final LagDetector lagDetector;
     /**
@@ -363,6 +365,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
     /**
      * 当前节点不是 follower时  通过该函数处理 FollowerCheckRequest 请求
+     * TODO 怎么处理
      * @param followerCheckRequest
      */
     void onFollowerCheckRequest(FollowerCheckRequest followerCheckRequest) {
@@ -439,7 +442,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             publishRequest.getAcceptedState().nodes().getLocalNode() + " != " + getLocalNode();
 
         synchronized (mutex) {
-            // 获取当前记录的集群中的master节点
+            // 找到leader节点
             final DiscoveryNode sourceNode = publishRequest.getAcceptedState().nodes().getMasterNode();
             logger.trace("handlePublishRequest: handling [{}] from [{}]", publishRequest, sourceNode);
 
@@ -467,23 +470,24 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             // 代表集群发生了更替 也就是leader节点变化了
             if (publishRequest.getAcceptedState().term() > localState.term()) {
                 // only do join validation if we have not accepted state from this master yet
-                // TODO 目前只看到有关兼容性检测的逻辑
+                // TODO 目前只看到有关兼容性检测的逻辑 先忽略
                 onJoinValidators.forEach(a -> a.accept(getLocalNode(), publishRequest.getAcceptedState()));
             }
 
             // 更新当前节点的任期
             ensureTermAtLeast(sourceNode, publishRequest.getAcceptedState().term());
-            // 处理发布请求 主要就是更新节点此时存储的 clusterState 这里还涉及到对clusterState的持久化
+            // 这里才是处理发布请求 并生成结果的步骤  按照jraft的实现 最新的clusterState应该被持久化在每个发布的节点上 并且成功写入半数以上时 认为写入成功
             final PublishResponse publishResponse = coordinationState.get().handlePublishRequest(publishRequest);
 
             if (sourceNode.equals(getLocalNode())) {
-                // 顺便更新 preVote中的leader节点   在发起预投票过程中 其他节点就是根据该属性判断 当前集群中leader节点是哪个
+                // 本节点晋升成leader时 实际上已经更新了预投票的结果了 这段可以忽略   目的都是一样的就是在预投票阶段 因为此时知道集群的leader所以不会通过
                 preVoteCollector.update(getPreVoteResponse(), getLocalNode());
             } else {
                 // 其余节点只要接收到了发布请求 就代表在当前任期中 自身不是master节点 并且此时集群中已经产生了master节点 就可以将自身转换成 follower节点
                 becomeFollower("handlePublishRequest", sourceNode); // also updates preVoteCollector
             }
 
+            // 如果是本轮支持它的node 就会在处理pub请求时 返回join
             return new PublishWithJoinResponse(publishResponse,
                 joinWithDestination(lastJoin, sourceNode, publishRequest.getAcceptedState().term()));
         }
@@ -795,7 +799,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             leaderChecker.setCurrentNodes(DiscoveryNodes.EMPTY_NODES);
             leaderChecker.updateLeader(null);
 
-            // 同上
+            // 此时为candidate时 不需要检测其他节点了
             followersChecker.clearCurrentNodes();
             // 更新当前结果状态 这时针对别的节点的请求 会快速返回该结果
             followersChecker.updateFastResponseState(getCurrentTerm(), mode);
@@ -857,7 +861,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 当某个候选节点 或者 master节点 接受到一个新的发布请求时 将自身转换成follower节点
+     * 只有在收到 leader的发布请求时 才会将自身修改成follower
      * @param method
      * @param leaderNode
      */
@@ -874,39 +878,43 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                 method, leaderNode, getCurrentTerm(), mode, lastKnownLeader);
         }
 
-        // 当leader节点发生了变化 或者是当前节点首次设置成follower 那么就可以重启 masterChecker对象了   masterCheck对象通过定期检测master节点是否下线 尝试发起新一轮选举
+        // 当leader节点发生了变化 或者是当前节点首次设置成follower
+        // 那么就可以重启 masterChecker对象了   masterCheck对象通过定期检测master节点是否下线 尝试发起新一轮选举
         final boolean restartLeaderChecker = (mode == Mode.FOLLOWER && Optional.of(leaderNode).equals(lastKnownLeader)) == false;
 
-        // 其他节点什么时候变成候选者  只有在发现master节点下线时么
         if (mode != Mode.FOLLOWER) {
             mode = Mode.FOLLOWER;
-            // 当前如果是candidate节点转换成follower 将会触发关闭累加器的逻辑 这时会处理该节点在startJoin期间 收到的所有join请求
+            // 当前如果是candidate节点转换成follower 将会触发关闭累加器的逻辑 会回复之前所有发送join请求的节点异常信息
+            // TODO 他们会发起重试么 如果没有发起重试 那么他们没有加入到集群中啊 就算加入了集群 那么多个发布任务又是没法同时进行的 还是没办法通知到其他节点
             joinAccumulator.close(mode);
-            // 将累加器切换成follower角色相关的  (这样在接受到新的join请求时就会走不同的逻辑)
+            // 将累加器切换成follower角色相关的
             joinAccumulator = new JoinHelper.FollowerJoinAccumulator();
-            // 在 leaderChecker中 只要当前节点不是master节点 实际上并不会用到 discoveryNodes
+            // 这时代表本节点不再是master节点 其他检测的节点就会感知到
             leaderChecker.setCurrentNodes(DiscoveryNodes.EMPTY_NODES);
         }
 
         // 更新此时已知的集群中leader节点
         lastKnownLeader = Optional.of(leaderNode);
+        // 每当一轮的选举结束时就是关闭finder对象的时候
         peerFinder.deactivate(leaderNode);
-        // 因为本轮选举已经结束了 所以不再需要打印join失败的信息了
+        // 因为本轮选举已经结束了 所以不再需要打印join失败的信息了  在一轮中到底可以往几个节点发送join请求
         clusterFormationFailureHelper.stop();
+        // 关闭预投票和触发预投票的定时任务
         closePrevotingAndElectionScheduler();
 
         // 如果此时该对象正在进行一个发布动作 也就是当前节点之前还是master节点  在某次选举后生成了新的master节点 并且通知到旧的master节点 这时取消publish任务
         cancelActivePublication("become follower: " + method);
-        // 更新为了处理预投票请求的 结果对象 (也就是在收到预投票请求时 会将此时的leader返回)
+        // 拒绝同一任期节点的预投票请求
         preVoteCollector.update(getPreVoteResponse(), leaderNode);
 
-        // 开始定期检测新的leader是否变化
+        // 只有当节点收到 leader的pub请求时 才会更新要检测的节点
         if (restartLeaderChecker) {
             leaderChecker.updateLeader(leaderNode);
         }
 
-        // 应该是只有 master节点才会开启这个对象
+        // 应该是只有leader 才要使用该对象
         followersChecker.clearCurrentNodes();
+        // 当感知到 checkFollower请求时将当前状态返回
         followersChecker.updateFastResponseState(getCurrentTerm(), mode);
         // follower不需要检测 滞后的节点
         lagDetector.clearTrackedNodes();
@@ -1468,10 +1476,12 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
                 // 获取此时即将要发布的集群节点  应该是还没有持久化的 照理说要通过半数节点认同才能进行持久化
                 final DiscoveryNodes publishNodes = publishRequest.getAcceptedState().nodes();
+                // TODO 这3个探测对象的具体情况先忽略 先看完整个发布流程  发布的处理结果还影响到 joinReq的监听器
                 leaderChecker.setCurrentNodes(publishNodes);
+                // 在这个时刻开启对其他节点的检测请求 要求必须是follower节点
                 followersChecker.setCurrentNodes(publishNodes);
                 lagDetector.setTrackedNodes(publishNodes);
-                // 开始发布任务
+                // 开始发布任务  faultyNodes 记录一组错误的node  不会将最新的clusterState发送到该node上 而是发送一个错误信息
                 publication.start(followersChecker.getFaultyNodes());
             }
         } catch (Exception e) {
@@ -1515,7 +1525,8 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 在当前节点变成候选者时 停止对外发布的动作  发布任务指的就是将clusterState的变化通知到其他节点
+     * 当前节点不再是leader节点时 如果存在某个发布任务 直接关闭
+     * 针对脑裂的情况(当前节点是一个旧的leader)
      * @param reason
      */
     private void cancelActivePublication(String reason) {
@@ -1726,9 +1737,9 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
          * 在处理因为join导致的 clusterState更新 并发起发布请求的场景下   publishListener 对应一个future对象 publish就是在阻塞等待future的结果
          * @param publishRequest
          * @param publicationContext
-         * @param localNodeAckEvent
+         * @param localNodeAckEvent  没有对象监听该future
          * @param ackListener    桥接到一组ACK监听器 可能是一个空列表
-         * @param publishListener
+         * @param publishListener  这个监听器才是关联到join的响应结果的
          */
         CoordinatorPublication(PublishRequest publishRequest, PublicationTransportHandler.PublicationContext publicationContext,
                                ListenableFuture<Void> localNodeAckEvent, AckListener ackListener, ActionListener<Void> publishListener) {
@@ -1746,7 +1757,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
 
                     /**
-                     * 往target节点暴露自己 并收到了确定信息(ack)
+                     * 将此时最新的clusterState发送到目标节点上 并收到了确定信息(ack)
                      * @param node the node  本次目标节点
                      * @param e the optional exception   代表本次处理结果失败
                      */
@@ -1763,10 +1774,11 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                                 }
                             }
                         } else {
+                            // 此时ackListener是NOOP 可以忽略
                             ackListener.onNodeAck(node, e);
                             // 本次成功收到目标节点的ack信息
                             if (e == null) {
-                                // 更新该节点的版本号
+                                // 代表此时信息已经发布到对端节点了 所以针对这个节点的探测版本也要更新
                                 lagDetector.setAppliedVersion(node, publishRequest.getAcceptedState().version());
                             }
                         }
@@ -1937,6 +1949,11 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             }
         }
 
+        /**
+         * 检测此时的
+         * @param votes
+         * @return
+         */
         @Override
         protected boolean isPublishQuorum(VoteCollection votes) {
             assert Thread.holdsLock(mutex) : "Coordinator mutex not held";
