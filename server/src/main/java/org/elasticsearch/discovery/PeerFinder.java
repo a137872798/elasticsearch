@@ -53,7 +53,8 @@ import java.util.stream.Collectors;
 import static java.util.Collections.emptyList;
 
 /**
- * 在 Coordinator处于候选者阶段的时候 会通过该对象探测集群中的其他节点
+ * 这就是一个 集群中节点信息的同步器 每个节点通过与其他节点的通信 感知到集群中所有在线的节点
+ * (节点上线时自动通知其他节点 当连接断开时自动从容器中移除)
  */
 public abstract class PeerFinder {
 
@@ -100,17 +101,20 @@ public abstract class PeerFinder {
     private boolean active;
 
     /**
-     * 最近一次发送Peers请求返回过来的集群中存在的节点
+     * 最近一次集群节点的信息
+     * 该数据本身存在滞后性 所以当其他节点如果能感知到不存在于 lastAcceptedNodes 的节点 需要同时到本节点 并尝试建立连接
      */
     private DiscoveryNodes lastAcceptedNodes;
 
     /**
-     * 当需要探测某个地址时 加入到该容器
+     * 存储集群中除了本节点外的其他 master节点
      */
     private final Map<TransportAddress, Peer> peersByAddress = new LinkedHashMap<>();
 
     /**
-     * 集群中的 master节点
+     * 集群中的 leader节点
+     * 当触发 active时 代表需要检测其他节点中记录的leader信息 进而判断是leader掉线
+     * 还是连接被断开 如果掉线 需要重新选举 如果仅是连接假死 只要当前节点重新建立与leader的连接即可
      */
     private Optional<DiscoveryNode> leader = Optional.empty();
     private volatile List<TransportAddress> lastResolvedAddresses = emptyList();
@@ -129,7 +133,8 @@ public abstract class PeerFinder {
     }
 
     /**
-     * 探测一组目标节点
+     * 开启某些节点的探测请求
+     * 如果当前节点是首次加入集群所以没有任何节点信息呢  无法探测 怎么做  照理说CP 一开始应该是知道哪些节点会参与选举   先假设知道集群中哪些节点会参与选举吧
      * @param lastAcceptedNodes 最近一次集群中存在的所有节点
      */
     public void activate(final DiscoveryNodes lastAcceptedNodes) {
@@ -141,7 +146,7 @@ public abstract class PeerFinder {
             active = true;
             this.lastAcceptedNodes = lastAcceptedNodes;
             leader = Optional.empty();
-            // 与此时集群中其他节点建立连接
+            // 与此时集群中其他节点建立连接  注意是异步的 此时无法确保是否有连接真正完成
             handleWakeUp(); // return value discarded: there are no known peers, so none can be disconnected
         }
 
@@ -149,7 +154,7 @@ public abstract class PeerFinder {
     }
 
     /**
-     * 当已经确定集群中的leader节点时 会触发该方法
+     * 当已经确定集群中的leader节点时 不再保持与其他节点的连接 但是允许被其他节点探测到 也就是不主动建立连接 允许被动的连接
      * @param leader
      */
     public void deactivate(DiscoveryNode leader) {
@@ -161,6 +166,7 @@ public abstract class PeerFinder {
             this.leader = Optional.of(leader);
             assert assertInactiveWithNoKnownPeers();
         }
+        // 一般来说必然会触发该方法
         if (peersRemoved) {
             onFoundPeersUpdated();
         }
@@ -179,7 +185,8 @@ public abstract class PeerFinder {
     }
 
     /**
-     * 当本节点作为 master节点时 接受其他节点的探测请求
+     * 当接受到其他节点的探测请求时进行处理
+     * 首先该节点必须是master节点 (也就是参与选举)
      * @param peersRequest
      * @return
      */
@@ -187,30 +194,27 @@ public abstract class PeerFinder {
         synchronized (mutex) {
             assert peersRequest.getSourceNode().equals(getLocalNode()) == false;
             final List<DiscoveryNode> knownPeers;
+            // 激活就代表着当前节点不知道集群中的 leader节点
             if (active) {
                 assert leader.isPresent() == false : leader;
-                // TODO  先忽略主节点的情况
-                // 如果发起请求的是一个主节点 那么开始探测
+                // 当其他节点收到了这个探测请求 需要将它更新到 peerByAddress中 这样所有参与选举的节点之间都会建立连接 他们能够互相感知到
+                // 并且每当与某个节点的连接断开时 将会自动从 peerByAddress中移除
                 if (peersRequest.getSourceNode().isMasterNode()) {
                     // 这里就是将 地址包装成 Peer对象 并存储到容器中
                     startProbe(peersRequest.getSourceNode().getAddress());
                 }
-                /**
-                 * 如果是一个普通的节点连接到 master节点后  会向master发起探测请求
-                 * 可以想象一个场景  接受请求的是一个master节点 同时req中还携带了 source节点目前已知的所有master.address
-                 * 当master节点获取到地址信息后   选择往这些地址发送探测请求
-                 * 这样master节点也会尝试连接到 其他master节点
-                 */
-                // 集群中其他的节点信息 也存储到容器中
+
+                // 除了发出请求的节点地址外所有已知节点的地址 也都会同步到该节点上
                 peersRequest.getKnownPeers().stream().map(DiscoveryNode::getAddress).forEach(this::startProbe);
 
-                // 将此时已知的集群中所有节点返回  不过这些连接鉴别是否是 master(通过异步移除 可能会存在脏数据)
                 knownPeers = getFoundPeersUnderLock();
             } else {
-                // 如果当前节点处于失活状态 返回一个空列表
+                // 当前对象处于失活状态时 不会对外部暴露集群中其他节点的位置信息  但是本节点的地址还是会通知到
+                // TODO master节点数量不变这个场景是简单的 如果会变化的话 那么不暴露其他节点是什么意思???
                 assert leader.isPresent() || lastAcceptedNodes == null;
                 knownPeers = emptyList();
             }
+            // 并且此时会将leader节点返回
             return new PeersResponse(leader, knownPeers, currentTerm);
         }
     }
@@ -279,6 +283,10 @@ public abstract class PeerFinder {
         }
     }
 
+    /**
+     * 返回至少成功连接过一次的node  包含之后断开连接的
+     * @return
+     */
     private List<DiscoveryNode> getFoundPeersUnderLock() {
         assert holdsLock() : "PeerFinder mutex not held";
         return peersByAddress.values().stream()
@@ -297,12 +305,14 @@ public abstract class PeerFinder {
     }
 
     /**
-     * @return whether any peers were removed due to disconnection   返回true代表有某个连接断开了
+     * 大体逻辑是这样的 该方法本身会递归调用 每次先更新 需要探测的地址加入到 peersByAddress 中 以及连接到对应的node并发送探测请求
+     * 之后开启一个定时任务 在一定延时后重新触发该方法
+     * @return whether any peers were removed due to disconnection
      */
     private boolean handleWakeUp() {
         assert holdsLock() : "PeerFinder mutex not held";
 
-        // 只要有一个 peer满足条件 就会返回true
+        // 与某个地址对应的node 断开了连接
         final boolean peersRemoved = peersByAddress.values().removeIf(Peer::handleWakeUp);
 
         if (active == false) {
@@ -310,12 +320,16 @@ public abstract class PeerFinder {
             return peersRemoved;
         }
 
+        // 下面的逻辑相当于是定期检测 需要探测的地址是否发生了变化 如果变化了 及时同步到 peersByAddress中
+
         logger.trace("probing master nodes from cluster state: {}", lastAcceptedNodes);
-        // 这里只探测master节点
+        // 这里只探测master节点  因为只有master节点参与选举
+        // 这里已经在与新的地址建立连接了  注意是异步的
         for (ObjectCursor<DiscoveryNode> discoveryNodeObjectCursor : lastAcceptedNodes.getMasterNodes().values()) {
             startProbe(discoveryNodeObjectCursor.value.getAddress());
         }
 
+        // 如果从其他途径获取了一些地址信息 也通过 startProbe 加入到 peerByAddress中
         configuredHostsResolver.resolveConfiguredHosts(providedAddresses -> {
             synchronized (mutex) {
                 lastResolvedAddresses = providedAddresses;
@@ -324,6 +338,7 @@ public abstract class PeerFinder {
             }
         });
 
+        // 启动定时任务
         transportService.getThreadPool().scheduleUnlessShuttingDown(findPeersInterval, Names.GENERIC, new AbstractRunnable() {
             @Override
             public boolean isForceExecution() {
@@ -343,6 +358,8 @@ public abstract class PeerFinder {
                         return;
                     }
                 }
+                // 在至少有某个node 的连接断开时 触发该方法
+                // 下次的检测任务依旧会执行
                 onFoundPeersUpdated();
             }
 
@@ -372,7 +389,7 @@ public abstract class PeerFinder {
             return;
         }
 
-        // 将source节点包装成 Peer对象并存储
+        // key 对应需要探测的某个地址   value 就是建立于某个地址的连接后创建的 peer对象
         peersByAddress.computeIfAbsent(transportAddress, this::createConnectingPeer);
     }
 
@@ -380,15 +397,19 @@ public abstract class PeerFinder {
      * 将某个master节点包装成Peer对象
      */
     private class Peer {
+
+        /**
+         * 对应探测的节点的地址
+         */
         private final TransportAddress transportAddress;
 
         /**
-         * 当目标地址确实对应一个master节点时 设置
+         * 如果设置了这个值 就代表目标节点此时是有效的 并且是master节点
          */
         private SetOnce<DiscoveryNode> discoveryNode = new SetOnce<>();
 
         /**
-         * 代表该对象正向 master节点 发送peer请求
+         * 代表此时有一个飞行中的 探测请求
          */
         private volatile boolean peersRequestInFlight;
 
@@ -402,8 +423,8 @@ public abstract class PeerFinder {
         }
 
         /**
-         * 是否需要丢弃连接
-         * @return 返回true 代表连接需要被丢弃
+         * 检测目标节点是否断开连接了
+         * @return 返回true
          */
         boolean handleWakeUp() {
             assert holdsLock() : "PeerFinder mutex not held";
@@ -416,24 +437,28 @@ public abstract class PeerFinder {
             final DiscoveryNode discoveryNode = getDiscoveryNode();
             // may be null if connection not yet established
 
-            // 如果node还没有初始化 也就没有连接需要被丢弃 返回false
+            // 此时已经连接到目标节点了
             if (discoveryNode != null) {
-                // 如果在 ConnectionManager中维护了某个node的连接 就代表已经连接上目标节点 发送peer请求 同时返回false
+                // 如果设置了目标节点 那么正常情况下 连接还存在于ConnectionManager中
+                // 此时代表连接没有断开 每隔多少时间会发送一个peersRequest 目的就是继续保持节点间信息的同步  一旦某个新的leader节点被选举出来 立即会触发onActiveMasterFound
                 if (transportService.nodeConnected(discoveryNode)) {
                     if (peersRequestInFlight == false) {
                         requestPeers();
                     }
                 } else {
+                    // 代表连接断开了
                     logger.trace("{} no longer connected", this);
                     return true;
                 }
             }
 
+            // 这时可以看作还没有连接到目标节点  不确定节点是否有效  而当连接失败时 address会从  peerByAddress 中移除  也就不会触发该方法
             return false;
         }
 
         /**
          * 建立与目标节点的连接
+         * 通过各种途径获取需要探测的地址后 会先调用该方法 与目标地址建立连接
          */
         void establishConnection() {
             assert holdsLock() : "PeerFinder mutex not held";
@@ -444,6 +469,11 @@ public abstract class PeerFinder {
 
             // 只有当目标节点确实是master节点时才会触发 onResponse
             transportAddressConnector.connectToRemoteMasterNode(transportAddress, new ActionListener<DiscoveryNode>() {
+
+                /**
+                 * 代表此时与目标地址已经建立连接
+                 * @param remoteNode
+                 */
                 @Override
                 public void onResponse(DiscoveryNode remoteNode) {
                     assert remoteNode.isMasterNode() : remoteNode + " is not master-eligible";
@@ -459,11 +489,12 @@ public abstract class PeerFinder {
                     }
 
                     assert holdsLock() == false : "PeerFinder mutex is held in error";
+                    // 每当与某个node的连接建立时 也会触发该方法
                     onFoundPeersUpdated();
                 }
 
                 /**
-                 * 因为这个节点不是master节点 所以从peersByAddress 中移除
+                 * 因为这个节点不是master节点 或者与该节点的连接失败   所以从peersByAddress 中移除  代表不再参考这个节点的leader信息
                  * @param e
                  */
                 @Override
@@ -477,7 +508,7 @@ public abstract class PeerFinder {
         }
 
         /**
-         * 当连接到master节点时 触发
+         * 此时已经连接到 其他master节点了 需要从该节点获取其他节点信息
          */
         private void requestPeers() {
             assert holdsLock() : "PeerFinder mutex not held";
@@ -495,7 +526,8 @@ public abstract class PeerFinder {
             logger.trace("{} requesting peers", this);
             peersRequestInFlight = true;
 
-            // 此时集群中所有已知的 master节点
+            // 此时集群中所有已知的 master节点   因为不同节点能感知到的master节点不一定相同
+            // 某些节点可能是从离线状态恢复的 那么集群快照就是旧的  这时数据就会出现不一致的情况
             final List<DiscoveryNode> knownNodes = getFoundPeersUnderLock();
 
             final TransportResponseHandler<PeersResponse> peersResponseHandler = new TransportResponseHandler<PeersResponse>() {
@@ -505,6 +537,10 @@ public abstract class PeerFinder {
                     return new PeersResponse(in);
                 }
 
+                /**
+                 * 处理从其他节点返回的peers结果
+                 * @param response
+                 */
                 @Override
                 public void handleResponse(PeersResponse response) {
                     logger.trace("{} received {}", Peer.this, response);
@@ -515,17 +551,25 @@ public abstract class PeerFinder {
 
                         peersRequestInFlight = false;
 
+                        // 就是leader节点   这里的行为也就是与之前没有观测到的节点建立连接
                         response.getMasterNode().map(DiscoveryNode::getAddress).ifPresent(PeerFinder.this::startProbe);
                         response.getKnownPeers().stream().map(DiscoveryNode::getAddress).forEach(PeerFinder.this::startProbe);
                     }
 
+                    // 该方法总会触发  比如一开始不知道leader节点 之后连接到其他节点后 从其他节点的leader信息中获取了地址 并进行连接 还是会进入这里
+                    // TODO 那么每个节点的leader属性是什么时候设置呢  已经在同一时刻 2个节点对应的leader不同会怎么样呢
                     if (response.getMasterNode().equals(Optional.of(discoveryNode))) {
                         // Must not hold lock here to avoid deadlock
                         assert holdsLock() == false : "PeerFinder mutex is held in error";
+                        // 为了比如2个节点处于不同的任期中 所以在处理 onActiveMasterFound 需要传入term信息
                         onActiveMasterFound(discoveryNode, response.getTerm());
                     }
                 }
 
+                /**
+                 * 当探测某个节点失败时 只能打印日志 因为没有解决办法
+                 * @param exp
+                 */
                 @Override
                 public void handleException(TransportException exp) {
                     peersRequestInFlight = false;
@@ -538,7 +582,7 @@ public abstract class PeerFinder {
                 }
             };
 
-            // 向master节点发送 获取集群中其他节点的请求
+            // 到了这里 开始发送探测请求了
             transportService.sendRequest(discoveryNode, REQUEST_PEERS_ACTION_NAME,
                 new PeersRequest(getLocalNode(), knownNodes),
                 TransportRequestOptions.builder().withTimeout(requestPeersTimeout).build(),

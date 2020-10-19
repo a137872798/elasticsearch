@@ -124,7 +124,7 @@ final class OutboundHandler {
 
     /**
      * Sends back an error response to the caller via the given channel
-     * 发送一个异常对象到对端???
+     * 发送一个异常对象到对端
      */
     void sendErrorResponse(final Version nodeVersion, final TcpChannel channel, final long requestId, final String action,
                            final Exception error) throws IOException {

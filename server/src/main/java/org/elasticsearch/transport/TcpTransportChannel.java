@@ -77,6 +77,11 @@ public final class TcpTransportChannel implements TransportChannel {
         }
     }
 
+    /**
+     * 当接收方处理抛出异常时 异常会以数据流的形式返回
+     * @param exception
+     * @throws IOException
+     */
     @Override
     public void sendResponse(Exception exception) throws IOException {
         try {

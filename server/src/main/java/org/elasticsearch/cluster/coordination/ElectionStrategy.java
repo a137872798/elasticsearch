@@ -44,7 +44,7 @@ public abstract class ElectionStrategy {
 
     /**
      * Whether there is an election quorum from the point of view of the given local node under the provided voting configurations
-     * @param joinVotes 代表所有参与选举的节点
+     * @param joinVotes 代表本次已经采集到的票数
      */
     public final boolean isElectionQuorum(DiscoveryNode localNode, long localCurrentTerm, long localAcceptedTerm, long localAcceptedVersion,
                                           VotingConfiguration lastCommittedConfiguration, VotingConfiguration lastAcceptedConfiguration,

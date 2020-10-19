@@ -198,6 +198,7 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
 
     /**
      * @param consumer Consumer for the resolved list. May not be called if an error occurs or if another resolution attempt is in
+     *                 定义了如果使用consumer 处理地址
      */
     @Override
     public void resolveConfiguredHosts(Consumer<List<TransportAddress>> consumer) {

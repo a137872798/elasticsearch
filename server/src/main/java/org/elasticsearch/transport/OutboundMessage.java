@@ -36,7 +36,7 @@ import java.io.IOException;
 abstract class OutboundMessage extends NetworkMessage {
 
     /**
-     * 待发送的消息体
+     * 待发送的消息体  可能是一个Exception 也可能是一个xxxRes
      */
     private final Writeable message;
 

@@ -401,6 +401,7 @@ public class GatewayMetaState implements Closeable {
 
     /**
      * Encapsulates the incremental writing of metadata to a {@link PersistedClusterStateService.Writer}.
+     * clusterState 是存储在lucene中的 每个节点底层应该都是直接关联到 lucene上的 (可以把它看作jraft中的 rocksDB)
      */
     static class LucenePersistedState implements PersistedState {
 

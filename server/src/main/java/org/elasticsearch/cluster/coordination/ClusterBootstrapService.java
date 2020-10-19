@@ -78,6 +78,9 @@ public class ClusterBootstrapService {
     private final TimeValue unconfiguredBootstrapTimeout;
     private final TransportService transportService;
     private final Supplier<Iterable<DiscoveryNode>> discoveredNodesSupplier;
+    /**
+     * 对应 getStateForMasterService().getLastAcceptedConfiguration().isEmpty() == false 就是之前持久化了相关数据
+     */
     private final BooleanSupplier isBootstrappedSupplier;
     private final Consumer<VotingConfiguration> votingConfigurationConsumer;
     private final AtomicBoolean bootstrappingPermitted = new AtomicBoolean(true);
@@ -115,7 +118,7 @@ public class ClusterBootstrapService {
                 throw new IllegalArgumentException(
                     "setting [" + INITIAL_MASTER_NODES_SETTING.getKey() + "] contains duplicates: " + initialMasterNodes);
             }
-            // 获取集群启动的超时时间
+            // 如果已经配置了就不需要基于finder寻找其他master节点了
             unconfiguredBootstrapTimeout = discoveryIsConfigured(settings) ? null : UNCONFIGURED_BOOTSTRAP_TIMEOUT_SETTING.get(settings);
         }
 
@@ -130,8 +133,15 @@ public class ClusterBootstrapService {
             INITIAL_MASTER_NODES_SETTING).anyMatch(s -> s.exists(settings));
     }
 
+    /**
+     * 每当集群中能感知到的节点发生变化时触发  在启动探测和关闭探测时也会触发
+     * 照理说该方法的触发时机在 scheduleUnconfiguredBootstrap之前
+     */
     void onFoundPeersUpdated() {
+        // 就是本地节点 + 通过finder感应到的所有节点
         final Set<DiscoveryNode> nodes = getDiscoveredNodes();
+        // bootstrappingPermitted == false 代表过了初始化时间 直接忽略更新请求
+        // bootstrapRequirements 不为空代表已经具备引导需要的参数了 不需要处理
         if (bootstrappingPermitted.get() && transportService.getLocalNode().isMasterNode() && bootstrapRequirements.isEmpty() == false
             && isBootstrappedSupplier.getAsBoolean() == false) {
 
@@ -163,7 +173,7 @@ public class ClusterBootstrapService {
     }
 
     void scheduleUnconfiguredBootstrap() {
-        // 如果没有配置 启动集群的超时时间 直接返回
+        // 如果没有配置 启动集群的超时时间 代表初始化配置中包含了选举信息
         if (unconfiguredBootstrapTimeout == null) {
             return;
         }
@@ -173,13 +183,15 @@ public class ClusterBootstrapService {
             return;
         }
 
+        // 如果集群配置中一开始没有配置好所有参与选举的节点  那么只能寄托于finder对象尽可能多的找到节点了
         logger.info("no discovery configuration found, will perform best-effort cluster bootstrapping after [{}] " +
             "unless existing master is discovered", unconfiguredBootstrapTimeout);
 
+        // 这里有一个触发时间 可以理解为最终只等待这么长时间 在这时间之后就认为此时检测到的所有节点就是集群中的所有节点
         transportService.getThreadPool().scheduleUnlessShuttingDown(unconfiguredBootstrapTimeout, Names.GENERIC, new Runnable() {
             @Override
             public void run() {
-                // 对应 peerFinder.getFoundPeers()    在某个节点刚启动时  peer对象中还没有任何节点
+                // 对应 peerFinder.getFoundPeers()
                 final Set<DiscoveryNode> discoveredNodes = getDiscoveredNodes();
                 logger.debug("performing best-effort cluster bootstrapping with {}", discoveredNodes);
                 startBootstrap(discoveredNodes, emptyList());
@@ -199,8 +211,8 @@ public class ClusterBootstrapService {
 
 
     /**
-     *
-     * @param discoveryNodes  针对此时集群中所有发现的节点 发起引导
+     * 在一定延时后触发该方法
+     * @param discoveryNodes  通过finder感知到的所有节点
      * @param unsatisfiedRequirements
      */
     private void startBootstrap(Set<DiscoveryNode> discoveryNodes, List<String> unsatisfiedRequirements) {

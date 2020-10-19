@@ -291,9 +291,10 @@ public class JoinHelper {
     /**
      * 往目标节点发送一个 join的请求
      * 流程是这样 首先某个通过预投票的节点 会向所有节点发送一个startJoin请求 之后 每个节点会返回一个join请求
+     * source节点通过了预投票阶段  那么此时就不需要做任何检测 无条件信任目标节点 并直接返回join请求
      * @param destination  通过预投票的节点
      * @param term  本地任期
-     * @param optionalJoin
+     * @param optionalJoin   目前看来该值一定会被设置
      */
     public void sendJoinRequest(DiscoveryNode destination, long term, Optional<Join> optionalJoin) {
         assert destination.isMasterNode() : "trying to join master-ineligible " + destination;
@@ -317,7 +318,7 @@ public class JoinHelper {
 
                     @Override
                     public void handleResponse(Empty response) {
-                        // 从命令池中移除等待
+                        // 操作后使得可以继续往同一节点发送请求
                         pendingOutgoingJoins.remove(dedupKey);
                         logger.debug("successfully joined {} with {}", destination, joinRequest);
                         lastFailedJoinAttempt.set(null);
@@ -326,6 +327,7 @@ public class JoinHelper {
                     @Override
                     public void handleException(TransportException exp) {
                         pendingOutgoingJoins.remove(dedupKey);
+                        // 当往某个节点发送的join失败时 会设置lastFailedJoinAttempt
                         FailedJoinAttempt attempt = new FailedJoinAttempt(destination, joinRequest, exp);
                         attempt.logNow();
                         lastFailedJoinAttempt.set(attempt);
@@ -350,7 +352,9 @@ public class JoinHelper {
         assert startJoinRequest.getSourceNode().isMasterNode()
             : "sending start-join request for master-ineligible " + startJoinRequest.getSourceNode();
         transportService.sendRequest(destination, START_JOIN_ACTION_NAME,
-            startJoinRequest, new TransportResponseHandler<Empty>() {
+            startJoinRequest,
+            // startJoin 本身的响应结果不重要  因为如果对端成接收到数据 会立即返回一个join请求
+            new TransportResponseHandler<Empty>() {
                 @Override
                 public Empty read(StreamInput in) {
                     return Empty.INSTANCE;
@@ -361,6 +365,10 @@ public class JoinHelper {
                     logger.debug("successful response to {} from {}", startJoinRequest, destination);
                 }
 
+                /**
+                 * 当某个节点本轮已经选择了一个node后 继续往该节点发送就会触发该方法
+                 * @param exp
+                 */
                 @Override
                 public void handleException(TransportException exp) {
                     logger.debug(new ParameterizedMessage("failure in response to {} from {}", startJoinRequest, destination), exp);

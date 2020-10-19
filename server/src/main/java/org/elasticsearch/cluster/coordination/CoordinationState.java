@@ -52,16 +52,23 @@ public class CoordinationState {
     private final PersistedState persistedState;
 
     // transient state
+    /**
+     * 专门用于选举leader的投票箱
+     */
     private VoteCollection joinVotes;
 
     /**
-     * 标记此时收到了startJoin 请求 已经进入了join阶段
+     * 标记此时收到了startJoin 请求
      */
     private boolean startedJoinSinceLastReboot;
     /**
      * 当收到 startJoin 请求时 的代表本次选举已经失败了
      */
     private boolean electionWon;
+
+    /**
+     * 当该属性首次被设置时 代表本节点晋升成了leader
+     */
     private long lastPublishedVersion;
 
     /**
@@ -125,7 +132,13 @@ public class CoordinationState {
         return electionWon;
     }
 
+    /**
+     * 此时 voteCollection中的nodes数 是否达到集群中的半数以上
+     * @param joinVotes
+     * @return
+     */
     public boolean isElectionQuorum(VoteCollection joinVotes) {
+        // 通过选举策略对象来决定是否满足条件
         return electionStrategy.isElectionQuorum(localNode, getCurrentTerm(), getLastAcceptedTerm(), getLastAcceptedVersion(),
             getLastCommittedConfiguration(), getLastAcceptedConfiguration(), joinVotes);
     }
@@ -189,6 +202,7 @@ public class CoordinationState {
      */
     public Join handleStartJoin(StartJoinRequest startJoinRequest) {
         // 既然要发起一个join请求 那么任期必须比该节点此时的要高
+        // 在下面的逻辑中因为更新了任期使得之后的startJoin请求会在这里被拒绝 也就是每个节点还是只能在一轮中回复一个Join请求
         if (startJoinRequest.getTerm() <= getCurrentTerm()) {
             logger.debug("handleStartJoin: ignoring [{}] as term provided is not greater than current term [{}]",
                 startJoinRequest, getCurrentTerm());
@@ -211,12 +225,13 @@ public class CoordinationState {
             logger.debug("handleStartJoin: discarding {}: {}", joinVotes, reason);
         }
 
-        // 此时更新之前旧的集群信息的任期
+        // currentTerm 应该是代表还没有确定leader 仅在startJoin 阶段使用的任期 当确定leader后才会最终确认term
         persistedState.setCurrentTerm(startJoinRequest.getTerm());
         assert getCurrentTerm() == startJoinRequest.getTerm();
         lastPublishedVersion = 0;
         lastPublishedConfiguration = getLastAcceptedConfiguration();
         startedJoinSinceLastReboot = true;
+        // 收到startJoin请求的节点 在本次选举中已经失败了
         electionWon = false;
         joinVotes = new VoteCollection();
         publishVotes = new VoteCollection();
@@ -231,7 +246,8 @@ public class CoordinationState {
      * @param join The Join received.
      * @return true iff this instance does not already have a join vote from the given source node for this term
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
-     * 当收到其他节点发来的join请求时 触发
+     * 当收到其他节点发来的join请求时触发
+     * 这里主要是为了选举出leader
      */
     public boolean handleJoin(Join join) {
         assert join.targetMatches(localNode) : "handling join " + join + " for the wrong node " + localNode;
@@ -243,11 +259,13 @@ public class CoordinationState {
                 "incoming term " + join.getTerm() + " does not match current term " + getCurrentTerm());
         }
 
+        // TODO
         if (startedJoinSinceLastReboot == false) {
             logger.debug("handleJoin: ignored join as term was not incremented yet after reboot");
             throw new CoordinationStateRejectedException("ignored join as term has not been incremented yet after reboot");
         }
 
+        // 持久化的term应该一致
         final long lastAcceptedTerm = getLastAcceptedTerm();
         if (join.getLastAcceptedTerm() > lastAcceptedTerm) {
             logger.debug("handleJoin: ignored join as joiner has a better last accepted term (expected: <=[{}], actual: [{}])",
@@ -284,6 +302,7 @@ public class CoordinationState {
         logger.debug("handleJoin: added join {} from [{}] for election, electionWon={} lastAcceptedTerm={} lastAcceptedVersion={}", join,
             join.getSourceNode(), electionWon, lastAcceptedTerm, getLastAcceptedVersion());
 
+        // 代表本次接受join请求使得本节点晋升成了leader
         if (electionWon && prevElectionWon == false) {
             logger.debug("handleJoin: election won in term [{}] with {}", getCurrentTerm(), joinVotes);
             lastPublishedVersion = getLastAcceptedVersion();

@@ -282,7 +282,7 @@ public class LeaderChecker {
                             return;
                         }
 
-                        // 这些情况应该就是 目标节点不再是leader节点了
+                        // 其余异常有一个容忍次数
                         long failureCount = failureCountSinceLastSuccess.incrementAndGet();
                         if (failureCount >= leaderCheckRetryCount) {
                             logger.debug(new ParameterizedMessage(
