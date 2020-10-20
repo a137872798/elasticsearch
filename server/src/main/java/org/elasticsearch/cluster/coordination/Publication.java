@@ -268,12 +268,13 @@ public abstract class Publication {
         FAILED,
         SENT_PUBLISH_REQUEST,
         /**
-         * 代表至少已经接受到某个发布响应结果 但是还没有达到半数以上
+         * 代表至少已经接受到某个发布响应结果
+         * 此时整个publish流程中成功的节点还没有达到半数
          */
         WAITING_FOR_QUORUM,
         /**
          * 当超过半数的follower 发送了pubRes时
-         * 由 master节点向他们发送 commit请求
+         * 由 leader节点向他们发送 commit请求  并等待结果
          */
         SENT_APPLY_COMMIT,
         APPLIED_COMMIT,
@@ -330,32 +331,31 @@ public abstract class Publication {
         }
 
         /**
-         * 处理某次收到的发布结果
+         * 在检测完 join对象后 开始处理发布结果   该方法在同步环境下执行
          * @param publishResponse
          */
         void handlePublishResponse(PublishResponse publishResponse) {
             assert isWaitingForQuorum() : this;
             logger.trace("handlePublishResponse: handling [{}] from [{}])", publishResponse, discoveryNode);
-            // 当收到超过半数节点的 publishRes 时  生成一个commitReq 对象 并且会设置到该字段中
-            // 之后能收到 pub的请求 必然是在isWaitingForQuorum 阶段  所以不需要走
-            // publicationTargets.stream().filter(PublicationTarget::isWaitingForQuorum)
-            //                            .forEach(PublicationTarget::sendApplyCommit); 的判断逻辑
+            // 之后成功的publish 当发现 commit标识已经被设置时 直接发送commit 请求就好
             if (applyCommitRequest.isPresent()) {
                 sendApplyCommit();
             } else {
                 try {
+
+                    // 交由实现类 处理res   当某次满足条件生成commit对象时 将它设置到applyCommitRequest上
                     Publication.this.handlePublishResponse(discoveryNode, publishResponse).ifPresent(applyCommit -> {
-                        // 只有第一次会设置 applyCommitRequest
                         assert applyCommitRequest.isPresent() == false;
                         applyCommitRequest = Optional.of(applyCommit);
 
-                        // 代表从发起publish 任务 到超过半数节点认同 总计花费多少时间
+                        // 代表从发起publish 任务 到超过半数节点认同 总计花费多少时间  该ack内部维护了一组空list 先忽略
                         ackListener.onCommit(TimeValue.timeValueMillis(currentTimeSupplier.getAsLong() - startTime));
                         // 找到所有刚确认pub的节点  发送 applyCommit请求
                         publicationTargets.stream().filter(PublicationTarget::isWaitingForQuorum)
                             .forEach(PublicationTarget::sendApplyCommit);
                     });
                 } catch (Exception e) {
+                    // 处理失败时检测失败数量是否超过半数 是的话结束任务
                     setFailed(e);
                     onPossibleCommitFailure();
                 }
@@ -363,7 +363,7 @@ public abstract class Publication {
         }
 
         /**
-         * 当此时pub 满足半数条件时 开始向之前确认的节点 发送commit请求
+         * 当pub 投票成功时 往这些节点发送commit请求
          */
         void sendApplyCommit() {
             assert state == PublicationTargetState.WAITING_FOR_QUORUM : state + " -> " + PublicationTargetState.SENT_APPLY_COMMIT;
@@ -381,6 +381,7 @@ public abstract class Publication {
 
         /**
          * 本次发布任务因为某个异常而停止
+         * 可能被关闭 甚至可能通过了pub投票  但是在commit请求时失败
          * @param e
          */
         void setFailed(Exception e) {
@@ -411,7 +412,7 @@ public abstract class Publication {
          * @param e
          */
         private void ackOnce(Exception e) {
-            // 只有确保请求发出去的情况 再失败时才会触发ack的钩子 如果请求还没发出去由其他 原因得知这个node不可靠 那么不需要触发ack
+            // ackIsPending 该属性在初始状态就是true 即使以失败的形式结束任务 还是会触发 ackOnce
             if (ackIsPending) {
                 ackIsPending = false;
                 ackListener.onNodeAck(discoveryNode, e);
@@ -447,11 +448,12 @@ public abstract class Publication {
         private class PublishResponseHandler implements ActionListener<PublishWithJoinResponse> {
 
             /**
-             *
+             * 处理某个发布结果  该方法在外部已经套锁了
              * @param response
              */
             @Override
             public void onResponse(PublishWithJoinResponse response) {
+                // 因为当前发布已经不可能成功了所以任务被提前关闭 这里是在关闭前发出的请求 res会被忽略
                 if (isFailed()) {
                     logger.debug("PublishResponseHandler.handleResponse: already failed, ignoring response from [{}]", discoveryNode);
                     assert publicationCompletedIffAllTargetsInactiveOrCancelled();
@@ -492,11 +494,16 @@ public abstract class Publication {
 
         /**
          * 该对象负责处理 commit的响应结果
+         * commit最核心的作用就是将最新的集群状态 暴露到应用
+         *
+         * 首先至少超过半数的请求pub成功 这时最优情况就是这些节点全部commit成功
+         * 当然如果所有节点的pub都成功的话 那么对应发出的commit请求数量也会更多 就有更多的机会达到半数以上
          */
         private class ApplyCommitResponseHandler implements ActionListener<TransportResponse.Empty> {
 
             @Override
             public void onResponse(TransportResponse.Empty ignored) {
+                // pub任务已经被提前关闭
                 if (isFailed()) {
                     logger.debug("ApplyCommitResponseHandler.handleResponse: already failed, ignoring response from [{}]",
                         discoveryNode);
@@ -513,6 +520,8 @@ public abstract class Publication {
                 final TransportException exp = (TransportException) e;
                 logger.debug(() -> new ParameterizedMessage("ApplyCommitResponseHandler: [{}] failed", discoveryNode), exp);
                 assert ((TransportException) e).getRootCause() instanceof Exception;
+
+                // 这时认为结果是失败的
                 setFailed((Exception) exp.getRootCause());
                 onPossibleCompletion();
                 assert publicationCompletedIffAllTargetsInactiveOrCancelled();

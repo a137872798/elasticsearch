@@ -56,9 +56,15 @@ import static org.elasticsearch.discovery.SettingsBasedSeedHostsProvider.DISCOVE
 
 /**
  * 集群引导服务
+ * 这个对象本身是不可靠的 一般都是通过 seed配置 或者 initial_master_nodes 获取最初的 masterNodes列表
+ * 而该对象则是尝试通过自主发现的方式找到参与选举的node  可以先不看
  */
 public class ClusterBootstrapService {
 
+    /**
+     * 每个集群中的节点首次启动时 需要通过该配置知道集群中有哪些 masternode 虽然之后可能会变化 但是在启动阶段 必须通过该配置直到初始信息
+     * 当集群已经形成时 就不应该通过这个配置获取masterNodes信息 而应该从此时leader节点获取信息
+     */
     public static final Setting<List<String>> INITIAL_MASTER_NODES_SETTING =
         Setting.listSetting("cluster.initial_master_nodes", emptyList(), Function.identity(), Property.NodeScope);
 

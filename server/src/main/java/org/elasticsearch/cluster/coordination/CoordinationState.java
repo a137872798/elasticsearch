@@ -410,12 +410,12 @@ public class CoordinationState {
     /**
      * May be called on receipt of a PublishResponse from the given sourceNode.
      *
-     * @param sourceNode      The sender of the PublishResponse received.
+     * @param sourceNode      The sender of the PublishResponse received.     该res是由哪个节点发出的
      * @param publishResponse The PublishResponse received.
      * @return An optional ApplyCommitRequest which, if present, may be broadcast to all peers, indicating that this publication
      * has been accepted at a quorum of peers and is therefore committed.
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
-     * 当master节点收到某个节点返回的publishRes时 触发该方法
+     * 当leader节点收到某个节点返回的publishRes时 触发该方法
      */
     public Optional<ApplyCommitRequest> handlePublishResponse(DiscoveryNode sourceNode, PublishResponse publishResponse) {
 
@@ -492,6 +492,7 @@ public class CoordinationState {
         logger.trace("handleCommit: applying commit request for term [{}] and version [{}]", applyCommit.getTerm(),
             applyCommit.getVersion());
 
+        // 在收到  pub请求的节点是更新 lastAcceptedState  而在commit阶段则是将它标记成 committed
         persistedState.markLastAcceptedStateAsCommitted();
         assert getLastCommittedConfiguration().equals(getLastAcceptedConfiguration());
     }
@@ -556,6 +557,7 @@ public class CoordinationState {
             Metadata.Builder metadataBuilder = null;
             if (lastAcceptedState.getLastAcceptedConfiguration().equals(lastAcceptedState.getLastCommittedConfiguration()) == false) {
                 final CoordinationMetadata coordinationMetadata = CoordinationMetadata.builder(lastAcceptedState.coordinationMetadata())
+                    // 主要就是在这里一步设置了一个 lastCommittedConf
                         .lastCommittedConfiguration(lastAcceptedState.getLastAcceptedConfiguration())
                         .build();
                 metadataBuilder = Metadata.builder(lastAcceptedState.metadata());

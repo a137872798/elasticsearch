@@ -71,7 +71,8 @@ import java.util.stream.Stream;
 import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
 
 /**
- * 有关集群状态变化的逻辑处理都交由该对象处理
+ * 应用层集群状态服务  即使在CP中更新了最新的集群state 也必须经由commit请求将state暴露到应用层 此时还会触发各种监听器
+ * 需要注意的一点就是每个节点都会与 state中记录的所有节点建立连接
  */
 public class ClusterApplierService extends AbstractLifecycleComponent implements ClusterApplier {
     private static final Logger logger = LogManager.getLogger(ClusterApplierService.class);
@@ -427,7 +428,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
             return;
         }
         try {
-            // 将处理函数包装成一个 updateTask 对象
+            // 将处理函数包装成一个 updateTask 对象   这个不是批任务 可以直接执行
             UpdateTask updateTask = new UpdateTask(config.priority(), source, new SafeClusterApplyListener(listener, logger), executor);
             if (config.timeout() != null) {
                 threadPoolExecutor.execute(updateTask, config.timeout(),
@@ -472,7 +473,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
-     * 执行更新集群的任务
+     * 当集群中的节点收到 commit请求时 将之前在 pub收到的集群状态通过该对象进行处理
      * @param task
      */
     private void runTask(UpdateTask task) {
@@ -482,6 +483,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         }
 
         logger.debug("processing [{}]: execute", task.source);
+        // 获取之前该对象中存储的集群状态
         final ClusterState previousClusterState = state.get();
 
         long startTimeMS = currentTimeInMillis();
@@ -489,7 +491,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         final ClusterState newClusterState;
         try {
             try (Releasable ignored = stopWatch.timing("running task [" + task.source + ']')) {
-                // 获取此时最新的集群状态
+                // 更新集群状态 比如 follower节点接收到最新的集群状态时(指的是收到commit请求) 会添加这种任务
                 newClusterState = task.apply(previousClusterState);
             }
         } catch (Exception e) {
@@ -498,6 +500,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
                 "failed to execute cluster state applier in [{}], state:\nversion [{}], source [{}]\n{}",
                 executionTime, previousClusterState.version(), task.source, previousClusterState), e);
             warnAboutSlowTaskIfNeeded(executionTime, task.source, stopWatch);
+            // 处理失败的信息会返回给发送端  commit请求失败会怎么样???
             task.listener.onFailure(task.source, e);
             return;
         }
@@ -516,6 +519,8 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
                 logger.debug("cluster state updated, version [{}], source [{}]", newClusterState.version(), task.source);
             }
             try {
+
+                // 应该是每个节点都会连接到一个master节点上 监听集群状态的变化 主要就是处理更新的配置项
                 applyChanges(task, previousClusterState, newClusterState, stopWatch);
                 TimeValue executionTime = TimeValue.timeValueMillis(Math.max(0, currentTimeInMillis() - startTimeMS));
                 logger.debug("processing [{}]: took [{}] done applying updated cluster state (version: {}, uuid: {})", task.source,
@@ -543,7 +548,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
-     * 通知所有监听器
+     * 处理变化的集群事件
      * @param task
      * @param previousClusterState
      * @param newClusterState
@@ -552,8 +557,8 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     private void applyChanges(UpdateTask task, ClusterState previousClusterState, ClusterState newClusterState, StopWatch stopWatch) {
         ClusterChangedEvent clusterChangedEvent = new ClusterChangedEvent(task.source, newClusterState, previousClusterState);
         // new cluster state, notify all listeners
-        // 通过前后状态 生成节点的变化对象
         final DiscoveryNodes.Delta nodesDelta = clusterChangedEvent.nodesDelta();
+        // 忽略日志信息
         if (nodesDelta.hasChanges() && logger.isInfoEnabled()) {
             String summary = nodesDelta.shortSummary();
             if (summary.length() > 0) {
@@ -564,13 +569,12 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
 
         logger.trace("connecting to nodes of cluster state with version {}", newClusterState.version());
         try (Releasable ignored = stopWatch.timing("connecting to new nodes")) {
-            // 当前节点会立即与集群间其他节点建立连接  TODO 应该是只要master节点与其他节点建立连接就可以了啊 并且连接之后是想要做什么呢  应该只需要与共享分片的节点连接 用于拷贝数据
+            // 这里与集群中所有节点都建立连接了  TODO 有这个必要么 为什么
             connectToNodesAndWait(newClusterState);
         }
 
         // nothing to do until we actually recover from the gateway or any other block indicates we need to disable persistency
-        // TODO  gateway 和 block是什么 ???
-        // 代表状态开启了持久化 并且元数据发生了变化
+        // 更新动态配置
         if (clusterChangedEvent.state().blocks().disableStatePersistence() == false && clusterChangedEvent.metadataChanged()) {
             logger.debug("applying settings from cluster state with version {}", newClusterState.version());
             final Settings incomingSettings = clusterChangedEvent.state().metadata().settings();
@@ -581,13 +585,15 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         }
 
         logger.debug("apply cluster state with version {}", newClusterState.version());
-        // 通知监听器
+        // TODO 通知监听器
         callClusterStateAppliers(clusterChangedEvent, stopWatch);
 
-        // 将 nodes外的其他节点修改成断开连接
+        // 与旧的集群state中过时的节点断开连接
         nodeConnectionsService.disconnectFromNodesExcept(newClusterState.nodes());
 
         logger.debug("set locally applied cluster state to version {}", newClusterState.version());
+        // 更新此时应用层的集群状态    在CP的各种处理中都只是涉及到持久层层面的集群状态 只有当调用commit请求时 最新的集群状态才会暴露到应用层
+        // 这时才会开始各种触发监听器钩子  触发动态配置等
         state.set(newClusterState);
 
         // 触发另一套监听器
@@ -595,7 +601,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
-     * 为每个node 创建一个 ConnectTarget 并执行连接操作
+     * 每个节点都需要与集群中的其他节点连接么
      * @param newClusterState
      */
     protected void connectToNodesAndWait(ClusterState newClusterState) {
