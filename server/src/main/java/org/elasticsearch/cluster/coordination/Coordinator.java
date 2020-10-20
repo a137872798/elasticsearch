@@ -93,9 +93,8 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 /**
- * 整个集群的协调者 内部应该使用了某种一致性算法
- * 并且应该是只有role为master的节点才会参与   跟leader不是一个概念 (leader是这些master节点通过一致性算法后选举出来的)
- * 如果要实现线性一致性 应该有一个与 leader节点同步数据的过程
+ * 该对象使用的选举算法不同于raft
+ * 针对选举节点会灵活变化的情况进行了改良 )
  */
 public class Coordinator extends AbstractLifecycleComponent implements Discovery {
 
@@ -143,7 +142,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
      */
     private final JoinHelper joinHelper;
     /**
-     * 处理节点从集群移除的请求
+     * 该对象负责处理将节点移除集群  当master节点检测到集群中某些节点滞后 就会被移除  判别条件是version
      */
     private final NodeRemovalClusterStateTaskExecutor nodeRemovalExecutor;
 
@@ -352,8 +351,14 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         }
     }
 
+    /**
+     * 当检测到节点滞后时 会将它从集群中移除  同样也会发布clusterState 到集群中其他节点
+     * @param discoveryNode
+     * @param reason
+     */
     private void removeNode(DiscoveryNode discoveryNode, String reason) {
         synchronized (mutex) {
+            // 确保此时是leader节点
             if (mode == Mode.LEADER) {
                 masterService.submitStateUpdateTask("node-left",
                     new NodeRemovalClusterStateTaskExecutor.Task(discoveryNode, reason),
@@ -804,7 +809,6 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             // 将当前节点的角色变成候选者
             mode = Mode.CANDIDATE;
             // 可能当前节点之前是 master 因为某种原因变成了candidate  并且此时正在往外部发送 pub请求 这里就要提前关闭
-            // TODO 关闭逻辑需要在仔细看下
             cancelActivePublication("become candidate: " + method);
 
             // 其余joinAccumulator.close 都是noop 所以不用看
@@ -812,7 +816,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             // 将该对象修改成 candidate角色对应的 accumulator
             joinAccumulator = joinHelper.new CandidateJoinAccumulator();
 
-            // 根据之前持久化的集群状态 与集群中所有节点同步信息
+            // 根据之前持久化的集群状态 访问他们并尝试获取此时集群中所有 参选的节点
             peerFinder.activate(coordinationState.get().getLastAcceptedState().nodes());
 
             // 该对象启动后 会定期执行joinHelper::logLastFailedJoinAttempt   也就是定期打印设置到 JoinHelper内部的失败的join
@@ -1031,15 +1035,15 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             // 获取之前持久化的最近一次集群数据  (每次某个节点重启时肯定是根据之前持久化的数据尝试恢复)
             final ClusterState lastAcceptedState = coordinationState.get().getLastAcceptedState();
 
-            // TODO
+            // 只是打印日志
             if (lastAcceptedState.metadata().clusterUUIDCommitted()) {
                 logger.info("cluster UUID [{}]", lastAcceptedState.metadata().clusterUUID());
             }
 
-            // 获取持久化数据中 描述最后一次选举的相关配置  也就是本次选举有多少节点参与
+            // 尝试获取本节点最后一次集群状态中commit阶段的数据 如果没有的话应该是空容器
             final VotingConfiguration votingConfiguration = lastAcceptedState.getLastCommittedConfiguration();
 
-            // 在单节点集群下 如果votingConfiguration.nodeIds >=2 那么无法完成选举动作 处于异常状态
+            // 单节点环境先忽略
             if (singleNodeDiscovery &&
                 votingConfiguration.isEmpty() == false &&
                 votingConfiguration.hasQuorum(Collections.singleton(getLocalNode().getId())) == false) {
@@ -1258,11 +1262,13 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     // Package-private for testing
+    // 增进配置
     ClusterState improveConfiguration(ClusterState clusterState) {
         assert Thread.holdsLock(mutex) : "Coordinator mutex not held";
         assert validVotingConfigExclusionState(clusterState) : clusterState;
 
         // exclude any nodes whose ID is in the voting config exclusions list ...
+        // 找到被排除在选举之外的所有nodeId
         final Stream<String> excludedNodeIds = clusterState.getVotingConfigExclusions().stream().map(VotingConfigExclusion::getNodeId);
         // ... and also automatically exclude the node IDs of master-ineligible nodes that were previously master-eligible and are still in
         // the voting config. We could exclude all the master-ineligible nodes here, but there could be quite a few of them and that makes
@@ -1273,12 +1279,15 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                 || clusterState.getLastCommittedConfiguration().getNodeIds().contains(n.getId())))
             .map(DiscoveryNode::getId);
 
+        // 找到能够成功投票给本节点的node
         final Set<DiscoveryNode> liveNodes = StreamSupport.stream(clusterState.nodes().spliterator(), false)
             .filter(DiscoveryNode::isMasterNode).filter(coordinationState.get()::containsJoinVoteFor).collect(Collectors.toSet());
+        // 生成修改后的配置对象
         final VotingConfiguration newConfig = reconfigurator.reconfigure(liveNodes,
             Stream.concat(masterIneligibleNodeIdsInVotingConfig, excludedNodeIds).collect(Collectors.toSet()),
             getLocalNode(), clusterState.getLastAcceptedConfiguration());
 
+        // 代表选举配置发生了变化 返回新的clusterState对象
         if (newConfig.equals(clusterState.getLastAcceptedConfiguration()) == false) {
             assert coordinationState.get().joinVotesHaveQuorumFor(newConfig);
             return ClusterState.builder(clusterState).metadata(Metadata.builder(clusterState.metadata())
@@ -1324,6 +1333,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         assert currentPublication.isPresent() == false : "Expected no publication in progress";
 
         final ClusterState state = getLastAcceptedState();
+        // 检测到选举配置发生了变化 提交一个集群状态 更新的任务 它将会再发起一次publish操作 同时在执行任务前 避免插入重复任务
         if (improveConfiguration(state) != state && reconfigurationTaskScheduled.compareAndSet(false, true)) {
             logger.trace("scheduling reconfiguration");
             masterService.submitStateUpdateTask("reconfigure", new ClusterStateUpdateTask(Priority.URGENT) {
@@ -1337,6 +1347,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
                 @Override
                 public void onFailure(String source, Exception e) {
+                    // 失败时也不能阻止新的线程继续检测配置
                     reconfigurationTaskScheduled.set(false);
                     logger.debug("reconfiguration failed", e);
                 }
@@ -1984,11 +1995,13 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                                                 attemptReconfiguration = false;
                                             }
                                         }
-                                        // 只要本节点还作为leader 就有定期更新配置的必要
+                                        // 在经过一段时间直到触发回调时 还是leader节点 此时尝试检测选举配置是否更新  变更时还是要将最新的集群状态发布到其他节点上(不仅仅是role为master的节点)
                                         if (attemptReconfiguration) {
                                             scheduleReconfigurationIfNeeded();
                                         }
                                     }
+                                    // 开始检测其他节点是否滞后
+                                    // 在调用publish时 会更新需要检测滞后的所有节点  也就是那个时刻集群中所有的节点
                                     lagDetector.startLagDetector(publishRequest.getAcceptedState().version());
                                     logIncompleteNodes(Level.WARN);
                                 }

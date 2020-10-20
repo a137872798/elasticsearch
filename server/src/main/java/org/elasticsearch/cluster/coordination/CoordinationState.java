@@ -565,6 +565,7 @@ public class CoordinationState {
             }
             assert lastAcceptedState.metadata().clusterUUID().equals(Metadata.UNKNOWN_CLUSTER_UUID) == false :
                 "received cluster state with empty cluster uuid: " + lastAcceptedState;
+            // 这里才是代表本次集群状态是提交过的么
             if (lastAcceptedState.metadata().clusterUUID().equals(Metadata.UNKNOWN_CLUSTER_UUID) == false &&
                 lastAcceptedState.metadata().clusterUUIDCommitted() == false) {
                 if (metadataBuilder == null) {

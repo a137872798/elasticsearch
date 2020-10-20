@@ -168,6 +168,10 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
      * 不同的集群 uuid不同
      */
     private final String clusterUUID;
+
+    /**
+     * 代表已经触发了 pub阶段的commit
+     */
     private final boolean clusterUUIDCommitted;
     private final long version;
 
@@ -196,6 +200,26 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
 
     private final SortedMap<String, IndexAbstraction> indicesLookup;
 
+    /**
+     *
+     * @param clusterUUID
+     * @param clusterUUIDCommitted
+     * @param version
+     * @param coordinationMetadata
+     * @param transientSettings
+     * @param persistentSettings
+     * @param hashesOfConsistentSettings
+     * @param indices
+     * @param templates
+     * @param customs
+     * @param allIndices
+     * @param visibleIndices
+     * @param allOpenIndices
+     * @param visibleOpenIndices
+     * @param allClosedIndices
+     * @param visibleClosedIndices
+     * @param indicesLookup
+     */
     Metadata(String clusterUUID, boolean clusterUUIDCommitted, long version, CoordinationMetadata coordinationMetadata,
              Settings transientSettings, Settings persistentSettings, DiffableStringMap hashesOfConsistentSettings,
              ImmutableOpenMap<String, IndexMetadata> indices, ImmutableOpenMap<String, IndexTemplateMetadata> templates,

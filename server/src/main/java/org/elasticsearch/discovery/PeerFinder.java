@@ -154,8 +154,8 @@ public abstract class PeerFinder {
     }
 
     /**
-     * 当已经确定集群中的leader节点时 不再保持与其他节点的连接 但是允许被其他节点探测到 也就是不主动建立连接 允许被动的连接
-     * 总共2个地方调用 分别是becomeLeader/becomeFollower  也就是当前节点确定了 本轮的leader时 不再对外暴露其他节点信息
+     * 这里的意思是既然已经知道了leader节点 那么直接让请求端访问leader就好  必须要再进入preVote阶段了
+     * 并且本节点也不需要继续探测外部的节点了
      * @param leader
      */
     public void deactivate(DiscoveryNode leader) {
@@ -210,8 +210,7 @@ public abstract class PeerFinder {
 
                 knownPeers = getFoundPeersUnderLock();
             } else {
-                // 当前对象处于失活状态时 不会对外部暴露集群中其他节点的位置信息  但是本节点的地址还是会通知到
-                // TODO master节点数量不变这个场景是简单的 如果会变化的话 那么不暴露其他节点是什么意思???
+                // 该对象被标记成失活时就代表leader已经确认了 这时直接让集群中还在探测的节点去访问leader节点就好
                 assert leader.isPresent() || lastAcceptedNodes == null;
                 knownPeers = emptyList();
             }
@@ -316,6 +315,7 @@ public abstract class PeerFinder {
         // 与某个地址对应的node 断开了连接
         final boolean peersRemoved = peersByAddress.values().removeIf(Peer::handleWakeUp);
 
+        // 当前节点已经确定leader的情况下就可以 停止探测外部节点了
         if (active == false) {
             logger.trace("not active");
             return peersRemoved;
@@ -557,8 +557,7 @@ public abstract class PeerFinder {
                         response.getKnownPeers().stream().map(DiscoveryNode::getAddress).forEach(PeerFinder.this::startProbe);
                     }
 
-                    // 该方法总会触发  比如一开始不知道leader节点 之后连接到其他节点后 从其他节点的leader信息中获取了地址 并进行连接 还是会进入这里
-                    // TODO 那么每个节点的leader属性是什么时候设置呢  已经在同一时刻 2个节点对应的leader不同会怎么样呢
+                    // 当探测到此时集群中的leader节点时 走下面的逻辑
                     if (response.getMasterNode().equals(Optional.of(discoveryNode))) {
                         // Must not hold lock here to avoid deadlock
                         assert holdsLock() == false : "PeerFinder mutex is held in error";

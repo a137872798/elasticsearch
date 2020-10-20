@@ -316,8 +316,8 @@ public class JoinHelper {
                     }
 
                     /**
-                     * 只有当本轮选举结束 才会收到ack信息 针对选举的节点成功leader的场景 因为leader变化 必然会触发publish到集群中
-                     * 并且等待所有节点都处理完事件后 才会触发监听器  进而把ack信息返回
+                     * 只有当本轮选举结束
+                     * 确认leader 并且将最新集群的信息发布到超过半数节点 并将clusterState通过clusterApplier作用到leader后才会返回ack
                      * @param response
                      */
                     @Override
@@ -515,6 +515,7 @@ public class JoinHelper {
 
         /**
          * 该对象存储了在 候选阶段收到的所有join请求
+         * 当本次变更leader的集群状态发布到超过半数的节点后 并且成功commit到 leader本地时 才会返回join的成功信息
          */
         private final Map<DiscoveryNode, JoinCallback> joinRequestAccumulator = new HashMap<>();
         boolean closed;

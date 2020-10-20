@@ -90,6 +90,7 @@ public class Reconfigurator {
      * @param currentMaster  The current master. Unless retired, we prefer to keep the current master in the config.
      * @param currentConfig  The current configuration. As far as possible, we prefer to keep the current config as-is.
      * @return An optimal configuration, or leave the current configuration unchanged if the optimal configuration has no live quorum.
+     * 基于当前信息生成一个新的选举配置对象
      */
     public VotingConfiguration reconfigure(Set<DiscoveryNode> liveNodes, Set<String> retiredNodeIds, DiscoveryNode currentMaster,
                                            VotingConfiguration currentConfig) {

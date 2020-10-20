@@ -77,7 +77,7 @@ public class NodeRemovalClusterStateTaskExecutor implements ClusterStateTaskExec
     }
 
     /**
-     * 执行移除任务
+     * 将在集群中感应到的滞后的节点从集群中移除  这种滞后的节点可以类比为 eureka中不再续约的服务
      * @param currentState
      * @param tasks
      * @return
@@ -111,10 +111,10 @@ public class NodeRemovalClusterStateTaskExecutor implements ClusterStateTaskExec
 
     protected ClusterTasksResult<Task> getTaskClusterTasksResult(ClusterState currentState, List<Task> tasks,
                                                                  ClusterState remainingNodesClusterState) {
-        // 随着某些node的移除 不再需要维护他们的持久化任务
+        // 随着某些node的移除 不再需要维护他们的持久化任务  TODO 这些待理解 但是与选举流程本身没有太大关系
         ClusterState ptasksDisassociatedState = PersistentTasksCustomMetadata.disassociateDeadNodes(remainingNodesClusterState);
         final ClusterTasksResult.Builder<Task> resultBuilder = ClusterTasksResult.<Task>builder().successes(tasks);
-        // 将分配到这些节点上的分片重新分配到其他节点
+        // 因为这些节点下线了 要灵活的将分片转移到其他节点上
         return resultBuilder.build(allocationService.disassociateDeadNodes(ptasksDisassociatedState, true, describeTasks(tasks)));
     }
 

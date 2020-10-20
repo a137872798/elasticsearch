@@ -106,7 +106,7 @@ public class LagDetector {
      * @param version
      */
     public void startLagDetector(final long version) {
-        // 找到所有tracker中 version小于入参的
+        // 找到所有tracker中 version小于入参的  TODO version小代表着什么  什么时候会出现差值
         final List<NodeAppliedStateTracker> laggingTrackers
             = appliedStateTrackersByNode.values().stream().filter(t -> t.appliedVersionLessThan(version)).collect(Collectors.toList());
 
@@ -177,6 +177,11 @@ public class LagDetector {
                 '}';
         }
 
+        /**
+         * 传入当前最新的version  并检测是否滞后
+         * 该任务本身只能由leader发起
+         * @param version
+         */
         void checkForLag(final long version) {
             // 当前对象已经过时
             if (appliedStateTrackersByNode.get(discoveryNode) != this) {
