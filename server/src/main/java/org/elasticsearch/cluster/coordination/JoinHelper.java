@@ -298,7 +298,7 @@ public class JoinHelper {
      * 某个刚重启的节点在感知到leader后 会生成一个join请求
      * @param destination  通过预投票的节点
      * @param term  本地任期
-     * @param optionalJoin   目前看来该值一定会被设置
+     * @param optionalJoin
      */
     public void sendJoinRequest(DiscoveryNode destination, long term, Optional<Join> optionalJoin) {
         assert destination.isMasterNode() : "trying to join master-ineligible " + destination;

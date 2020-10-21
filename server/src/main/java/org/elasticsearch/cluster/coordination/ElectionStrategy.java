@@ -44,13 +44,14 @@ public abstract class ElectionStrategy {
 
     /**
      * Whether there is an election quorum from the point of view of the given local node under the provided voting configurations
-     * @param joinVotes 代表本次已经采集到的票数
+     * @param joinVotes 要求此时连接上的节点数超过半数 可是该配置本身是过时的
      */
     public final boolean isElectionQuorum(DiscoveryNode localNode, long localCurrentTerm, long localAcceptedTerm, long localAcceptedVersion,
                                           VotingConfiguration lastCommittedConfiguration, VotingConfiguration lastAcceptedConfiguration,
                                           VoteCollection joinVotes) {
         return joinVotes.isQuorum(lastCommittedConfiguration) &&
             joinVotes.isQuorum(lastAcceptedConfiguration) &&
+            // 代表一些额外的约束
             satisfiesAdditionalQuorumConstraints(localNode, localCurrentTerm, localAcceptedTerm, localAcceptedVersion,
                 lastCommittedConfiguration, lastAcceptedConfiguration, joinVotes);
     }

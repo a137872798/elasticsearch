@@ -440,7 +440,7 @@ public abstract class PeerFinder {
             // 此时已经连接到目标节点了
             if (discoveryNode != null) {
                 // 如果设置了目标节点 那么正常情况下 连接还存在于ConnectionManager中
-                // 此时代表连接没有断开 每隔多少时间会发送一个peersRequest 目的就是继续保持节点间信息的同步  一旦某个新的leader节点被选举出来 立即会触发onActiveMasterFound
+                // 此时代表连接没有断开 每隔多少时间会发送一个peersRequest 目的就是获取最新的集群节点信息
                 if (transportService.nodeConnected(discoveryNode)) {
                     if (peersRequestInFlight == false) {
                         requestPeers();

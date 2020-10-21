@@ -133,7 +133,7 @@ public class CoordinationState {
     }
 
     /**
-     * 此时 voteCollection中的nodes数 是否达到集群中的半数以上
+     * 检测当前感受到的选举节点数能否触发选举
      * @param joinVotes
      * @return
      */

@@ -131,13 +131,7 @@ public class PreVoteCollector {
      * @return
      */
     private PreVoteResponse handlePreVoteRequest(final PreVoteRequest request) {
-        // 当前节点收到其他节点的请求 并藉此检测任期情况
-        /**
-         * 3种情况
-         * 1.任期落后 代表本节点已经与半数节点发生网络分区了  这里应该会尝试获取对端的leader节点 还有更新最新的任期
-         * 2.任期一致 将此时的leader节点返回给请求端
-         * 3.任期超前 同样将此时的leader返回给请求端
-         */
+        // 当前节点收到其他节点的请求 并藉此检测当前节点是否落后 当本节点是leader 且落后时 会降级成candidate 并直接向其他节点发起startJoin请求
         updateMaxTermSeen.accept(request.getCurrentTerm());
 
         // 无论哪个节点在启动阶段都通过持久化的数据复原了 state 所以该属性必然被设置
@@ -147,12 +141,13 @@ public class PreVoteCollector {
         final DiscoveryNode leader = state.v1();
         final PreVoteResponse response = state.v2();
 
-        // 此时不知道集群中的leader节点  返回res 这里包含最新的term 和 version
+        // 此时不知道集群中的leader节点  返回res 这里包含本节点的term和version  这时可能会比选举的节点高 也可能会比选举的节点低 它会怎么做呢???
+        // 在预投票阶段实际上对term是没有要求的
         if (leader == null) {
             return response;
         }
 
-        // 预投票的目标节点是包含了自己的  而发起预投票的节点必然不知道leader节点 所以直接返回res
+        // 这是特殊情况 leader下线 当前节点还没有检测到下线的时候 leader又上线了 这时可以选择通过 其实就跟 leader == null是一样的
         if (leader.equals(request.getSourceNode())) {
             // This is a _rare_ case where our leader has detected a failure and stepped down, but we are still a follower. It's possible
             // that the leader lost its quorum, but while we're still a follower we will not offer joins to any other node so there is no
@@ -196,6 +191,7 @@ public class PreVoteCollector {
 
         PreVotingRound(final ClusterState clusterState, final long currentTerm) {
             this.clusterState = clusterState;
+            // 每次发起预投票请求时 都会以当前节点最新的任期去触发   注意在预投票阶段任期还没有+1
             preVoteRequest = new PreVoteRequest(transportService.getLocalNode(), currentTerm);
         }
 
@@ -220,7 +216,9 @@ public class PreVoteCollector {
                     }
 
                     /**
-                     * 远端产生的所有异常都会被包装成 TransportException  也就是在发起预投票时 如果对端包含了leader信息  就返回异常  没有通知leader节点的地址 那么怎么做数据同步呢
+                     * 返回异常信息 代表对端是有leader的  本节点能做的就是2件事
+                     * 1.等待finder找到leader节点 并加入集群
+                     * 2.在等待一定时间后 继续发起preVote请求 直到通过预投票
                      * @param exp
                      */
                     @Override
@@ -241,7 +239,7 @@ public class PreVoteCollector {
         }
 
         /**
-         * 处理接收到的结果
+         * 处理预投票结果
          * @param response
          * @param sender
          */
@@ -251,35 +249,35 @@ public class PreVoteCollector {
                 return;
             }
 
-            // 每当收到一个结果 就通过该函数处理  这样就会尽可能同步集群中节点的任期
+            // 因为当前不是leader节点 所以该函数的作用 仅仅是更新maxTermSeen
             updateMaxTermSeen.accept(response.getCurrentTerm());
 
-            // 如果对方的任期更新  代表对方的数据更新 那么对于对方来说本节点没有成为leader的资格  (本节点的任期至少要高于半数节点)
+            // 因为对端节点 最后一次持久化的任期 比当前节点的大  也就是本节点的数据是落后与目标节点的  这样是无法通过选举的
+            // 目标就是找到超过半数的节点 任期数据比当前节点小 或者相等
             if (response.getLastAcceptedTerm() > clusterState.term()
-                // TODO 这个 == 和 > 需要细品
                 || (response.getLastAcceptedTerm() == clusterState.term()
                 && response.getLastAcceptedVersion() > clusterState.version())) {
                 logger.debug("{} ignoring {} from {} as it is fresher", this, response, sender);
                 return;
             }
 
-            // 存储收到的结果
+            // 在term。version 满足条件的情况下 加入到投票箱中
             preVotesReceived.put(sender, response);
 
             // create a fake VoteCollection based on the pre-votes and check if there is an election quorum
-            // 每次都检测是否满足半数条件
             final VoteCollection voteCollection = new VoteCollection();
             final DiscoveryNode localNode = clusterState.nodes().getLocalNode();
 
-            // 获取本节点推崇的leader节点 以及打算返给其他节点的res对象
+            // 该对象包含了当前节点持久化的最新任期 当前尚未持久化的任期等信息   (当前任期可以理解为在还未选举出leader节点使用的临时任期
+            // 而当选出leader后 会在pub中将任期进行持久化)
             final PreVoteResponse localPreVoteResponse = getPreVoteResponse();
 
-            // 将所有支持的节点塞到投票箱中 检测是否满足条件
+            // 将票数放入投票箱中 并检测此时是否满足半数节点要求
             preVotesReceived.forEach((node, preVoteResponse) -> voteCollection.addJoinVote(
                 new Join(node, localNode, preVoteResponse.getCurrentTerm(),
                 preVoteResponse.getLastAcceptedTerm(), preVoteResponse.getLastAcceptedVersion())));
 
-            // 代表此时还不满足选举的条件  本次处理结束
+            // 未满足条件 忽略本次处理
             if (electionStrategy.isElectionQuorum(clusterState.nodes().getLocalNode(), localPreVoteResponse.getCurrentTerm(),
                 localPreVoteResponse.getLastAcceptedTerm(), localPreVoteResponse.getLastAcceptedVersion(),
                 clusterState.getLastCommittedConfiguration(), clusterState.getLastAcceptedConfiguration(), voteCollection) == false) {

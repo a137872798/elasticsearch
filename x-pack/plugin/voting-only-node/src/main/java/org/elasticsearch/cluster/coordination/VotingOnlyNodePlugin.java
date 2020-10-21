@@ -143,7 +143,7 @@ public class VotingOnlyNodePlugin extends Plugin implements DiscoveryPlugin, Net
     }
 
     /**
-     * 这是ES内置的选举算法
+     * 代表参选的节点必须满足这些条件才能触发预选举
      */
     static class VotingOnlyNodeElectionStrategy extends ElectionStrategy {
 
@@ -152,6 +152,7 @@ public class VotingOnlyNodePlugin extends Plugin implements DiscoveryPlugin, Net
                                                             long localAcceptedVersion, VotingConfiguration lastCommittedConfiguration,
                                                             VotingConfiguration lastAcceptedConfiguration, VoteCollection joinVotes) {
             // if local node is voting only, have additional checks on election quorum definition
+            // 如果当前节点仅是选举节点那么要考虑额外的因素
             if (isVotingOnlyNode(localNode)) {
                 // if all votes are from voting only nodes, do not elect as master (no need to transfer state)
                 if (joinVotes.nodes().stream().filter(DiscoveryNode::isMasterNode).allMatch(VotingOnlyNodePlugin::isVotingOnlyNode)) {
