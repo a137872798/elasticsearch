@@ -36,9 +36,9 @@ public class PreVoteResponse extends TransportResponse {
 
     /**
      *
-     * @param currentTerm  对应 PersistedState.getCurrentTerm()
-     * @param lastAcceptedTerm   对应 PersistedState.getLastAcceptedState().term()  TODO 这2个term之前有什么不同
-     * @param lastAcceptedVersion
+     * @param currentTerm  本地持久化的任期
+     * @param lastAcceptedTerm   代表某次成功选举出leader后在pub阶段存储的任期信息
+     * @param lastAcceptedVersion   同一次任期中总计触发了多少次pub
      */
     public PreVoteResponse(long currentTerm, long lastAcceptedTerm, long lastAcceptedVersion) {
         this.currentTerm = currentTerm;

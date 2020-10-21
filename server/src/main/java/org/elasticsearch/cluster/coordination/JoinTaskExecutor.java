@@ -155,7 +155,7 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
             logger.trace("processing node joins, but we are not the master. current master: {}", currentNodes.getMasterNode());
             throw new NotMasterException("Node [" + currentNodes.getLocalNode() + "] not master for join request");
         } else {
-            // 基于当前集群state 生成一个新的构建器   进入到这里应该是代表以leaderAccumulator 处理新收到的join请求
+            // 当前节点已经成为leader的情况下 收到新的join请求 会更新clusterState
             newState = ClusterState.builder(currentState);
         }
 
@@ -217,8 +217,9 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
                 r -> logger.trace("post-join reroute completed"),
                 e -> logger.debug("post-join reroute failed", e)));
 
+
             if (joiniedNodeNameIds.isEmpty() == false) {
-                // 找到一组不参与选举的对象
+                // 找到此时不参与选举的配置信息
                 Set<CoordinationMetadata.VotingConfigExclusion> currentVotingConfigExclusions = currentState.getVotingConfigExclusions();
 
                 Set<CoordinationMetadata.VotingConfigExclusion> newVotingConfigExclusions = currentVotingConfigExclusions.stream()

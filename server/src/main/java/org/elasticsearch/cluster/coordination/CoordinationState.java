@@ -67,12 +67,12 @@ public class CoordinationState {
     private boolean electionWon;
 
     /**
-     * 当该属性首次被设置时 代表本节点晋升成了leader
+     * 每当更新任期的时候可以发现该属性被重置了  可以推测这个version就是在同一任期中leader调用pub的次数
      */
     private long lastPublishedVersion;
 
     /**
-     * 在初始化阶段 由最新一次持久化的数据中获得 记录最后一次选举有哪些node加入
+     * 每当更新任期时 会记录之前所有参与选举的节点配置
      */
     private VotingConfiguration lastPublishedConfiguration;
     private VoteCollection publishVotes;
@@ -198,11 +198,10 @@ public class CoordinationState {
      * @param startJoinRequest The startJoinRequest, specifying the node requesting the join.
      * @return A Join that should be sent to the target node of the join.
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
-     * 处理 startJoin请求
+     *
      */
     public Join handleStartJoin(StartJoinRequest startJoinRequest) {
-        // 既然要发起一个join请求 那么任期必须比该节点此时的要高
-        // 在下面的逻辑中因为更新了任期使得之后的startJoin请求会在这里被拒绝 也就是每个节点还是只能在一轮中回复一个Join请求
+        // 可以看到在同一轮中每个节点只能收到一次startJoin请求
         if (startJoinRequest.getTerm() <= getCurrentTerm()) {
             logger.debug("handleStartJoin: ignoring [{}] as term provided is not greater than current term [{}]",
                 startJoinRequest, getCurrentTerm());
@@ -212,7 +211,8 @@ public class CoordinationState {
 
         logger.debug("handleStartJoin: leaving term [{}] due to {}", getCurrentTerm(), startJoinRequest);
 
-        // joinVotes 填充了数据应该就代表本节点也正好发起了startJoin请求   之后该容器将会被清空 所以这里打印日志
+        // joinVotes 填充了数据应该就代表本节点也正好发起了startJoin请求
+        // 但是由于收到的新请求的任期更大 所以直接放弃了本次选举
         if (joinVotes.isEmpty() == false) {
             final String reason;
             if (electionWon == false) {
@@ -225,17 +225,25 @@ public class CoordinationState {
             logger.debug("handleStartJoin: discarding {}: {}", joinVotes, reason);
         }
 
-        // currentTerm 应该是代表还没有确定leader 仅在startJoin 阶段使用的任期 当确定leader后才会最终确认term
+        // 这里更新任期  1.candidate发起新的选举 此时他们的任期会+1 并通过startJoin使得其他落后的节点的任期也更新
+        //               2.新启动的节点感应到之前的leader节点 会模拟leader发出了一个startJoin请求  之后同步任期
         persistedState.setCurrentTerm(startJoinRequest.getTerm());
         assert getCurrentTerm() == startJoinRequest.getTerm();
+        // 每当更新任期的时候可以发现 pub的version重置了  可以推测这个version就是在同一任期中leader调用pub的次数
         lastPublishedVersion = 0;
+        // 在更新任期前 集群中参与投票的配置会被记录下来
         lastPublishedConfiguration = getLastAcceptedConfiguration();
+
+        // 代表在重启过后同步过任期
         startedJoinSinceLastReboot = true;
-        // 收到startJoin请求的节点 在本次选举中已经失败了 所以重置相关属性
+        // 在更新任期的同时代表在最新的任期中该节点已经选举失败了
         electionWon = false;
+
+        // 清空之前的投票箱 因为本节点在当前任期已经无法发送startJoin 和 pubReq了
         joinVotes = new VoteCollection();
         publishVotes = new VoteCollection();
 
+        // 生成一个当前节点加入到目标节点的join对象
         return new Join(localNode, startJoinRequest.getSourceNode(), getCurrentTerm(), getLastAcceptedTerm(),
             getLastAcceptedVersion());
     }
@@ -247,11 +255,12 @@ public class CoordinationState {
      * @return true iff this instance does not already have a join vote from the given source node for this term
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
      * 当收到其他节点发来的join请求时触发
-     * 这里主要是为了选举出leader
+     * 此时处理join时 可能本节点已经成为了leader 又或者 收到某个节点加入集群的申请
      */
     public boolean handleJoin(Join join) {
         assert join.targetMatches(localNode) : "handling join " + join + " for the wrong node " + localNode;
 
+        // 必须同一任期的join才有意义  落后的节点会在同步任期后发起请求 所以任期是一致的 而某个candidate发起选举时 其他节点收到startJoin请求也会同步任期
         if (join.getTerm() != getCurrentTerm()) {
             logger.debug("handleJoin: ignored join due to term mismatch (expected: [{}], actual: [{}])",
                 getCurrentTerm(), join.getTerm());
@@ -259,13 +268,13 @@ public class CoordinationState {
                 "incoming term " + join.getTerm() + " does not match current term " + getCurrentTerm());
         }
 
-        // TODO
+        // 修改为true的条件是接收过startJoin 而成为leader时 也要给自己发送startJoin请求 所以这个条件必然能通过
         if (startedJoinSinceLastReboot == false) {
             logger.debug("handleJoin: ignored join as term was not incremented yet after reboot");
             throw new CoordinationStateRejectedException("ignored join as term has not been incremented yet after reboot");
         }
 
-        // 持久化的term应该一致
+        // 请求端最近一次写入的集群状态必然比作为leader的节点最近一次集群状态要旧或相等 这个条件也必然会满足
         final long lastAcceptedTerm = getLastAcceptedTerm();
         if (join.getLastAcceptedTerm() > lastAcceptedTerm) {
             logger.debug("handleJoin: ignored join as joiner has a better last accepted term (expected: <=[{}], actual: [{}])",
@@ -274,6 +283,7 @@ public class CoordinationState {
                 " of join higher than current last accepted term " + lastAcceptedTerm);
         }
 
+        // 如果在同一个任期中 但是join 此时集群的集群状态版本更新 也是异常情况  这些应该都是伪造请求吧 正常操作不会出现这种情况
         if (join.getLastAcceptedTerm() == lastAcceptedTerm && join.getLastAcceptedVersion() > getLastAcceptedVersion()) {
             logger.debug(
                 "handleJoin: ignored join as joiner has a better last accepted version (expected: <=[{}], actual: [{}]) in term {}",

@@ -53,7 +53,7 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
     private final long term;
 
     /**
-     * 这里有关投票的动作被分为了  accepted 和 commited
+     * 这里有关投票的配置被分为了  accepted 和 commited
      */
     private final VotingConfiguration lastCommittedConfiguration;
 

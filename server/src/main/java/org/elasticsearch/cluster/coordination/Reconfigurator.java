@@ -83,12 +83,12 @@ public class Reconfigurator {
      * Compute an optimal configuration for the cluster.
      *
      * @param liveNodes      The live nodes in the cluster. The optimal configuration prefers live nodes over non-live nodes as far as
-     *                       possible.
+     *                       possible.                                                                                                当前存活的所有节点
      * @param retiredNodeIds Nodes that are leaving the cluster and which should not appear in the configuration if possible. Nodes that are
      *                       retired and not in the current configuration will never appear in the resulting configuration; this is useful
-     *                       for shifting the vote in a 2-node cluster so one of the nodes can be restarted without harming availability.
-     * @param currentMaster  The current master. Unless retired, we prefer to keep the current master in the config.
-     * @param currentConfig  The current configuration. As far as possible, we prefer to keep the current config as-is.
+     *                       for shifting the vote in a 2-node cluster so one of the nodes can be restarted without harming availability.   这些节点将不会存在于VotingConfiguration中
+     * @param currentMaster  The current master. Unless retired, we prefer to keep the current master in the config.                   当前master节点
+     * @param currentConfig  The current configuration. As far as possible, we prefer to keep the current config as-is.                  最近一次持久化的所有可参与选举的节点
      * @return An optimal configuration, or leave the current configuration unchanged if the optimal configuration has no live quorum.
      * 基于当前信息生成一个新的选举配置对象
      */
@@ -102,12 +102,17 @@ public class Reconfigurator {
             .filter(DiscoveryNode::isMasterNode).map(DiscoveryNode::getId).collect(Collectors.toSet());
         final Set<String> currentConfigNodeIds = currentConfig.getNodeIds();
 
+        // 将此时所有存活的候选节点按照特殊顺序排序
         final Set<VotingConfigNode> orderedCandidateNodes = new TreeSet<>();
+
         liveNodes.stream()
             .filter(DiscoveryNode::isMasterNode)
+            // 过滤掉在选举阶段被排除的节点
             .filter(n -> retiredNodeIds.contains(n.getId()) == false)
             .forEach(n -> orderedCandidateNodes.add(new VotingConfigNode(n.getId(), true,
                 n.getId().equals(currentMaster.getId()), currentConfigNodeIds.contains(n.getId()))));
+
+        // 将之前配置中的配置 按照当前是否被排除 是否失活的情况 生成live = false 的VotingConfigNode对象 并加入到列表中
         currentConfigNodeIds.stream()
             .filter(nid -> liveNodeIds.contains(nid) == false)
             .filter(nid -> retiredNodeIds.contains(nid) == false)
@@ -115,12 +120,18 @@ public class Reconfigurator {
 
         /*
          * Now we work out how many nodes should be in the configuration:
+         * 计算此时所有已写入的节点的数量
          */
         final int nonRetiredConfigSize = Math.toIntExact(orderedCandidateNodes.stream().filter(n -> n.inCurrentConfig).count());
+        // 是否开启了自动缩减功能  也就是如果检测到某个节点失活 是否自动从集群中剔除
+        // 这个是最少要保证的节点数量
         final int minimumConfigEnforcedSize = autoShrinkVotingConfiguration ? (nonRetiredConfigSize < 3 ? 1 : 3) : nonRetiredConfigSize;
+        // 找到所有存活节点数量
         final int nonRetiredLiveNodeCount = Math.toIntExact(orderedCandidateNodes.stream().filter(n -> n.live).count());
+        // roundDownToOdd(nonRetiredLiveNodeCount) 将nonRetiredLiveNodeCount 向下变成奇数
         final int targetSize = Math.max(roundDownToOdd(nonRetiredLiveNodeCount), minimumConfigEnforcedSize);
 
+        // 仅将有效的节点数更新到投票配置中  因为在排序过程中live 肯定排在 noLive前面 且targetSize <= live 数量 所以可以确保存储的都是存活节点
         final VotingConfiguration newConfig = new VotingConfiguration(
             orderedCandidateNodes.stream()
                 .limit(targetSize)
@@ -128,6 +139,7 @@ public class Reconfigurator {
                 .collect(Collectors.toSet()));
 
         // new configuration should have a quorum
+        // 正常情况下肯定满足该条件  但是当过多有效节点刚好被排除时 可能此时有效的节点数不足所有存活节点的一半 这时不进行改动
         if (newConfig.hasQuorum(liveNodeIds)) {
             return newConfig;
         } else {
@@ -137,9 +149,19 @@ public class Reconfigurator {
     }
 
     static class VotingConfigNode implements Comparable<VotingConfigNode> {
+
         final String id;
+        /**
+         * 该节点此时是否已经确定存活
+         */
         final boolean live;
+        /**
+         * 该节点是否是leader节点
+         */
         final boolean currentMaster;
+        /**
+         * 该节点可以作为选举节点的信息是否已经持久化
+         */
         final boolean inCurrentConfig;
 
         VotingConfigNode(String id, boolean live, boolean currentMaster, boolean inCurrentConfig) {
@@ -149,9 +171,11 @@ public class Reconfigurator {
             this.inCurrentConfig = inCurrentConfig;
         }
 
+
         @Override
         public int compareTo(VotingConfigNode other) {
             // prefer current master
+            // 如果leader不相同 按照不同的leader节点排序  这条规则基本可以忽略
             final int currentMasterComp = Boolean.compare(other.currentMaster, currentMaster);
             if (currentMasterComp != 0) {
                 return currentMasterComp;

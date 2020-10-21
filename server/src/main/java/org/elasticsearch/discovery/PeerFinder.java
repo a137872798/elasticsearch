@@ -53,8 +53,7 @@ import java.util.stream.Collectors;
 import static java.util.Collections.emptyList;
 
 /**
- * 这就是一个 集群中节点信息的同步器 每个节点通过与其他节点的通信 感知到集群中所有在线的节点
- * (节点上线时自动通知其他节点 当连接断开时自动从容器中移除)
+ * 该节点就是通过探测集群中其他已知的 master节点找到此时可用的leader  如果此时没有任何可用的节点则尽可能多的获取参与选举的node
  */
 public abstract class PeerFinder {
 
@@ -214,7 +213,7 @@ public abstract class PeerFinder {
                 assert leader.isPresent() || lastAcceptedNodes == null;
                 knownPeers = emptyList();
             }
-            // 并且此时会将leader节点返回
+            // 在这个结果中  leader 和 knownPeers是不可能同时设置的  设置了leader就代表这个节点有认同的leader 否则就返回能参与选举的所有node
             return new PeersResponse(leader, knownPeers, currentTerm);
         }
     }
@@ -495,7 +494,7 @@ public abstract class PeerFinder {
                 }
 
                 /**
-                 * 因为这个节点不是master节点 或者与该节点的连接失败   所以从peersByAddress 中移除  代表不再参考这个节点的leader信息
+                 * 因为这个节点不是能够参与选举的节点 或者与该节点的连接失败   所以从peersByAddress 中移除  代表不再参考这个节点的leader信息
                  * @param e
                  */
                 @Override
@@ -552,16 +551,16 @@ public abstract class PeerFinder {
 
                         peersRequestInFlight = false;
 
-                        // 就是leader节点   这里的行为也就是与之前没有观测到的节点建立连接
+                        // 如果存在leader 就与leader连接 如果存在普通节点就连接普通节点
                         response.getMasterNode().map(DiscoveryNode::getAddress).ifPresent(PeerFinder.this::startProbe);
                         response.getKnownPeers().stream().map(DiscoveryNode::getAddress).forEach(PeerFinder.this::startProbe);
                     }
 
-                    // 当探测到此时集群中的leader节点时 走下面的逻辑
+                    // 当检测到leader节点时走下面的逻辑  如果产生了脑裂 那么可能此时会存在多个leader 这里检测到leader后并没有立即失活
+                    // 而是将leader的任期与当前节点的任期比较 如果leader更新 那么尝试发送一个join请求加入
                     if (response.getMasterNode().equals(Optional.of(discoveryNode))) {
                         // Must not hold lock here to avoid deadlock
                         assert holdsLock() == false : "PeerFinder mutex is held in error";
-                        // 为了比如2个节点处于不同的任期中 所以在处理 onActiveMasterFound 需要传入term信息
                         onActiveMasterFound(discoveryNode, response.getTerm());
                     }
                 }

@@ -41,6 +41,14 @@ public class Join implements Writeable {
     private final long lastAcceptedTerm;
     private final long lastAcceptedVersion;
 
+    /**
+     *
+     * @param sourceNode
+     * @param targetNode
+     * @param term  在于targetNode同步任期后 此时sourceNode 的任期
+     * @param lastAcceptedTerm   获取上一次的持久化的clusteState对应的任期信息
+     * @param lastAcceptedVersion 获取上一次的持久化的clusteState对应的version  就是对应同一任期中clusterState变化的不同版本
+     */
     public Join(DiscoveryNode sourceNode, DiscoveryNode targetNode, long term, long lastAcceptedTerm, long lastAcceptedVersion) {
         assert term >= 0;
         assert lastAcceptedTerm >= 0;

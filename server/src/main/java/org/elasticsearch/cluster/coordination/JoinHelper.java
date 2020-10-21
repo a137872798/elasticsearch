@@ -181,18 +181,20 @@ public class JoinHelper {
                 channel.sendResponse(Empty.INSTANCE);
             });
 
-        // 校验join请求
+        // 尝试加入leader 的节点发起join请求后 会收到一个校验请求  这里主要就是校验兼容性  发起请求前实际上只知道一个leader的地址 其余信息都是不知道的
         transportService.registerRequestHandler(VALIDATE_JOIN_ACTION_NAME,
             ThreadPool.Names.GENERIC, ValidateJoinRequest::new,
             (request, channel, task) -> {
+                // 获取当前集群状态信息
                 final ClusterState localState = currentStateSupplier.get();
-                // 这里尝试匹配本地clusterState的 uuid  与请求携带的uuid  不匹配的情况 拒绝请求
+                // 在uuid已提交的情况下 如果2个id不一致   代表此时认为2个节点属于不同的集群
                 if (localState.metadata().clusterUUIDCommitted() &&
                     localState.metadata().clusterUUID().equals(request.getState().metadata().clusterUUID()) == false) {
                     throw new CoordinationStateRejectedException("join validation on cluster state" +
                         " with a different cluster uuid " + request.getState().metadata().clusterUUID() +
                         " than local cluster uuid " + localState.metadata().clusterUUID() + ", rejecting");
                 }
+                // 除了校验兼容性外 还要使用用户自己定义的校验器
                 joinValidators.forEach(action -> action.accept(transportService.getLocalNode(), request.getState()));
                 // 校验之后 发送一个ack信息
                 channel.sendResponse(Empty.INSTANCE);
@@ -292,6 +294,8 @@ public class JoinHelper {
      * 往目标节点发送一个 join的请求
      * 流程是这样 首先某个通过预投票的节点 会向所有节点发送一个startJoin请求 之后 每个节点会返回一个join请求
      * source节点通过了预投票阶段  那么此时就不需要做任何检测 无条件信任目标节点 并直接返回join请求
+     *
+     * 某个刚重启的节点在感知到leader后 会生成一个join请求
      * @param destination  通过预投票的节点
      * @param term  本地任期
      * @param optionalJoin   目前看来该值一定会被设置
@@ -303,7 +307,6 @@ public class JoinHelper {
         final JoinRequest joinRequest = new JoinRequest(transportService.getLocalNode(), term, optionalJoin);
         final Tuple<DiscoveryNode, JoinRequest> dedupKey = Tuple.tuple(destination, joinRequest);
 
-        // 加入成功代表首次往该节点上发送join请求  加入失败代表在这轮join中已经为该节点投过一票了
         if (pendingOutgoingJoins.add(dedupKey)) {
             logger.debug("attempting to join {} with {}", destination, joinRequest);
             transportService.sendRequest(destination, JOIN_ACTION_NAME, joinRequest,
@@ -391,7 +394,8 @@ public class JoinHelper {
     }
 
     /**
-     * 校验join的请求
+     * 集群中有些节点没有直接参与选举 而是后来启动的 通过finder检测到leader后 发起join请求 就会触发该方法  当然在finderleader时 需要确保任期更新
+     * 而在遇到脑裂的情况时 一个节点可能会检测到多个leader 那么就需要通过 校验才能确定哪个才是最新的leader
      * @param node
      * @param state
      * @param listener
