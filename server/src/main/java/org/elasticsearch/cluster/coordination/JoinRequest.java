@@ -42,7 +42,7 @@ public class JoinRequest extends TransportRequest {
      * The minimum term for which the joining node will accept any cluster state publications. If the joining node is in a strictly greater
      * term than the master it wants to join then the master must enter a new term and hold another election. Doesn't necessarily match
      * {@link JoinRequest#optionalJoin}.
-     * TODO term不是必须要一致才可以么
+     * 在处理startJoin前的任期   因为处理startJoin后任期可能就更新了
      */
     private final long minimumTerm;
 

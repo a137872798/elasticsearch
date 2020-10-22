@@ -89,13 +89,13 @@ public abstract class Publication {
     /**
      * 针对这组失败的节点 触发  PublicationTarget.onFaultyNode 钩子
      * 并且针对所有 target对象发送 publishRequest
-     * @param faultyNodes
+     * @param faultyNodes  这组节点 有可能记录了followerChecker 长期连接不上的节点
      */
     public void start(Set<DiscoveryNode> faultyNodes) {
         logger.trace("publishing {} to {}", publishRequest, publicationTargets);
 
         for (final DiscoveryNode faultyNode : faultyNodes) {
-            // 每当往某个节点发送错误消息时 顺带检测能否提前结束pub任务 因为往其他节点发送本身是一个比较重的操作 当失败的节点数已经确定超过半数时 可以提前结束任务
+            // 如果有半数节点连接不上 那么本次发布不可能成功 提前结束
             onFaultyNode(faultyNode);
         }
         // 在faultyNodes为空的时候 就有检测这个的必要了  如果一开始票数就是达不到要求的就可以直接结束pub任务 而不浪费时间
@@ -343,7 +343,9 @@ public abstract class Publication {
             } else {
                 try {
 
-                    // 交由实现类 处理res   当某次满足条件生成commit对象时 将它设置到applyCommitRequest上
+                    // 交由实现类 处理res   当某次满足条件生成commit对象时 将它设置到applyCommitRequest上  这里的条件就是pub成功发布到超过半数的候选节点
+                    // 因为在选举出leadr时就已经获得了超半数候选节点的同意  所以正常情况下在pub时 也能获取超半数候选节点的认同
+                    // commit 针对的范围也是所有节点
                     Publication.this.handlePublishResponse(discoveryNode, publishResponse).ifPresent(applyCommit -> {
                         assert applyCommitRequest.isPresent() == false;
                         applyCommitRequest = Optional.of(applyCommit);

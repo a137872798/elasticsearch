@@ -136,7 +136,7 @@ public class JoinTaskExecutor implements ClusterStateTaskExecutor<JoinTaskExecut
         // TODO 如果一个join就能结束选举工作 那应该是单节点环境 忽略这条逻辑 可以看到它既不需要更新clusterState 也不需要publish到其他节点
         if (joiningNodes.size() == 1 && joiningNodes.get(0).isFinishElectionTask()) {
             return results.successes(joiningNodes).build(currentState);
-        //  在满足某些条件时 masterId 会被置空
+        //  代表本次任务 当前节点刚刚晋升成leader
         //  本节点竞选leader成功时 会将集群中的leader修改为当前节点
         } else if (currentNodes.getMasterNode() == null && joiningNodes.stream().anyMatch(Task::isBecomeMasterTask)) {
 

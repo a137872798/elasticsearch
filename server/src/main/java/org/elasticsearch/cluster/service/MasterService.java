@@ -283,7 +283,7 @@ public class MasterService extends AbstractLifecycleComponent {
 
         logger.debug("executing cluster state update for [{}]", summary);
 
-        // 在更新集群状态前 获取之前的集群信息
+        // 在更新集群状态前 获取之前的集群信息    如果之前集群中就存在的node 在重新上线后集群状态本身是不变的 但是在ClusterApplier中可能就要更改状态
         final ClusterState previousClusterState = state();
 
         // 某些任务要求必须在leader节点 触发 这时触发钩子

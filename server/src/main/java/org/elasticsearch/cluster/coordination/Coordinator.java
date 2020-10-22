@@ -353,7 +353,8 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 当检测到节点滞后时 会将它从集群中移除  同样也会发布clusterState 到集群中其他节点
+     * 目前只有master节点有这个权利  就是当它管理下面所有node时 发现某个节点一直无法访问 就将其从集群中剔除
+     * 这也会触发pub  该任务本身不是强制的 如果本次没有执行 下次pub会从faultyNodes中找到未处理的任务 并执行
      * @param discoveryNode
      * @param reason
      */
@@ -371,16 +372,16 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 当前节点不是 follower时  通过该函数处理 FollowerCheckRequest 请求
-     * TODO 怎么处理
+     * 当某个leader出现时 会通知clusterState中所有的节点 将他们转换成follower
      *
      * @param followerCheckRequest
      */
     void onFollowerCheckRequest(FollowerCheckRequest followerCheckRequest) {
         synchronized (mutex) {
-            // 探测端的term 是可能比接收端要大的
+            // 这里更新当前term 并将自己修改成candidate 并尝试通过finder发现leader 以及加入
             ensureTermAtLeast(followerCheckRequest.getSender(), followerCheckRequest.getTerm());
 
+            // 忽略 在followerChecker中应该已经挡掉这种可能了
             if (getCurrentTerm() != followerCheckRequest.getTerm()) {
                 logger.trace("onFollowerCheckRequest: current term is [{}], rejecting {}", getCurrentTerm(), followerCheckRequest);
                 throw new CoordinationStateRejectedException("onFollowerCheckRequest: current term is ["
@@ -391,6 +392,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             // term and therefore never removed the NO_MASTER_BLOCK for this term. This logic ensures that we quickly turn a node
             // into follower, even before receiving the first cluster state update, but also don't have to deal with the situation
             // where we would possibly have to remove the NO_MASTER_BLOCK from the applierState when turning a candidate back to follower.
+            // TODO 如果任期一样 代表已经处理过pub了 那么重启的candidate 无法 自动变成follower吗   但是发起选举 如果集群中leader还是有效的 那么选举也会失败
             if (getLastAcceptedState().term() < getCurrentTerm()) {
                 becomeFollower("onFollowerCheckRequest", followerCheckRequest.getSender());
             } else if (mode == Mode.FOLLOWER) {
@@ -406,8 +408,8 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 当集群选出 leader节点后 会向所有节点发送 pub请求 当收到超过半数的有效响应时 会对这些节点发起 commit请求
-     * 超过半数后 又收到pubRes时 也会发送commitReq请求 注意此时整个pub流程还没有结束    最早发起join请求的节点还没有收到ack信息
+     * 当集群选出 leader节点后 会向所有节点发送 pub请求 当收到超过半数候选节点的有效响应时 会对这些节点发起 commit请求
+     * 超过半数后 又收到pubRes时 也会发送commitReq请求
      *
      * @param applyCommitRequest
      * @param applyListener
@@ -423,10 +425,12 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             applierState = mode == Mode.CANDIDATE ? clusterStateWithNoMasterBlock(committedState) : committedState;
             if (applyCommitRequest.getSourceNode().equals(getLocalNode())) {
                 // master node applies the committed state at the end of the publication process, not here.
-                // leader 节点的集群状态更新在最后面处理
+                // 在本地节点持久化最新的集群数据后 并没有直接暴露到应用层
                 applyListener.onResponse(null);
             } else {
-                // 当前节点感知到集群状态发生变化时触发  将最新的集群状态暴露到应用层
+                // 只有当pub成功 将数据写入到超过半数的候选节点后 在整个集群范围内这个最新状态才是有效的  此时才应该暴露到应用层
+                // 其余无法连接上的节点 在重启后会自动找到leader 并拉取最新的clusterState 并设置到应用层
+                // 只要pub成功 其他节点的commit是否成功实际上已经不重要了
                 clusterApplier.onNewClusterState(applyCommitRequest.toString(), () -> applierState,
                     new ClusterApplyListener() {
 
@@ -445,7 +449,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 当接受到集群中的 发布请求时触发
+     * leader会将每次clusterState的变化 通知到其他节点  这里包含普通节点
      *
      * @param publishRequest
      * @return
@@ -480,20 +484,19 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                     " than local cluster uuid " + localState.metadata().clusterUUID() + ", rejecting");
             }
 
-            // 代表集群发生了更替 也就是leader节点变化了
             if (publishRequest.getAcceptedState().term() > localState.term()) {
                 // only do join validation if we have not accepted state from this master yet
-                // TODO 目前只看到有关兼容性检测的逻辑 先忽略
+                // TODO 目前只看到有关兼容性检测的逻辑 先忽略  不兼容的话 就会抛出异常 使得pub失败
                 onJoinValidators.forEach(a -> a.accept(getLocalNode(), publishRequest.getAcceptedState()));
             }
 
-            // 更新当前节点的任期
+            // 某个刚启动还没有加入到集群的节点 会通过leader的pub 被动更新term
             ensureTermAtLeast(sourceNode, publishRequest.getAcceptedState().term());
-            // 这里才是处理发布请求 并生成结果的步骤  按照jraft的实现 最新的clusterState应该被持久化在每个发布的节点上 并且成功写入半数以上时 认为写入成功
+            // 这里才是处理发布请求 并生成结果的步骤
             final PublishResponse publishResponse = coordinationState.get().handlePublishRequest(publishRequest);
 
             if (sourceNode.equals(getLocalNode())) {
-                // 本节点晋升成leader时 实际上已经更新了预投票的结果了 这段可以忽略   目的都是一样的就是在预投票阶段 因为此时知道集群的leader所以不会通过
+                // 主要是为了更新预投票阶段的version  只有最新的term + version 对应的节点才能发起预投票
                 preVoteCollector.update(getPreVoteResponse(), getLocalNode());
             } else {
                 // 其余节点只要接收到了发布请求 就代表在当前任期中 自身不是master节点 并且此时集群中已经产生了master节点 就可以将自身转换成 follower节点
@@ -567,9 +570,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                         // 这里只是修改自身的任期 以及降级成candidate 并刷新 lastJoin
                         // 并且随着降级会使得 follower 都检测不到leader 进而将follower也转换成candidate
                         ensureTermAtLeast(getLocalNode(), maxTermSeen);
-                        // 看来当leader 降级成candidate时 会直接发起startJoin请求
-                        // 这个特殊点在于 leader此时拥有一部分的支持者 它没有再从预投票重新开始
-                        // 问题是他的选举配置可能是过期的啊 这也让他选举么
+                        // 低任期发起的startJoin请求肯定会失败 这步应该是没必要的
                         startElection();
                     } catch (Exception e) {
                         logger.warn(new ParameterizedMessage("failed to bump term to {}", maxTermSeen), e);
@@ -603,7 +604,8 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                 final StartJoinRequest startJoinRequest
                     = new StartJoinRequest(getLocalNode(), Math.max(getCurrentTerm(), maxTermSeen) + 1);
                 logger.debug("starting election with {}", startJoinRequest);
-                // 发送的节点首先必须被 peerFinder连接上
+                // 获取此时被连接的所有节点 并发起startJoin请求
+                // 这时有可能连接上的节点数不满足超过半数的条件 还是会发起 startJoin  不过不会成功
                 getDiscoveredNodes().forEach(node -> joinHelper.sendStartJoinRequest(startJoinRequest, node));
             }
         }
@@ -674,7 +676,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 当收到startJoin请求时 会通过该方式生成Join对象
+     * 当收到startJoin请求时 根据携带的term信息  生成Join对象
      *
      * @param startJoinRequest
      * @return
@@ -692,15 +694,12 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             // 更新任期后 在处理Peer请求时 也能返回最新的任期  这样在尝试选举的阶段  每个节点就能尽可能获取准确的数据
             peerFinder.setCurrentTerm(getCurrentTerm());
 
-            // 在 startJoin的阶段 可以将除了通过预投票的其余节点强制修改成 候选节点   也就是预投票阶段就是检测是否是master节点无效了
-            // 当然任期不合法的情况 会在handleStartJoin中提前抛出异常
-            // 每个落后的节点在与其他节点交互时 收到了更新的任期 就会模拟一个startJoin请求 并进行处理 这时如果当前节点不是candidate 那么就会降级成candidate
             if (mode != Mode.CANDIDATE) {
                 becomeCandidate("joinLeaderInTerm"); // updates followersChecker and preVoteCollector
             } else {
 
                 // 先假设当前节点在重启时作为候选节点  并通过finder对象感知到leader节点 且leader节点的term大于当前节点时的场景 就是模拟一个leader节点的startJoin请求
-                // 并使用该方法处理请求   更新followerChecker内的数据 这样当leader发起探测请求时就可以感知到这个节点 TODO leader节点在什么时刻可以察觉到这个节点 ??? 是通过finder对象么
+                // 并使用该方法处理请求   更新followerChecker内的数据 这样当leader发起探测请求时就可以感知到这个节点
 
                 followersChecker.updateFastResponseState(getCurrentTerm(), mode);
                 // 此时虽然收到了更新的任期信息 但是并不能确保leader就一定是准确的 因为还有可能发生脑裂 所以这里能做的就是更新在预投票阶段对外暴露的任期信息
@@ -732,10 +731,13 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
         // 有些连接是通过startJoin 后再发送的  所以不会重复建立连接， 而向是节点主动向leader发起join请求的场景 连接不一定创建了
         transportService.connectToNode(joinRequest.getSourceNode(), ActionListener.wrap(ignore -> {
-            // 如果当前节点不是leader节点 比如在选举阶段 那么追加noMasterBlocks
+            // 能接收join请求的 一种是通过预投票的 且在startJoin中检测到任期超过投票者的
+            //                  第二种就是leader接收重启的参选节点
+            //                  第三种就是非参选节点 只有在leader确定后 会通过finder找到leader 并发起join请求
+            // 根据当前情况选择是否去除leader的相关信息
             final ClusterState stateForJoinValidation = getStateForMasterService();
 
-            // 新的节点主动加入到leader 触发的是上面的分支
+            // 新的节点主动加入到leader 触发的是上面的分支  这里只对应第二三种情况
             if (stateForJoinValidation.nodes().isLocalNodeElectedMaster()) {
                 // onJoinValidators 除了最基础的校验兼容性外 用户可以自己定义兼容逻辑
                 onJoinValidators.forEach(a -> a.accept(joinRequest.getSourceNode(), stateForJoinValidation));
@@ -746,10 +748,10 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                     JoinTaskExecutor.ensureMajorVersionBarrier(joinRequest.getSourceNode().getVersion(),
                         stateForJoinValidation.getNodes().getMinNodeVersion());
                 }
+                // 因为对端可能也设置了自定义检验逻辑  所以要发送一个校验join
                 sendValidateJoinRequest(stateForJoinValidation, joinRequest, joinCallback);
             } else {
                 // 成功连接到节点后发送处理join
-                // 为什么在选举阶段处理join请求就不用校验了
                 processJoinRequest(joinRequest, joinCallback);
             }
         }, joinCallback::onFailure));
@@ -795,11 +797,11 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
      * @param joinCallback
      */
     private void processJoinRequest(JoinRequest joinRequest, JoinHelper.JoinCallback joinCallback) {
-        // 目前看到在处理startJoin请求时 一定会产生一个join
+        // 只有一种情况没有join  那就是重启的节点的任期 与当前集群中leader节点的任期一样
         final Optional<Join> optionalJoin = joinRequest.getOptionalJoin();
         synchronized (mutex) {
-            // 照理说发起join 就代表目标节点的任期与当前节点是一样的  (先是任期低于当前节点，之后检测到leader 并且leader的任期更高 才会同步任期，并发送join请求，因为此时join无论是否成功
-            // 至少term离当前最新的term更近了) 如果某个candidate更新任期后离线了 之后又上线 那么此时集群中应该是没有任期超过它的leader的  他将会尝试发起preVote
+            // 在startJoin阶段 如果本节点传过去的任期低 是不会发起join请求的 而在之后的处理中 会更新join内部的任期 所以这个的任期应该等于当前任期 如果当前节点又增加了任期
+            // 那么至少也是 >= 的关系 req的任期不可能更大
             updateMaxTermSeen(joinRequest.getTerm());
 
             final CoordinationState coordState = coordinationState.get();
@@ -807,6 +809,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             final boolean prevElectionWon = coordState.electionWon();
 
             // 处理本次joinReq内部的join   当票数足够时  会将coordinationState中的win修改成true
+            // 如果join为空 代表目标节点的任期与当前节点一致  实际上只要过了票选阶段这个join对象就没作用了
             optionalJoin.ifPresent(this::handleJoin);
 
             // 当此节点 已经成为leader后 再处理join请求时 会将该节点加入到clusterState中 之后触发pub 将最新集群状态通知到clusterState下的所有node
@@ -942,8 +945,8 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
         if (mode != Mode.FOLLOWER) {
             mode = Mode.FOLLOWER;
-            // 当前如果是candidate节点转换成follower 将会触发关闭累加器的逻辑 会回复之前所有发送join请求的节点异常信息
-            // TODO 他们会发起重试么 如果没有发起重试 那么他们没有加入到集群中啊 就算加入了集群 那么多个发布任务又是没法同时进行的 还是没办法通知到其他节点
+            // 当前如果是candidate节点转换成follower 将会触发关闭累加器的逻辑 会回复之前所有发送join请求的节点异常信息  这里仅提示join失败
+            // 之后那些节点会通过finder找到leader 并向leader发起join请求
             joinAccumulator.close(mode);
             // 将累加器切换成follower角色相关的
             joinAccumulator = new JoinHelper.FollowerJoinAccumulator();
@@ -962,7 +965,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
         // 如果此时该对象正在进行一个发布动作 也就是当前节点之前还是master节点  在某次选举后生成了新的master节点 并且通知到旧的master节点 这时取消publish任务
         cancelActivePublication("become follower: " + method);
-        // 拒绝同一任期节点的预投票请求
+        // 更新此时的 term + version 确保旧的节点无法发起预投票 除非集群中有半数以上的旧节点
         preVoteCollector.update(getPreVoteResponse(), leaderNode);
 
         // 只有当节点收到 leader的pub请求时 才会更新要检测的节点
@@ -1239,7 +1242,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
      *
      * @param votingConfiguration The nodes that should form the initial configuration.
      * @return whether this call successfully set the initial configuration - if false, the cluster has already been bootstrapped.
-     * 这是初始化参与选举的节点配置的  每当选举是否成功时 都要检测票数是否满足 TODO 这个配置能够动态变化么
+     * 这是初始化参与选举的节点配置的  每当选举是否成功时 都要检测票数是否满足
      */
     public boolean setInitialConfiguration(final VotingConfiguration votingConfiguration) {
         synchronized (mutex) {
@@ -1399,18 +1402,18 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 处理某个节点加入到集群的请求 这个节点可以是 非参与选举的节点
+     * 处理某个节点加入到集群的请求 这个节点可以是 非参与选举的节点（但是非参选节点只有在确定leader后才会发送 在选举阶段不会发起join请求）
      * 在节点启动阶段无论任何节点都会通过 finder对象找到leader节点 并进行连接 目的就是为了告知leader节点 当前节点存活
      *
      * @param join
      */
     private void handleJoin(Join join) {
         synchronized (mutex) {
-            // 先假设 join的任期与当前节点的任期一样 这样不会返回join 无法递归出发handleJoin
+            // 如果join的任期比当前任期大 则更新本地任期后继续处理join  这种情况应该是不可能发生的
             ensureTermAtLeast(getLocalNode(), join.getTerm()).ifPresent(this::handleJoin);
 
             // 当本节点已经竞选成功的情况下 又收到了其他join  也就是后启动的落后的节点感知到leader后主动申请加入  但是当前leader的任期必须比落后的节点高
-            // (节点在重启加入集群的场景下 如果任期不低于leader是不会自动加入的)
+            // 还有非参选的节点在知道leader节点后也会加入到集群中
             if (coordinationState.get().electionWon()) {
                 // If we have already won the election then the actual join does not matter for election purposes, so swallow any exception
                 // 返回true 代表该join已经加入到leader的投票箱中了 如果出现异常该节点被否认 同时返回false  加入到投票箱就代表leader认为该节点存活
@@ -1514,6 +1517,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
     /**
      * 将集群变化的事件通知到所有节点  比如当前节点晋升成了master节点  又或者 集群下感知到了新的node并加入到clusterState (通过join请求感知到)
+     * 成为leader节点最基本的要求就是首先将最新的集群状态发布到超过半数节点  如果连这次通知都失败了 实际上本次选举就是失败的 所以leader会直接降级成candidate
      *
      * @param clusterChangedEvent 存储了集群的前后状态 以及新增的node
      * @param publishListener     当任务完成时往future中设置结果
@@ -1532,8 +1536,10 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                     return;
                 }
 
-                // 当前正在处理一个发布事件 无法继续发布  这样不对啊 那后来收到的join请求不都无法正常执行了么
-                // TODO join在一轮中会进行重试么  一轮中可以通知到多个节点么
+                // 因为发布任务本身会将最新的集群状态持久化 如果同时执行2个发布任务 且写入到不同的节点中 那么此时clusteState是不可控的 会产生混乱
+                // 所以最好的方式就是确保每次的集群配置变化后  才进行持久化 这里指的集群状态配置主要是说参与投票的节点数发生变化 因为每个节点进行选举时都是根据本地的选举配置发起选举的
+                // 在发布过程中 其他join都会失败 但是其他节点可以通过finder对象持续不断的发起join请求 直到join成功
+                // 原本就在集群中的node 重启时 由于集群状态没有发生变化 所以join会直接成功
                 if (currentPublication.isPresent()) {
                     assert false : "[" + currentPublication.get() + "] in progress, cannot start new publication";
                     logger.warn(() -> new ParameterizedMessage("[{}] failed publication as already publication in progress",
@@ -1550,7 +1556,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                 assert getLocalNode().equals(clusterState.getNodes().get(getLocalNode().getId())) :
                     getLocalNode() + " should be in published " + clusterState;
 
-                // 基于要发布的内容 创建一个上下文对象 该对象已经定义了publish/commit 怎么处理
+                // 基于要发布的内容 创建一个上下文对象 该对象已经定义了publish/commit怎么处理
                 final PublicationTransportHandler.PublicationContext publicationContext =
                     publicationHandler.newPublicationContext(clusterChangedEvent);
 
@@ -1561,17 +1567,17 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                 final CoordinatorPublication publication = new CoordinatorPublication(publishRequest, publicationContext,
                     new ListenableFuture<>(), ackListener, publishListener);
 
-                // 当此时要执行一个发布任务时 就会设置到这个属性中 也就是在短时间内不能连续的处理发布任务   那么更新就无法被及时处理了啊???
                 currentPublication = Optional.of(publication);
 
-                // 获取此时即将要发布的集群节点  应该是还没有持久化的 照理说要通过半数节点认同才能进行持久化
+                // 如果本次插入了新的节点 那么本次要通知的节点也包括那个节点 主要是为了计算 pubVote
                 final DiscoveryNodes publishNodes = publishRequest.getAcceptedState().nodes();
-                // TODO 这3个探测对象的具体情况先忽略 先看完整个发布流程  发布的处理结果还影响到 joinReq的监听器
+                // 将当前节点作为leader 暴露给集群的其他节点
                 leaderChecker.setCurrentNodes(publishNodes);
-                // 在这个时刻开启对其他节点的检测请求 要求必须是follower节点
+                // 因为持有最新的集群节点列表 主动的通知所有节点变成follower
                 followersChecker.setCurrentNodes(publishNodes);
+                // 设置需要探测的节点
                 lagDetector.setTrackedNodes(publishNodes);
-                // 开始发布任务  faultyNodes 记录一组错误的node  不会将最新的clusterState发送到该node上 而是发送一个错误信息
+                // 开始发布任务  followersChecker.getFaultyNodes() 中包含了因为连接不上从集群中被移除的节点
                 publication.start(followersChecker.getFaultyNodes());
             }
         } catch (Exception e) {
@@ -1692,8 +1698,10 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                     final VoteCollection expectedVotes = new VoteCollection();
                     foundPeers.forEach(expectedVotes::addVote);
                     expectedVotes.addVote(Coordinator.this.getLocalNode());
-                    // 此时是否满足选举的条件了  实际上这里只用了当前能连接到的选举节点和持久化数据中的所有参选节点做判断
-                    // 但是实际上此时可能参选的节点变多了  那么这里会更早的触发选举
+                    // 如果当前节点之前持久化的选举配置是最新的 那么开始就可以开始预投票了
+                    // 如果之前选举配置是过时的
+                    // TODO 在极端情况下可能会出现2个leader 比如旧的配置 只有3个节点  新的配置是5个节点
+                    // TODO 旧的节点启动只要求2个节点就能开始选举   新的节点中产生脑裂有2个节点脱节  这样就有可能在同一时间开启2个选举 并都成功 这个问题该怎么解决???
                     final boolean foundQuorum = coordinationState.get().isElectionQuorum(expectedVotes);
 
                     if (foundQuorum) {
@@ -1703,7 +1711,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                             startElectionScheduler();
                         }
                     } else {
-                        // 一旦检测到此时的节点数不可能满足选举条件时 自动放弃选举
+                        // 一旦检测到此时的节点数不可能满足选举条件时 自动放弃选举 这样也就不会有后续的startJoin操作了
                         closePrevotingAndElectionScheduler();
                     }
                 }
@@ -1755,7 +1763,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                             return;
                         }
 
-                        // 关闭上次的预投票round
+                        // 关闭上次的预投票round  这里主要是避免2次触发时间间隔短 上次任务还没有完成
                         if (prevotingRound != null) {
                             prevotingRound.close();
                         }
@@ -2170,12 +2178,12 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             // The remote node did not include a join vote in its publish response. We do not persist joins, so it could be that the remote
             // node voted for us and then rebooted, or it could be that it voted for a different node in this term. If we don't have a copy
             // of a join from this node then we assume the latter and bump our term to obtain a vote from this node.
-            // 是这样 本次为该leader投票的节点肯定是正常的 但是如果没有投票  可能这个节点的状态不正常 这时就更新任期
-            // missingJoinVoteFrom 确保当前节点的roles中包含 master 并且当前节点确实没有在本轮中选择当前节点
+            // 这时有2种情况  第一种该节点在本轮中选择了其他节点 第二种选择了本节点 但是重启了 之后term一样 不会生成join
+            // missingJoinVoteFrom 确保当前节点是参与选举的节点 同时这个节点没有投票给当前leader (就是检查joinVote)
             if (missingJoinVoteFrom(discoveryNode)) {
                 final long term = publishRequest.getAcceptedState().term();
                 logger.debug("onMissingJoin: no join vote from {}, bumping term to exceed {}", discoveryNode, term);
-                // 增加 maxTermSeen   在因为publish发起的检查中 暂时不会将leader修改成candidate
+                // TODO 只要出现没有选择自己的节点 就增加任期???
                 updateMaxTermSeen(term + 1);
             }
         }

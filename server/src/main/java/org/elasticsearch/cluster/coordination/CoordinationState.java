@@ -201,7 +201,7 @@ public class CoordinationState {
      *
      */
     public Join handleStartJoin(StartJoinRequest startJoinRequest) {
-        // 可以看到在同一轮中每个节点只能收到一次startJoin请求
+        // 当本节点收到一个任期大于自己的startJoin时 会更新本地任期 并生成一个join对象 如果落后的任期 不予处理
         if (startJoinRequest.getTerm() <= getCurrentTerm()) {
             logger.debug("handleStartJoin: ignoring [{}] as term provided is not greater than current term [{}]",
                 startJoinRequest, getCurrentTerm());
@@ -243,7 +243,7 @@ public class CoordinationState {
         joinVotes = new VoteCollection();
         publishVotes = new VoteCollection();
 
-        // 生成一个当前节点加入到目标节点的join对象
+        // 生成一个当前节点加入到目标节点的join对象  这里携带了请求加入到集群的 节点记录的选举配置信息
         return new Join(localNode, startJoinRequest.getSourceNode(), getCurrentTerm(), getLastAcceptedTerm(),
             getLastAcceptedVersion());
     }
@@ -387,7 +387,7 @@ public class CoordinationState {
      * @param publishRequest The publish request received.
      * @return A PublishResponse which can be sent back to the sender of the PublishRequest.
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
-     * 当收到 master节点的发布请求时触发
+     * 当收到leader节点的发布请求时触发
      */
     public PublishResponse handlePublishRequest(PublishRequest publishRequest) {
         final ClusterState clusterState = publishRequest.getAcceptedState();
@@ -399,7 +399,7 @@ public class CoordinationState {
                 getCurrentTerm());
         }
 
-        // 版本号匹配失败的时候抛出异常
+        // 代表在同一任期中 触发了不止一次的pub 每次version都会更新 收到的新的version 必须比之前的新
         if (clusterState.term() == getLastAcceptedTerm() && clusterState.version() <= getLastAcceptedVersion()) {
             logger.debug("handlePublishRequest: ignored publish request due to version mismatch (expected: >[{}], actual: [{}])",
                 getLastAcceptedVersion(), clusterState.version());
@@ -443,7 +443,7 @@ public class CoordinationState {
                 + " does not match current term " + getCurrentTerm());
         }
 
-        // 版本号发生变化时 也拒绝处理res
+        // pub本身是串行执行的 执行完一个 增加一次版本号 所以旧的任务不予处理
         if (publishResponse.getVersion() != lastPublishedVersion) {
             logger.debug("handlePublishResponse: ignored publish response due to version mismatch (expected: [{}], actual: [{}])",
                 lastPublishedVersion, publishResponse.getVersion());
@@ -454,7 +454,7 @@ public class CoordinationState {
         logger.trace("handlePublishResponse: accepted publish response for version [{}] and term [{}] from [{}]",
             publishResponse.getVersion(), publishResponse.getTerm(), sourceNode);
 
-        // 代表发布成功 将结果加入到投票箱中
+        // 代表发布成功 将结果加入到投票箱中   注意这里加入投票箱的前提是必须是参与选举的节点  也就是pub虽然针对的是所有节点 但是只有写入超过半数的参选节点 才算pub成功
         publishVotes.addVote(sourceNode);
 
         // 代表此时已经有超过半数的节点 更新了集群最新的信息
@@ -485,6 +485,7 @@ public class CoordinationState {
             throw new CoordinationStateRejectedException("incoming term " + applyCommit.getTerm() + " does not match current term " +
                 getCurrentTerm());
         }
+        // 处理commit是在处理pub之后的 在pub时 getLastAcceptedTerm 已经与getCurrentTerm 做同步了 所以应该是一致的
         if (applyCommit.getTerm() != getLastAcceptedTerm()) {
             logger.debug("handleCommit: ignored commit request due to term mismatch " +
                     "(expected: [term {} version {}], actual: [term {} version {}])",
@@ -492,6 +493,7 @@ public class CoordinationState {
             throw new CoordinationStateRejectedException("incoming term " + applyCommit.getTerm() + " does not match last accepted term " +
                 getLastAcceptedTerm());
         }
+
         if (applyCommit.getVersion() != getLastAcceptedVersion()) {
             logger.debug("handleCommit: ignored commit request due to version mismatch (term {}, expected: [{}], actual: [{}])",
                 getLastAcceptedTerm(), getLastAcceptedVersion(), applyCommit.getVersion());

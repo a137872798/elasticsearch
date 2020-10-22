@@ -138,7 +138,7 @@ public class JoinHelper {
         this.joinTaskExecutor = new JoinTaskExecutor(allocationService, logger, rerouteService) {
 
             /**
-             * 在之前的基础上还需要判断任期是否合法
+             * 在发布clusterState前 将内部的 term更新
              * @param currentState
              * @param joiningTasks
              * @return
@@ -307,6 +307,8 @@ public class JoinHelper {
         final JoinRequest joinRequest = new JoinRequest(transportService.getLocalNode(), term, optionalJoin);
         final Tuple<DiscoveryNode, JoinRequest> dedupKey = Tuple.tuple(destination, joinRequest);
 
+
+        // 避免在同一时间 加入到多个个leader  或者又加入leader 又开始为某个节点投票
         if (pendingOutgoingJoins.add(dedupKey)) {
             logger.debug("attempting to join {} with {}", destination, joinRequest);
             transportService.sendRequest(destination, JOIN_ACTION_NAME, joinRequest,

@@ -210,7 +210,7 @@ public class PublicationTransportHandler {
         return new PublicationContext() {
 
             /**
-             * 将发布请求发往某个node  这里的node应该包含非master role的节点
+             * 将发布请求发往某个node  这里的节点没有角色限制
              * @param destination
              * @param publishRequest
              * @param originalListener
@@ -222,7 +222,7 @@ public class PublicationTransportHandler {
                 assert transportService.getThreadPool().getThreadContext().isSystemContext();
                 final ActionListener<PublishWithJoinResponse> responseActionListener;
 
-                // 发布的目标就是将集群最新的状态 通知给集群中所有节点  但是只要满足 > 1/2 的条件此时就认为发布成功了  并且自身也算在内
+                // 既然当前节点能成为master 也就是集群状态是最新的 只要能写入超过半数节点就代表本次发布任务完成
                 if (destination.equals(nodes.getLocalNode())) {
                     // if publishing to self, use original request instead (see currentPublishRequestToSelf for explanation)
                     // 直接将数据存储在本地 这样在处理时就不用解析数据包了
@@ -266,6 +266,7 @@ public class PublicationTransportHandler {
 
             /**
              * 当超过半数的节点 认为pub成功时 会向每个返回ack的节点发送 commit请求
+             * 之后收到的pubRes 就会直接触发 commit
              * @param destination
              * @param applyCommitRequest
              * @param responseActionListener

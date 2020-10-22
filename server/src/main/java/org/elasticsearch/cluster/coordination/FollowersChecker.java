@@ -102,7 +102,7 @@ public class FollowersChecker {
     private final Map<DiscoveryNode, FollowerChecker> followerCheckers = newConcurrentMap();
 
     /**
-     * 某个节点不再是follower时会移动到这个容器中
+     * 因为长时间连接不上而被从集群中移除的节点会存储在这里
      */
     private final Set<DiscoveryNode> faultyNodes = new HashSet<>();
 
@@ -113,6 +113,13 @@ public class FollowersChecker {
      */
     private volatile FastResponseState fastResponseState;
 
+    /**
+     *
+     * @param settings
+     * @param transportService
+     * @param handleRequestAndUpdateState
+     * @param onNodeFailure 长期失联的节点会从集群中移除
+     */
     public FollowersChecker(Settings settings, TransportService transportService,
                             Consumer<FollowerCheckRequest> handleRequestAndUpdateState,
                             BiConsumer<DiscoveryNode, String> onNodeFailure) {
@@ -147,10 +154,9 @@ public class FollowersChecker {
 
             // 当某些节点已经不再属于最新的 DiscoveryNodes 时 将他们移除
             followerCheckers.keySet().removeIf(isUnknownNode);
-            // 同时 faultyNodes 也不再维护这些node
             faultyNodes.removeIf(isUnknownNode);
 
-            // 将discoveryNodes 中master节点排在第一个后 触发forEach
+            // 将discoveryNodes 中master节点排在第一个后 触发forEach  这里的目标是所有节点  也就是包含非参选的节点 普通节点可以变成follower从leader处接收新数据
             discoveryNodes.mastersFirstStream().forEach(discoveryNode -> {
                 // 检测除了本节点外的其他节点是否为 follower
                 if (discoveryNode.equals(discoveryNodes.getLocalNode()) == false
@@ -183,12 +189,15 @@ public class FollowersChecker {
     }
 
     /**
-     * 处理外部访问该节点  并检测是否还是follower的请求     此时本节点还可能是leader/candidate节点
+     * 当集群中产生了新的leader时 会发起请求将其他节点降级成follower
+     * 某个时刻是有可能出现2个leader的  因为候选节点数量本身是可变的
      * @param request
      * @param transportChannel
      * @throws IOException
      */
     private void handleFollowerCheck(FollowerCheckRequest request, TransportChannel transportChannel) throws IOException {
+
+        // 该对象中包含了此时该节点的任期 以及当前角色
         FastResponseState responder = this.fastResponseState;
 
         // 当前节点此时确实是 follower时 直接返回ack信息
@@ -198,7 +207,7 @@ public class FollowersChecker {
             return;
         }
 
-        // TODO 探测的任期太旧意味着  对端的节点已经集群脱节了
+        // 忽略旧的 leader的请求 应该有某种方法 使得新的leader会告知到旧的leader
         if (request.term < responder.term) {
             throw new CoordinationStateRejectedException("rejecting " + request + " since local state is " + this);
         }
@@ -298,7 +307,7 @@ public class FollowersChecker {
 
     /**
      * A checker for an individual follower.
-     * 每个对象检测一个node是否 还是follower
+     * 当本节点成为leader后 需要通过该对象通知他们更改成follower
      */
     private class FollowerChecker {
         private final DiscoveryNode discoveryNode;
@@ -327,7 +336,7 @@ public class FollowersChecker {
                 return;
             }
 
-            // 当前节点的任期和node信息
+            // 当前leader节点以及对应的任期
             final FollowerCheckRequest request = new FollowerCheckRequest(fastResponseState.term, transportService.getLocalNode());
             logger.trace("handleWakeUp: checking {} with {}", discoveryNode, request);
 
@@ -387,7 +396,7 @@ public class FollowersChecker {
         }
 
         /**
-         * 当出现某种原因导致 这个节点不再是follower节点 注意如果断开连接也会触发该方法
+         * 认为这个节点已经脱离了集群 不再进行无意义的检测
          * @param reason
          */
         void failNode(String reason) {

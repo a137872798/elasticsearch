@@ -244,16 +244,18 @@ public class PreVoteCollector {
          * @param sender
          */
         private void handlePreVoteResponse(final PreVoteResponse response, final DiscoveryNode sender) {
+            // 每次收到结果都是一次触发机制  当预投票由于候选人数不足被关闭时 自然就不会处理后面的res  而之前能够进行startJoin的前提也是至少到达半数了
+            // 还是有可能一开始满足预投票条件 之后不满足 那么允许在startJoin阶段 仅向不足半数的节点发送请求 反正这时startJoin也不会成功
             if (isClosed.get()) {
                 logger.debug("{} is closed, ignoring {} from {}", this, response, sender);
                 return;
             }
 
             // 因为当前不是leader节点 所以该函数的作用 仅仅是更新maxTermSeen
+            // 预投票阶段 仅检查leader是否过期 并没有对新的任期进行持久化
             updateMaxTermSeen.accept(response.getCurrentTerm());
 
-            // 因为对端节点 最后一次持久化的任期 比当前节点的大  也就是本节点的数据是落后与目标节点的  这样是无法通过选举的
-            // 目标就是找到超过半数的节点 任期数据比当前节点小 或者相等
+            // 在预投票阶段要确保目标节点的集群配置是最新的
             if (response.getLastAcceptedTerm() > clusterState.term()
                 || (response.getLastAcceptedTerm() == clusterState.term()
                 && response.getLastAcceptedVersion() > clusterState.version())) {
