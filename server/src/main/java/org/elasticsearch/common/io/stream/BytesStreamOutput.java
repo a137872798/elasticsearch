@@ -30,11 +30,15 @@ import java.io.IOException;
 /**
  * A @link {@link StreamOutput} that uses {@link BigArrays} to acquire pages of
  * bytes, which avoids frequent reallocation &amp; copying of the internal data.
+ * 该层实现了写入功能
  */
 public class BytesStreamOutput extends BytesStream {
 
     protected final BigArrays bigArrays;
 
+    /**
+     * 该对象模拟一个大byte[]
+     */
     protected ByteArray bytes;
     protected int count;
 

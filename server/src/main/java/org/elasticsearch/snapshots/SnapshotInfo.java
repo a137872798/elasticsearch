@@ -50,6 +50,7 @@ import java.util.stream.Collectors;
 
 /**
  * Information about a snapshot
+ * 代表某个快照的信息
  */
 public final class SnapshotInfo implements Comparable<SnapshotInfo>, ToXContent, Writeable {
 

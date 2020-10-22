@@ -24,6 +24,7 @@ import java.util.Map;
 
 /**
  * An interface for storing blobs.
+ * 代表大块数据的仓库  他是一个抽象的概念 需要通过指定path来找到对应的容器  容器应该才是真正存储数据的地方
  */
 public interface BlobStore extends Closeable {
 
@@ -34,6 +35,8 @@ public interface BlobStore extends Closeable {
 
     /**
      * Returns statistics on the count of operations that have been performed on this blob store
+     * 获取该仓库下的各种统计信息
+     * 仓库与存储服务是一对一的关系
      */
     default Map<String, Long> stats() {
         return Collections.emptyMap();

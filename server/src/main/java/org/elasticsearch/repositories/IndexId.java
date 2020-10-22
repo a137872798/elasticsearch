@@ -32,6 +32,7 @@ import java.util.Objects;
 
 /**
  * Represents a single snapshotted index in the repository.
+ * 这个id 是在存储模块中用的 每个快照下 的每个索引有一个id
  */
 public final class IndexId implements Writeable, ToXContentObject {
     protected static final String NAME = "name";

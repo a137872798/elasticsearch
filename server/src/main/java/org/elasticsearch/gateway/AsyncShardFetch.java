@@ -55,6 +55,7 @@ import static java.util.Collections.emptySet;
  * The async fetch logic maintains a map of which nodes are being fetched from in an async manner,
  * and once the results are back, it makes sure to schedule a reroute to make sure those results will
  * be taken into account.
+ * 代表一个拉取分片数据的结果
  */
 public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Releasable {
 
@@ -67,7 +68,13 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
 
     protected final Logger logger;
     protected final String type;
+    /**
+     * 拉取的分片id
+     */
     protected final ShardId shardId;
+    /**
+     * 自定义的数据路径
+     */
     protected final String customDataPath;
     private final Lister<BaseNodesResponse<T>, T> action;
     private final Map<String, NodeEntry<T>> cache = new HashMap<>();
@@ -90,7 +97,8 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
     }
 
     /**
-     * Returns the number of async fetches that are currently ongoing.
+     * Returns the
+     * number of async fetches that are currently ongoing.
      */
     public synchronized int getNumberOfInFlightFetches() {
         int count = 0;

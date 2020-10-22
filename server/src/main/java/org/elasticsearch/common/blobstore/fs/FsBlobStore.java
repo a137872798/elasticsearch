@@ -31,18 +31,32 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+/**
+ * 只看这一个实现
+ */
 public class FsBlobStore implements BlobStore {
 
+    /**
+     * 这个path对应的是文件系统的path 代表当前的rootPath  之后blobPath 会以该对象为基础 每个文件夹都可以看作是一个 blobContainer
+     */
     private final Path path;
 
     private final int bufferSizeInBytes;
 
     private final boolean readOnly;
 
+    /**
+     * 在FsRepository中 根据 settings 和metadata 初始化   (只有当需要写入/读取数据 才惰性初始化)
+     * @param settings
+     * @param path
+     * @param readonly
+     * @throws IOException
+     */
     public FsBlobStore(Settings settings, Path path, boolean readonly) throws IOException {
         this.path = path;
         this.readOnly = readonly;
         if (this.readOnly == false) {
+            // 可能默认创建的文件夹就是包含全部权限的吧
             Files.createDirectories(path);
         }
         this.bufferSizeInBytes = (int) settings.getAsBytesSize("repositories.fs.buffer_size",
@@ -76,6 +90,12 @@ public class FsBlobStore implements BlobStore {
         // nothing to do here...
     }
 
+    /**
+     * 通过 BlobPath 构造文件路径
+     * @param path
+     * @return
+     * @throws IOException
+     */
     private synchronized Path buildAndCreate(BlobPath path) throws IOException {
         Path f = buildPath(path);
         if (readOnly == false) {

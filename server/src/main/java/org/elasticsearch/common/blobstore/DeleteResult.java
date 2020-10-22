@@ -21,12 +21,19 @@ package org.elasticsearch.common.blobstore;
 
 /**
  * The result of deleting multiple blobs from a {@link BlobStore}.
+ * 当删除某个BlobContainer时 返回的结果
  */
 public final class DeleteResult {
 
     public static final DeleteResult ZERO = new DeleteResult(0, 0);
 
+    /**
+     * 删除的blob对象数量
+     */
     private final long blobsDeleted;
+    /**
+     * 删除的数据总计占了多少字节
+     */
     private final long bytesDeleted;
 
     public DeleteResult(long blobsDeleted, long bytesDeleted) {

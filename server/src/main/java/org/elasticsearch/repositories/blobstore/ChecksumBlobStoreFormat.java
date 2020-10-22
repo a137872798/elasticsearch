@@ -111,12 +111,18 @@ public final class ChecksumBlobStoreFormat<T extends ToXContent> {
      * @param blobContainer blob container
      * @param name          name to be translated into
      * @return parsed blob object
+     * 指定容器以及快照id  将数据流读取出来后并格式化
      */
     public T read(BlobContainer blobContainer, String name) throws IOException {
         String blobName = blobName(name);
         return readBlob(blobContainer, blobName);
     }
 
+    /**
+     * 传入的名字需要替换模板的占位符部分 才能作为有效的blobName
+     * @param name
+     * @return
+     */
     public String blobName(String name) {
         return String.format(Locale.ROOT, blobNameFormat, name);
     }
@@ -126,8 +132,10 @@ public final class ChecksumBlobStoreFormat<T extends ToXContent> {
      *
      * @param blobContainer blob container
      * @param blobName blob name
+     *                 根据名字去 container中读取数据流 并格式化成目标对象
      */
     public T readBlob(BlobContainer blobContainer, String blobName) throws IOException {
+        // readFully 会使用一个es自己封装的 outputStream 并将数据全部读出后 将bytes取出
         final BytesReference bytes = Streams.readFully(blobContainer.readBlob(blobName));
         final String resourceDesc = "ChecksumBlobStoreFormat.readBlob(blob=\"" + blobName + "\")";
         try {

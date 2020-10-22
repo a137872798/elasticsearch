@@ -24,9 +24,13 @@ import org.elasticsearch.common.blobstore.BlobPath;
 
 /**
  * A base abstract blob container that implements higher level container methods.
+ * 每个容器本身有自己的路径
  */
 public abstract class AbstractBlobContainer implements BlobContainer {
 
+    /**
+     * 针对 root路径而言的相对路径
+     */
     private final BlobPath path;
 
     protected AbstractBlobContainer(BlobPath path) {

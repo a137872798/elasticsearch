@@ -28,6 +28,7 @@ import java.util.Map;
 
 /**
  * An interface for managing a repository of blob entries, where each blob entry is just a named group of bytes.
+ * 代表仓库中的某个容器  BlobStore 就是一组BlobContainer
  */
 public interface BlobContainer {
 
@@ -35,6 +36,7 @@ public interface BlobContainer {
      * Gets the {@link BlobPath} that defines the implementation specific paths to where the blobs are contained.
      *
      * @return  the BlobPath where the blobs are contained
+     * 该仓库对应的路径
      */
     BlobPath path();
 
@@ -46,6 +48,7 @@ public interface BlobContainer {
      * @return  The {@code InputStream} to read the blob.
      * @throws  NoSuchFileException if the blob does not exist
      * @throws  IOException if the blob can not be read.
+     * 内部每个数据体 有自己的blobName 通过名字找到一组输入流
      */
     InputStream readBlob(String blobName) throws IOException;
 
@@ -60,6 +63,7 @@ public interface BlobContainer {
      * @return The {@code InputStream} to read the blob.
      * @throws NoSuchFileException if the blob does not exist
      * @throws IOException         if the blob can not be read.
+     * 在通过name 获取输入流的基础上还可以定位偏移量
      */
     default InputStream readBlob(final String blobName, final long position, final long length) throws IOException {
         throw new UnsupportedOperationException(); // NORELEASE
@@ -96,7 +100,7 @@ public interface BlobContainer {
      *          The size of the blob to be written, in bytes.  It is implementation dependent whether
      *          this value is used in writing the blob to the repository.
      * @param   failIfAlreadyExists
-     *          whether to throw a FileAlreadyExistsException if the given blob already exists
+     *          whether to throw a FileAlreadyExistsException if the given blob already exists   当同名blob存在时 是选择覆盖还是失败
      * @throws  FileAlreadyExistsException if failIfAlreadyExists is true and a blob by the same name already exists
      * @throws  IOException if the input stream could not be read, or the target blob could not be written to.
      */
@@ -120,6 +124,7 @@ public interface BlobContainer {
      *          whether to throw a FileAlreadyExistsException if the given blob already exists
      * @throws  FileAlreadyExistsException if failIfAlreadyExists is true and a blob by the same name already exists
      * @throws  IOException if the input stream could not be read, or the target blob could not be written to.
+     * 指明以原子方式写入
      */
     void writeBlobAtomic(String blobName, InputStream inputStream, long blobSize, boolean failIfAlreadyExists) throws IOException;
 
@@ -128,6 +133,7 @@ public interface BlobContainer {
      *
      * @return delete result
      * @throws IOException on failure
+     * 删除该仓库下所有的数据
      */
     DeleteResult delete() throws IOException;
 
@@ -137,6 +143,7 @@ public interface BlobContainer {
      *
      * @param   blobNames  The names of the blob to delete.
      * @throws  IOException if a subset of blob exists but could not be deleted.
+     * 删除某组blob   如果数据不存在 静默处理
      */
     void deleteBlobsIgnoringIfNotExists(List<String> blobNames) throws IOException;
 
@@ -146,6 +153,7 @@ public interface BlobContainer {
      * @return  A map of all the blobs in the container.  The keys in the map are the names of the blobs and
      *          the values are {@link BlobMetadata}, containing basic information about each blob.
      * @throws  IOException if there were any failures in reading from the blob container.
+     * 返回该容器下所有的blob对象
      */
     Map<String, BlobMetadata> listBlobs() throws IOException;
 
@@ -156,6 +164,7 @@ public interface BlobContainer {
      *
      * @return Map of name of the child container to child container
      * @throws IOException on failure to list child containers
+     * 返回自己容器  容器本身是一个树结构  就跟文件系统的文件夹类似
      */
     Map<String, BlobContainer> children() throws IOException;
 
@@ -167,6 +176,7 @@ public interface BlobContainer {
      * @return  A map of the matching blobs in the container.  The keys in the map are the names of the blobs
      *          and the values are {@link BlobMetadata}, containing basic information about each blob.
      * @throws  IOException if there were any failures in reading from the blob container.
+     * 通过 blob的前缀找到符合条件的blob对象
      */
     Map<String, BlobMetadata> listBlobsByPrefix(String blobNamePrefix) throws IOException;
 }

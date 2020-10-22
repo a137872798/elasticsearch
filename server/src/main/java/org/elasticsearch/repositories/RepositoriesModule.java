@@ -35,15 +35,26 @@ import java.util.Map;
 
 /**
  * Sets up classes for Snapshot/Restore.
- * 存储模块
+ * 存储模块  负责安装存储服务   skyWalking是跟这个学的套路吗
  */
 public final class RepositoriesModule {
 
     private final RepositoriesService repositoriesService;
 
+
+    /**
+     *
+     * @param env
+     * @param repoPlugins
+     * @param transportService
+     * @param clusterService  通过该对象访问集群相关的api
+     * @param threadPool
+     * @param namedXContentRegistry
+     */
     public RepositoriesModule(Environment env, List<RepositoryPlugin> repoPlugins, TransportService transportService,
                               ClusterService clusterService, ThreadPool threadPool, NamedXContentRegistry namedXContentRegistry) {
         Map<String, Repository.Factory> factories = new HashMap<>();
+        // 基于文件系统是默认实现  也有按照google云   hdfs（好像是大数据相关的）实现的
         factories.put(FsRepository.TYPE, metadata -> new FsRepository(metadata, env, namedXContentRegistry, clusterService));
 
         for (RepositoryPlugin repoPlugin : repoPlugins) {

@@ -148,12 +148,19 @@ import static org.elasticsearch.index.snapshots.blobstore.BlobStoreIndexShardSna
  * </p>
  * For in depth documentation on how exactly implementations of this class interact with the snapshot functionality please refer to the
  * documentation of the package {@link org.elasticsearch.repositories.blobstore}.
+ * 代表大块的数据存储
  */
 public abstract class BlobStoreRepository extends AbstractLifecycleComponent implements Repository {
     private static final Logger logger = LogManager.getLogger(BlobStoreRepository.class);
 
+    /**
+     * 每个存储对象都会关联一个元数据
+     */
     protected volatile RepositoryMetadata metadata;
 
+    /**
+     * 通过线程池对象 将任务合理拆解成并行执行
+     */
     protected final ThreadPool threadPool;
 
     private static final int BUFFER_SIZE = 4096;
@@ -209,12 +216,21 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     private final boolean compress;
 
+    /**
+     * 是否缓存存储层的数据
+     */
     private final boolean cacheRepositoryData;
 
+    /**
+     * 果然是lucene的限流器  会根据限流值 缓慢的将数据写入到FS系统中
+     */
     private final RateLimiter snapshotRateLimiter;
 
     private final RateLimiter restoreRateLimiter;
 
+    /**
+     * 这些计数器对象是用来标明 在每个纳秒内执行了多少次写入???
+     */
     private final CounterMetric snapshotRateLimitingTimeInNanos = new CounterMetric();
 
     private final CounterMetric restoreRateLimitingTimeInNanos = new CounterMetric();
@@ -223,6 +239,9 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     private final ChecksumBlobStoreFormat<IndexMetadata> indexMetadataFormat;
 
+    /**
+     * 格式化对象定义了如何从数据流还原成pojo类
+     */
     protected final ChecksumBlobStoreFormat<SnapshotInfo> snapshotFormat;
 
     private final boolean readOnly;
@@ -235,6 +254,9 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     private final SetOnce<BlobContainer> blobContainer = new SetOnce<>();
 
+    /**
+     * 一个存储服务只对应一个仓库  仓库下还有各种子级容器
+     */
     private final SetOnce<BlobStore> blobStore = new SetOnce<>();
 
     private final BlobPath basePath;
@@ -249,6 +271,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
      * during a new {@code index-N} write, this does not present a problem. The node will still load the correct {@link RepositoryData} in
      * all cases and simply do a redundant listing of the repository contents if it tries to load {@link RepositoryData} and falls back
      * to {@link #latestIndexBlobId()} to validate the value of {@link RepositoryMetadata#generation()}.
+     * 启动时 发现上次的写入是否被中断
      */
     private boolean uncleanStart;
 
@@ -268,8 +291,9 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     /**
      * Constructs new BlobStoreRepository
-     * @param metadata   The metadata for this repository including name and settings
+     * @param metadata   The metadata for this repository including name and settings  在初始化存储对象时还会传入相关的元数据
      * @param clusterService ClusterService
+     * @param basePath 定义store的基础目录
      */
     protected BlobStoreRepository(
         final RepositoryMetadata metadata,
@@ -279,13 +303,19 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         this.metadata = metadata;
         this.threadPool = clusterService.getClusterApplierService().threadPool();
         this.clusterService = clusterService;
+        // 是否采用压缩方式存储数据流
         this.compress = COMPRESS_SETTING.get(metadata.settings());
+        // 每秒仅允许写入 40MB    文件系统的限流有什么意义么
         snapshotRateLimiter = getRateLimiter(metadata.settings(), "max_snapshot_bytes_per_sec", new ByteSizeValue(40, ByteSizeUnit.MB));
         restoreRateLimiter = getRateLimiter(metadata.settings(), "max_restore_bytes_per_sec", new ByteSizeValue(40, ByteSizeUnit.MB));
+
+        // 内部的数据是否只读
         readOnly = metadata.settings().getAsBoolean("readonly", false);
+        // 是否缓存存储层的数据
         cacheRepositoryData = CACHE_REPOSITORY_DATA.get(metadata.settings());
         this.basePath = basePath;
 
+        // 这些对象负责将数据流格式化  XXX_NAME_FORMAT 代表着 blobName 也是格式化的 通过snapshot.uuid 替换关键字后 可以作为blobName
         indexShardSnapshotFormat = new ChecksumBlobStoreFormat<>(SNAPSHOT_CODEC, SNAPSHOT_NAME_FORMAT,
             BlobStoreIndexShardSnapshot::fromXContent, namedXContentRegistry, compress);
         indexShardSnapshotsFormat = new ChecksumBlobStoreFormat<>(SNAPSHOT_INDEX_CODEC, SNAPSHOT_INDEX_NAME_FORMAT,
@@ -298,10 +328,16 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             SnapshotInfo::fromXContentInternal, namedXContentRegistry, compress);
     }
 
+    /**
+     * 当存储层组件初始化时 触发该方法
+     */
     @Override
     protected void doStart() {
+        // 推测每次写入前 先设置pendingGen  当写入完成时 将 gen 同于到 pendingGen中
         uncleanStart = metadata.pendingGeneration() > RepositoryData.EMPTY_REPO_GEN &&
             metadata.generation() != metadata.pendingGeneration();
+
+        // 校验chunk大小是否合法
         ByteSizeValue chunkSize = chunkSize();
         if (chunkSize != null && chunkSize.getBytes() <= 0) {
             throw new IllegalArgumentException("the chunk size cannot be negative: [" + chunkSize + "]");
@@ -452,6 +488,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     /**
      * maintains single lazy instance of {@link BlobContainer}
+     * 什么对象需要惰性生成呢  一般是大对象
      */
     protected BlobContainer blobContainer() {
         assertSnapshotOrGenericThread();
@@ -459,8 +496,11 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         BlobContainer blobContainer = this.blobContainer.get();
         if (blobContainer == null) {
            synchronized (lock) {
+
                blobContainer = this.blobContainer.get();
                if (blobContainer == null) {
+                   // 通过basePath + store 构构建基础的container 并且在该对象上可以通过追加路径生成子级container
+                   // container 本身是一个树结构
                    blobContainer = blobStore().blobContainer(basePath());
                    this.blobContainer.set(blobContainer);
                }
@@ -473,6 +513,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
     /**
      * Maintains single lazy instance of {@link BlobStore}.
      * Public for testing.
+     * store对象也是惰性加载的
      */
     public BlobStore blobStore() {
         assertSnapshotOrGenericThread();
@@ -501,6 +542,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     /**
      * Creates new BlobStore to read and write data.
+     * 基于metadata 创建store对象   因为store涉及到具体的实现类  所以对子类开放钩子
      */
     protected abstract BlobStore createBlobStore() throws Exception;
 
@@ -532,6 +574,10 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         return null;
     }
 
+    /**
+     * 获取存储相关的元数据
+     * @return
+     */
     @Override
     public RepositoryMetadata getMetadata() {
         return metadata;
@@ -1020,6 +1066,11 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         }
     }
 
+    /**
+     * 通过传入快照id 找到快照对象
+     * @param snapshotId  snapshot id
+     * @return
+     */
     @Override
     public SnapshotInfo getSnapshotInfo(final SnapshotId snapshotId) {
         try {

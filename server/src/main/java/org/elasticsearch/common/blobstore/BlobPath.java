@@ -28,11 +28,15 @@ import java.util.List;
 
 /**
  * The list of paths where a blob can reside.  The contents of the paths are dependent upon the implementation of {@link BlobContainer}.
+ * 代表存储大块数据Container的路径信息
  */
 public class BlobPath implements Iterable<String> {
 
     private static final String SEPARATOR = "/";
 
+    /**
+     * 实际上他们拼接起来才是完整的路径 但是拆分后按小段存储
+     */
     private final List<String> paths;
 
     public BlobPath() {
@@ -62,6 +66,10 @@ public class BlobPath implements Iterable<String> {
         return new BlobPath(Collections.unmodifiableList(paths));
     }
 
+    /**
+     * 将这组路径使用"/" 拼接
+     * @return
+     */
     public String buildAsString() {
         String p = String.join(SEPARATOR, paths);
         if (p.isEmpty() || p.endsWith(SEPARATOR)) {
@@ -74,6 +82,7 @@ public class BlobPath implements Iterable<String> {
      * Returns this path's parent path.
      *
      * @return Parent path or {@code null} if there is none
+     * 返回上级路径 也就是去除掉最后的路径
      */
     @Nullable
     public BlobPath parent() {

@@ -59,23 +59,42 @@ import java.util.Map;
 
 /**
  * Service responsible for maintaining and providing access to snapshot repositories on nodes.
+ * 该对象负责存储相关的功能  同时可以监听集群的变化事件
  */
 public class RepositoriesService extends AbstractLifecycleComponent implements ClusterStateApplier {
 
     private static final Logger logger = LogManager.getLogger(RepositoriesService.class);
 
+    /**
+     * 可以key 可以找到不同的存储工厂
+     */
     private final Map<String, Repository.Factory> typesRegistry;
     private final Map<String, Repository.Factory> internalTypesRegistry;
 
+    /**
+     * 集群服务
+     */
     private final ClusterService clusterService;
 
     private final ThreadPool threadPool;
 
+    /**
+     * 该对象负责进行认证相关的工作
+     */
     private final VerifyNodeRepositoryAction verifyAction;
 
     private final Map<String, Repository> internalRepositories = ConcurrentCollections.newConcurrentMap();
     private volatile Map<String, Repository> repositories = Collections.emptyMap();
 
+    /**
+     *
+     * @param settings
+     * @param clusterService
+     * @param transportService
+     * @param typesRegistry
+     * @param internalTypesRegistry
+     * @param threadPool
+     */
     public RepositoriesService(Settings settings, ClusterService clusterService, TransportService transportService,
                                Map<String, Repository.Factory> typesRegistry, Map<String, Repository.Factory> internalTypesRegistry,
                                ThreadPool threadPool) {

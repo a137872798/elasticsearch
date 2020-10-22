@@ -28,15 +28,20 @@ import java.util.Objects;
 
 /**
  * Metadata about registered repository
+ * 用于描述某个存储对象的
  */
 public class RepositoryMetadata {
 
     private final String name;
     private final String type;
+    /**
+     * 相关的配置
+     */
     private final Settings settings;
 
     /**
      * Safe repository generation.
+     * 可能每次存储都会增加该值吧
      */
     private final long generation;
 

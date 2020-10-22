@@ -21,6 +21,9 @@ package org.elasticsearch.common.io.stream;
 
 import org.elasticsearch.common.bytes.BytesReference;
 
+/**
+ * 可以将内部的数据 以 BytesReference的形式返回 该对象内部就是一个byte[]
+ */
 public abstract class BytesStream extends StreamOutput {
 
     public abstract BytesReference bytes();

@@ -48,6 +48,7 @@ import java.util.function.Function;
  *      Defaults to not chucked.</dd>
  * <dt>{@code compress}</dt><dd>If set to true metadata files will be stored compressed. Defaults to false.</dd>
  * </dl>
+ * 创建一个基于文件系统的存储对象
  */
 public class FsRepository extends BlobStoreRepository {
     private static final Logger logger = LogManager.getLogger(FsRepository.class);
@@ -64,6 +65,9 @@ public class FsRepository extends BlobStoreRepository {
         new ByteSizeValue(Long.MAX_VALUE), new ByteSizeValue(5), new ByteSizeValue(Long.MAX_VALUE), Property.NodeScope);
     private final Environment environment;
 
+    /**
+     * 每个chunk的大小  将数据按照该单位划分
+     */
     private final ByteSizeValue chunkSize;
 
     /**
@@ -101,9 +105,16 @@ public class FsRepository extends BlobStoreRepository {
         }
     }
 
+    /**
+     * 根据元数据信息 初始化store对象
+     * @return
+     * @throws Exception
+     */
     @Override
     protected BlobStore createBlobStore() throws Exception {
+        // 找到 有关 fs. 的相关路径
         final String location = REPOSITORIES_LOCATION_SETTING.get(getMetadata().settings());
+        // 在env对象上存在一个 根路径  需要拼接上location 才是真正的路径
         final Path locationFile = environment.resolveRepoFile(location);
         return new FsBlobStore(environment.settings(), locationFile, isReadOnly());
     }

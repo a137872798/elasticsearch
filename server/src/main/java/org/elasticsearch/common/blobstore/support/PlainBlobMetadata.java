@@ -21,10 +21,19 @@ package org.elasticsearch.common.blobstore.support;
 
 import org.elasticsearch.common.blobstore.BlobMetadata;
 
+/**
+ * 代表一个标准的 blob元数据
+ */
 public class PlainBlobMetadata implements BlobMetadata {
 
+    /**
+     * blobName
+     */
     private final String name;
 
+    /**
+     * 数据块大小
+     */
     private final long length;
 
     public PlainBlobMetadata(String name, long length) {

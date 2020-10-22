@@ -28,6 +28,7 @@ import java.io.IOException;
 
 /**
  * A base class for node level operations.
+ * 某些交互需要node 信息 这里提供了一层抽象
  */
 public abstract class BaseNodeResponse extends TransportResponse {
 

@@ -38,6 +38,10 @@ public final class SnapshotId implements Comparable<SnapshotId>, Writeable, ToXC
     private static final String UUID = "uuid";
 
     private final String name;
+
+    /**
+     * 这个才是作为id的体现 其他都是附加字段
+     */
     private final String uuid;
 
     // Caching hash code
