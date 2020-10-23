@@ -35,22 +35,48 @@ import java.util.Arrays;
 /** Utility class to work with arrays. */
 public class BigArrays {
 
+    /**
+     * 该对象内部本身包含各种并发容器 以及各种类型的数组对象  在回收时 将对象存储到队列中 并在使用时取出
+     */
     final PageCacheRecycler recycler;
+
+    /**
+     * 为了避免频繁创建 BigArray对象 使用限流器做限制
+     */
     private final CircuitBreakerService breakerService;
+    /**
+     * 是否打开熔断开关
+     */
     private final boolean checkBreaker;
+
+    /**
+     * 一个需要检测是否熔断的实例对象 如果当前对象需要检测熔断 那么该对象就是this 否则就是基于this生成的一个新对象 差别仅是checkBreaker = true
+     */
     private final BigArrays circuitBreakingInstance;
+
+    /**
+     * 使用该key 去breakService中申请熔断器
+     */
     private final String breakerName;
+
 
     public static final BigArrays NON_RECYCLING_INSTANCE = new BigArrays(null, null, CircuitBreaker.REQUEST);
 
     /** Returns the next size to grow when working with parallel arrays that
-     *  may have different page sizes or number of bytes per element. */
+     *  may have different page sizes or number of bytes per element.
+     *  传入一个目标大小 并预估扩容后的实际大小
+     *  */
     public static long overSize(long minTargetSize) {
         return overSize(minTargetSize, PageCacheRecycler.PAGE_SIZE_IN_BYTES / 8, 1);
     }
 
-    /** Return the next size to grow to that is &gt;= <code>minTargetSize</code>.
-     *  Inspired from {@link ArrayUtil#oversize(int, int)} and adapted to play nicely with paging. */
+    /**
+     * Return the next size to grow to that is &gt;= <code>minTargetSize</code>.
+     * Inspired from {@link ArrayUtil#oversize(int, int)} and adapted to play nicely with paging.
+     * @param minTargetSize   该大小代表预开放多少个对象
+     * @param bytesPerElement   代表每个对象会占用多少byte
+     *
+     */
     public static long overSize(long minTargetSize, int pageSize, int bytesPerElement) {
         if (minTargetSize < 0) {
             throw new IllegalArgumentException("minTargetSize must be >= 0");
@@ -63,12 +89,16 @@ public class BigArrays {
         }
 
         long newSize;
+
         if (minTargetSize < pageSize) {
+            // 在该方法中 会根据当前虚拟机的运行环境分配指定byte倍数的大小  比如64位虚拟机 就会分配8byte的倍数  也就是 （newSize * bytesPerElement） % 8 == 0
             newSize = ArrayUtil.oversize((int)minTargetSize, bytesPerElement);
         } else {
+            // 如果超过数据页的大小 就扩容 1/8  为啥跟上面不一样 ...
             newSize = minTargetSize + (minTargetSize >>> 3);
         }
 
+        // 向上增加 确保是page的n倍
         if (newSize > pageSize) {
             // round to a multiple of pageSize
             newSize = newSize - (newSize % pageSize) + pageSize;
@@ -78,10 +108,17 @@ public class BigArrays {
         return newSize;
     }
 
+    /**
+     * 当前下标的值在int的范围内
+     * @param index
+     * @return
+     */
     static boolean indexIsInt(long index) {
         return index == (int) index;
     }
 
+
+    // 下面几个类 将一个普通的数组对象模拟成 BigArray （原本BigArray是一个pages） //
     private abstract static class AbstractArrayWrapper extends AbstractArray implements BigArray {
 
         static final long SHALLOW_SIZE = RamUsageEstimator.shallowSizeOfInstance(ByteArrayWrapper.class);
@@ -378,7 +415,7 @@ public class BigArrays {
      * @param recycler
      * @param breakerService
      * @param breakerName
-     * @param checkBreaker  检测是否断路 默认为false
+     * @param checkBreaker  默认情况下是不开启断路器检测的
      */
     protected BigArrays(PageCacheRecycler recycler, @Nullable final CircuitBreakerService breakerService, String breakerName,
                         boolean checkBreaker) {
@@ -401,9 +438,12 @@ public class BigArrays {
      * this method, and the breaker trips, we add the delta without breaking
      * to account for the created data.  If the data has not been created yet,
      * we do not add the delta to the breaker if it trips.
+     * @param isDataAlreadyCreated  代表数据是否已经创建了
+     *                              该对象在分配内存方面是做了限制的  当申请了新的BigArray 会调整熔断器内部的值
      */
     void adjustBreaker(final long delta, final boolean isDataAlreadyCreated) {
         if (this.breakerService != null) {
+            // 熔断器服务 是通过生成 熔断器实例进行熔断检测的
             CircuitBreaker breaker = this.breakerService.getBreaker(breakerName);
             if (this.checkBreaker) {
                 // checking breaker means potentially tripping, but it doesn't
@@ -415,6 +455,7 @@ public class BigArrays {
                         if (isDataAlreadyCreated) {
                             // since we've already created the data, we need to
                             // add it so closing the stream re-adjusts properly
+                            // 在抛出熔断异常时 会将之前增加的值回退 ，但是如果对象确实已经创建的情况下 还是要增加这个值
                             breaker.addWithoutBreaking(delta);
                         }
                         // re-throw the original exception
@@ -426,6 +467,7 @@ public class BigArrays {
             } else {
                 // even if we are not checking the breaker, we need to adjust
                 // its' totals, so add without breaking
+                // 当没有开启检测的时候也要增加消耗量 这样其他需要检测的对象就会受到限制
                 breaker.addWithoutBreaking(delta);
             }
         }
@@ -434,6 +476,7 @@ public class BigArrays {
     /**
      * Return an instance of this BigArrays class with circuit breaking
      * explicitly enabled, instead of only accounting enabled
+     * 返回一个具备熔断功能的实例对象  目标对象与源对象共用熔断器
      */
     public BigArrays withCircuitBreaking() {
         return this.circuitBreakingInstance;
@@ -443,6 +486,13 @@ public class BigArrays {
         return this.circuitBreakingInstance.breakerService;
     }
 
+    /**
+     * 重置某个  bigArray的大小 同时还会调整熔断器
+     * @param array
+     * @param newSize
+     * @param <T>
+     * @return
+     */
     private <T extends AbstractBigArray> T resizeInPlace(T array, long newSize) {
         final long oldMemSize = array.ramBytesUsed();
         final long oldSize = array.size();
@@ -472,13 +522,18 @@ public class BigArrays {
      * Allocate a new {@link ByteArray}.
      * @param size          the initial length of the array
      * @param clearOnResize whether values should be set to 0 on initialization and resize
+     *                      申请 BigByteArray对象
      */
     public ByteArray newByteArray(long size, boolean clearOnResize) {
+        // 如果申请的大小超过了一个page
         if (size > PageCacheRecycler.BYTE_PAGE_SIZE) {
             // when allocating big arrays, we want to first ensure we have the capacity by
             // checking with the circuit breaker before attempting to allocate
+            // 增加熔断器的值 如果触发熔断则抛出异常
             adjustBreaker(BigByteArray.estimateRamBytes(size), false);
             return new BigByteArray(size, this, clearOnResize);
+
+            // 当分配的大小不足一个page时 实际上没必要生成 灵活的BigByteArray 直接创建了一个包装类 不过这里还是尝试使用recycler复用之前的内存块
         } else if (size >= PageCacheRecycler.BYTE_PAGE_SIZE / 2 && recycler != null) {
             final Recycler.V<byte[]> page = recycler.bytePage(clearOnResize);
             return validate(new ByteArrayWrapper(this, page.v(), size, page, clearOnResize));

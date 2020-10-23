@@ -100,6 +100,7 @@ public abstract class Streams {
             out.write(buffer, 0, bytesRead);
             byteCount += bytesRead;
         }
+        // 如果写入到内存中 flush 就是 NOOP
         out.flush();
         return byteCount;
     }

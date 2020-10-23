@@ -109,11 +109,13 @@ public interface CircuitBreaker {
      * @param bytes number of bytes to add
      * @param label string label describing the bytes being added
      * @return the number of "used" bytes for the circuit breaker
+     * 增加此时的内存消耗量 并且在超出范围时触发熔断
      */
     double addEstimateBytesAndMaybeBreak(long bytes, String label) throws CircuitBreakingException;
 
     /**
      * Adjust the circuit breaker without tripping
+     * 每个熔断器实例由多个使用者共享  可能A不会触发熔断  但是还是要将使用量累加到熔断器中 这样就能限制到B
      */
     long addWithoutBreaking(long bytes);
 

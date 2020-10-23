@@ -85,7 +85,7 @@ import static java.util.Map.entry;
  * everywhere. That being said, this class deals primarily with {@code List}s rather than Arrays. For the most part calls should adapt to
  * lists, either by storing {@code List}s internally or just converting to and from a {@code List} when calling. This comment is repeated
  * on {@link StreamInput}.
- * 这里拓展了 JDK 自带的输出流
+ * 该对象定义了如何将不同类型的数据 以byte形式写入
  */
 public abstract class StreamOutput extends OutputStream {
 

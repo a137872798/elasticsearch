@@ -27,16 +27,29 @@ import org.elasticsearch.common.recycler.Recycler;
 import java.lang.reflect.Array;
 import java.util.Arrays;
 
-/** Common implementation for array lists that slice data into fixed-size blocks. */
+/**
+ * Common implementation for array lists that slice data into fixed-size blocks.
+ * 这里存储了一些公共方法 以及 通过recycle 获取/回收数据块的逻辑
+ */
 abstract class AbstractBigArray extends AbstractArray {
 
     private final PageCacheRecycler recycler;
+
+    /**
+     * 存储可以释放之前申请的内存块的句柄
+     */
     private Recycler.V<?>[] cache;
 
     private final int pageShift;
     private final int pageMask;
     protected long size;
 
+    /**
+     *
+     * @param pageSize  总计有多少个数据页
+     * @param bigArrays
+     * @param clearOnResize
+     */
     protected AbstractBigArray(int pageSize, BigArrays bigArrays, boolean clearOnResize) {
         super(bigArrays, clearOnResize);
         this.recycler = bigArrays.recycler;
@@ -49,6 +62,8 @@ abstract class AbstractBigArray extends AbstractArray {
         this.pageShift = Integer.numberOfTrailingZeros(pageSize);
         this.pageMask = pageSize - 1;
         size = 0;
+
+        // 初始状态创建大小为16的句柄数组
         if (this.recycler != null) {
             cache = new Recycler.V<?>[16];
         } else {
@@ -56,6 +71,11 @@ abstract class AbstractBigArray extends AbstractArray {
         }
     }
 
+    /**
+     * 在初始化大小时 会计算有多少个page
+     * @param capacity
+     * @return
+     */
     final int numPages(long capacity) {
         final long numPages = (capacity + pageMask) >>> pageShift;
         if (numPages > Integer.MAX_VALUE) {
@@ -96,15 +116,31 @@ abstract class AbstractBigArray extends AbstractArray {
         return ((long) pageIndex(size - 1) + 1) * pageSize() * numBytesPerElement();
     }
 
+    /**
+     * @param array
+     * @param minSize
+     * @param <T>
+     * @return
+     */
     private static <T> T[] grow(T[] array, int minSize) {
         if (array.length < minSize) {
+            // 在分配大小时 会考虑虚拟机的运行环境  比如在64位环境下  每次尽可能分配8byte的倍数  minSize 代表要分配多少个单位长度 NUM_BYTES_OBJECT_REF 对应每个单位长度的byte
             final int newLen = ArrayUtil.oversize(minSize, RamUsageEstimator.NUM_BYTES_OBJECT_REF);
             array = Arrays.copyOf(array, newLen);
         }
         return array;
     }
 
+    /**
+     * 这里是将回收每个page内部数据的 句柄存起来
+     * @param v
+     * @param page
+     * @param expectedSize  某页下 V内部数组 对应的大小
+     * @param <T>
+     * @return
+     */
     private <T> T registerNewPage(Recycler.V<T> v, int page, int expectedSize) {
+        // 为了避免缓存大小不足 进行扩容
         cache = grow(cache, page + 1);
         assert cache[page] == null;
         cache[page] = v;
@@ -112,8 +148,15 @@ abstract class AbstractBigArray extends AbstractArray {
         return v.v();
     }
 
+    /**
+     * 指定数据页 并生成数组对象
+     * @param page
+     * @return
+     */
     protected final byte[] newBytePage(int page) {
+        // 如果存在循环对象的话 先尝试从该对象中获取
         if (recycler != null) {
+            // 当之前没有可复用内存块时 新创建的内存块大小默认就是BYTE_PAGE_SIZE 所以下面在register是默认传入的就是BYTE_PAGE_SIZE
             final Recycler.V<byte[]> v = recycler.bytePage(clearOnResize);
             return registerNewPage(v, page, PageCacheRecycler.BYTE_PAGE_SIZE);
         } else {
@@ -148,6 +191,10 @@ abstract class AbstractBigArray extends AbstractArray {
         }
     }
 
+    /**
+     * 将对象通过recycle回收
+     * @param page
+     */
     protected final void releasePage(int page) {
         if (recycler != null) {
             cache[page].close();
@@ -155,6 +202,9 @@ abstract class AbstractBigArray extends AbstractArray {
         }
     }
 
+    /**
+     * 在关闭该对象时 将所有分配的数组都通过 recycle维护
+     */
     @Override
     protected final void doClose() {
         if (recycler != null) {

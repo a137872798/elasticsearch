@@ -22,7 +22,10 @@ package org.elasticsearch.common.util;
 import org.apache.lucene.util.Accountable;
 import org.elasticsearch.common.lease.Releasable;
 
-/** Base abstraction of an array. */
+/**
+ * Base abstraction of an array.
+ * 代表一个大数组对象 内部的类型还是不确定的
+ * */
 public interface BigArray extends Releasable, Accountable {
 
     /** Return the length of this array. */

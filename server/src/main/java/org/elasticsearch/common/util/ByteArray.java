@@ -23,6 +23,7 @@ import org.apache.lucene.util.BytesRef;
 
 /**
  * Abstraction of an array of byte values.
+ * 申明了数组类型是 byte[]   下面提供了写入/读取数组的api  并且申明value类型为byte
  */
 public interface ByteArray extends BigArray {
 
@@ -40,6 +41,7 @@ public interface ByteArray extends BigArray {
      * Get a reference to a slice.
      *
      * @return <code>true</code> when a byte[] was materialized, <code>false</code> otherwise.
+     * 返回true代表发生了换页
      */
     boolean get(long index, int len, BytesRef ref);
 

@@ -68,6 +68,7 @@ public interface BytesReference extends Comparable<BytesReference>, ToXContentFr
 
     /**
      * Returns an array of byte buffers from the given BytesReference.
+     * 将 ref内部的数据读取出来 并转换成 ByteBuffer对象
      */
     static ByteBuffer[] toByteBuffers(BytesReference reference) {
         BytesRefIterator byteRefIterator = reference.iterator();

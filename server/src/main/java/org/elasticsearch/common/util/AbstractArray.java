@@ -28,7 +28,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 abstract class AbstractArray implements BigArray {
 
+    /**
+     * 该对象是通过哪个  BigArrays分配的
+     * 使用者一般通过 BigArrays 创建各种 BigArray对象 为了避免短时间内创建的内存太大 这里就会有一个限流机制
+     */
     private final BigArrays bigArrays;
+    /**
+     * 每当通过recycle 获取之前回收的数组对象时 是否做清理操作
+     */
     public final boolean clearOnResize;
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -37,6 +44,9 @@ abstract class AbstractArray implements BigArray {
         this.clearOnResize = clearOnResize;
     }
 
+    /**
+     * 因为这个对象被关闭 就可以放宽限流器对其他用户创建 BigArray的限制
+     */
     @Override
     public final void close() {
         if (closed.compareAndSet(false, true)) {

@@ -56,7 +56,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
     private static final MemoryMXBean MEMORY_MX_BEAN = ManagementFactory.getMemoryMXBean();
 
     /**
-     * 存储相关的熔断器
+     * 在内部通过 类似命名空间的概念来划分熔断器实例
      */
     private final ConcurrentMap<String, CircuitBreaker> breakers = new ConcurrentHashMap<>();
 

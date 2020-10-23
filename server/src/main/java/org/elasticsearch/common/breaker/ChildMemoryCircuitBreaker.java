@@ -44,6 +44,10 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
      * 描述持久性
      */
     private final Durability durability;
+
+    /**
+     * 记录此时总计消耗了多少内存 并以此作为判断是否应当触发熔断的条件
+     */
     private final AtomicLong used;
     private final AtomicLong trippedCount;
     private final Logger logger;
@@ -150,6 +154,7 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
             // If the parent breaker is tripped, this breaker has to be
             // adjusted back down because the allocation is "blocked" but the
             // breaker has already been incremented
+            // 因为本次分配失败了 所以还原之前分配的内存量
             this.addWithoutBreaking(-bytes);
             throw e;
         }
@@ -211,7 +216,7 @@ public class ChildMemoryCircuitBreaker implements CircuitBreaker {
      *
      * @param bytes number of bytes to add to the breaker
      * @return number of "used" bytes so far
-     * 该数据的变化是不会触发熔断的
+     * 累加总的消耗量 但是不触发熔断
      */
     @Override
     public long addWithoutBreaking(long bytes) {

@@ -46,6 +46,12 @@ public abstract class AbstractBytesReference implements BytesReference {
         return (get(index) & 0xFF) << 24 | (get(index + 1) & 0xFF) << 16 | (get(index + 2) & 0xFF) << 8 | get(index + 3) & 0xFF;
     }
 
+    /**
+     * 指定一个范围 直到读取到与marker相同的byte后返回
+     * @param marker marker byte to search
+     * @param from lower bound for the index to check (inclusive)
+     * @return
+     */
     @Override
     public int indexOf(byte marker, int from) {
         final int to = length();

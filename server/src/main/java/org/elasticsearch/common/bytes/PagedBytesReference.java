@@ -35,6 +35,10 @@ public class PagedBytesReference extends AbstractBytesReference {
 
     private static final int PAGE_SIZE = PageCacheRecycler.BYTE_PAGE_SIZE;
 
+    /**
+     * 没有使用 lucene的 BytesRef 而是自己封装了一个差不多的对象 因为将byte[] 拓展成了一个通过多个page 在逻辑上实现连续的BigArray 好处是可以避免频繁扩容导致的数据拷贝
+     * 减少GC 开销
+     */
     private final ByteArray byteArray;
     private final int offset;
     private final int length;
@@ -73,6 +77,10 @@ public class PagedBytesReference extends AbstractBytesReference {
         return bref;
     }
 
+    /**
+     * 生成 Ref迭代器对象
+     * @return
+     */
     @Override
     public final BytesRefIterator iterator() {
         final int offset = this.offset;
@@ -81,6 +89,7 @@ public class PagedBytesReference extends AbstractBytesReference {
         // we calculate the initial fragment size here to ensure that if this reference is a slice we are still page aligned
         // across the entire iteration. The first page is smaller if our offset != 0 then we start in the middle of the page
         // otherwise we iterate full pages until we reach the last chunk which also might end within a page.
+        // 每次获取的数据块大小 不应该超过一个页
         final int initialFragmentSize = offset != 0 ? PAGE_SIZE - (offset % PAGE_SIZE) : PAGE_SIZE;
         return new BytesRefIterator() {
             int position = 0;
@@ -88,8 +97,15 @@ public class PagedBytesReference extends AbstractBytesReference {
             // this BytesRef is reused across the iteration on purpose - BytesRefIterator interface was designed for this
             final BytesRef slice = new BytesRef();
 
+
+            /**
+             * 以页为单位  将数据读取出来并转换成 byteRef  当读取数据量不超过一个page时 实际上只是拷贝了引用  没有发生真正的数据拷贝
+             * @return
+             * @throws IOException
+             */
             @Override
             public BytesRef next() throws IOException {
+                // 只要还有要读取的数据
                 if (nextFragmentSize != 0) {
                     final boolean materialized = byteArray.get(offset + position, nextFragmentSize, slice);
                     assert materialized == false : "iteration should be page aligned but array got materialized";

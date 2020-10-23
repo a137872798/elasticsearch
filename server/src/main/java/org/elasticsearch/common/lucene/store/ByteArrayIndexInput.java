@@ -25,6 +25,7 @@ import java.io.IOException;
 
 /**
  * Wraps array of bytes into IndexInput
+ * 基于数组的输入流
  */
 public class ByteArrayIndexInput extends IndexInput {
     private final byte[] bytes;

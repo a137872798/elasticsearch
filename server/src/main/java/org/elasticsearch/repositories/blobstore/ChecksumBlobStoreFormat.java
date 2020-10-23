@@ -139,13 +139,24 @@ public final class ChecksumBlobStoreFormat<T extends ToXContent> {
         final BytesReference bytes = Streams.readFully(blobContainer.readBlob(blobName));
         final String resourceDesc = "ChecksumBlobStoreFormat.readBlob(blob=\"" + blobName + "\")";
         try {
+            // 写入的时候采用了各种压缩方式  而 ByteBuffersIndexInput 内部已经封装了各种读取 Vint Zint 的逻辑
             final IndexInput indexInput = bytes.length() > 0 ? new ByteBuffersIndexInput(
+                // 该对象将一组 ByteBuffer 包装成一个输入流
                     new ByteBuffersDataInput(Arrays.asList(BytesReference.toByteBuffers(bytes))), resourceDesc)
+                // 以数组为单位创建输入流
                     : new ByteArrayIndexInput(resourceDesc, BytesRef.EMPTY_BYTES);
+
+            // 校验和相关的先忽略 也就是将ES 的输出流转化成lucene的输入流的目的就是为了直接使用 lucene封装的api 比如这个校验功能
+            // 同时也代表着blob文件本身满足可以校验的格式
             CodecUtil.checksumEntireFile(indexInput);
             CodecUtil.checkHeader(indexInput, codec, VERSION, VERSION);
+
+            // 在校验header的时候 跳过了校验头的位置
             long filePointer = indexInput.getFilePointer();
+            // 总长 - 校验头 - 校验尾  得到内容长
             long contentSize = indexInput.length() - CodecUtil.footerLength() - filePointer;
+
+            // 解析器就不细看了 反正就是适配了第三方的格式化解析器 比如JSON/YML 啥的
             try (XContentParser parser = XContentHelper.createParser(namedXContentRegistry, LoggingDeprecationHandler.INSTANCE,
                 bytes.slice((int) filePointer, (int) contentSize), XContentType.SMILE)) {
                 return reader.apply(parser);

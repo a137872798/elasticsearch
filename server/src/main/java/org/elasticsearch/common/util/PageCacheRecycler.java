@@ -61,6 +61,10 @@ public class PageCacheRecycler {
     public static final int OBJECT_PAGE_SIZE = PAGE_SIZE_IN_BYTES / RamUsageEstimator.NUM_BYTES_OBJECT_REF;
     public static final int LONG_PAGE_SIZE = PAGE_SIZE_IN_BYTES / Long.BYTES;
     public static final int INT_PAGE_SIZE = PAGE_SIZE_IN_BYTES / Integer.BYTES;
+
+    /**
+     * 每个page的默认大小
+     */
     public static final int BYTE_PAGE_SIZE = PAGE_SIZE_IN_BYTES;
 
     /**
@@ -169,6 +173,7 @@ public class PageCacheRecycler {
 
     public Recycler.V<byte[]> bytePage(boolean clear) {
         final Recycler.V<byte[]> v = bytePage.obtain();
+        // v.isRecycled() 代表是获取了之前分配的内存块  此时如果clear为true 就要清空相关数据 如果是新分配的内存块 原本就是空的 就不需要再清空了
         if (v.isRecycled() && clear) {
             Arrays.fill(v.v(), (byte) 0);
         }

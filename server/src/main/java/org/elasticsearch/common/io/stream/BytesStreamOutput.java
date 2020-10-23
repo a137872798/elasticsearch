@@ -34,16 +34,24 @@ import java.io.IOException;
  */
 public class BytesStreamOutput extends BytesStream {
 
+    /**
+     * 该对象可以分配各种类型的 BigArray对象
+     */
     protected final BigArrays bigArrays;
 
     /**
-     * 该对象模拟一个大byte[]
+     * 通过BigArray 分配出来的专门用于存储byte[] 的对象
      */
     protected ByteArray bytes;
+
+    /**
+     * 此时已经写入了多少数据
+     */
     protected int count;
 
     /**
      * Create a non recycling {@link BytesStreamOutput} with an initial capacity of 0.
+     * 该对象本身应该是支持自动扩容的  所以在初始化阶段 大小为0
      */
     public BytesStreamOutput() {
         // since this impl is not recycling anyway, don't bother aligning to
@@ -56,15 +64,20 @@ public class BytesStreamOutput extends BytesStream {
      * to satisfy the capacity given by expected size.
      *
      * @param expectedSize the expected maximum size of the stream in bytes.
+     *
      */
     public BytesStreamOutput(int expectedSize) {
         this(expectedSize, BigArrays.NON_RECYCLING_INSTANCE);
     }
 
+    /**
+     *
+     * @param expectedSize
+     * @param bigArrays  默认情况下不使用熔断器 以及 recycler  只是一个最简易的分配器
+     */
     protected BytesStreamOutput(int expectedSize, BigArrays bigArrays) {
-        // 存储写入的数据
         this.bigArrays = bigArrays;
-        // 分配目标大小的数组
+        // 申请一个 以byte[] 形式存储数据的对象
         this.bytes = bigArrays.newByteArray(expectedSize, false);
     }
 
@@ -144,6 +157,10 @@ public class BytesStreamOutput extends BytesStream {
         return count;
     }
 
+    /**
+     * 将内部的数据包装成 ref对象
+     * @return
+     */
     @Override
     public BytesReference bytes() {
         return new PagedBytesReference(bytes, count);
