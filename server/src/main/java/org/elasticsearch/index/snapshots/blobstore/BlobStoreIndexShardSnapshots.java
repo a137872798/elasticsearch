@@ -41,21 +41,30 @@ import static java.util.Collections.unmodifiableMap;
  * <p>
  * This class is used to find files that were already snapshotted and clear out files that no longer referenced by any
  * snapshots.
+ * 某个索引分片的所有快照信息
  */
 public class BlobStoreIndexShardSnapshots implements Iterable<SnapshotFiles>, ToXContentFragment {
 
     public static final BlobStoreIndexShardSnapshots EMPTY = new BlobStoreIndexShardSnapshots(Collections.emptyList());
 
+    /**
+     * 维护了各个快照文件
+     */
     private final List<SnapshotFiles> shardSnapshots;
     private final Map<String, FileInfo> files;
     private final Map<String, List<FileInfo>> physicalFiles;
 
+    /**
+     * 使用一组此时可用的快照文件进行初始化
+     * @param shardSnapshots
+     */
     public BlobStoreIndexShardSnapshots(List<SnapshotFiles> shardSnapshots) {
         this.shardSnapshots = List.copyOf(shardSnapshots);
         // Map between blob names and file info
         Map<String, FileInfo> newFiles = new HashMap<>();
         // Map between original physical names and file info
         Map<String, List<FileInfo>> physicalFiles = new HashMap<>();
+        // 下面的操作就是将 SnapshotFiles 内部的文件信息取出 并设置
         for (SnapshotFiles snapshot : shardSnapshots) {
             // First we build map between filenames in the repo and their original file info
             // this map will be used in the next loop

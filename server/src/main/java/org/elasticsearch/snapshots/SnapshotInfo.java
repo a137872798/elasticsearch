@@ -50,7 +50,7 @@ import java.util.stream.Collectors;
 
 /**
  * Information about a snapshot
- * 代表某个快照的信息
+ * 各种数据可能都会有快照 snapshotInfo 描述本次生成快照这个动作的数据
  */
 public final class SnapshotInfo implements Comparable<SnapshotInfo>, ToXContent, Writeable {
 

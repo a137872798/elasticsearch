@@ -29,9 +29,14 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 /**
  * A list backed by an {@link AtomicReferenceArray} with potential null values, easily allowing
  * to get the concrete values as a list using {@link #asList()}.
+ * 现在的水平还没发领悟这个类
  */
 public class AtomicArray<E> {
     private final AtomicReferenceArray<E> array;
+
+    /**
+     * 相当于一份快照
+     */
     private volatile List<E> nonNullList;
 
     public AtomicArray(int size) {
@@ -52,6 +57,8 @@ public class AtomicArray<E> {
      * @param value the new value
      */
     public void set(int i, E value) {
+        // 这个就可以理解为一个先写入实际数据 后删缓存的标准demo
+        // set 函数没有cas的语义 也就是强行覆盖原本的数据
         array.set(i, value);
         if (nonNullList != null) { // read first, lighter, and most times it will be null...
             nonNullList = null;
@@ -59,9 +66,11 @@ public class AtomicArray<E> {
     }
 
     public final void setOnce(int i, E value) {
+        // 将某个值设置到数组中  cas失败时抛出异常
         if (array.compareAndSet(i, null, value) == false) {
             throw new IllegalStateException("index [" + i + "] has already been set");
         }
+        // 清除缓存
         if (nonNullList != null) { // read first, lighter, and most times it will be null...
             nonNullList = null;
         }
@@ -79,6 +88,7 @@ public class AtomicArray<E> {
 
     /**
      * Returns the it as a non null list.
+     * 返回一份快照
      */
     public List<E> asList() {
         if (nonNullList == null) {

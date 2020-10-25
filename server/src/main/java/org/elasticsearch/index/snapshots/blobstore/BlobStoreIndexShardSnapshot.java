@@ -43,13 +43,20 @@ public class BlobStoreIndexShardSnapshot implements ToXContentFragment {
 
     /**
      * Information about snapshotted file
+     * 描述一个快照文件信息
      */
     public static class FileInfo {
 
         private final String name;
+        /**
+         * 描述该文件的大小
+         */
         private final ByteSizeValue partSize;
         private final long partBytes;
         private final long numberOfParts;
+        /**
+         * 描述该文件校验和之类的信息
+         */
         private final StoreFileMetadata metadata;
 
         /**
@@ -350,6 +357,9 @@ public class BlobStoreIndexShardSnapshot implements ToXContentFragment {
 
     private final long incrementalSize;
 
+    /**
+     * 该快照下包含的一组索引文件
+     */
     private final List<FileInfo> indexFiles;
 
     /**

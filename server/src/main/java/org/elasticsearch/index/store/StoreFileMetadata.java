@@ -31,6 +31,9 @@ import java.io.IOException;
 import java.text.ParseException;
 import java.util.Objects;
 
+/**
+ * 描述所有存储文件对应的元数据信息
+ */
 public class StoreFileMetadata implements Writeable {
 
     private final String name;

@@ -127,6 +127,9 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
      */
     public static EnumSet<XContentContext> ALL_CONTEXTS = EnumSet.allOf(XContentContext.class);
 
+    /**
+     * 代表一种自定义的元数据  他需要满足2个接口 一个是可以表示数据的变化   一个是可以转换成格式化结构的对象
+     */
     public interface Custom extends NamedDiffable<Custom>, ToXContentFragment {
 
         EnumSet<XContentContext> context();
@@ -186,6 +189,10 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
      */
     private final ImmutableOpenMap<String, IndexMetadata> indices;
     private final ImmutableOpenMap<String, IndexTemplateMetadata> templates;
+
+    /**
+     * metadata 代表一个总的元数据 其他自定义的各种元数据 可以自行设置
+     */
     private final ImmutableOpenMap<String, Custom> customs;
 
     private final transient int totalNumberOfShards; // Transient ? not serializable anyway?

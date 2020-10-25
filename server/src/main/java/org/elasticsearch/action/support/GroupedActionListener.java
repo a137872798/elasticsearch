@@ -33,26 +33,33 @@ import java.util.concurrent.atomic.AtomicReference;
  * it has received N results (either successes or failures). This allows synchronous
  * tasks to be forked off in a loop with the same listener and respond to a
  * higher level listener once all tasks responded.
- * 该监听器会设置到多个future对象上 并触发多次 onResponse 在最后一次才会真正为future设置结果
+ * 整合了一组监听器 之后当触发同等次数的 onRes/onFail后  会一次性触发所有监听器
  */
 public final class GroupedActionListener<T> implements ActionListener<T> {
+
+    /**
+     * 简易的信号量
+     */
     private final CountDown countDown;
+    /**
+     * 记录触发了多少次 onRes
+     */
     private final AtomicInteger pos = new AtomicInteger();
 
     /**
-     * 以线程安全的方式将数据存储到数组中 每个slot仅允许操作一次
+     * 可以看作一个简单的AtomicReferenceArray
      */
     private final AtomicArray<T> results;
     /**
-     * 当这组任务执行完成时会触发函数
+     * 所有监听器 会被一起执行
      */
     private final ActionListener<Collection<T>> delegate;
     private final AtomicReference<Exception> failure = new AtomicReference<>();
 
     /**
      * Creates a new listener
-     * @param delegate the delegate listener
-     * @param groupSize the group size
+     * @param delegate the delegate listener  该监听器包含了统一调度内部监听器的逻辑
+     * @param groupSize the group size  代表内部共有多少个监听器
      */
     public GroupedActionListener(ActionListener<Collection<T>> delegate, int groupSize) {
         if (groupSize <= 0) {
@@ -84,6 +91,7 @@ public final class GroupedActionListener<T> implements ActionListener<T> {
     @Override
     public void onFailure(Exception e) {
         if (failure.compareAndSet(null, e) == false) {
+            // 代表触发了不止一次 onFail 将错误信息累加
             failure.accumulateAndGet(e, (current, update) -> {
                 // we have to avoid self-suppression!
                 if (update != current) {

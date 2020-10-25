@@ -41,6 +41,7 @@ import java.util.Objects;
 
 /**
  * A class that represents the snapshot deletions that are in progress in the cluster.
+ * 该对象描述了当前集群下快照删除的进度
  */
 public class SnapshotDeletionsInProgress extends AbstractNamedDiffable<Custom> implements Custom {
 

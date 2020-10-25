@@ -32,6 +32,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+/**
+ * 存储了各个分片的 gen
+ */
 public final class ShardGenerations {
 
     public static final ShardGenerations EMPTY = new ShardGenerations(Collections.emptyMap());
@@ -48,6 +51,9 @@ public final class ShardGenerations {
      */
     public static final String DELETED_SHARD_GEN = "_deleted";
 
+    /**
+     * key 代表每个索引的id   value 代表该索引下所有分片的gen  分片id 就是list的下标
+     */
     private final Map<IndexId, List<String>> shardGenerations;
 
     private ShardGenerations(Map<IndexId, List<String>> shardGenerations) {
@@ -115,6 +121,7 @@ public final class ShardGenerations {
      * @param indexId IndexId
      * @param shardId Shard Id
      * @return generation of the {@link org.elasticsearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshots} blob
+     * 通过索引id 和分片id 定位到gen信息
      */
     @Nullable
     public String getShardGen(IndexId indexId, int shardId) {

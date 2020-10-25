@@ -30,6 +30,7 @@ import java.util.Map;
 
 /**
  * 有关仓库相关的统计信息
+ * 目前FS实现中 并没有相关的统计信息  只有 S3BlobStore中有 所以先忽略
  */
 public class RepositoryStats implements Writeable {
 

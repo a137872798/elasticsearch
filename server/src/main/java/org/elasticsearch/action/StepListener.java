@@ -24,6 +24,7 @@ import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.common.util.concurrent.FutureUtils;
 import org.elasticsearch.common.util.concurrent.ListenableFuture;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -48,12 +49,13 @@ import java.util.function.Consumer;
  *    }, flowListener::onFailure);
  *  }
  * }</pre>
+ * 该对象设计的初衷是模仿 CompletableFuture
  */
 
 public final class StepListener<Response> extends NotifyOnceListener<Response> {
 
     /**
-     * 该对象本身是一个 future对象 但是还挂载了一组监听器
+     * 该对象内置了一个future对象  当任务完成时 会触发内部的监听器
      */
     private final ListenableFuture<Response> delegate;
 
@@ -78,6 +80,7 @@ public final class StepListener<Response> extends NotifyOnceListener<Response> {
      *
      * @param onResponse is called when this step is completed successfully
      * @param onFailure  is called when this step is completed with a failure
+     *                   通过这种暴露意图的api 向内部的delegate追加监听器
      */
     public void whenComplete(CheckedConsumer<Response, Exception> onResponse, Consumer<Exception> onFailure) {
         delegate.addListener(ActionListener.wrap(onResponse, onFailure), EsExecutors.newDirectExecutorService(), null);

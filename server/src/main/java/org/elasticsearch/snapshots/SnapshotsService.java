@@ -1313,6 +1313,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      *
      * @param repositoryMetaVersion version to check
      * @return true if version supports {@link ShardGenerations}
+     * 检测是否需要将版本号写入到存储层中
      */
     public static boolean useShardGenerations(Version repositoryMetaVersion) {
         return repositoryMetaVersion.onOrAfter(SHARD_GEN_IN_REPO_DATA_VERSION);

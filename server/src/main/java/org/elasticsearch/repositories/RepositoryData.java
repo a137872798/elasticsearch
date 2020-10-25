@@ -48,11 +48,13 @@ import java.util.stream.Collectors;
 /**
  * A class that represents the data in a repository, as captured in the
  * repository's index blob.
+ * 描述存储层本身的数据
  */
 public final class RepositoryData {
 
     /**
      * The generation value indicating the repository has no index generational files.
+     * 代表root目录下没有 index-？ 文件
      */
     public static final long EMPTY_REPO_GEN = -1L;
 
@@ -90,6 +92,7 @@ public final class RepositoryData {
     private final Map<String, IndexId> indices;
     /**
      * The snapshots that each index belongs to.
+     * 记录每个索引下的有快照
      */
     private final Map<IndexId, List<SnapshotId>> indexSnapshots;
 
@@ -183,14 +186,17 @@ public final class RepositoryData {
      *
      * @param snapshotIds SnapshotId to remove
      * @return List of indices that are changed but not removed
+     * 只要该索引下有这个快照id 就会返回
      */
     public List<IndexId> indicesToUpdateAfterRemovingSnapshot(Collection<SnapshotId> snapshotIds) {
         return indexSnapshots.entrySet().stream()
             .filter(entry -> {
                 final Collection<SnapshotId> existingIds = entry.getValue();
+                // TODO 这种情况是啥意思
                 if (snapshotIds.containsAll(existingIds)) {
                     return existingIds.size() > snapshotIds.size();
                 }
+                // 只要有一个符合条件就返回true
                 for (SnapshotId snapshotId : snapshotIds) {
                     if (entry.getValue().contains(snapshotId)) {
                         return true;

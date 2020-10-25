@@ -91,7 +91,7 @@ public interface Repository extends LifecycleComponent {
      *
      * @param snapshotId  snapshot id
      * @return information about snapshot
-     * 通过某个快照id 从存储层获取数据
+     * 获取某次快照的描述信息
      */
     SnapshotInfo getSnapshotInfo(SnapshotId snapshotId);
 
@@ -118,7 +118,7 @@ public interface Repository extends LifecycleComponent {
      * Returns a {@link RepositoryData} to describe the data in the repository, including the snapshots
      * and the indices across all snapshots found in the repository.  Throws a {@link RepositoryException}
      * if there was an error in reading the data.
-     * 以请求的方式获取存储数据 根据不同的结果触发监听器  异步
+     * 获取此时最新的数据 并触发监听器
      */
     void getRepositoryData(ActionListener<RepositoryData> listener);
 

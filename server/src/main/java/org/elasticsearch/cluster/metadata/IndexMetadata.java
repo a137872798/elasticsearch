@@ -298,6 +298,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     private final int routingFactor;
     private final int routingPartitionSize;
 
+    /**
+     * 该索引下总计有多少分片
+     */
     private final int numberOfShards;
     private final int numberOfReplicas;
 

@@ -42,6 +42,7 @@ import java.util.List;
 
 /**
  * Contains metadata about registered snapshot repositories
+ * 管理所有存储层的元数据
  */
 public class RepositoriesMetadata extends AbstractNamedDiffable<Custom> implements Custom {
 
@@ -53,6 +54,9 @@ public class RepositoriesMetadata extends AbstractNamedDiffable<Custom> implemen
      */
     public static final String HIDE_GENERATIONS_PARAM = "hide_generations";
 
+    /**
+     * 可能会有一组存储层 每个存储层对应一个metadata
+     */
     private final List<RepositoryMetadata> repositories;
 
     /**
@@ -67,10 +71,11 @@ public class RepositoriesMetadata extends AbstractNamedDiffable<Custom> implemen
     /**
      * Creates a new instance that has the given repository moved to the given {@code safeGeneration} and {@code pendingGeneration}.
      *
-     * @param repoName          repository name
+     * @param repoName          repository name  某一存储层具体实现的名字
      * @param safeGeneration    new safe generation
      * @param pendingGeneration new pending generation
      * @return new instance with updated generations
+     * TODO  什么是 saftGen  什么是 pendingGen
      */
     public RepositoriesMetadata withUpdatedGeneration(String repoName, long safeGeneration, long pendingGeneration) {
         int indexOfRepo = -1;
@@ -84,6 +89,7 @@ public class RepositoriesMetadata extends AbstractNamedDiffable<Custom> implemen
             throw new IllegalArgumentException("Unknown repository [" + repoName + "]");
         }
         final List<RepositoryMetadata> updatedRepos = new ArrayList<>(repositories);
+        // 将某个存储层的gen 更新后返回
         updatedRepos.set(indexOfRepo, new RepositoryMetadata(repositories.get(indexOfRepo), safeGeneration, pendingGeneration));
         return new RepositoriesMetadata(updatedRepos);
     }

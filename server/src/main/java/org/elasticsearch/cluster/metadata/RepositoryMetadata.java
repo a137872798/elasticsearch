@@ -28,7 +28,8 @@ import java.util.Objects;
 
 /**
  * Metadata about registered repository
- * 用于描述某个存储对象的
+ * 用于描述某个存储组件的
+ * 存储层本身可能有多种实现 或者同时使用多种实现  这里只表示其中某一种
  */
 public class RepositoryMetadata {
 

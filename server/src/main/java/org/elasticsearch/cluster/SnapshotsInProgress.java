@@ -52,6 +52,7 @@ import java.util.stream.Collectors;
 
 /**
  * Meta data about snapshots that are currently executing
+ * 描述当前生成快照的进度
  */
 public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implements Custom {
 
@@ -84,14 +85,27 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
     }
 
     public static class Entry implements ToXContent, RepositoryOperation {
+
+        /**
+         * 快照任务当前的运行状态
+         */
         private final State state;
+        /**
+         * 快照对象本身没有数据属性 仅包含一个路径和一个id
+         */
         private final Snapshot snapshot;
         private final boolean includeGlobalState;
         private final boolean partial;
         private final ImmutableOpenMap<ShardId, ShardSnapshotStatus> shards;
+        /**
+         * 本次快照相关的所有索引
+         */
         private final List<IndexId> indices;
         private final ImmutableOpenMap<String, List<ShardId>> waitingIndices;
         private final long startTime;
+        /**
+         * 这个好像等同于 gen 怎么得出来的???
+         */
         private final long repositoryStateId;
         // see #useShardGenerations
         private final Version version;
@@ -420,6 +434,9 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
         }
     }
 
+    /**
+     * 描述当前快照任务的状态
+     */
     public enum State {
         INIT((byte) 0, false),
         STARTED((byte) 1, false),

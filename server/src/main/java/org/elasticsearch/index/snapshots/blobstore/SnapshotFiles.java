@@ -30,6 +30,9 @@ import java.util.Map;
  */
 public class SnapshotFiles {
 
+    /**
+     * 快照名
+     */
     private final String snapshot;
 
     private final List<FileInfo> indexFiles;
