@@ -173,6 +173,7 @@ public final class ShardGenerations {
          *
          * @param indices indices to filter for
          * @return builder that contains only the given {@code indices} and no {@link #DELETED_SHARD_GEN} entries
+         * 只保留传入的所有相关的gen
          */
         public Builder retainIndicesAndPruneDeletes(Set<IndexId> indices) {
             generations.keySet().retainAll(indices);
@@ -182,6 +183,7 @@ public final class ShardGenerations {
                 while (iterator.hasNext()) {
                     Map.Entry<Integer, String> entry = iterator.next();
                     final String generation = entry.getValue();
+                    // TODO _deleted 这个gen是什么意思
                     if (generation.equals(DELETED_SHARD_GEN)) {
                         iterator.remove();
                     }
@@ -193,6 +195,11 @@ public final class ShardGenerations {
             return this;
         }
 
+        /**
+         * 就是覆盖操作
+         * @param shardGenerations
+         * @return
+         */
         public Builder putAll(ShardGenerations shardGenerations) {
             shardGenerations.shardGenerations.forEach((indexId, gens) -> {
                 for (int i = 0; i < gens.size(); i++) {

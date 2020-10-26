@@ -128,6 +128,7 @@ public final class RepositoryData {
      * Creates a copy of this instance that contains updated version data.
      * @param versions map of snapshot versions
      * @return copy with updated version data
+     * 将每个快照的版本信息填充到  RepositoryData中
      */
     public RepositoryData withVersions(Map<SnapshotId, Version> versions) {
         if (versions.isEmpty()) {
@@ -263,12 +264,15 @@ public final class RepositoryData {
     /**
      * Remove snapshots and remove any indices that no longer exist in the repository due to the deletion of the snapshots.
      *
-     * @param snapshots               Snapshot ids to remove
+     * @param snapshots               Snapshot ids to remove    避免这些快照继续被访问
      * @param updatedShardGenerations Shard generations that changed as a result of removing the snapshot.
      *                                The {@code String[]} passed for each {@link IndexId} contains the new shard generation id for each
      *                                changed shard indexed by its shardId
+     *                                某次删除操作中涉及到了哪个 indexId shardId 并且相关的gen是多少  (删除操作是选择生成一个新文件 而不是修改原文件内容)
      */
     public RepositoryData removeSnapshots(final Collection<SnapshotId> snapshots, final ShardGenerations updatedShardGenerations) {
+
+        // 此时需要保留的快照
         Map<String, SnapshotId> newSnapshotIds = snapshotIds.values().stream().filter(Predicate.not(snapshots::contains))
             .collect(Collectors.toMap(SnapshotId::getUUID, Function.identity()));
         if (newSnapshotIds.size() != snapshotIds.size() - snapshots.size()) {
@@ -276,12 +280,14 @@ public final class RepositoryData {
             notFound.removeAll(snapshotIds.values());
             throw new ResourceNotFoundException("Attempting to remove non-existent snapshots {} from repository data", notFound);
         }
+        // 在原本的快照状态， 版本号  中移除掉本次删除的快照相关信息
         Map<String, SnapshotState> newSnapshotStates = new HashMap<>(snapshotStates);
         final Map<String, Version> newSnapshotVersions = new HashMap<>(snapshotVersions);
         for (SnapshotId snapshotId : snapshots) {
             newSnapshotStates.remove(snapshotId.getUUID());
             newSnapshotVersions.remove(snapshotId.getUUID());
         }
+        // 也是一些删除操作
         Map<IndexId, List<SnapshotId>> indexSnapshots = new HashMap<>();
         for (final IndexId indexId : indices.values()) {
             List<SnapshotId> snapshotIds = this.indexSnapshots.get(indexId);

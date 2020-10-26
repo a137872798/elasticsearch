@@ -72,10 +72,9 @@ public class RepositoriesMetadata extends AbstractNamedDiffable<Custom> implemen
      * Creates a new instance that has the given repository moved to the given {@code safeGeneration} and {@code pendingGeneration}.
      *
      * @param repoName          repository name  某一存储层具体实现的名字
-     * @param safeGeneration    new safe generation
-     * @param pendingGeneration new pending generation
+     * @param safeGeneration    new safe generation  推测是此时的gen
+     * @param pendingGeneration new pending generation  本次正要更新的gen
      * @return new instance with updated generations
-     * TODO  什么是 saftGen  什么是 pendingGen
      */
     public RepositoriesMetadata withUpdatedGeneration(String repoName, long safeGeneration, long pendingGeneration) {
         int indexOfRepo = -1;
