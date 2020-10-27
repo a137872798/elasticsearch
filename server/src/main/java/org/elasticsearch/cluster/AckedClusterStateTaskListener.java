@@ -22,6 +22,9 @@ import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.unit.TimeValue;
 
+/**
+ *
+ */
 public interface AckedClusterStateTaskListener extends ClusterStateTaskListener {
 
     /**
@@ -33,6 +36,7 @@ public interface AckedClusterStateTaskListener extends ClusterStateTaskListener 
      *
      * @param discoveryNode a node
      * @return true if the node is expected to send ack back, false otherwise
+     * 判断某个node 是否期望获取ack信息
      */
     boolean mustAck(DiscoveryNode discoveryNode);
 

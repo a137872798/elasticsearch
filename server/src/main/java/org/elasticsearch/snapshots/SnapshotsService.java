@@ -101,6 +101,7 @@ import static org.elasticsearch.cluster.SnapshotsInProgress.completed;
 /**
  * Service responsible for creating snapshots. See package level documentation of {@link org.elasticsearch.snapshots}
  * for details.
+ * 快照服务
  */
 public class SnapshotsService extends AbstractLifecycleComponent implements ClusterStateApplier {
 
@@ -112,10 +113,19 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
 
     private static final Logger logger = LogManager.getLogger(SnapshotsService.class);
 
+    /**
+     * 集群服务 负责执行一些更新clusterState的任务 并将最新的集群状态发布给其它节点
+     */
     private final ClusterService clusterService;
 
+    /**
+     * 这个解析器先不管吧 也就是在name和格式化字符串之间做映射 与ES本身的核心功能无关
+     */
     private final IndexNameExpressionResolver indexNameExpressionResolver;
 
+    /**
+     * 存储服务
+     */
     private final RepositoriesService repositoriesService;
 
     private final ThreadPool threadPool;
@@ -129,6 +139,14 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     // Set of snapshots that are currently being ended by this node
     private final Set<Snapshot> endingSnapshots = Collections.synchronizedSet(new HashSet<>());
 
+    /**
+     * 快照服务
+     * @param settings
+     * @param clusterService
+     * @param indexNameExpressionResolver
+     * @param repositoriesService
+     * @param threadPool
+     */
     public SnapshotsService(Settings settings, ClusterService clusterService, IndexNameExpressionResolver indexNameExpressionResolver,
                             RepositoriesService repositoriesService, ThreadPool threadPool) {
         this.clusterService = clusterService;
@@ -136,6 +154,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         this.repositoriesService = repositoriesService;
         this.threadPool = threadPool;
 
+        // 如果当前节点是一个参与选举的节点
         if (DiscoveryNode.isMasterNode(settings)) {
             // addLowPriorityApplier to make sure that Repository will be created before snapshot
             clusterService.addLowPriorityApplier(this);
@@ -145,6 +164,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     /**
      * Same as {@link #createSnapshot(CreateSnapshotRequest, ActionListener)} but invokes its callback on completion of
      * the snapshot.
+     * 接收创建快照的请求 并执行一次快照操作
      *
      * @param request snapshot request
      * @param listener snapshot completion listener
@@ -160,18 +180,28 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      * This method is used by clients to start snapshot. It makes sure that there is no snapshots are currently running and
      * creates a snapshot record in cluster state metadata.
      *
-     * @param request  snapshot request
-     * @param listener snapshot creation listener
+     * @param request  snapshot request   申请创建快照
+     * @param listener snapshot creation listener   生成的快照结果会触发监听器
      */
     public void createSnapshot(final CreateSnapshotRequest request, final ActionListener<Snapshot> listener) {
+
+        // 本次依靠于哪个存储实例创建快照
         final String repositoryName = request.repository();
+        // 解析成快照名
         final String snapshotName = indexNameExpressionResolver.resolveDateMathExpression(request.snapshot());
+        // 校验名称有效性
         validate(repositoryName, snapshotName);
         final SnapshotId snapshotId = new SnapshotId(snapshotName, UUIDs.randomBase64UUID()); // new UUID for the snapshot
+
+        // 通过指定的存储实例名 寻找实例对象
         Repository repository = repositoriesService.repository(request.repository());
+        // 存储实例 处理一些用户传入的元数据 并尝试修改成自身可以处理的数据  默认情况下就是返回原数据
         final Map<String, Object> userMeta = repository.adaptUserMetadata(request.userMetadata());
+
+        // 更新clusterState 并通知到其他节点
         clusterService.submitStateUpdateTask("create_snapshot [" + snapshotName + ']', new ClusterStateUpdateTask() {
 
+            // SnapshotsInProgress 负责管理所有的生成快照任务   而每个entry则代表一个快照任务
             private SnapshotsInProgress.Entry newSnapshot = null;
 
             private List<String> indices;
@@ -179,11 +209,15 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
             @Override
             public ClusterState execute(ClusterState currentState) {
                 validate(repositoryName, snapshotName, currentState);
+
+                // 找到此时正在执行的所有 快照删除任务
                 SnapshotDeletionsInProgress deletionsInProgress = currentState.custom(SnapshotDeletionsInProgress.TYPE);
+                // 当正在执行删除快照的任务时 无法生成快照
                 if (deletionsInProgress != null && deletionsInProgress.hasDeletionsInProgress()) {
                     throw new ConcurrentSnapshotExecutionException(repositoryName, snapshotName,
                         "cannot snapshot while a snapshot deletion is in-progress in [" + deletionsInProgress + "]");
                 }
+                // 什么是 repositoryCleanup  它跟删除快照有什么联系
                 final RepositoryCleanupInProgress repositoryCleanupInProgress = currentState.custom(RepositoryCleanupInProgress.TYPE);
                 if (repositoryCleanupInProgress != null && repositoryCleanupInProgress.hasCleanupInProgress()) {
                     throw new ConcurrentSnapshotExecutionException(repositoryName, snapshotName,
@@ -193,17 +227,24 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                 // Fail if there are any concurrently running snapshots. The only exception to this being a snapshot in INIT state from a
                 // previous master that we can simply ignore and remove from the cluster state because we would clean it up from the
                 // cluster state anyway in #applyClusterState.
+                // 找到所有正在初始化阶段的快照任务 并且该entry内的快照处于 initializingSnapshots 阶段  那么无法执行快照任务 应该是代表此时正在执行某个快照任务吧
                 if (snapshots != null && snapshots.entries().stream().anyMatch(entry ->
                     (entry.state() == State.INIT && initializingSnapshots.contains(entry.snapshot()) == false) == false)) {
                     throw new ConcurrentSnapshotExecutionException(repositoryName, snapshotName, " a snapshot is already running");
                 }
                 // Store newSnapshot here to be processed in clusterStateProcessed
+                // 反正就是生成了一组索引名
                 indices = Arrays.asList(indexNameExpressionResolver.concreteIndexNames(currentState,
                     request.indicesOptions(), request.indices()));
                 logger.trace("[{}][{}] creating snapshot for indices [{}]", repositoryName, snapshotName, indices);
+
+                // 照理说不是可以存储一组快照么
                 newSnapshot = new SnapshotsInProgress.Entry(
+                    // 快照名称和存储名称是指定的   snapshotId 内部的uuid是随机生成的
                     new Snapshot(repositoryName, snapshotId),
+                    // 是否包含globalState 和  partial 是什么意思???
                     request.includeGlobalState(), request.partial(),
+                    // 新插入的集群状态是 init
                     State.INIT,
                     Collections.emptyList(), // We'll resolve the list of indices when moving to the STARTED state in #beginSnapshot
                     threadPool.absoluteTimeInMillis(),
@@ -211,8 +252,10 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     null,
                     userMeta, Version.CURRENT
                 );
+                // 将初始化的快照存储到 initializingSnapshots中
                 initializingSnapshots.add(newSnapshot.snapshot());
                 snapshots = new SnapshotsInProgress(newSnapshot);
+                // 将最新的快照发布到集群中
                 return ClusterState.builder(currentState).putCustom(SnapshotsInProgress.TYPE, snapshots).build();
             }
 
@@ -226,12 +269,19 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                 listener.onFailure(e);
             }
 
+            /**
+             * 在es中 很多操作都要求尽可能发布到多的节点后才执行
+             * @param source
+             * @param oldState
+             * @param newState
+             */
             @Override
             public void clusterStateProcessed(String source, ClusterState oldState, final ClusterState newState) {
                 if (newSnapshot != null) {
                     final Snapshot current = newSnapshot.snapshot();
                     assert initializingSnapshots.contains(current);
                     assert indices != null;
+                    // 开始生成快照
                     beginSnapshot(newState, newSnapshot, request.partial(), indices, repository, new ActionListener<>() {
                         @Override
                         public void onResponse(final Snapshot snapshot) {
@@ -301,9 +351,10 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      * <p>
      * Creates snapshot in repository and updates snapshot metadata record with list of shards that needs to be processed.
      *
-     * @param clusterState               cluster state
-     * @param snapshot                   snapshot meta data
-     * @param partial                    allow partial snapshots
+     * @param clusterState               cluster state  此时最新的集群状态
+     * @param snapshot                   snapshot meta data   本次生成快照时 相关的信息
+     * @param partial                    allow partial snapshots   是否允许部分生成快照
+     * @param repository                 本次生成快照使用的存储实例
      * @param userCreateSnapshotListener listener
      */
     private void beginSnapshot(final ClusterState clusterState,
@@ -319,6 +370,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
             @Override
             protected void doRun() {
                 assert initializingSnapshots.contains(snapshot.snapshot());
+                // 如果该存储对象是一个只读对象 那么无法生成快照
                 if (repository.isReadOnly()) {
                     throw new RepositoryException(repository.getMetadata().name(), "cannot create snapshot in a readonly repository");
                 }

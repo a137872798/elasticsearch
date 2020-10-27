@@ -19,8 +19,14 @@
 
 package org.elasticsearch.repositories;
 
+/**
+ * 代表认证失败了
+ */
 public class VerificationFailure {
 
+    /**
+     * 在哪个节点进行认证导致失败
+     */
     private String nodeId;
 
     private Exception cause;

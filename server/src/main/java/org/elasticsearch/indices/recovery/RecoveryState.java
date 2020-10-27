@@ -45,6 +45,7 @@ import java.util.Map;
 
 /**
  * Keeps track of state related to shard recovery.
+ * 描述此时从快照中恢复数据的状态
  */
 public class RecoveryState implements ToXContentFragment, Writeable {
 
@@ -688,6 +689,9 @@ public class RecoveryState implements ToXContentFragment, Writeable {
         }
     }
 
+    /**
+     * 这个索引是 ES定义的 与 lucene中index的定义不同
+     */
     public static class Index extends Timer implements ToXContentFragment, Writeable {
 
         private final Map<String, File> fileDetails = new HashMap<>();

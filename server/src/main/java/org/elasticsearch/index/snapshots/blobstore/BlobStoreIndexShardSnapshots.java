@@ -48,7 +48,7 @@ public class BlobStoreIndexShardSnapshots implements Iterable<SnapshotFiles>, To
     public static final BlobStoreIndexShardSnapshots EMPTY = new BlobStoreIndexShardSnapshots(Collections.emptyList());
 
     /**
-     * 维护了各个快照文件
+     * 每次生成快照 都会对应一个 snapshotFiles 对象  也就是该对象包含了某个索引分片的所有快照
      */
     private final List<SnapshotFiles> shardSnapshots;
     private final Map<String, FileInfo> files;

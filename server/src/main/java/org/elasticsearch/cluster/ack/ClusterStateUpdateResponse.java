@@ -24,6 +24,9 @@ package org.elasticsearch.cluster.ack;
  */
 public class ClusterStateUpdateResponse {
 
+    /**
+     * 本次更新是否通知到了所有的节点上
+     */
     private final boolean acknowledged;
 
     public ClusterStateUpdateResponse(boolean acknowledged) {

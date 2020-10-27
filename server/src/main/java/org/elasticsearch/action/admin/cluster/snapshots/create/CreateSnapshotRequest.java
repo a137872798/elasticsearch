@@ -61,6 +61,7 @@ import static org.elasticsearch.common.xcontent.support.XContentMapValues.nodeBo
  * <li>must be lowercase</li>
  * <li>must not contain invalid file name characters {@link org.elasticsearch.common.Strings#INVALID_FILENAME_CHARS} </li>
  * </ul>
+ * 执行一次快照操作
  */
 public class CreateSnapshotRequest extends MasterNodeRequest<CreateSnapshotRequest>
         implements IndicesRequest.Replaceable, ToXContentObject {
@@ -74,6 +75,9 @@ public class CreateSnapshotRequest extends MasterNodeRequest<CreateSnapshotReque
 
     private IndicesOptions indicesOptions = IndicesOptions.strictExpand();
 
+    /**
+     * 是否是部分的???
+     */
     private boolean partial = false;
 
     private Settings settings = EMPTY_SETTINGS;
@@ -82,6 +86,9 @@ public class CreateSnapshotRequest extends MasterNodeRequest<CreateSnapshotReque
 
     private boolean waitForCompletion;
 
+    /**
+     * 用户在传入请求时携带的一些额外信息
+     */
     private Map<String, Object> userMetadata;
 
     public CreateSnapshotRequest() {

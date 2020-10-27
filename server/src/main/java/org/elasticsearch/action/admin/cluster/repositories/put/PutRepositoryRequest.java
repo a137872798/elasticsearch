@@ -44,6 +44,7 @@ import static org.elasticsearch.common.settings.Settings.Builder.EMPTY_SETTINGS;
  * <p>
  * Registers a repository with given name, type and settings. If the repository with the same name already
  * exists in the cluster, the new repository will replace the existing repository.
+ * 该请求期望返回ack 信息
  */
 public class PutRepositoryRequest extends AcknowledgedRequest<PutRepositoryRequest> implements ToXContentObject {
 
@@ -197,6 +198,7 @@ public class PutRepositoryRequest extends AcknowledgedRequest<PutRepositoryReque
 
     /**
      * Returns true if repository should be verified after creation
+     * 在申请创建该存储实例后 需要进行检测  否则不需要检测
      */
     public boolean verify() {
         return this.verify;

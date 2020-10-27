@@ -460,7 +460,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     // Inspects all cluster state elements that contain a hint about what the current repository generation is and updates
     // #latestKnownRepoGen if a newer than currently known generation is found
-    // 将最新state的数据存储起来
+    // 当集群状态发生变化时 会用该函数进行处理 更新本地的 latestKnownRepoGen
     @Override
     public void updateState(ClusterState state) {
         // 从当前集群状态中获取该存储实现相关的元数据  该元数据是以custom 的形式存储在clusterState中的
@@ -1330,6 +1330,10 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             "Expected current thread [" + Thread.currentThread() + "] to be the snapshot or generic thread.";
     }
 
+    /**
+     * 实际是在做准备工作  在repositoriesService中可以看到先调用该方法后 通过 verifyAction 发起一个认证动作 并在认证完成后触发 endVerification
+     * @return
+     */
     @Override
     public String startVerification() {
         try {
@@ -1939,36 +1943,62 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         }
     }
 
+    /**
+     * 为当前分片创建快照
+     * @param store                 store to be snapshotted
+     * @param mapperService         the shards mapper service
+     * @param snapshotId            snapshot id    本次申请生成快照所用的快照id   如果在
+     * @param indexId               id for the index being snapshotted
+     * @param snapshotIndexCommit   commit point
+     * @param shardStateIdentifier  a unique identifier of the state of the shard that is stored with the shard's snapshot and used
+     *                              to detect if the shard has changed between snapshots. If {@code null} is passed as the identifier
+     *                              snapshotting will be done by inspecting the physical files referenced by {@code snapshotIndexCommit}
+     * @param snapshotStatus        snapshot status            快照的状态
+     * @param repositoryMetaVersion version of the updated repository metadata to write
+     * @param userMetadata          user metadata of the snapshot found in {@link SnapshotsInProgress.Entry#userMetadata()}
+     * @param listener              listener invoked on completion
+     *                              为什么生成一个快照需要这么多参数
+     */
     @Override
     public void snapshotShard(Store store, MapperService mapperService, SnapshotId snapshotId, IndexId indexId,
                               IndexCommit snapshotIndexCommit, String shardStateIdentifier, IndexShardSnapshotStatus snapshotStatus,
                               Version repositoryMetaVersion, Map<String, Object> userMetadata, ActionListener<String> listener) {
+        // 获取 store 对应的分片id
         final ShardId shardId = store.shardId();
         final long startTime = threadPool.absoluteTimeInMillis();
         try {
+            // 获取当前快照的gen 每次生成新的gen 该值都会被更新
             final String generation = snapshotStatus.generation();
             logger.debug("[{}] [{}] snapshot to [{}] [{}] ...", shardId, snapshotId, metadata.name(), generation);
+            // 通过索引和分片id定位到目标文件夹
             final BlobContainer shardContainer = shardContainer(indexId, shardId);
             final Set<String> blobs;
             if (generation == null) {
                 try {
+                    // 如果此时还没有设置 gen信息 那么查找当前所有的index-n 文件  可能是兼容旧代码的
                     blobs = shardContainer.listBlobsByPrefix(INDEX_FILE_PREFIX).keySet();
                 } catch (IOException e) {
                     throw new IndexShardSnapshotFailedException(shardId, "failed to list blobs", e);
                 }
             } else {
+                // 只获取目标gen 对应的文件
                 blobs = Collections.singleton(INDEX_FILE_PREFIX + generation);
             }
 
+            // key 代表找到 index-n 文件后 将数据流读取出来并反序列化后的结果
             Tuple<BlobStoreIndexShardSnapshots, String> tuple = buildBlobStoreIndexShardSnapshots(blobs, shardContainer, generation);
             BlobStoreIndexShardSnapshots snapshots = tuple.v1();
             String fileListGeneration = tuple.v2();
 
+            // TODO 为什么不允许snapshotId(snapshotName) 重复 却允许 shardStateIdentifier 重复 他们的意义分别是什么
+            // 在通过gen 定位到文件后 解析的实体中 不应该存在本次传入的快照id    一个index-n 文件下包含多个快照么  什么时候清除这个目录 ???
             if (snapshots.snapshots().stream().anyMatch(sf -> sf.snapshot().equals(snapshotId.getName()))) {
                 throw new IndexShardSnapshotFailedException(shardId,
                     "Duplicate snapshot name [" + snapshotId.getName() + "] detected, aborting");
             }
             // First inspect all known SegmentInfos instances to see if we already have an equivalent commit in the repository
+            // 首先检测存储层下是否有相同的数据    shardStateIdentifier 是同一组快照中确定唯一性的东西 这里在检查是否已经为当前索引分片生成过快照了
+            // 如果找到了shardStateIdentifier 一致的对象 那么将内部的所有文件信息返回
             final List<BlobStoreIndexShardSnapshot.FileInfo> filesFromSegmentInfos = Optional.ofNullable(shardStateIdentifier).map(id -> {
                 for (SnapshotFiles snapshotFileSet : snapshots.snapshots()) {
                     if (id.equals(snapshotFileSet.shardStateIdentifier())) {
@@ -1979,15 +2009,20 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             }).orElse(null);
 
             final List<BlobStoreIndexShardSnapshot.FileInfo> indexCommitPointFiles;
+            // 分别记录本次新增的快照文件数量 以及大小    和 总的快照文件数量，大小
             int indexIncrementalFileCount = 0;
             int indexTotalNumberOfFiles = 0;
             long indexIncrementalSize = 0;
             long indexTotalFileSize = 0;
+
+            // needsWrite == true 的文件存储在阻塞队列中
             final BlockingQueue<BlobStoreIndexShardSnapshot.FileInfo> filesToSnapshot = new LinkedBlockingQueue<>();
             // If we did not find a set of files that is equal to the current commit we determine the files to upload by comparing files
             // in the commit with files already in the repository
+            // 代表没有发生重复
             if (filesFromSegmentInfos == null) {
                 indexCommitPointFiles = new ArrayList<>();
+                // 增加引用计数 避免被意外关闭
                 store.incRef();
                 final Collection<String> fileNames;
                 final Store.MetadataSnapshot metadataFromStore;
@@ -1996,23 +2031,30 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                     try {
                         logger.trace(
                             "[{}] [{}] Loading store metadata using index commit [{}]", shardId, snapshotId, snapshotIndexCommit);
+                        // 从该仓库下找到本次 commit相关的所有文件中的 segment_N 文件  并将所有文件的大小，校验和等信息抽取出来生成  metadataSnapshot中
                         metadataFromStore = store.getMetadata(snapshotIndexCommit);
                         fileNames = snapshotIndexCommit.getFileNames();
                     } catch (IOException e) {
                         throw new IndexShardSnapshotFailedException(shardId, "Failed to get store file metadata", e);
                     }
                 } finally {
+                    // 读取完相关数据后就可以允许关闭store了
                     store.decRef();
                 }
+                // 遍历本次提交的所有文件
                 for (String fileName : fileNames) {
+                    // TODO 为什么不一开始就检查这个  并且该status 是追踪某次生成快照的动作  还是会影响到对这个索引分片的所有快照操作
                     if (snapshotStatus.isAborted()) {
                         logger.debug("[{}] [{}] Aborted on the file [{}], exiting", shardId, snapshotId, fileName);
                         throw new IndexShardSnapshotFailedException(shardId, "Aborted");
                     }
 
                     logger.trace("[{}] [{}] Processing [{}]", shardId, snapshotId, fileName);
+                    // 获取该文件的元数据 也就是大小 校验和啥的
                     final StoreFileMetadata md = metadataFromStore.get(fileName);
+                    // 本次快照中有与 此时存在于store中完全相同的文件
                     BlobStoreIndexShardSnapshot.FileInfo existingFileInfo = null;
+                    // 通过某个文件名找到 该文件对应的所有快照么 ???
                     List<BlobStoreIndexShardSnapshot.FileInfo> filesInfo = snapshots.findPhysicalIndexFiles(fileName);
                     if (filesInfo != null) {
                         for (BlobStoreIndexShardSnapshot.FileInfo fileInfo : filesInfo) {
@@ -2027,14 +2069,20 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
                     // We can skip writing blobs where the metadata hash is equal to the blob's contents because we store the hash/contents
                     // directly in the shard level metadata in this case
+                    // hashEqualsContents 的结果与是否需要写入有什么关系
                     final boolean needsWrite = md.hashEqualsContents() == false;
+
+                    // 这里累加文件总长度
                     indexTotalFileSize += md.length();
                     indexTotalNumberOfFiles++;
 
+                    // 代表快照数据不存在 需要自己生成
                     if (existingFileInfo == null) {
+                        // 新增了多少文件
                         indexIncrementalFileCount++;
                         indexIncrementalSize += md.length();
                         // create a new FileInfo
+                        // 进入到这里代表需要创建一个新的快照文件
                         BlobStoreIndexShardSnapshot.FileInfo snapshotFileInfo =
                             new BlobStoreIndexShardSnapshot.FileInfo(
                                 (needsWrite ? UPLOADED_DATA_BLOB_PREFIX : VIRTUAL_DATA_BLOB_PREFIX) + UUIDs.randomBase64UUID(),
@@ -2049,18 +2097,24 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                     }
                 }
             } else {
+                 // shardStateIdentifier 匹配的情况 对于快照下所有的文件就是 indexCommitPointFiles
                 indexCommitPointFiles = filesFromSegmentInfos;
             }
 
+            // 切换快照状态    shardStateIdentifier匹配的情况 4个容器都是空的  并且还有切换到start的必要么
             snapshotStatus.moveToStarted(startTime, indexIncrementalFileCount,
                 indexTotalNumberOfFiles, indexIncrementalSize, indexTotalFileSize);
 
             final StepListener<Collection<Void>> allFilesUploadedListener = new StepListener<>();
+
+            // 当生成快照的逻辑处理完后 触发相关逻辑  v 可以忽略 因为触发监听器时 对应的类型是Void
             allFilesUploadedListener.whenComplete(v -> {
+                // 将快照状态修改成 finalize  代表快照文件的写入已经完成 但是还需要将这个状态反映到 BlobStoreIndexShardSnapshots 上
                 final IndexShardSnapshotStatus.Copy lastSnapshotStatus =
                     snapshotStatus.moveToFinalize(snapshotIndexCommit.getGeneration());
 
                 // now create and write the commit point
+                // 将本次快照总计写入了多少文件，耗时等信息抽取出来生成快照对象
                 final BlobStoreIndexShardSnapshot snapshot = new BlobStoreIndexShardSnapshot(snapshotId.getName(),
                     lastSnapshotStatus.getIndexVersion(),
                     indexCommitPointFiles,
@@ -2072,11 +2126,13 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
                 logger.trace("[{}] [{}] writing shard snapshot file", shardId, snapshotId);
                 try {
+                    // 将对象写入到文件中   就可以把这种持久化与DB 做类比 一个是插入记录到数据库中 一个是直接在文件系统中生成文件   每个文件就代表每次操作 或者是描述操作的结果 或者是此时最新的gen等关键信息
                     indexShardSnapshotFormat.write(snapshot, shardContainer, snapshotId.getUUID(), false);
                 } catch (IOException e) {
                     throw new IndexShardSnapshotFailedException(shardId, "Failed to write commit point", e);
                 }
                 // build a new BlobStoreIndexShardSnapshot, that includes this one and all the saved ones
+                // 更新 BlobStoreIndexShardSnapshots ， 该对象本身是维护了每次快照的信息的  所以要将本次快照信息 + 之前的信息
                 List<SnapshotFiles> newSnapshotsList = new ArrayList<>();
                 newSnapshotsList.add(new SnapshotFiles(snapshot.snapshot(), snapshot.indexFiles(), shardStateIdentifier));
                 for (SnapshotFiles point : snapshots) {
@@ -2084,11 +2140,13 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                 }
                 final List<String> blobsToDelete;
                 final String indexGeneration;
+                // 检查是否要写入分片的gen
                 final boolean writeShardGens = SnapshotsService.useShardGenerations(repositoryMetaVersion);
                 if (writeShardGens) {
                     indexGeneration = UUIDs.randomBase64UUID();
                     blobsToDelete = Collections.emptyList();
                 } else {
+                    // TODO 忽略兼容性代码
                     indexGeneration = Long.toString(Long.parseLong(fileListGeneration) + 1);
                     // Delete all previous index-N blobs
                     blobsToDelete = blobs.stream().filter(blob -> blob.startsWith(SNAPSHOT_INDEX_PREFIX)).collect(Collectors.toList());
@@ -2098,12 +2156,14 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                         + "] when deleting index-N blobs " + blobsToDelete;
                 }
                 try {
+                    // 将此时最新的 BlobStoreIndexShardSnapshots 写入到container
                     writeShardIndexBlob(shardContainer, indexGeneration, new BlobStoreIndexShardSnapshots(newSnapshotsList));
                 } catch (IOException e) {
                     throw new IndexShardSnapshotFailedException(shardId,
                         "Failed to finalize snapshot creation [" + snapshotId + "] with shard index ["
                             + indexShardSnapshotsFormat.blobName(indexGeneration) + "]", e);
                 }
+                // TODO 忽略兼容代码
                 if (writeShardGens == false) {
                     try {
                         shardContainer.deleteBlobsIgnoringIfNotExists(blobsToDelete);
@@ -2112,24 +2172,32 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                             snapshotId, shardId), e);
                     }
                 }
+                // 代表快照的同步工作也已经完成
                 snapshotStatus.moveToDone(threadPool.absoluteTimeInMillis(), indexGeneration);
                 listener.onResponse(indexGeneration);
             }, listener::onFailure);
+
+            // 当本次新增的快照文件为0时  直接触发监听器 代表任务已经完成
             if (indexIncrementalFileCount == 0) {
                 allFilesUploadedListener.onResponse(Collections.emptyList());
                 return;
             }
             final Executor executor = threadPool.executor(ThreadPool.Names.SNAPSHOT);
             // Start as many workers as fit into the snapshot pool at once at the most
+            // 尽可能多的创建工作线程执行任务
             final int workers = Math.min(threadPool.info(ThreadPool.Names.SNAPSHOT).getMax(), indexIncrementalFileCount);
+            // 装饰了一层监听器
             final ActionListener<Void> filesListener = fileQueueListener(filesToSnapshot, workers, allFilesUploadedListener);
             for (int i = 0; i < workers; ++i) {
-                executor.execute(ActionRunnable.run(filesListener, () -> {
+                executor.execute(ActionRunnable.run(filesListener,
+                    // 运行下面的逻辑 并在完成后触发监听器
+                    () -> {
                     BlobStoreIndexShardSnapshot.FileInfo snapshotFileInfo = filesToSnapshot.poll(0L, TimeUnit.MILLISECONDS);
                     if (snapshotFileInfo != null) {
                         store.incRef();
                         try {
                             do {
+                                // 不断从阻塞队列中拉取待生成的快照文件  当完成时触发监听器
                                 snapshotFile(snapshotFileInfo, indexId, shardId, snapshotId, snapshotStatus, store);
                                 snapshotFileInfo = filesToSnapshot.poll(0L, TimeUnit.MILLISECONDS);
                             } while (snapshotFileInfo != null);
@@ -2155,18 +2223,40 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         return true;
     }
 
+    /**
+     * 从快照中还原 数据分片
+     * @param store           the store to restore the index into
+     * @param snapshotId      snapshot id
+     * @param indexId         id of the index in the repository from which the restore is occurring
+     * @param snapshotShardId shard id (in the snapshot)
+     * @param recoveryState   recovery state   在该对象内部还包含了Index  每次恢复是以index为单位的么
+     *
+     * @param listener        listener to invoke once done
+     */
     @Override
     public void restoreShard(Store store, SnapshotId snapshotId, IndexId indexId, ShardId snapshotShardId,
                              RecoveryState recoveryState, ActionListener<Void> listener) {
         final ShardId shardId = store.shardId();
+        // 生成一个桥接的监听器
         final ActionListener<Void> restoreListener = ActionListener.delegateResponse(listener,
             (l, e) -> l.onFailure(new IndexShardRestoreFailedException(shardId, "failed to restore snapshot [" + snapshotId + "]", e)));
         final Executor executor = threadPool.executor(ThreadPool.Names.SNAPSHOT);
+
+        // 先通过索引分片id  定位到container
         final BlobContainer container = shardContainer(indexId, snapshotShardId);
         executor.execute(ActionRunnable.wrap(restoreListener, l -> {
+            // 在指定快照id 后获取描述本次快照的对象 比如本次快照涉及到多少文件
             final BlobStoreIndexShardSnapshot snapshot = loadShardSnapshot(container, snapshotId);
+            // 将涉及到的所有文件包装成 SnapshotFiles 对象
             final SnapshotFiles snapshotFiles = new SnapshotFiles(snapshot.snapshot(), snapshot.indexFiles(), null);
             new FileRestoreContext(metadata.name(), shardId, snapshotId, recoveryState) {
+
+                /**
+                 * 具体的恢复逻辑由子类定义
+                 * @param filesToRecover List of files to restore  本次恢复需要使用到的所有快照文件
+                 * @param store          Store to restore into
+                 * @param listener
+                 */
                 @Override
                 protected void restoreFiles(List<BlobStoreIndexShardSnapshot.FileInfo> filesToRecover, Store store,
                                             ActionListener<Void> listener) {
@@ -2196,15 +2286,25 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                     }
                 }
 
+                /**
+                 * 实际的恢复操作
+                 * @param fileInfo
+                 * @param store
+                 * @throws IOException
+                 */
                 private void restoreFile(BlobStoreIndexShardSnapshot.FileInfo fileInfo, Store store) throws IOException {
                     boolean success = false;
                     try (IndexOutput indexOutput =
                              store.createVerifyingOutput(fileInfo.physicalName(), fileInfo.metadata(), IOContext.DEFAULT)) {
+
+                        // 如果当前文件是虚拟文件
                         if (fileInfo.name().startsWith(VIRTUAL_DATA_BLOB_PREFIX)) {
+                            // 获取文件的hash信息 并写入到目标文件中
                             final BytesRef hash = fileInfo.metadata().hash();
                             indexOutput.writeBytes(hash.bytes, hash.offset, hash.length);
                             recoveryState.getIndex().addRecoveredBytesToFile(fileInfo.physicalName(), hash.length);
                         } else {
+                            // 如果内部包含有效数据 通过rateLimit加工输入流  并进行写入
                             try (InputStream stream = maybeRateLimit(new SlicedInputStream(fileInfo.numberOfParts()) {
                                 @Override
                                 protected InputStream openSlice(long slice) throws IOException {
@@ -2213,6 +2313,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                             }, restoreRateLimiter, restoreRateLimitingTimeInNanos)) {
                                 final byte[] buffer = new byte[BUFFER_SIZE];
                                 int length;
+                                // 将数据转移到 buffer中 再写入到 output中   buffer使用固定大小 避免在一次传输中占据太多内存量
                                 while ((length = stream.read(buffer)) > 0) {
                                     indexOutput.writeBytes(buffer, 0, length);
                                     recoveryState.getIndex().addRecoveredBytesToFile(fileInfo.physicalName(), length);
@@ -2221,6 +2322,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                         }
                         Store.verify(indexOutput);
                         indexOutput.close();
+                        // 将页缓存中的数据置换到磁盘中
                         store.directory().sync(Collections.singleton(fileInfo.physicalName()));
                         success = true;
                     } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
@@ -2248,6 +2350,13 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         });
     }
 
+    /**
+     * 如果传入了限流器的话  使用限流器包装输入流
+     * @param stream
+     * @param rateLimiter
+     * @param metric  每次触发监听器都会累加这个计数器
+     * @return
+     */
     private static InputStream maybeRateLimit(InputStream stream, @Nullable RateLimiter rateLimiter, CounterMetric metric) {
         return rateLimiter == null ? stream : new RateLimitingInputStream(stream, rateLimiter, metric::inc);
     }
@@ -2260,6 +2369,11 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             snapshot.incrementalSize(), snapshot.totalSize(), null); // Not adding a real generation here as it doesn't matter to callers
     }
 
+    /**
+     * 就是检测能否正常写入blob 失败的情况下抛出异常
+     * @param seed
+     * @param localNode         the local node information, for inclusion in verification errors
+     */
     @Override
     public void verify(String seed, DiscoveryNode localNode) {
         assertSnapshotOrGenericThread();
@@ -2446,17 +2560,25 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     /**
      * Snapshot individual file
-     * @param fileInfo file to be snapshotted
+     * @param fileInfo file to be snapshotted  描述快照文件的对象 此时还没有往内部写入数据
+     *
+     *                 感觉下面的逻辑像是读取此时的目标文件 并生成了一份副本 作为快照文件
      */
     private void snapshotFile(BlobStoreIndexShardSnapshot.FileInfo fileInfo, IndexId indexId, ShardId shardId, SnapshotId snapshotId,
                               IndexShardSnapshotStatus snapshotStatus, Store store) throws IOException {
+        // 定位到分片所在的container 基于文件系统的实现 就是文件夹
         final BlobContainer shardContainer = shardContainer(indexId, shardId);
+        // 获取本次快照文件对应的名字
         final String file = fileInfo.physicalName();
         try (IndexInput indexInput = store.openVerifyingInput(file, IOContext.READONCE, fileInfo.metadata())) {
+
+            // 每个文件都分为几个部分是什么意思
             for (int i = 0; i < fileInfo.numberOfParts(); i++) {
+                // 每个部分的长度
                 final long partBytes = fileInfo.partBytes(i);
 
                 // Make reads abortable by mutating the snapshotStatus object
+                // 在读取快照数据时 使用到了限流器   同时每个inputStrem 只读取一个片段
                 final InputStream inputStream = new FilterInputStream(maybeRateLimit(
                     new InputStreamIndexInput(indexInput, partBytes), snapshotRateLimiter, snapshotRateLimitingTimeInNanos)) {
                     @Override
@@ -2479,9 +2601,12 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                         }
                     }
                 };
+                // 把文件的某个片段写入到container 中
                 shardContainer.writeBlob(fileInfo.partName(i), inputStream, partBytes, true);
             }
+            // 进行认证
             Store.verify(indexInput);
+            // 增加一个已经处理完的快照对象
             snapshotStatus.addProcessedFile(fileInfo.length());
         } catch (Exception t) {
             failStoreIfCorrupted(store, t);

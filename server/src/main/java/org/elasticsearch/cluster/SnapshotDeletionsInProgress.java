@@ -48,6 +48,7 @@ public class SnapshotDeletionsInProgress extends AbstractNamedDiffable<Custom> i
     public static final String TYPE = "snapshot_deletions";
 
     // the list of snapshot deletion request entries
+    // 每当有一个正在执行的快照删除任务 就会包装成一个entry 并设置到容器中
     private final List<Entry> entries;
 
     public SnapshotDeletionsInProgress(List<Entry> entries) {

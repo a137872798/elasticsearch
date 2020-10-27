@@ -126,21 +126,37 @@ import static java.util.Collections.unmodifiableMap;
  *          store.decRef();
  *      }
  * </pre>
+ * 每个store 对应一个 shard
  */
 public class Store extends AbstractIndexShardComponent implements Closeable, RefCounted {
     static final String CODEC = "store";
     static final int CORRUPTED_MARKER_CODEC_VERSION = 2;
     // public is for test purposes
     public static final String CORRUPTED_MARKER_NAME_PREFIX = "corrupted_";
+
+    /**
+     * 统计数据的刷新时间间隔
+     */
     public static final Setting<TimeValue> INDEX_STORE_STATS_REFRESH_INTERVAL_SETTING =
         Setting.timeSetting("index.store.stats_refresh_interval", TimeValue.timeValueSeconds(10), Property.IndexScope);
 
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
+
+    /**
+     * ES 包装后的目录对象   仓库指代的就是这个目录吧 并且该目录下应该都是该分片的数据
+     */
     private final StoreDirectory directory;
     private final ReentrantReadWriteLock metadataLock = new ReentrantReadWriteLock();
+
+    /**
+     * 什么是分片锁
+     */
     private final ShardLock shardLock;
     private final OnClose onClose;
 
+    /**
+     * 当引用计数归0时 触发 closeInternal
+     */
     private final AbstractRefCounted refCounter = new AbstractRefCounted("store") {
         @Override
         protected void closeInternal() {
@@ -156,9 +172,13 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     public Store(ShardId shardId, IndexSettings indexSettings, Directory directory, ShardLock shardLock,
                  OnClose onClose) {
         super(shardId, indexSettings);
+        // 从配置对象中获取统计数据刷新的时间间隔
         final TimeValue refreshInterval = indexSettings.getValue(INDEX_STORE_STATS_REFRESH_INTERVAL_SETTING);
         logger.debug("store stats are refreshed with refresh_interval [{}]", refreshInterval);
+
+        // 该目录对象是包装过的 会记录此时打开了多少输出流 总计修改了多少文件等
         ByteSizeCachingDirectory sizeCachingDir = new ByteSizeCachingDirectory(directory, refreshInterval);
+        // 在此之上又包装一层  变成一个分片目录
         this.directory = new StoreDirectory(sizeCachingDir, Loggers.getLogger("index.store.deletes", shardId));
         this.shardLock = shardLock;
         this.onClose = onClose;
@@ -177,8 +197,10 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * Returns the last committed segments info for this store
      *
      * @throws IOException if the index is corrupted or the segments file is not present
+     * 获取最后一次提交的segment 信息
      */
     public SegmentInfos readLastCommittedSegmentsInfo() throws IOException {
+        // 确保文件没有损坏
         failIfCorrupted();
         try {
             return readSegmentsInfo(null, directory());
@@ -192,6 +214,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * Returns the segments info for the given commit or for the latest commit if the given commit is <code>null</code>
      *
      * @throws IOException if the index is corrupted or the segments file is not present
+     * 从指定目录中读取segmentInfos  实际上就是 segment_N 文件 并还原成segmentInfos
      */
     private static SegmentInfos readSegmentsInfo(IndexCommit commit, Directory directory) throws IOException {
         assert commit == null || commit.getDirectory() == directory;
@@ -233,6 +256,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * @throws FileNotFoundException      if one or more files referenced by a commit are not present.
      * @throws NoSuchFileException        if one or more files referenced by a commit are not present.
      * @throws IndexNotFoundException     if the commit point can't be found in this store
+     * 获取 indexCommit 对应的segment_N 文件此时的信息 作为一个快照
      */
     public MetadataSnapshot getMetadata(IndexCommit commit) throws IOException {
         return getMetadata(commit, false);
@@ -260,6 +284,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * @throws FileNotFoundException      if one or more files referenced by a commit are not present.
      * @throws NoSuchFileException        if one or more files referenced by a commit are not present.
      * @throws IndexNotFoundException     if the commit point can't be found in this store
+     * indexCommit  代表某次调用 IndexWriter.commit 生成的结果 从该对象中抽取出元数据快照
      */
     public MetadataSnapshot getMetadata(IndexCommit commit, boolean lockDirectory) throws IOException {
         ensureOpen();
@@ -267,6 +292,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         assert lockDirectory ? commit == null : true : "IW lock should not be obtained if there is a commit point available";
         // if we lock the directory we also acquire the write lock since that makes sure that nobody else tries to lock the IW
         // on this store at the same time.
+        // 非加锁情况 实际上也是获取了读锁 并非完全不加锁
         java.util.concurrent.locks.Lock lock = lockDirectory ? metadataLock.writeLock() : metadataLock.readLock();
         lock.lock();
         try (Closeable ignored = lockDirectory ? directory.obtainLock(IndexWriter.WRITE_LOCK_NAME) : () -> {} ) {
@@ -282,6 +308,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     /**
      * Renames all the given files from the key of the map to the
      * value of the map. All successfully renamed files are removed from the map in-place.
+     * 将 key 对应的文件 重命名为 value  同时将成功rename的键值对从map中移除
      */
     public void renameTempFilesSafe(Map<String, String> tempFileMap) throws IOException {
         // this works just like a lucene commit - we rename all temp files and once we successfully
@@ -308,16 +335,19 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                 String origFile = entry.getValue();
                 // first, go and delete the existing ones
                 try {
+                    // 先删除旧文件
                     directory.deleteFile(origFile);
                 } catch (FileNotFoundException | NoSuchFileException e) {
                 } catch (Exception ex) {
                     logger.debug(() -> new ParameterizedMessage("failed to delete file [{}]", origFile), ex);
                 }
                 // now, rename the files... and fail it it won't work
+                // 进行rename
                 directory.rename(tempFile, origFile);
                 final String remove = tempFileMap.remove(tempFile);
                 assert remove != null;
             }
+            // 将页缓存的数据置换到磁盘中
             directory.syncMetaData();
         } finally {
             metadataLock.writeLock().unlock();
@@ -340,6 +370,11 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         }
     }
 
+    /**
+     * 该统计对象 记录了这个目录的大小
+     * @return
+     * @throws IOException
+     */
     public StoreStats stats() throws IOException {
         ensureOpen();
         return new StoreStats(directory.estimateSize());
@@ -357,6 +392,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * @throws AlreadyClosedException iff the reference counter can not be incremented.
      * @see #decRef
      * @see #tryIncRef()
+     * 在使用该对象前 应该先调用该方法
      */
     @Override
     public final void incRef() {
@@ -402,12 +438,17 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         }
     }
 
+    /**
+     * 当引用计数清零时 会触发该方法
+     */
     private void closeInternal() {
         // Leverage try-with-resources to close the shard lock for us
         try (Closeable c = shardLock) {
             try {
+                // 关闭目录对象
                 directory.innerClose(); // this closes the distributorDirectory as well
             } finally {
+                // 使用该钩子去处理 分片锁对象
                 onClose.accept(shardLock);
             }
         } catch (IOException e) {
@@ -418,12 +459,16 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     /**
      * Reads a MetadataSnapshot from the given index locations or returns an empty snapshot if it can't be read.
      *
+     * @param shardLocker 代表一个可上锁对象 暴露一个lock的api 同时还可以指定锁定时间
      * @throws IOException if the index we try to read is corrupted
+     * 通过指定的路径找到元数据快照   MetadataSnapshot 记录的是某个时刻segment_N 内部的数据
      */
     public static MetadataSnapshot readMetadataSnapshot(Path indexLocation, ShardId shardId, NodeEnvironment.ShardLocker shardLocker,
                                                         Logger logger) throws IOException {
+        // 代表将某个分片锁定5秒钟
         try (ShardLock lock = shardLocker.lock(shardId, "read metadata snapshot", TimeUnit.SECONDS.toMillis(5));
              Directory dir = new SimpleFSDirectory(indexLocation)) {
+            // 在确定目录未损坏时 通过该目录定位 segment_n文件 并生成一个快照对象
             failIfCorrupted(dir);
             return new MetadataSnapshot(null, dir, logger);
         } catch (IndexNotFoundException ex) {
@@ -440,12 +485,15 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * Tries to open an index for the given location. This includes reading the
      * segment infos and possible corruption markers. If the index can not
      * be opened, an exception is thrown
+     * 尝试打开指定位置的索引
      */
     public static void tryOpenIndex(Path indexLocation, ShardId shardId, NodeEnvironment.ShardLocker shardLocker,
-                                        Logger logger) throws IOException, ShardLockObtainFailedException {
+                                    Logger logger) throws IOException, ShardLockObtainFailedException {
         try (ShardLock lock = shardLocker.lock(shardId, "open index", TimeUnit.SECONDS.toMillis(5));
              Directory dir = new SimpleFSDirectory(indexLocation)) {
+            // 先检测目录下数据是否不正常
             failIfCorrupted(dir);
+            // 还原段信息
             SegmentInfos segInfo = Lucene.readSegmentInfos(dir);
             logger.trace("{} loaded segment info [{}]", shardId, segInfo);
         }
@@ -456,9 +504,11 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * <p>
      * Note: Checksums are calculated by default since version 4.8.0. This method only adds the
      * verification against the checksum in the given metadata and does not add any significant overhead.
+     * 通过目标目录生成输出流 同时用一个校验器包裹
+     * LuceneVerifyingIndexOutput 怎么使用还是由外部人员决定 Store对象本身只是定义它的功能
      */
     public IndexOutput createVerifyingOutput(String fileName, final StoreFileMetadata metadata,
-                                                final IOContext context) throws IOException {
+                                             final IOContext context) throws IOException {
         IndexOutput output = directory().createOutput(fileName, context);
         boolean success = false;
         try {
@@ -479,6 +529,14 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         }
     }
 
+    /**
+     * 包装输入流 使得可以校验
+     * @param filename
+     * @param context
+     * @param metadata
+     * @return
+     * @throws IOException
+     */
     public IndexInput openVerifyingInput(String filename, IOContext context, StoreFileMetadata metadata) throws IOException {
         assert metadata.writtenBy() != null;
         return new VerifyingIndexInput(directory().openInput(filename, context));
@@ -503,6 +561,12 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         }
     }
 
+    /**
+     * 就是对比校验和
+     * @param md
+     * @param directory
+     * @throws IOException
+     */
     public static void checkIntegrity(final StoreFileMetadata md, final Directory directory) throws IOException {
         try (IndexInput input = directory.openInput(md.name(), IOContext.READONCE)) {
             if (input.length() != md.length()) { // first check the length no matter how old this file is
@@ -514,11 +578,16 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             // throw exception if metadata is inconsistent
             if (!checksum.equals(md.checksum())) {
                 throw new CorruptIndexException("inconsistent metadata: lucene checksum=" + checksum +
-                        ", metadata checksum=" + md.checksum(), input);
+                    ", metadata checksum=" + md.checksum(), input);
             }
         }
     }
 
+    /**
+     * 当前目录下是否有文件被标记成 corrupted
+     * @return
+     * @throws IOException
+     */
     public boolean isMarkedCorrupted() throws IOException {
         ensureOpen();
         /* marking a store as corrupted is basically adding a _corrupted to all
@@ -535,6 +604,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
 
     /**
      * Deletes all corruption markers from this store.
+     * 移除掉 corrupted开头的文件   当目录下出现该文件 实际上是一种标记  代表这个 目录对应的segment 应该是出现了某种问题
      */
     public void removeCorruptionMarker() throws IOException {
         ensureOpen();
@@ -560,14 +630,21 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     }
 
     public void failIfCorrupted() throws IOException {
+        // 如果当前引用计数为负数 代表已经被关闭了
         ensureOpen();
         failIfCorrupted(directory);
     }
 
+    /**
+     * 检测该目录是否已经损坏
+     * @param directory
+     * @throws IOException
+     */
     private static void failIfCorrupted(Directory directory) throws IOException {
         final String[] files = directory.listAll();
         List<CorruptIndexException> ex = new ArrayList<>();
         for (String file : files) {
+            // 找到以 corrupted_ 开头的文件   这些文件是存储异常的... 在output对象中异常信息也会以特殊的格式写入到文件中
             if (file.startsWith(CORRUPTED_MARKER_NAME_PREFIX)) {
                 try (ChecksumIndexInput input = directory.openChecksumInput(file, IOContext.READONCE)) {
                     CodecUtil.checkHeader(input, CODEC, CORRUPTED_MARKER_CODEC_VERSION, CORRUPTED_MARKER_CODEC_VERSION);
@@ -596,26 +673,29 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * to the given snapshot. If the snapshots are inconsistent an illegal state exception is thrown.
      *
      * @param reason         the reason for this cleanup operation logged for each deleted file
-     * @param sourceMetadata the metadata used for cleanup. all files in this metadata should be kept around.
+     * @param sourceMetadata the metadata used for cleanup. all files in this metadata should be kept around.    元数据中的文件应当被保留
      * @throws IOException           if an IOException occurs
      * @throws IllegalStateException if the latest snapshot in this store differs from the given one after the cleanup.
+     * 删除该目录下所有的文件
      */
     public void cleanupAndVerify(String reason, MetadataSnapshot sourceMetadata) throws IOException {
         metadataLock.writeLock().lock();
         try (Lock writeLock = directory.obtainLock(IndexWriter.WRITE_LOCK_NAME)) {
             for (String existingFile : directory.listAll()) {
+                // 跳过锁文件 和快照文件
                 if (Store.isAutogenerated(existingFile) || sourceMetadata.contains(existingFile)) {
                     // don't delete snapshot file, or the checksums file (note, this is extra protection since the Store won't delete
                     // checksum)
                     continue;
                 }
                 try {
+                    // 其余文件会被删除
                     directory.deleteFile(reason, existingFile);
                     // FNF should not happen since we hold a write lock?
                 } catch (IOException ex) {
                     if (existingFile.startsWith(IndexFileNames.SEGMENTS)
-                            || existingFile.equals(IndexFileNames.OLD_SEGMENTS_GEN)
-                            || existingFile.startsWith(CORRUPTED_MARKER_NAME_PREFIX)) {
+                        || existingFile.equals(IndexFileNames.OLD_SEGMENTS_GEN)
+                        || existingFile.startsWith(CORRUPTED_MARKER_NAME_PREFIX)) {
                         // TODO do we need to also fail this if we can't delete the pending commit file?
                         // if one of those files can't be deleted we better fail the cleanup otherwise we might leave an old commit
                         // point around?
@@ -626,7 +706,9 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                 }
             }
             directory.syncMetaData();
+            // 根据此时文件情况 更新snapshot
             final Store.MetadataSnapshot metadataOrEmpty = getMetadata(null);
+            // 传入前后2个快照
             verifyAfterCleanup(sourceMetadata, metadataOrEmpty);
         } finally {
             metadataLock.writeLock().unlock();
@@ -636,6 +718,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     // pkg private for testing
     final void verifyAfterCleanup(MetadataSnapshot sourceMetadata, MetadataSnapshot targetMetadata) {
         final RecoveryDiff recoveryDiff = targetMetadata.recoveryDiff(sourceMetadata);
+        // 2者并非完全一致
         if (recoveryDiff.identical.size() != recoveryDiff.size()) {
             if (recoveryDiff.missing.isEmpty()) {
                 for (StoreFileMetadata meta : recoveryDiff.different) {
@@ -647,6 +730,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                     // come out as different in the diff. That's why we have to double check here again if the rest of it matches.
 
                     // all is fine this file is just part of a commit or a segment that is different
+                    // 代表文件发生了变化
                     if (local.isSame(remote) == false) {
                         logger.debug("Files are different on the recovery target: {} ", recoveryDiff);
                         throw new IllegalStateException("local version: " + local + " is different from remote version after recovery: " +
@@ -654,9 +738,10 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                     }
                 }
             } else {
+                // 代表此时target出现了之前没有的文件
                 logger.debug("Files are missing on the recovery target: {} ", recoveryDiff);
                 throw new IllegalStateException("Files are missing on the recovery target: [different="
-                        + recoveryDiff.different + ", missing=" + recoveryDiff.missing + ']', null);
+                    + recoveryDiff.different + ", missing=" + recoveryDiff.missing + ']', null);
             }
         }
     }
@@ -668,10 +753,18 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         return refCounter.refCount();
     }
 
+    /**
+     * 基于lucene的目录包装类 进行增强
+     */
     static final class StoreDirectory extends FilterDirectory {
 
         private final Logger deletesLogger;
 
+        /**
+         *
+         * @param delegateDirectory  该对象会记录目录下修改的文件数量 大小等
+         * @param deletesLogger  日志对象 先忽略
+         */
         StoreDirectory(ByteSizeCachingDirectory delegateDirectory, Logger deletesLogger) {
             super(delegateDirectory);
             this.deletesLogger = deletesLogger;
@@ -682,6 +775,9 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             return ((ByteSizeCachingDirectory) getDelegate()).estimateSizeInBytes();
         }
 
+        /**
+         * 不允许外部调用close
+         */
         @Override
         public void close() {
             assert false : "Nobody should close this directory except of the Store itself";
@@ -717,14 +813,22 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * change concurrently for safety reasons.
      *
      * @see StoreFileMetadata
+     * 元数据的快照
      */
     public static final class MetadataSnapshot implements Iterable<StoreFileMetadata>, Writeable {
+
+        /**
+         * StoreFileMetadata 就是描述某个文件有多大 校验和是啥等等
+         */
         private final Map<String, StoreFileMetadata> metadata;
 
         public static final MetadataSnapshot EMPTY = new MetadataSnapshot();
 
         private final Map<String, String> commitUserData;
 
+        /**
+         * 此时总计有多少doc
+         */
         private final long numDocs;
 
         public MetadataSnapshot(Map<String, StoreFileMetadata> metadata, Map<String, String> commitUserData, long numDocs) {
@@ -739,7 +843,15 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             numDocs = 0;
         }
 
+        /**
+         *
+         * @param commit  某次调用lucene.commit 返回的结果
+         * @param directory  数据所在的目录
+         * @param logger
+         * @throws IOException
+         */
         MetadataSnapshot(IndexCommit commit, Directory directory, Logger logger) throws IOException {
+            // 就是从 segment_N 中计算总doc数 版本号 各个文件的校验和
             LoadedMetadata loadedMetadata = loadMetadata(commit, directory, logger);
             metadata = loadedMetadata.fileMetadata;
             commitUserData = loadedMetadata.userData;
@@ -790,7 +902,13 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             return numDocs;
         }
 
+        /**
+         * 对应某个 segment_N 文件
+         */
         static class LoadedMetadata {
+            /**
+             * 内部每个文件的大小 校验和等
+             */
             final Map<String, StoreFileMetadata> fileMetadata;
             final Map<String, String> userData;
             final long numDocs;
@@ -802,15 +920,27 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             }
         }
 
+        /**
+         *
+         * @param commit
+         * @param directory
+         * @param logger
+         * @return
+         * @throws IOException
+         */
         static LoadedMetadata loadMetadata(IndexCommit commit, Directory directory, Logger logger) throws IOException {
             long numDocs;
             Map<String, StoreFileMetadata> builder = new HashMap<>();
             Map<String, String> commitUserDataBuilder = new HashMap<>();
             try {
+                // 通过提交点对应的目录找到最大的 segment_N 文件 并还原成segmentInfos对象
                 final SegmentInfos segmentCommitInfos = Store.readSegmentsInfo(commit, directory);
+                // 获取总的doc数量
                 numDocs = Lucene.getNumDocs(segmentCommitInfos);
+                // 将用户自定义的信息存入
                 commitUserDataBuilder.putAll(segmentCommitInfos.getUserData());
                 // we don't know which version was used to write so we take the max version.
+                // 获取这些段中最小的版本号
                 Version maxVersion = segmentCommitInfos.getMinSegmentLuceneVersion();
                 for (SegmentCommitInfo info : segmentCommitInfos) {
                     final Version version = info.info.getVersion();
@@ -818,9 +948,11 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                         // version is written since 3.1+: we should have already hit IndexFormatTooOld.
                         throw new IllegalArgumentException("expected valid version value: " + info.info.toString());
                     }
+                    // 通过遍历每个segment 后  更新maxVersion
                     if (version.onOrAfter(maxVersion)) {
                         maxVersion = version;
                     }
+                    // 所有文件都需要校验 checksum  这里不包含segment_n
                     for (String file : info.files()) {
                         checksumFromLuceneFile(directory, file, builder, logger, version,
                             SEGMENT_INFO_EXTENSION.equals(IndexFileNames.getExtension(file)));
@@ -830,6 +962,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                     maxVersion = org.elasticsearch.Version.CURRENT.minimumIndexCompatibilityVersion().luceneVersion;
                 }
                 final String segmentsFile = segmentCommitInfos.getSegmentsFileName();
+                // 这里在校验segment_n 文件
                 checksumFromLuceneFile(directory, segmentsFile, builder, logger, maxVersion, true);
             } catch (CorruptIndexException | IndexNotFoundException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
                 // we either know the index is corrupted or it's just not there
@@ -855,8 +988,18 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             return new LoadedMetadata(unmodifiableMap(builder), unmodifiableMap(commitUserDataBuilder), numDocs);
         }
 
+        /**
+         *
+         * @param directory
+         * @param file
+         * @param builder
+         * @param logger
+         * @param version
+         * @param readFileAsHash   当目标文件的后缀名是 .si 时 该标识为true
+         * @throws IOException
+         */
         private static void checksumFromLuceneFile(Directory directory, String file, Map<String, StoreFileMetadata> builder,
-                Logger logger, Version version, boolean readFileAsHash) throws IOException {
+                                                   Logger logger, Version version, boolean readFileAsHash) throws IOException {
             final String checksum;
             final BytesRefBuilder fileHash = new BytesRefBuilder();
             try (IndexInput in = directory.openInput(file, IOContext.READONCE)) {
@@ -868,9 +1011,11 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                         throw new CorruptIndexException("Can't retrieve checksum from file: " + file + " file length must be >= " +
                             CodecUtil.footerLength() + " but was: " + in.length(), in);
                     }
+                    // 校验和相关的不细看了
                     if (readFileAsHash) {
                         // additional safety we checksum the entire file we read the hash for...
                         final VerifyingIndexInput verifyingIndexInput = new VerifyingIndexInput(in);
+                        // 将剩余的数据全部取出来
                         hashFile(fileHash, new InputStreamIndexInput(verifyingIndexInput, length), length);
                         checksum = digestToString(verifyingIndexInput.verify());
                     } else {
@@ -946,10 +1091,14 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
          * </ul>
          * <p>
          * NOTE: this diff will not contain the {@code segments.gen} file. This file is omitted on recovery.
+         * 将当前快照 与 传入的快照对象 的不同点抽取出来
          */
         public RecoveryDiff recoveryDiff(MetadataSnapshot recoveryTargetSnapshot) {
+            // 存储相同的数据
             final List<StoreFileMetadata> identical = new ArrayList<>();
+            // 不同的数据
             final List<StoreFileMetadata> different = new ArrayList<>();
+            // recoveryTargetSnapshot 与该对象相比缺失的
             final List<StoreFileMetadata> missing = new ArrayList<>();
             final Map<String, List<StoreFileMetadata>> perSegment = new HashMap<>();
             final List<StoreFileMetadata> perCommitStoreFiles = new ArrayList<>();
@@ -961,7 +1110,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                 final String segmentId = IndexFileNames.parseSegmentName(meta.name());
                 final String extension = IndexFileNames.getExtension(meta.name());
                 if (IndexFileNames.SEGMENTS.equals(segmentId) ||
-                        DEL_FILE_EXTENSION.equals(extension) || LIV_FILE_EXTENSION.equals(extension)) {
+                    DEL_FILE_EXTENSION.equals(extension) || LIV_FILE_EXTENSION.equals(extension)) {
                     // only treat del files as per-commit files fnm files are generational but only for upgradable DV
                     perCommitStoreFiles.add(meta);
                 } else {
@@ -994,8 +1143,8 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             RecoveryDiff recoveryDiff = new RecoveryDiff(Collections.unmodifiableList(identical),
                 Collections.unmodifiableList(different), Collections.unmodifiableList(missing));
             assert recoveryDiff.size() == this.metadata.size() - (metadata.containsKey(IndexFileNames.OLD_SEGMENTS_GEN) ? 1 : 0)
-                    : "some files are missing recoveryDiff size: [" + recoveryDiff.size() + "] metadata size: [" +
-                      this.metadata.size() + "] contains  segments.gen: [" + metadata.containsKey(IndexFileNames.OLD_SEGMENTS_GEN) + "]";
+                : "some files are missing recoveryDiff size: [" + recoveryDiff.size() + "] metadata size: [" +
+                this.metadata.size() + "] contains  segments.gen: [" + metadata.containsKey(IndexFileNames.OLD_SEGMENTS_GEN) + "]";
             return recoveryDiff;
         }
 
@@ -1092,10 +1241,10 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         @Override
         public String toString() {
             return "RecoveryDiff{" +
-                    "identical=" + identical +
-                    ", different=" + different +
-                    ", missing=" + missing +
-                    '}';
+                "identical=" + identical +
+                ", different=" + different +
+                ", missing=" + missing +
+                '}';
         }
     }
 
@@ -1118,8 +1267,14 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
 
     static class LuceneVerifyingIndexOutput extends VerifyingIndexOutput {
 
+        /**
+         * 就是描述某个文件的大小/ 校验和 之类的
+         */
         private final StoreFileMetadata metadata;
         private long writtenBytes;
+        /**
+         * 读取校验和的起始偏移量
+         */
         private final long checksumPosition;
         private String actualChecksum;
         private final byte[] footerChecksum = new byte[8]; // this holds the actual footer checksum data written by to this output
@@ -1127,6 +1282,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         LuceneVerifyingIndexOutput(StoreFileMetadata metadata, IndexOutput out) {
             super(out);
             this.metadata = metadata;
+            // 最后8位就是校验和
             checksumPosition = metadata.length() - 8; // the last 8 bytes are the checksum - we store it in footerChecksum
         }
 
@@ -1141,8 +1297,8 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                 }
             }
             throw new CorruptIndexException("verification failed (hardware problem?) : expected=" + metadata.checksum() +
-                    " actual=" + actualChecksum + " footer=" + footerDigest +" writtenLength=" + writtenBytes + " expectedLength=" +
-                    metadata.length() + " (resource=" + metadata.toString() + ")", "VerifyingIndexOutput(" + metadata.name() + ")");
+                " actual=" + actualChecksum + " footer=" + footerDigest +" writtenLength=" + writtenBytes + " expectedLength=" +
+                metadata.length() + " (resource=" + metadata.toString() + ")", "VerifyingIndexOutput(" + metadata.name() + ")");
         }
 
         @Override
@@ -1171,8 +1327,8 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             actualChecksum = digestToString(getChecksum());
             if (!metadata.checksum().equals(actualChecksum)) {
                 throw new CorruptIndexException("checksum failed (hardware problem?) : expected=" + metadata.checksum() +
-                        " actual=" + actualChecksum +
-                        " (resource=" + metadata.toString() + ")", "VerifyingIndexOutput(" + metadata.name() + ")");
+                    " actual=" + actualChecksum +
+                    " (resource=" + metadata.toString() + ")", "VerifyingIndexOutput(" + metadata.name() + ")");
             }
         }
 
@@ -1232,7 +1388,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
 
         @Override
         public void readBytes(byte[] b, int offset, int len)
-                throws IOException {
+            throws IOException {
             long pos = input.getFilePointer();
             input.readBytes(b, offset, len);
             if (pos + len > verifiedPosition) {
@@ -1316,7 +1472,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                 return storedChecksum;
             }
             throw new CorruptIndexException("verification failed : calculated=" + Store.digestToString(getChecksum()) +
-                    " stored=" + Store.digestToString(storedChecksum), this);
+                " stored=" + Store.digestToString(storedChecksum), this);
         }
 
     }
@@ -1326,7 +1482,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         StoreDirectory directory = this.directory;
         for (String file : files) {
             try {
-               directory.deleteFile("Store.deleteQuiet", file);
+                directory.deleteFile("Store.deleteQuiet", file);
             } catch (Exception ex) {
                 // ignore :(
             }
@@ -1336,6 +1492,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     /**
      * Marks this store as corrupted. This method writes a {@code corrupted_${uuid}} file containing the given exception
      * message. If a store contains a {@code corrupted_${uuid}} file {@link #isMarkedCorrupted()} will return <code>true</code>.
+     * 当产生了一个异常时 生成一个标记文件 也就是 corrupted开头的文件
      */
     public void markStoreCorrupted(IOException exception) throws IOException {
         ensureOpen();
@@ -1383,6 +1540,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             map.put(SequenceNumbers.LOCAL_CHECKPOINT_KEY, Long.toString(SequenceNumbers.NO_OPS_PERFORMED));
             map.put(SequenceNumbers.MAX_SEQ_NO, Long.toString(SequenceNumbers.NO_OPS_PERFORMED));
             map.put(Engine.MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID, "-1");
+            // 将map作为userData写入到indexWriter中 并进行commit 也就是会生成segment_N 文件
             updateCommitData(writer, map);
         } finally {
             metadataLock.writeLock().unlock();
@@ -1433,6 +1591,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      */
     public void associateIndexWithNewTranslog(final String translogUUID) throws IOException {
         metadataLock.writeLock().lock();
+        // 生成一个追加模式的 indexWriter
         try (IndexWriter writer = newAppendingIndexWriter(directory, null)) {
             if (translogUUID.equals(getUserData(writer).get(Translog.TRANSLOG_UUID_KEY))) {
                 throw new IllegalArgumentException("a new translog uuid can't be equal to existing one. got [" + translogUUID + "]");
@@ -1460,6 +1619,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * commit on the replica will cause exception as the new last commit c3 will have recovery_translog_gen=1. The recovery
      * translog generation of a commit is calculated based on the current local checkpoint. The local checkpoint of c3 is 1
      * while the local checkpoint of c2 is 2.
+     * 这里也是往 indexWriter中写入某些数据 并在之后进行提交
      */
     public void trimUnsafeCommits(final Path translogPath) throws IOException {
         metadataLock.writeLock().lock();
@@ -1526,6 +1686,13 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         return new IndexWriter(dir, iwc);
     }
 
+    /**
+     * 初始化 IndexWriter
+     * @param dir
+     * @param luceneVersion
+     * @return
+     * @throws IOException
+     */
     private static IndexWriter newEmptyIndexWriter(final Directory dir, final Version luceneVersion) throws IOException {
         IndexWriterConfig iwc = newIndexWriterConfig()
             .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
@@ -1535,11 +1702,11 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
 
     private static IndexWriterConfig newIndexWriterConfig() {
         return new IndexWriterConfig(null)
-                .setSoftDeletesField(Lucene.SOFT_DELETES_FIELD)
-                .setCommitOnClose(false)
-                // we don't want merges to happen here - we call maybe merge on the engine
-                // later once we stared it up otherwise we would need to wait for it here
-                // we also don't specify a codec here and merges should use the engines for this index
-                .setMergePolicy(NoMergePolicy.INSTANCE);
+            .setSoftDeletesField(Lucene.SOFT_DELETES_FIELD)
+            .setCommitOnClose(false)
+            // we don't want merges to happen here - we call maybe merge on the engine
+            // later once we stared it up otherwise we would need to wait for it here
+            // we also don't specify a codec here and merges should use the engines for this index
+            .setMergePolicy(NoMergePolicy.INSTANCE);
     }
 }

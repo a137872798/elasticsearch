@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Represent shard snapshot status
+ * 某个分片索引的快照状态信息
  */
 public class IndexShardSnapshotStatus {
 
@@ -57,6 +58,9 @@ public class IndexShardSnapshotStatus {
         ABORTED
     }
 
+    /**
+     * 当前执行到快照的哪一步
+     */
     private final AtomicReference<Stage> stage;
     private final AtomicReference<String> generation;
     private long startTime;
@@ -87,6 +91,16 @@ public class IndexShardSnapshotStatus {
         this.failure = failure;
     }
 
+    /**
+     * 将此时的快照状态机 切换到start状态
+     * 当shardStateIdentifier 匹配的情况 这几个值都是0
+     * @param startTime
+     * @param incrementalFileCount  本次增加了多少新的文件
+     * @param totalFileCount
+     * @param incrementalSize  本次增加的所有文件的总大小
+     * @param totalSize
+     * @return
+     */
     public synchronized Copy moveToStarted(final long startTime, final int incrementalFileCount, final int totalFileCount,
                                            final long incrementalSize, final long totalSize) {
         if (stage.compareAndSet(Stage.INIT, Stage.STARTED)) {
@@ -102,6 +116,11 @@ public class IndexShardSnapshotStatus {
         return asCopy();
     }
 
+    /**
+     * 代表某个 indexCommit.gen  生成了快照
+     * @param indexVersion
+     * @return
+     */
     public synchronized Copy moveToFinalize(final long indexVersion) {
         if (stage.compareAndSet(Stage.STARTED, Stage.FINALIZE)) {
             this.indexVersion = indexVersion;
@@ -112,6 +131,11 @@ public class IndexShardSnapshotStatus {
         return asCopy();
     }
 
+    /**
+     * finalize 代表快照文件写入完成  done 代表最新的快照信息已经同步到  BlobStoreIndexShardSnapshots 上   该对象管理所有生成的快照信息 也就是触发了几次快照 每个快照生成多少文件等等
+     * @param endTime
+     * @param newGeneration
+     */
     public synchronized void moveToDone(final long endTime, final String newGeneration) {
         assert newGeneration != null;
         if (stage.compareAndSet(Stage.FINALIZE, Stage.DONE)) {
@@ -146,6 +170,7 @@ public class IndexShardSnapshotStatus {
 
     /**
      * Increments number of processed files
+     * 当某次写入快照文件完成时  会调用该方法
      */
     public synchronized void addProcessedFile(long size) {
         processedFileCount++;

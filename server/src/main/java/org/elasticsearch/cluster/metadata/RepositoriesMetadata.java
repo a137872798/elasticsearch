@@ -55,7 +55,7 @@ public class RepositoriesMetadata extends AbstractNamedDiffable<Custom> implemen
     public static final String HIDE_GENERATIONS_PARAM = "hide_generations";
 
     /**
-     * 可能会有一组存储层 每个存储层对应一个metadata
+     * 每个存储层可能会有多种实现  里面每个metadata 都对应一种实现
      */
     private final List<RepositoryMetadata> repositories;
 

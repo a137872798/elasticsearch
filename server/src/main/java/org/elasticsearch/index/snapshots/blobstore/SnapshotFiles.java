@@ -27,6 +27,7 @@ import java.util.Map;
 
 /**
  * Contains a list of files participating in a snapshot
+ * 某次快照相关的所有文件
  */
 public class SnapshotFiles {
 
@@ -35,8 +36,14 @@ public class SnapshotFiles {
      */
     private final String snapshot;
 
+    /**
+     * 单次快照对应的所有文件
+     */
     private final List<FileInfo> indexFiles;
 
+    /**
+     * 用于标注这组快照文件唯一性的字符串
+     */
     @Nullable
     private final String shardStateIdentifier;
 

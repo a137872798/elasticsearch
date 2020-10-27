@@ -28,12 +28,12 @@ import java.util.Objects;
 
 /**
  * Basic information about a snapshot - a SnapshotId and the repository that the snapshot belongs to.
- * 代表一个快照存储的位置
+ * 最细粒度的快照对象 每个对象仅能通过一种存储组件实现功能
  */
 public final class Snapshot implements Writeable {
 
     /**
-     * 指定存储位置
+     * 使用的存储层
      */
     private final String repository;
     /**

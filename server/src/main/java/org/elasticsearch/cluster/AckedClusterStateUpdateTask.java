@@ -28,10 +28,18 @@ import org.elasticsearch.common.unit.TimeValue;
 /**
  * An extension interface to {@link ClusterStateUpdateTask} that allows to be notified when
  * all the nodes have acknowledged a cluster state update request
+ * 该对象本身是一个可以更新集群状态的任务对象  同时
  */
 public abstract class AckedClusterStateUpdateTask<Response> extends ClusterStateUpdateTask implements AckedClusterStateTaskListener {
 
+    /**
+     * 当更新任务完成时会触发监听器
+     */
     private final ActionListener<Response> listener;
+
+    /**
+     * 某个包含ack超时信息的req 对象
+     */
     private final AckedRequest request;
 
     protected AckedClusterStateUpdateTask(AckedRequest request, ActionListener<Response> listener) {

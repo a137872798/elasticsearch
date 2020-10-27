@@ -63,7 +63,7 @@ public class BlobStoreIndexShardSnapshot implements ToXContentFragment {
          * Constructs a new instance of file info
          *
          * @param name         file name as stored in the blob store
-         * @param metadata  the files meta data
+         * @param metadata  the files meta data    该文件关联的元数据对象
          * @param partSize     size of the single chunk
          */
         public FileInfo(String name, StoreFileMetadata metadata, ByteSizeValue partSize) {

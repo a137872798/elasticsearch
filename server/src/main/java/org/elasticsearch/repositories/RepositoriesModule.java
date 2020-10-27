@@ -39,13 +39,16 @@ import java.util.Map;
  */
 public final class RepositoriesModule {
 
+    /**
+     * 存储服务内部可能有多个实现(多个Repository)
+     */
     private final RepositoriesService repositoriesService;
 
 
     /**
      *
      * @param env
-     * @param repoPlugins
+     * @param repoPlugins  通过插件形式使得存储实现可以多样化
      * @param transportService
      * @param clusterService  通过该对象访问集群相关的api
      * @param threadPool
@@ -58,6 +61,8 @@ public final class RepositoriesModule {
         factories.put(FsRepository.TYPE, metadata -> new FsRepository(metadata, env, namedXContentRegistry, clusterService));
 
         for (RepositoryPlugin repoPlugin : repoPlugins) {
+            // 每个插件都可以包含不止一种实现
+            // TODO 先忽略吧  只需要关注如何基于本地文件实现快照功能
             Map<String, Repository.Factory> newRepoTypes = repoPlugin.getRepositories(env, namedXContentRegistry, clusterService);
             for (Map.Entry<String, Repository.Factory> entry : newRepoTypes.entrySet()) {
                 if (factories.put(entry.getKey(), entry.getValue()) != null) {
@@ -66,6 +71,7 @@ public final class RepositoriesModule {
             }
         }
 
+        // 内部工厂是什么鬼
         Map<String, Repository.Factory> internalFactories = new HashMap<>();
         for (RepositoryPlugin repoPlugin : repoPlugins) {
             Map<String, Repository.Factory> newRepoTypes = repoPlugin.getInternalRepositories(env, namedXContentRegistry, clusterService);
