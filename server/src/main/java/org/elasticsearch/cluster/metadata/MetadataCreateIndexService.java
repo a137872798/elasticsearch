@@ -152,6 +152,7 @@ public class MetadataCreateIndexService {
 
     /**
      * Validate the name for an index against some static rules and a cluster state.
+     * 检测某个索引名是否合法
      */
     public void validateIndexName(String index, ClusterState state) {
         validateIndexOrAliasName(index, InvalidIndexNameException::new);
@@ -161,6 +162,7 @@ public class MetadataCreateIndexService {
 
         // NOTE: dot-prefixed index names are validated after template application, not here
 
+        // 如果当前state中已经存在这个索引了 抛出异常
         if (state.routingTable().hasIndex(index)) {
             throw new ResourceAlreadyExistsException(state.routingTable().index(index).getIndex());
         }
@@ -176,10 +178,12 @@ public class MetadataCreateIndexService {
      * Validates (if this index has a dot-prefixed name) whether it follows the rules for dot-prefixed indices.
      * @param index The name of the index in question
      * @param state The current cluster state
-     * @param isHidden Whether or not this is a hidden index
+     * @param isHidden Whether or not this is a hidden index  当前索引是否是一个隐藏索引  什么玩意啊
+     *                 检测索引中是否携带 "."
      */
     public void validateDotIndex(String index, ClusterState state, @Nullable Boolean isHidden) {
         if (index.charAt(0) == '.') {
+            // 找到匹配的索引描述器
             List<SystemIndexDescriptor> matchingDescriptors = systemIndexDescriptors.stream()
                 .filter(descriptor -> descriptor.matchesIndexPattern(index))
                 .collect(toList());
@@ -187,6 +191,7 @@ public class MetadataCreateIndexService {
                 deprecationLogger.deprecatedAndMaybeLog("index_name_starts_with_dot",
                     "index name [{}] starts with a dot '.', in the next major version, index names " +
                     "starting with a dot are reserved for hidden indices and system indices", index);
+            // 当匹配结果超过1个时 抛出异常
             } else if (matchingDescriptors.size() > 1) {
                 // This should be prevented by erroring on overlapping patterns at startup time, but is here just in case.
                 StringBuilder errorMessage = new StringBuilder()
@@ -937,6 +942,13 @@ public class MetadataCreateIndexService {
         validateIndexSettings(request.index(), request.settings(), forbidPrivateIndexSettings);
     }
 
+    /**
+     * 检验某个索引配置
+     * @param indexName
+     * @param settings
+     * @param forbidPrivateIndexSettings
+     * @throws IndexCreationException
+     */
     public void validateIndexSettings(String indexName, final Settings settings, final boolean forbidPrivateIndexSettings)
         throws IndexCreationException {
         List<String> validationErrors = getIndexSettingsValidationErrors(settings, forbidPrivateIndexSettings);
@@ -954,13 +966,20 @@ public class MetadataCreateIndexService {
      * @param settings     the settings of the index to be created
      * @param clusterState the current cluster state
      * @throws ValidationException if creating this index would put the cluster over the cluster shard limit
+     *
      */
     public static void checkShardLimit(final Settings settings, final ClusterState clusterState) {
+        // 下面计算出的分片数应该是仅针对一个index的
+
+        // 获取配置中的分片数量 默认值为1  最大范围为1024 也就是超出该范围时 会抛出异常
         final int numberOfShards = IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.get(settings);
+        // 获取副本数量
         final int numberOfReplicas = IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(settings);
+        // 得到总的分片数 (包含副本)
         final int shardsToCreate = numberOfShards * (1 + numberOfReplicas);
 
         final Optional<String> shardLimit = IndicesService.checkShardLimit(shardsToCreate, clusterState);
+        // 代表此时集群已经承载不下这么多分片了
         if (shardLimit.isPresent()) {
             final ValidationException e = new ValidationException();
             e.addValidationError(shardLimit.get());
@@ -995,8 +1014,10 @@ public class MetadataCreateIndexService {
      * @param settings the index configured settings
      * @param sharedDataPath the configured `path.shared_data` (if any)
      * @return a list containing validaton errors or an empty list if there aren't any errors
+     * 检测 sharedDataPath 是否是 customPath 的子路径
      */
     private static List<String> validateIndexCustomPath(Settings settings, @Nullable Path sharedDataPath) {
+        // 获取数据路径
         String customPath = IndexMetadata.INDEX_DATA_PATH_SETTING.get(settings);
         List<String> validationErrors = new ArrayList<>();
         if (!Strings.isEmpty(customPath)) {

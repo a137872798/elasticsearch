@@ -133,6 +133,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     private final Map<Snapshot, List<ActionListener<Tuple<RepositoryData, SnapshotInfo>>>> snapshotCompletionListeners =
         new ConcurrentHashMap<>();
 
+    // 这2个容器存储了不同时期的snapshot
+
     // Set of snapshots that are currently being initialized by this node
     private final Set<Snapshot> initializingSnapshots = Collections.synchronizedSet(new HashSet<>());
 
@@ -341,8 +343,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         }
         if (Strings.validFileName(snapshotName) == false) {
             throw new InvalidSnapshotNameException(repositoryName,
-                                                   snapshotName,
-                                                   "must not contain the following characters " + Strings.INVALID_FILENAME_CHARS);
+                snapshotName,
+                "must not contain the following characters " + Strings.INVALID_FILENAME_CHARS);
         }
     }
 
@@ -365,6 +367,9 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                final ActionListener<Snapshot> userCreateSnapshotListener) {
         threadPool.executor(ThreadPool.Names.SNAPSHOT).execute(new AbstractRunnable() {
 
+            /**
+             * 代表检测到 本次快照对应的entry已经被标记成Aborted了
+             */
             boolean hadAbortedInitializations;
 
             @Override
@@ -376,29 +381,37 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                 }
                 final String snapshotName = snapshot.snapshot().getSnapshotId().getName();
                 final StepListener<RepositoryData> repositoryDataListener = new StepListener<>();
+                // 获取此时存储实例对应的 repositoryData
                 repository.getRepositoryData(repositoryDataListener);
                 repositoryDataListener.whenComplete(repositoryData -> {
                     // check if the snapshot name already exists in the repository
+                    // 先检查repositoryData 中是否已经出现过这个快照了  不能重复添加
                     if (repositoryData.getSnapshotIds().stream().anyMatch(s -> s.getName().equals(snapshotName))) {
                         throw new InvalidSnapshotNameException(
                             repository.getMetadata().name(), snapshotName, "snapshot with the same name already exists");
                     }
 
                     logger.info("snapshot [{}] started", snapshot.snapshot());
+                    // 这里就是从所有快照中找到最小的版本
                     final Version version =
                         minCompatibleVersion(clusterState.nodes().getMinNodeVersion(), snapshot.repository(), repositoryData, null);
                     if (indices.isEmpty()) {
                         // No indices in this snapshot - we are done
+                        // 该快照不需要包含任何索引 那么就可以直接触发了  在监听器中 会触发  initializingSnapshots.remove(snapshot);
                         userCreateSnapshotListener.onResponse(snapshot.snapshot());
+                        // 这时又创建了一个新的快照对象去触发 endSnapshot
                         endSnapshot(new SnapshotsInProgress.Entry(
                             snapshot, State.STARTED, Collections.emptyList(), repositoryData.getGenId(), null, version,
                             null), clusterState.metadata());
                         return;
                     }
+
+                    // 正常的处理流程在这里
                     clusterService.submitStateUpdateTask("update_snapshot [" + snapshot.snapshot() + "]", new ClusterStateUpdateTask() {
 
                         @Override
                         public ClusterState execute(ClusterState currentState) {
+                            // 获取正在处理中的快照
                             SnapshotsInProgress snapshots = currentState.custom(SnapshotsInProgress.TYPE);
                             List<SnapshotsInProgress.Entry> entries = new ArrayList<>();
                             for (SnapshotsInProgress.Entry entry : snapshots.entries()) {
@@ -407,20 +420,26 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                     continue;
                                 }
 
+                                // 找到快照一致的entry
                                 if (entry.state() == State.ABORTED) {
                                     entries.add(entry);
                                     assert entry.shards().isEmpty();
                                     hadAbortedInitializations = true;
                                 } else {
+                                    // 将index转换成indexId
                                     final List<IndexId> indexIds = repositoryData.resolveNewIndices(indices);
                                     // Replace the snapshot that was just initialized
+                                    // 将分片的信息抽取出来设置到ShardSnapshotStatus
                                     ImmutableOpenMap<ShardId, ShardSnapshotStatus> shards =
                                         shards(currentState, indexIds, useShardGenerations(version), repositoryData);
+                                    // 非部分的情况
                                     if (!partial) {
+                                        // v1 代表没有分片的索引  v2 代表已经被关闭的索引
                                         Tuple<Set<String>, Set<String>> indicesWithMissingShards = indicesWithMissingShards(shards,
                                             currentState.metadata());
                                         Set<String> missing = indicesWithMissingShards.v1();
                                         Set<String> closed = indicesWithMissingShards.v2();
+                                        // 也就是说出现了miss 和close的本次处理就算是失败了
                                         if (missing.isEmpty() == false || closed.isEmpty() == false) {
                                             final StringBuilder failureMessage = new StringBuilder();
                                             if (missing.isEmpty() == false) {
@@ -434,6 +453,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                                 failureMessage.append("Indices are closed ");
                                                 failureMessage.append(closed);
                                             }
+                                            // 代表本次生成快照失败了
                                             entries.add(new SnapshotsInProgress.Entry(entry, State.FAILED, indexIds,
                                                 repositoryData.getGenId(), shards, version, failureMessage.toString()));
                                             continue;
@@ -443,6 +463,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                         shards, version, null));
                                 }
                             }
+                            // 使用新的entries 覆盖之前的数据
                             return ClusterState.builder(currentState)
                                 .putCustom(SnapshotsInProgress.TYPE, new SnapshotsInProgress(unmodifiableList(entries)))
                                 .build();
@@ -509,16 +530,27 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
             userCreateSnapshotListener.onFailure(ExceptionsHelper.useOrSuppress(e, this.e));
         }
 
+        /**
+         * 当本节点不再是leader时 无法继续处理
+         */
         public void onNoLongerMaster() {
             userCreateSnapshotListener.onFailure(e);
         }
     }
 
+    /**
+     * 生成分片gen数据
+     * @param snapshot
+     * @param metadata
+     * @return
+     */
     private static ShardGenerations buildGenerations(SnapshotsInProgress.Entry snapshot, Metadata metadata) {
         ShardGenerations.Builder builder = ShardGenerations.builder();
         final Map<String, IndexId> indexLookup = new HashMap<>();
+        // 将快照中所有的索引信息都插入到 map中
         snapshot.indices().forEach(idx -> indexLookup.put(idx.getName(), idx));
         snapshot.shards().forEach(c -> {
+            // 把分片的id 和 gen存起来
             if (metadata.index(c.key.getIndex()) == null) {
                 assert snapshot.partial() :
                     "Index [" + c.key.getIndex() + "] was deleted during a snapshot but snapshot was not partial.";
@@ -533,6 +565,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     }
 
     private static Metadata metadataForSnapshot(SnapshotsInProgress.Entry snapshot, Metadata metadata) {
+        // 如果不包含全局state   这里只是将该快照下所有的索引对应的 IndexMetadata 包装成新的metadata
         if (snapshot.includeGlobalState() == false) {
             // Remove global state from the cluster state
             Metadata.Builder builder = Metadata.builder();
@@ -559,6 +592,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      * @param repository          repository id
      * @param snapshots           list of snapshots that will be used as a filter, empty list means no snapshots are filtered
      * @return list of metadata for currently running snapshots
+     * 获取当前快照
      */
     public static List<SnapshotsInProgress.Entry> currentSnapshots(@Nullable SnapshotsInProgress snapshotsInProgress, String repository,
                                                                    List<String> snapshots) {
@@ -568,24 +602,30 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         if ("_all".equals(repository)) {
             return snapshotsInProgress.entries();
         }
+        // 代表此时只有一个正在执行的快照任务
         if (snapshotsInProgress.entries().size() == 1) {
             // Most likely scenario - one snapshot is currently running
             // Check this snapshot against the query
+            // 获取快照实体
             SnapshotsInProgress.Entry entry = snapshotsInProgress.entries().get(0);
+            // 如果快照使用的repository 与传入的不一致
             if (entry.snapshot().getRepository().equals(repository) == false) {
                 return Collections.emptyList();
             }
             if (snapshots.isEmpty() == false) {
                 for (String snapshot : snapshots) {
+                    // 只要命中了任意一个快照就返回所有entries
                     if (entry.snapshot().getSnapshotId().getName().equals(snapshot)) {
                         return snapshotsInProgress.entries();
                     }
                 }
                 return Collections.emptyList();
             } else {
+                // 返回所有快照entry
                 return snapshotsInProgress.entries();
             }
         }
+        // 这里将 inprogress.entry 中的快照 与 传入的 snapshots做匹配 将命中的返回
         List<SnapshotsInProgress.Entry> builder = new ArrayList<>();
         for (SnapshotsInProgress.Entry entry : snapshotsInProgress.entries()) {
             if (entry.snapshot().getRepository().equals(repository) == false) {
@@ -605,17 +645,26 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         return unmodifiableList(builder);
     }
 
+    /**
+     * 当集群状态发生变化时触发
+     * @param event
+     */
     @Override
     public void applyClusterState(ClusterChangedEvent event) {
         try {
+            // 只有当本节点成为leader时才进行处理
             if (event.localNodeMaster()) {
                 // We don't remove old master when master flips anymore. So, we need to check for change in master
+                // 找到最新的 clusterState中 描述执行的快照任务
                 final SnapshotsInProgress snapshotsInProgress = event.state().custom(SnapshotsInProgress.TYPE);
                 final boolean newMaster = event.previousState().nodes().isLocalNodeElectedMaster() == false;
                 if (snapshotsInProgress != null) {
+                    // 如果是此次刚成为leader   或者某些节点被移除了
                     if (newMaster || removedNodesCleanupNeeded(snapshotsInProgress, event.nodesDelta().removedNodes())) {
+                        // 从当前clusterState中移除掉已经无效的node 之后将最新的集群状态发布到集群中
                         processSnapshotsOnRemovedNodes();
                     }
+                    // 如果本次快照相关的所有索引 刚好与本次变动有关 并且处于 started或者unassigned状态
                     if (event.routingTableChanged() && waitingShardsStartedOrUnassigned(snapshotsInProgress, event)) {
                         processStartedShards();
                     }
@@ -626,7 +675,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     snapshotsInProgress.entries().stream().filter(
                         entry -> entry.state().completed()
                             || initializingSnapshots.contains(entry.snapshot()) == false
-                               && (entry.state() == State.INIT || completed(entry.shards().values()))
+                            && (entry.state() == State.INIT || completed(entry.shards().values()))
                     ).forEach(entry -> endSnapshot(entry, event.state().metadata()));
                 }
                 if (newMaster) {
@@ -668,18 +717,20 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
             assert deletionsInProgress.getEntries().size() == 1 : "only one in-progress deletion allowed per cluster";
             SnapshotDeletionsInProgress.Entry entry = deletionsInProgress.getEntries().get(0);
             deleteSnapshotsFromRepository(entry.repository(), entry.getSnapshots(), null, entry.repositoryStateId(),
-                    state.nodes().getMinNodeVersion());
+                state.nodes().getMinNodeVersion());
         }
     }
 
     /**
      * Cleans up shard snapshots that were running on removed nodes
+     * 当某些node被移除时 相关的快照需要被清理
      */
     private void processSnapshotsOnRemovedNodes() {
         clusterService.submitStateUpdateTask("update snapshot state after node removal", new ClusterStateUpdateTask() {
             @Override
             public ClusterState execute(ClusterState currentState) {
                 DiscoveryNodes nodes = currentState.nodes();
+                // 如果此时没有正在处理的快照返回原CS
                 SnapshotsInProgress snapshots = currentState.custom(SnapshotsInProgress.TYPE);
                 if (snapshots == null) {
                     return currentState;
@@ -688,17 +739,22 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                 ArrayList<SnapshotsInProgress.Entry> entries = new ArrayList<>();
                 for (final SnapshotsInProgress.Entry snapshot : snapshots.entries()) {
                     SnapshotsInProgress.Entry updatedSnapshot = snapshot;
+                    // 如果快照处于刚启动或者禁止状态
                     if (snapshot.state() == State.STARTED || snapshot.state() == State.ABORTED) {
                         ImmutableOpenMap.Builder<ShardId, ShardSnapshotStatus> shards = ImmutableOpenMap.builder();
                         boolean snapshotChanged = false;
                         for (ObjectObjectCursor<ShardId, ShardSnapshotStatus> shardEntry : snapshot.shards()) {
+                            // 该快照下描述每个分片的状态
                             final ShardSnapshotStatus shardStatus = shardEntry.value;
                             final ShardId shardId = shardEntry.key;
+                            // 只处理还未完成 且nodeId不为空的分片status
                             if (!shardStatus.state().completed() && shardStatus.nodeId() != null) {
+                                // 代表这个分片对象的node 还存在于集群中
                                 if (nodes.nodeExists(shardStatus.nodeId())) {
                                     shards.put(shardId, shardStatus);
                                 } else {
                                     // TODO: Restart snapshot on another node?
+                                    // 当该快照对应的node 已经从CS中移除时
                                     snapshotChanged = true;
                                     logger.warn("failing snapshot of shard [{}] on closed node [{}]",
                                         shardId, shardStatus.nodeId());
@@ -707,9 +763,11 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                             shardStatus.generation()));
                                 }
                             } else {
+                                // 完成的或者 未设置nodeId的也会被加入到shards中
                                 shards.put(shardId, shardStatus);
                             }
                         }
+                        // 确实发生了变化 需要重新生成
                         if (snapshotChanged) {
                             changed = true;
                             ImmutableOpenMap<ShardId, ShardSnapshotStatus> shardsMap = shards.build();
@@ -742,6 +800,9 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         });
     }
 
+    /**
+     * 处理所有处于 started 的分片
+     */
     private void processStartedShards() {
         clusterService.submitStateUpdateTask("update snapshot state after shards started", new ClusterStateUpdateTask() {
             @Override
@@ -753,9 +814,13 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     ArrayList<SnapshotsInProgress.Entry> entries = new ArrayList<>();
                     for (final SnapshotsInProgress.Entry snapshot : snapshots.entries()) {
                         SnapshotsInProgress.Entry updatedSnapshot = snapshot;
+                        // 当该快照处于started状态时
                         if (snapshot.state() == State.STARTED) {
+                            // 更新分片状态
                             ImmutableOpenMap<ShardId, ShardSnapshotStatus> shards = processWaitingShards(snapshot.shards(),
                                 routingTable);
+
+                            // 代表分片发生了变化
                             if (shards != null) {
                                 changed = true;
                                 if (!snapshot.state().completed() && completed(shards.values())) {
@@ -783,18 +848,30 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         });
     }
 
+    /**
+     * 相当于遍历当前snapshotShards 下所有的snapshotStatus 并在路由表中找到当前分片的状态
+     * 根据状态更新snapshotStatus 并重新生成ImmutableOpenMap<ShardId, ShardSnapshotStatus> 对象
+     * @param snapshotShards
+     * @param routingTable
+     * @return
+     */
     private static ImmutableOpenMap<ShardId, ShardSnapshotStatus> processWaitingShards(
-            ImmutableOpenMap<ShardId, ShardSnapshotStatus> snapshotShards, RoutingTable routingTable) {
+        ImmutableOpenMap<ShardId, ShardSnapshotStatus> snapshotShards, RoutingTable routingTable) {
         boolean snapshotChanged = false;
         ImmutableOpenMap.Builder<ShardId, ShardSnapshotStatus> shards = ImmutableOpenMap.builder();
         for (ObjectObjectCursor<ShardId, ShardSnapshotStatus> shardEntry : snapshotShards) {
+            // 获取某个分片当前的快照状态
             ShardSnapshotStatus shardStatus = shardEntry.value;
             ShardId shardId = shardEntry.key;
+            // 如果当前分片处于等待状态
             if (shardStatus.state() == ShardState.WAITING) {
                 IndexRoutingTable indexShardRoutingTable = routingTable.index(shardId.getIndex());
                 if (indexShardRoutingTable != null) {
+                    // 通过索引和分片定位到这个 IndexShardRoutingTable
                     IndexShardRoutingTable shardRouting = indexShardRoutingTable.shard(shardId.id());
+                    // 上面都是在查找 state == waiting 的分片
                     if (shardRouting != null && shardRouting.primaryShard() != null) {
+                        // 代表某个分片处于已启动状态
                         if (shardRouting.primaryShard().started()) {
                             // Shard that we were waiting for has started on a node, let's process it
                             snapshotChanged = true;
@@ -809,6 +886,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                         }
                     }
                 }
+                // 进入到这里代表已经失败了
                 // Shard that we were waiting for went into unassigned state or disappeared - giving up
                 snapshotChanged = true;
                 logger.warn("failing snapshot of shard [{}] on unassigned shard [{}]", shardId, shardStatus.nodeId());
@@ -825,13 +903,24 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         }
     }
 
+    /**
+     * 检测在 entry.waitingIndices 中是否有任意一个参与本次变化的索引 处于started|unassigned
+     * @param snapshotsInProgress
+     * @param event
+     * @return
+     */
     private static boolean waitingShardsStartedOrUnassigned(SnapshotsInProgress snapshotsInProgress, ClusterChangedEvent event) {
         for (SnapshotsInProgress.Entry entry : snapshotsInProgress.entries()) {
+            // 首先确保当前快照处于started状态
             if (entry.state() == State.STARTED) {
+                // 找到所有等待中的索引
                 for (ObjectCursor<String> index : entry.waitingIndices().keys()) {
+                    // 如果等待中的索引正好发生了变化
                     if (event.indexRoutingTableChanged(index.value)) {
                         IndexRoutingTable indexShardRoutingTable = event.state().getRoutingTable().index(index.value);
+                        // 找到所有相关的分片
                         for (ShardId shardId : entry.waitingIndices().get(index.value)) {
+                            // 找到该 shardId 对应所有分片 包含主副本
                             ShardRouting shardRouting = indexShardRoutingTable.shard(shardId.id()).primaryShard();
                             if (shardRouting != null && (shardRouting.started() || shardRouting.unassigned())) {
                                 return true;
@@ -844,12 +933,18 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         return false;
     }
 
+    /**
+     * 代表这些快照对应的node 在本次CS更新时 被移除了
+     * @param snapshotsInProgress
+     * @param removedNodes
+     * @return
+     */
     private static boolean removedNodesCleanupNeeded(SnapshotsInProgress snapshotsInProgress, List<DiscoveryNode> removedNodes) {
         // If at least one shard was running on a removed node - we need to fail it
         return removedNodes.isEmpty() == false && snapshotsInProgress.entries().stream().flatMap(snapshot ->
-                StreamSupport.stream(((Iterable<ShardSnapshotStatus>) () -> snapshot.shards().valuesIt()).spliterator(), false)
-                    .filter(s -> s.state().completed() == false).map(ShardSnapshotStatus::nodeId))
-                .anyMatch(removedNodes.stream().map(DiscoveryNode::getId).collect(Collectors.toSet())::contains);
+            StreamSupport.stream(((Iterable<ShardSnapshotStatus>) () -> snapshot.shards().valuesIt()).spliterator(), false)
+                .filter(s -> s.state().completed() == false).map(ShardSnapshotStatus::nodeId))
+            .anyMatch(removedNodes.stream().map(DiscoveryNode::getId).collect(Collectors.toSet())::contains);
     }
 
     /**
@@ -857,14 +952,17 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      *
      * @param shards list of shard statuses
      * @return list of failed and closed indices
+     * 返回没有分片的索引 以及被关闭的索引
      */
     private static Tuple<Set<String>, Set<String>> indicesWithMissingShards(
         ImmutableOpenMap<ShardId, SnapshotsInProgress.ShardSnapshotStatus> shards, Metadata metadata) {
         Set<String> missing = new HashSet<>();
         Set<String> closed = new HashSet<>();
         for (ObjectObjectCursor<ShardId, SnapshotsInProgress.ShardSnapshotStatus> entry : shards) {
+            // 找到status是miss的
             if (entry.value.state() == ShardState.MISSING) {
                 if (metadata.hasIndex(entry.key.getIndex().getName()) &&
+                    // 如果发现元数据是关闭的 加入到close的容器中
                     metadata.getIndexSafe(entry.key.getIndex()).getState() == IndexMetadata.State.CLOSE) {
                     closed.add(entry.key.getIndex().getName());
                 } else {
@@ -881,12 +979,14 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      * This is non-blocking method that runs on a thread from SNAPSHOT thread pool
      *
      * @param entry snapshot
+     *              当某个快照生成完毕时触发
      */
     private void endSnapshot(SnapshotsInProgress.Entry entry, Metadata metadata) {
         if (endingSnapshots.add(entry.snapshot()) == false) {
             return;
         }
         final Snapshot snapshot = entry.snapshot();
+        // 当完成时 stateId 不能为unknownGen
         if (entry.repositoryStateId() == RepositoryData.UNKNOWN_REPO_GEN) {
             logger.debug("[{}] was aborted before starting", snapshot);
             removeSnapshotFromClusterState(entry.snapshot(), new SnapshotException(snapshot, "Aborted on initialization"), null);
@@ -924,20 +1024,20 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     metadataForSnapshot(entry, metadata),
                     entry.userMetadata(),
                     entry.version(),
-                        state -> stateWithoutSnapshot(state, snapshot),
-                        ActionListener.wrap(result -> {
-                            final List<ActionListener<Tuple<RepositoryData, SnapshotInfo>>> completionListeners =
-                                    snapshotCompletionListeners.remove(snapshot);
-                            if (completionListeners != null) {
-                                try {
-                                    ActionListener.onResponse(completionListeners, result);
-                                } catch (Exception e) {
-                                    logger.warn("Failed to notify listeners", e);
-                                }
+                    state -> stateWithoutSnapshot(state, snapshot),
+                    ActionListener.wrap(result -> {
+                        final List<ActionListener<Tuple<RepositoryData, SnapshotInfo>>> completionListeners =
+                            snapshotCompletionListeners.remove(snapshot);
+                        if (completionListeners != null) {
+                            try {
+                                ActionListener.onResponse(completionListeners, result);
+                            } catch (Exception e) {
+                                logger.warn("Failed to notify listeners", e);
                             }
-                            endingSnapshots.remove(snapshot);
-                            logger.info("snapshot [{}] completed with state [{}]", snapshot, result.v2().state());
-                        }, this::onFailure));
+                        }
+                        endingSnapshots.remove(snapshot);
+                        logger.info("snapshot [{}] completed with state [{}]", snapshot, result.v2().state());
+                    }, this::onFailure));
             }
 
             @Override
@@ -958,6 +1058,12 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         });
     }
 
+    /**
+     * 从当前CS中 剔除掉指定的snapshot
+     * @param state
+     * @param snapshot
+     * @return
+     */
     private static ClusterState stateWithoutSnapshot(ClusterState state, Snapshot snapshot) {
         SnapshotsInProgress snapshots = state.custom(SnapshotsInProgress.TYPE);
         if (snapshots != null) {
@@ -972,7 +1078,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
             }
             if (changed) {
                 return ClusterState.builder(state).putCustom(
-                        SnapshotsInProgress.TYPE, new SnapshotsInProgress(unmodifiableList(entries))).build();
+                    SnapshotsInProgress.TYPE, new SnapshotsInProgress(unmodifiableList(entries))).build();
             }
         }
         return state;
@@ -983,6 +1089,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      * @param snapshot   snapshot
      * @param failure    exception if snapshot failed
      * @param listener   listener to notify when snapshot information is removed from the cluster state
+     *                   因为出现了异常情况 需要将某个快照从 clusterState中移除
      */
     private void removeSnapshotFromClusterState(final Snapshot snapshot, Exception failure,
                                                 @Nullable CleanupAfterErrorListener listener) {
@@ -1023,7 +1130,13 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         });
     }
 
+    /**
+     * 当某个处理失败的快照从CS移除后触发的监听器
+     * @param snapshot
+     * @param e
+     */
     private void failSnapshotCompletionListeners(Snapshot snapshot, Exception e) {
+        // 从相关容器中移除快照
         final List<ActionListener<Tuple<RepositoryData, SnapshotInfo>>> completionListeners = snapshotCompletionListeners.remove(snapshot);
         if (completionListeners != null) {
             try {
@@ -1050,7 +1163,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         final String[] snapshotNames = request.snapshots();
         final String repositoryName = request.repository();
         logger.info(() -> new ParameterizedMessage("deleting snapshots [{}] from repository [{}]",
-                Strings.arrayToCommaDelimitedString(snapshotNames), repositoryName));
+            Strings.arrayToCommaDelimitedString(snapshotNames), repositoryName));
 
         clusterService.submitStateUpdateTask("delete snapshot", new ClusterStateUpdateTask(Priority.NORMAL) {
 
@@ -1062,8 +1175,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
             public ClusterState execute(ClusterState currentState) {
                 if (snapshotNames.length > 1 && currentState.nodes().getMinNodeVersion().before(MULTI_DELETE_VERSION)) {
                     throw new IllegalArgumentException("Deleting multiple snapshots in a single request is only supported in version [ "
-                            + MULTI_DELETE_VERSION + "] but cluster contained node of version [" + currentState.nodes().getMinNodeVersion()
-                            + "]");
+                        + MULTI_DELETE_VERSION + "] but cluster contained node of version [" + currentState.nodes().getMinNodeVersion()
+                        + "]");
                 }
                 final SnapshotsInProgress snapshots = currentState.custom(SnapshotsInProgress.TYPE);
                 final SnapshotsInProgress.Entry snapshotEntry;
@@ -1147,8 +1260,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     try {
                         repositoriesService.repository(repositoryName).executeConsistentStateUpdate(repositoryData ->
                                 createDeleteStateUpdate(matchingSnapshotIds(repositoryData, snapshotNames, repositoryName), repositoryName,
-                                        repositoryData.getGenId(), request.masterNodeTimeout(), Priority.NORMAL, listener),
-                                        "delete completed snapshots", listener::onFailure);
+                                    repositoryData.getGenId(), request.masterNodeTimeout(), Priority.NORMAL, listener),
+                            "delete completed snapshots", listener::onFailure);
                     } catch (RepositoryMissingException e) {
                         listener.onFailure(e);
                     }
@@ -1159,8 +1272,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     result -> {
                         logger.debug("deleted snapshot completed - deleting files");
                         clusterService.submitStateUpdateTask("delete snapshot",
-                                createDeleteStateUpdate(Collections.singletonList(result.v2().snapshotId()), repositoryName,
-                                        result.v1().getGenId(), null, Priority.IMMEDIATE, listener));
+                            createDeleteStateUpdate(Collections.singletonList(result.v2().snapshotId()), repositoryName,
+                                result.v1().getGenId(), null, Priority.IMMEDIATE, listener));
                     },
                     e -> {
                         if (abortedDuringInit) {
@@ -1192,7 +1305,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     private static List<SnapshotId> matchingSnapshotIds(RepositoryData repositoryData, String[] snapshotsOrPatterns,
                                                         String repositoryName) {
         final Map<String, SnapshotId> allSnapshotIds = repositoryData.getSnapshotIds().stream().collect(
-                Collectors.toMap(SnapshotId::getName, Function.identity()));
+            Collectors.toMap(SnapshotId::getName, Function.identity()));
         final Set<SnapshotId> foundSnapshots = new HashSet<>();
         for (String snapshotOrPattern : snapshotsOrPatterns) {
             if (Regex.isSimpleMatchPattern(snapshotOrPattern) == false) {
@@ -1287,14 +1400,14 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                 if (snapshots != null && snapshots.entries().isEmpty() == false) {
                     // However other snapshots are running - cannot continue
                     throw new ConcurrentSnapshotExecutionException(
-                            repoName, snapshotIds.toString(), "another snapshot is currently running cannot delete");
+                        repoName, snapshotIds.toString(), "another snapshot is currently running cannot delete");
                 }
                 // add the snapshot deletion to the cluster state
                 SnapshotDeletionsInProgress.Entry entry = new SnapshotDeletionsInProgress.Entry(
-                        snapshotIds,
-                        repoName,
-                        threadPool.absoluteTimeInMillis(),
-                        repositoryStateId
+                    snapshotIds,
+                    repoName,
+                    threadPool.absoluteTimeInMillis(),
+                    repositoryStateId
                 );
                 if (deletionsInProgress != null) {
                     deletionsInProgress = deletionsInProgress.withAddedEntry(entry);
@@ -1325,16 +1438,20 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      * @param repositoryName name of the repository to modify
      * @param repositoryData current {@link RepositoryData} of that repository
      * @param excluded       snapshot id to ignore when computing the minimum version
-     *                       (used to use newer metadata version after a snapshot delete)
+     *                       (used to use newer metadata version after a snapshot delete)    某些是需要被排除的
      * @return minimum node version that must still be able to read the repository metadata
+     * 获取最小的兼容版本
      */
     public Version minCompatibleVersion(Version minNodeVersion, String repositoryName, RepositoryData repositoryData,
                                         @Nullable Collection<SnapshotId> excluded) {
+        // 记录这么多快照中最低的版本号
         Version minCompatVersion = minNodeVersion;
+        // 获取此时所有的快照
         final Collection<SnapshotId> snapshotIds = repositoryData.getSnapshotIds();
         final Repository repository = repositoriesService.repository(repositoryName);
         for (SnapshotId snapshotId : snapshotIds.stream().filter(excluded == null ? sn -> true : Predicate.not(excluded::contains))
-                .collect(Collectors.toList())) {
+            .collect(Collectors.toList())) {
+            // 找到每个快照对应的版本号
             final Version known = repositoryData.getVersion(snapshotId);
             // If we don't have the version cached in the repository data yet we load it from the snapshot info blobs
             if (known == null) {
@@ -1444,9 +1561,9 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     /**
      * Calculates the list of shards that should be included into the current snapshot
      *
-     * @param clusterState        cluster state
-     * @param indices             Indices to snapshot
-     * @param useShardGenerations whether to write {@link ShardGenerations} during the snapshot
+     * @param clusterState        cluster state   当前集群状态
+     * @param indices             Indices to snapshot          本次快照相关的所有索引
+     * @param useShardGenerations whether to write {@link ShardGenerations} during the snapshot   是否需要将分片的gen写入快照 新版本都是true
      * @return list of shard to be included into current snapshot
      */
     private static ImmutableOpenMap<ShardId, SnapshotsInProgress.ShardSnapshotStatus> shards(ClusterState clusterState,
@@ -1455,19 +1572,25 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                                                                              RepositoryData repositoryData) {
         ImmutableOpenMap.Builder<ShardId, SnapshotsInProgress.ShardSnapshotStatus> builder = ImmutableOpenMap.builder();
         Metadata metadata = clusterState.metadata();
+        // 每个分片的gen 代表着什么???
         final ShardGenerations shardGenerations = repositoryData.shardGenerations();
         for (IndexId index : indices) {
             final String indexName = index.getName();
+            // 代表本次快照中某个索引是之前没有的
             final boolean isNewIndex = repositoryData.getIndices().containsKey(indexName) == false;
             IndexMetadata indexMetadata = metadata.index(indexName);
             if (indexMetadata == null) {
                 // The index was deleted before we managed to start the snapshot - mark it as missing.
+                // 创建了一个内部包含未知索引的shardId
                 builder.put(new ShardId(indexName, IndexMetadata.INDEX_UUID_NA_VALUE, 0),
                     new SnapshotsInProgress.ShardSnapshotStatus(null, ShardState.MISSING, "missing index", null));
             } else {
+                // 获取该索引相关的所有分片
                 IndexRoutingTable indexRoutingTable = clusterState.getRoutingTable().index(indexName);
+                // 根据分片数量创建多个shardId
                 for (int i = 0; i < indexMetadata.getNumberOfShards(); i++) {
                     ShardId shardId = new ShardId(indexMetadata.getIndex(), i);
+                    // 有关分片的gen
                     final String shardRepoGeneration;
                     if (useShardGenerations) {
                         if (isNewIndex) {
@@ -1475,12 +1598,15 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                 : "Found shard generation for new index [" + index + "]";
                             shardRepoGeneration = ShardGenerations.NEW_SHARD_GEN;
                         } else {
+                            // 如果是旧的索引 可以直接通过 索引 + 分片id进行定位
                             shardRepoGeneration = shardGenerations.getShardGen(index, shardId.getId());
                         }
                     } else {
                         shardRepoGeneration = null;
                     }
+                    // TODO 构建了这个对象又怎么了呢
                     if (indexRoutingTable != null) {
+                        // 每个分片 还有主副关系 这里是只获取主分片
                         ShardRouting primary = indexRoutingTable.shard(i).primaryShard();
                         if (primary == null || !primary.assignedToNode()) {
                             builder.put(shardId,
@@ -1556,3 +1682,4 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         clusterService.removeApplier(this);
     }
 }
+

@@ -91,14 +91,17 @@ public final class ElasticsearchDirectoryReader extends FilterDirectoryReader {
      *
      * @throws IllegalArgumentException if the reader doesn't contain an
      *     {@link ElasticsearchDirectoryReader} in it's hierarchy
+     *     为 DirectoryReader 追加一个关闭监听器
      */
     @SuppressForbidden(reason = "This is the only sane way to add a ReaderClosedListener")
     public static void addReaderCloseListener(DirectoryReader reader, IndexReader.ClosedListener listener) {
+        // 进行解包装
         ElasticsearchDirectoryReader elasticsearchDirectoryReader = getElasticsearchDirectoryReader(reader);
         if (elasticsearchDirectoryReader == null) {
             throw new IllegalArgumentException(
                     "Can't install close listener reader is not an ElasticsearchDirectoryReader/ElasticsearchLeafReader");
         }
+        // 将监听器设置到 cacheHelper上
         IndexReader.CacheHelper cacheHelper = elasticsearchDirectoryReader.getReaderCacheHelper();
         if (cacheHelper == null) {
             throw new IllegalArgumentException("Reader " + elasticsearchDirectoryReader + " does not support caching");

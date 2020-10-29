@@ -73,6 +73,7 @@ public interface ExistingShardsAllocator {
     /**
      * Called when the given shards have started, so that implementations can invalidate caches and clean up any in-flight activity for
      * those shards.
+     * 当这组分片开始使用时
      */
     void applyStartedShards(List<ShardRouting> startedShards, RoutingAllocation allocation);
 

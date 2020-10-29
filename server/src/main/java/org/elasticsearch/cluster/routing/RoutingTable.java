@@ -553,6 +553,13 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
             return this;
         }
 
+        /**
+         *
+         * @param indexMetadata
+         * @param recoverySource  本次执行恢复操作相关的各种参数
+         * @param ignoreShards  处理失败的分片
+         * @return
+         */
         public Builder addAsNewRestore(IndexMetadata indexMetadata, SnapshotRecoverySource recoverySource, IntSet ignoreShards) {
             IndexRoutingTable.Builder indexRoutingBuilder = new IndexRoutingTable.Builder(indexMetadata.getIndex())
                     .initializeAsNewRestore(indexMetadata, recoverySource, ignoreShards);

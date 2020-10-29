@@ -48,19 +48,41 @@ import static org.elasticsearch.common.xcontent.support.XContentMapValues.nodeBo
 
 /**
  * Restore snapshot request
+ * 通过快照恢复数据的请求
  */
 public class RestoreSnapshotRequest extends MasterNodeRequest<RestoreSnapshotRequest> implements ToXContentObject {
 
+    /**
+     * 指定从哪个快照恢复
+     */
     private String snapshot;
+    /**
+     * 使用的存储实例
+     */
     private String repository;
+    /**
+     * 只针对哪些索引进行恢复
+     */
     private String[] indices = Strings.EMPTY_ARRAY;
     private IndicesOptions indicesOptions = IndicesOptions.strictExpandOpen();
+
+    /**
+     * restore请求支持通过 renamePattern 去匹配索引中的部分字符 比替换成 renameReplacement
+     */
     private String renamePattern;
     private String renameReplacement;
+    /**
+     * 是否等待任务完成
+     */
     private boolean waitForCompletion;
+    // globalState 和 partial 是指什么
     private boolean includeGlobalState = false;
     private boolean partial = false;
     private boolean includeAliases = true;
+
+    /**
+     * 本次请求中还携带了一些索引配置  在处理该请求的过程中会用该配置来更新 indexMetadata
+     */
     private Settings indexSettings = EMPTY_SETTINGS;
     private String[] ignoreIndexSettings = Strings.EMPTY_ARRAY;
 

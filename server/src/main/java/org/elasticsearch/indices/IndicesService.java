@@ -174,6 +174,9 @@ import static org.elasticsearch.index.IndexService.IndexCreationContext.METADATA
 import static org.elasticsearch.index.query.AbstractQueryBuilder.parseInnerQueryBuilder;
 import static org.elasticsearch.search.SearchService.ALLOW_EXPENSIVE_QUERIES;
 
+/**
+ * 管理所有索引的服务
+ */
 public class IndicesService extends AbstractLifecycleComponent
     implements IndicesClusterStateService.AllocatedIndices<IndexShard, IndexService>, IndexService.ShardStoreDeleter {
     private static final Logger logger = LogManager.getLogger(IndicesService.class);
@@ -240,6 +243,28 @@ public class IndicesService extends AbstractLifecycleComponent
         threadPool.schedule(this.cacheCleaner, this.cleanInterval, ThreadPool.Names.SAME);
     }
 
+    /**
+     * 初始化管理所有索引的服务
+     * @param settings
+     * @param pluginsService
+     * @param nodeEnv
+     * @param xContentRegistry
+     * @param analysisRegistry
+     * @param indexNameExpressionResolver
+     * @param mapperRegistry
+     * @param namedWriteableRegistry
+     * @param threadPool
+     * @param indexScopedSettings
+     * @param circuitBreakerService
+     * @param bigArrays
+     * @param scriptService
+     * @param clusterService
+     * @param client
+     * @param metaStateService
+     * @param engineFactoryProviders
+     * @param directoryFactories
+     * @param valuesSourceRegistry
+     */
     public IndicesService(Settings settings, PluginsService pluginsService, NodeEnvironment nodeEnv, NamedXContentRegistry xContentRegistry,
                           AnalysisRegistry analysisRegistry, IndexNameExpressionResolver indexNameExpressionResolver,
                           MapperRegistry mapperRegistry, NamedWriteableRegistry namedWriteableRegistry, ThreadPool threadPool,
@@ -1549,13 +1574,15 @@ public class IndicesService extends AbstractLifecycleComponent
      * Checks to see if an operation can be performed without taking the cluster over the cluster-wide shard limit. Adds a deprecation
      * warning or returns an error message as appropriate
      *
-     * @param newShards         The number of shards to be added by this operation
+     * @param newShards         The number of shards to be added by this operation   本次要新增的分片
      * @param state             The current cluster state
      * @return If present, an error message to be given as the reason for failing
      * an operation. If empty, a sign that the operation is valid.
+     * 检测当前集群能否承载这么多分片
      */
     public static Optional<String> checkShardLimit(int newShards, ClusterState state) {
         Settings theseSettings = state.metadata().settings();
+        // 获取数据节点总数 数据节点就是存储数据用的  有些节点则负责参与选举 被称为masterNode
         int nodeCount = state.getNodes().getDataNodes().size();
 
         // Only enforce the shard limit if we have at least one data node, so that we don't block
@@ -1563,8 +1590,11 @@ public class IndicesService extends AbstractLifecycleComponent
         if (nodeCount == 0 || newShards < 0) {
             return Optional.empty();
         }
+        // 获取每个节点的最大分片数
         int maxShardsPerNode = Metadata.SETTING_CLUSTER_MAX_SHARDS_PER_NODE.get(theseSettings);
+        // 得到集群下的能够承载的总分片数
         int maxShardsInCluster = maxShardsPerNode * nodeCount;
+        // 获取总的打开的分片数
         int currentOpenShards = state.getMetadata().getTotalOpenIndexShards();
 
         if ((currentOpenShards + newShards) > maxShardsInCluster) {

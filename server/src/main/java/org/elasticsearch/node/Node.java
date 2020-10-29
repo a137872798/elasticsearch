@@ -237,6 +237,9 @@ public class Node implements Closeable {
 
     private static final String CLIENT_TYPE = "node";
 
+    /**
+     * 采用组合的方式 插入这个生命周期对象
+     */
     private final Lifecycle lifecycle = new Lifecycle();
 
     /**
@@ -635,7 +638,7 @@ public class Node implements Closeable {
             resourcesToClose.add(persistentTasksClusterService);
             final PersistentTasksService persistentTasksService = new PersistentTasksService(clusterService, threadPool, client);
 
-            // 这里又加入了一个特殊模块
+            // 将相关对象注册到IOC 容器中
             modules.add(
                 // 该函数对应 Module.configure
                 b -> {
@@ -774,6 +777,7 @@ public class Node implements Closeable {
 
     /**
      * Start the node. If the node is already started, this method is no-op.
+     * 启动节点
      */
     public Node start() throws NodeValidationException {
         if (!lifecycle.moveToStarted()) {
@@ -781,8 +785,10 @@ public class Node implements Closeable {
         }
 
         logger.info("starting ...");
+        // 挨个启动所有生命周期组件
         pluginLifecycleComponents.forEach(LifecycleComponent::start);
 
+        // 手动启动一些服务
         injector.getInstance(MappingUpdatedAction.class).setClient(client);
         injector.getInstance(IndicesService.class).start();
         injector.getInstance(IndicesClusterStateService.class).start();

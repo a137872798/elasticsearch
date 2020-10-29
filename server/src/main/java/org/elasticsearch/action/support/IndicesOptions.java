@@ -98,6 +98,9 @@ public class IndicesOptions implements ToXContentFragment {
     }
 
     public enum Option {
+        /**
+         * 代表如果要求的索引在所有available中 没有找到 需要抛出异常
+         */
         IGNORE_UNAVAILABLE,
         IGNORE_ALIASES,
         ALLOW_NO_INDICES,

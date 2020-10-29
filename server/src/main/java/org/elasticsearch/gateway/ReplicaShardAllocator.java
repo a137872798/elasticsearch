@@ -57,13 +57,19 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
      * Process existing recoveries of replicas and see if we need to cancel them if we find a better
      * match. Today, a better match is one that can perform a no-op recovery while the previous recovery
      * has to copy segment files.
+     * @param allocation 本次分配的结果
      */
     public void processExistingRecoveries(RoutingAllocation allocation) {
+        // 该对象内部整合了各种元数据信息
         Metadata metadata = allocation.metadata();
+        // 每个RoutingNode 包含了该node下所有的分片信息  RoutingNodes 则维护了整个集群下所有node的分片信息
         RoutingNodes routingNodes = allocation.routingNodes();
         List<Runnable> shardCancellationActions = new ArrayList<>();
         for (RoutingNode routingNode : routingNodes) {
+            // 获取每个分片的路由信息
             for (ShardRouting shard : routingNode) {
+
+                // 只处理副本&完成初始化的&没有处于重定位状态的
                 if (shard.primary()) {
                     continue;
                 }
@@ -75,6 +81,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
                 }
 
                 // if we are allocating a replica because of index creation, no need to go and find a copy, there isn't one...
+                // 分片此时如果处于未分配状态 并且原因是 index_created  那么也不需要处理
                 if (shard.unassignedInfo() != null && shard.unassignedInfo().getReason() == UnassignedInfo.Reason.INDEX_CREATED) {
                     continue;
                 }

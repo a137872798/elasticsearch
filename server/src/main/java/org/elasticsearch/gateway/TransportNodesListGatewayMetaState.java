@@ -118,6 +118,9 @@ public class TransportNodesListGatewayMetaState extends TransportNodesAction<Tra
         }
     }
 
+    /**
+     * 网关会向 参选节点统一发送获取元数据的请求
+     */
     public static class NodeGatewayMetaState extends BaseNodeResponse {
 
         private Metadata metadata;

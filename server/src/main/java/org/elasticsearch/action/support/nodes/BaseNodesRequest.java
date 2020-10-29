@@ -29,6 +29,10 @@ import org.elasticsearch.common.unit.TimeValue;
 
 import java.io.IOException;
 
+/**
+ * 代表这个请求是针对一组node 的
+ * @param <Request>
+ */
 public abstract class BaseNodesRequest<Request extends BaseNodesRequest<Request>> extends ActionRequest {
 
     /**
@@ -39,12 +43,14 @@ public abstract class BaseNodesRequest<Request extends BaseNodesRequest<Request>
      * See {@link DiscoveryNodes#resolveNodes} for a full description of the options.
      *
      * TODO: we can get rid of this and resolve it to concrete nodes in the rest layer
+     * 本次请求涉及到的所有node
      **/
     private String[] nodesIds;
 
     /**
      * once {@link #nodesIds} are resolved this will contain the concrete nodes that are part of this request. If set, {@link #nodesIds}
      * will be ignored and this will be used.
+     * nodeIds 对应节点
      * */
     private DiscoveryNode[] concreteNodes;
 

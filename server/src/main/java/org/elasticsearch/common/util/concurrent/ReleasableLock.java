@@ -27,8 +27,13 @@ import java.util.concurrent.locks.Lock;
 
 /**
  * Releasable lock used inside of Engine implementations
+ * 除开assert外 这就是一个普通的锁对象
  */
 public class ReleasableLock implements Releasable {
+
+    /**
+     * 内部存了一个锁对象
+     */
     private final Lock lock;
 
 
@@ -37,6 +42,7 @@ public class ReleasableLock implements Releasable {
 
     public ReleasableLock(Lock lock) {
         this.lock = lock;
+        // 断言相关的就不管了
         if (Assertions.ENABLED) {
             holdingThreads = new ThreadLocal<>();
         } else {

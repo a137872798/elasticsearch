@@ -65,6 +65,7 @@ import java.util.function.Supplier;
  * <p>
  * There are still several TODOs left in this class, some easily addressable, some more complex, but the support
  * is functional.
+ * 该对象本身还实现了  RemovalListener 当缓存内的数据被移除时 触发监听器
  */
 public final class IndicesRequestCache implements RemovalListener<IndicesRequestCache.Key, BytesReference>, Closeable {
 
@@ -81,19 +82,44 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
     public static final Setting<TimeValue> INDICES_CACHE_QUERY_EXPIRE =
         Setting.positiveTimeSetting("indices.requests.cache.expire", new TimeValue(0), Property.NodeScope);
 
+    /**
+     * 每当往缓存中存入一个新数据并成功时  会生成一个cleanupKey对象 并设置到该容器中  并且该cleanupKey 是设置了 readerCacheKey
+     */
     private final ConcurrentMap<CleanupKey, Boolean> registeredClosedListeners = ConcurrentCollections.newConcurrentMap();
+
+    /**
+     * 因为reader被关闭会将一些cleanupKey 从registeredClosedListeners 移动到该容器中
+     */
     private final Set<CleanupKey> keysToClean = ConcurrentCollections.newConcurrentSet();
     private final ByteSizeValue size;
+
+    /**
+     * 缓存过期时间
+     */
     private final TimeValue expire;
+
+    /**
+     * key 对应缓存键 维护一些重要信息  value则是数据流
+     */
     private final Cache<Key, BytesReference> cache;
 
+    /**
+     * 通过settings的缓存配置初始化缓存
+     * @param settings
+     */
     IndicesRequestCache(Settings settings) {
+        // 指的是缓存大小占jvm.getHeapMax的比率
         this.size = INDICES_CACHE_QUERY_SIZE.get(settings);
+        // 如果未设置缓存超时时间 代表缓存数据不会过期
         this.expire = INDICES_CACHE_QUERY_EXPIRE.exists(settings) ? INDICES_CACHE_QUERY_EXPIRE.get(settings) : null;
+
+        // 获取缓存大小
         long sizeInBytes = size.getBytes();
         CacheBuilder<Key, BytesReference> cacheBuilder = CacheBuilder.<Key, BytesReference>builder()
+            // 每个Cache对象 仅允许设置一个removalListener
             .setMaximumWeight(sizeInBytes).weigher((k, v) -> k.ramBytesUsed() + v.ramBytesUsed()).removalListener(this);
         if (expire != null) {
+            // cache 本身使用lru算法 也就是当某个元素长时间没有被访问时 会从lru链表中移除 同时lru链表的清理 在被动情况下必须等待weight达到maxWeight 才会触发
             cacheBuilder.setExpireAfterAccess(expire);
         }
         cache = cacheBuilder.build();
@@ -101,14 +127,24 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
 
     @Override
     public void close() {
+        // 当本对象被关闭时 会清空缓存
         cache.invalidateAll();
     }
 
+    /**
+     * @param entity
+     */
     void clear(CacheEntity entity) {
+        // 先将清理数据加入到keysToClean
         keysToClean.add(new CleanupKey(entity, null));
+        // 在cache中清理匹配的数据
         cleanCache();
     }
 
+    /**
+     * 每个缓存数据被移除时触发的逻辑就是由 cacheEntry决定的
+     * @param notification
+     */
     @Override
     public void onRemoval(RemovalNotification<Key, BytesReference> notification) {
         notification.getKey().entity.onRemoval(notification);
@@ -120,24 +156,34 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
     BytesReference getOrCompute(CacheEntity cacheEntity, CheckedSupplier<BytesReference, IOException> loader,
                                 DirectoryReader reader, BytesReference cacheKey, Supplier<String> cacheKeyRenderer) throws Exception {
         assert reader.getReaderCacheHelper() != null;
+        // 在默认的 standardDirectoryReader中 好像没有看到cache
         final Key key =  new Key(cacheEntity, reader.getReaderCacheHelper().getKey(), cacheKey);
+
+        // 将外部传入的 key->value 转换函数包装成loader (做了一层适配 因为cache只能使用CacheLoader)
         Loader cacheLoader = new Loader(cacheEntity, loader);
+        // 将数据插入到缓存中
         BytesReference value = cache.computeIfAbsent(key, cacheLoader);
+        // 代表插入成功了 所以调用了loader 读取数据
         if (cacheLoader.isLoaded()) {
+            // 插入成功返回来也意味着 缓存未命中
             key.entity.onMiss();
             if (logger.isTraceEnabled()) {
                 logger.trace("Cache miss for reader version [{}], max_doc[{}] and request:\n {}",
                     reader.getVersion(), reader.maxDoc(), cacheKeyRenderer.get());
             }
             // see if its the first time we see this reader, and make sure to register a cleanup key
+            // 这里又生成了一个对应的 清除键  并存入到registeredClosedListeners
             CleanupKey cleanupKey = new CleanupKey(cacheEntity, reader.getReaderCacheHelper().getKey());
             if (!registeredClosedListeners.containsKey(cleanupKey)) {
                 Boolean previous = registeredClosedListeners.putIfAbsent(cleanupKey, Boolean.TRUE);
                 if (previous == null) {
+                    // 一般来说不会出现重复插入 在插入成功时 还会将cleanupKey 设置到reader上 作为close监听器
+                    // 在reader被关闭的时候会触发 onClose钩子  并将cleanupKey 从registeredClosedListeners 移动到keysToClean
                     ElasticsearchDirectoryReader.addReaderCloseListener(reader, cleanupKey);
                 }
             }
         } else {
+            // 当命中时 只是简单打印日志
             key.entity.onHit();
             if (logger.isTraceEnabled()) {
                 logger.trace("Cache hit for reader version [{}], max_doc[{}] and request:\n {}",
@@ -152,16 +198,27 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
      * @param cacheEntity the cache entity to invalidate for
      * @param reader the reader to invalidate the cache entry for
      * @param cacheKey the cache key to invalidate
+     *                 将某个缓存标记成无效
      */
     void invalidate(CacheEntity cacheEntity, DirectoryReader reader, BytesReference cacheKey) {
         assert reader.getReaderCacheHelper() != null;
         cache.invalidate(new Key(cacheEntity, reader.getReaderCacheHelper().getKey(), cacheKey));
     }
 
+    /**
+     * 该类定义了如何通过key 获取到value
+     */
     private static class Loader implements CacheLoader<Key, BytesReference> {
 
         private final CacheEntity entity;
+
+        /**
+         * 实际上是转发到这个函数
+         */
         private final CheckedSupplier<BytesReference, IOException> loader;
+        /**
+         * 代表已经加载过数据了
+         */
         private boolean loaded;
 
         Loader(CacheEntity entity, CheckedSupplier<BytesReference, IOException> loader) {
@@ -176,6 +233,7 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
         @Override
         public BytesReference load(Key key) throws Exception {
             BytesReference value = loader.get();
+            // 调用该方法时 代表已经准备将数据存储到缓存中了  所以触发 onCached
             entity.onCached(key, value);
             loaded = true;
             return value;
@@ -184,17 +242,20 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
 
     /**
      * Basic interface to make this cache testable.
+     * 该对象还定义了 关联的缓存Key 被移除时该如何处理
      */
     interface CacheEntity extends Accountable {
 
         /**
          * Called after the value was loaded.
+         * 当键值对即将存储到缓存时触发
          */
         void onCached(Key key, BytesReference value);
 
         /**
          * Returns <code>true</code> iff the resource behind this entity is still open ie.
          * entities associated with it can remain in the cache. ie. IndexShard is still open.
+         * 这个数据体此时是否处于打开状态
          */
         boolean isOpen();
 
@@ -206,11 +267,13 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
 
         /**
          * Called each time this entity has a cache hit.
+         * 缓存命中时触发
          */
         void onHit();
 
         /**
          * Called each time this entity has a cache miss.
+         * 每当缓存未命中时 触发该方法  这个方法怎么触发多次 只要发现未命中不就加入到缓存中了么 ???
          */
         void onMiss();
 
@@ -220,11 +283,23 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
         void onRemoval(RemovalNotification<Key, BytesReference> notification);
     }
 
+    /**
+     * 该cache内部的key 都是 Key
+     */
     static class Key implements Accountable {
         private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(Key.class);
 
+        /**
+         * 该对象定义了缓存失效时的处理逻辑
+         */
         public final CacheEntity entity; // use as identity equality
+        /**
+         * 这是lucene的缓存键 这个对象之前就没怎么看过 只是一个空对象
+         */
         public final IndexReader.CacheKey readerCacheKey;
+        /**
+         * 对应的数据流
+         */
         public final BytesReference value;
 
         Key(CacheEntity entity, IndexReader.CacheKey readerCacheKey, BytesReference value) {
@@ -264,6 +339,9 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
         }
     }
 
+    /**
+     * 当lucene的缓存被清理时 触发该对象
+     */
     private class CleanupKey implements IndexReader.ClosedListener {
         final CacheEntity entity;
         final IndexReader.CacheKey readerCacheKey;
@@ -302,7 +380,9 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
     }
 
 
-
+    /**
+     * 处理 keysToClean 内部的数据
+     */
     synchronized void cleanCache() {
         final ObjectSet<CleanupKey> currentKeysToClean = new ObjectHashSet<>();
         final ObjectSet<Object> currentFullClean = new ObjectHashSet<>();
@@ -313,14 +393,17 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
             iterator.remove();
             if (cleanupKey.readerCacheKey == null || cleanupKey.entity.isOpen() == false) {
                 // null indicates full cleanup, as does a closed shard
+                // null 代表着全部清理  或者此时entity处于未打开
                 currentFullClean.add(cleanupKey.entity.getCacheIdentity());
             } else {
+                // 这里的只按照 readerCacheKey 进行清理
                 currentKeysToClean.add(cleanupKey);
             }
         }
         if (!currentKeysToClean.isEmpty() || !currentFullClean.isEmpty()) {
             for (Iterator<Key> iterator = cache.keys().iterator(); iterator.hasNext(); ) {
                 Key key = iterator.next();
+                // 这里是匹配 CacheIdentity 下面是匹配 entity和 readerCacheKey
                 if (currentFullClean.contains(key.entity.getCacheIdentity())) {
                     iterator.remove();
                 } else {

@@ -38,7 +38,7 @@ import java.util.Objects;
 
 /**
  * Stores information about failures that occurred during shard snapshotting process
- * 在生成快照时失败了
+ * 在执行生成快照任务的过程中 针对某些索引的处理失败了
  */
 public class SnapshotShardFailure extends ShardOperationFailedException {
 

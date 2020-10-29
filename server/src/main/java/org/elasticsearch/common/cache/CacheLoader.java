@@ -19,6 +19,11 @@
 
 package org.elasticsearch.common.cache;
 
+/**
+ * 通过key 从缓存中查找value
+ * @param <K>
+ * @param <V>
+ */
 @FunctionalInterface
 public interface CacheLoader<K, V> {
     V load(K key) throws Exception;

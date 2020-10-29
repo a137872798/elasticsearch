@@ -19,7 +19,17 @@
 
 package org.elasticsearch.common.cache;
 
+/**
+ * 针对缓存层使用的监听器  当缓存中某个key被移除时触发函数
+ * @param <K>
+ * @param <V>
+ */
 @FunctionalInterface
 public interface RemovalListener<K, V> {
+
+    /**
+     * 当某个键值对被移除时触发函数
+     * @param notification
+     */
     void onRemoval(RemovalNotification<K, V> notification);
 }

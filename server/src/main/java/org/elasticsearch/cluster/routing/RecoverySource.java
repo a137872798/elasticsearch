@@ -242,6 +242,10 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
      * 从快照中恢复数据  看来他跟redis这种类似  也是定期生成快照的
      */
     public static class SnapshotRecoverySource extends RecoverySource {
+
+        /**
+         * 每次申请恢复都会生成一个唯一id
+         */
         private final String restoreUUID;
         /**
          * 快照对象主要就是存在一个仓库属性 以及一个 snapshotId 属性

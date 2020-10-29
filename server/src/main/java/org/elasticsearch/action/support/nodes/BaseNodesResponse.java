@@ -35,6 +35,10 @@ public abstract class BaseNodesResponse<TNodeResponse extends BaseNodeResponse> 
 
     private ClusterName clusterName;
     private List<FailedNodeException> failures;
+
+    /**
+     * 所有正常处理的结果会填充到这个列表中
+     */
     private List<TNodeResponse> nodes;
     private Map<String, TNodeResponse> nodesMap;
 

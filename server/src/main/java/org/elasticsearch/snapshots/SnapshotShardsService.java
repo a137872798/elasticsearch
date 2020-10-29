@@ -92,6 +92,7 @@ import static org.elasticsearch.cluster.SnapshotsInProgress.completed;
 /**
  * This service runs on data and master nodes and controls currently snapshotted shards on these nodes. It is responsible for
  * starting and stopping shard level snapshots
+ * 快照分片服务
  */
 public class SnapshotShardsService extends AbstractLifecycleComponent implements ClusterStateListener, IndexEventListener {
     private static final Logger logger = LogManager.getLogger(SnapshotShardsService.class);
@@ -108,15 +109,37 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
 
     private final ThreadPool threadPool;
 
+    /**
+     * 这里存储了每次快照 对应的所有处理的分片以及他们此时的快照处理状态
+     */
     private final Map<Snapshot, Map<ShardId, IndexShardSnapshotStatus>> shardSnapshots = new HashMap<>();
 
     // A map of snapshots to the shardIds that we already reported to the master as failed
+    // 该对象确保同一个req对象 同一时间只有一个在执行
     private final TransportRequestDeduplicator<UpdateIndexShardSnapshotStatusRequest> remoteFailedRequestDeduplicator =
         new TransportRequestDeduplicator<>();
 
+    /**
+     * 该对象定义了如何更新CS
+     */
     private final SnapshotStateExecutor snapshotStateExecutor = new SnapshotStateExecutor();
+
+    /**
+     * 该对象内部包含了如何更新快照状态
+     */
     private final UpdateSnapshotStatusAction updateSnapshotStatusHandler;
 
+    /**
+     *
+     * @param settings
+     * @param clusterService
+     * @param repositoriesService
+     * @param threadPool
+     * @param transportService
+     * @param indicesService
+     * @param actionFilters  该对象内部存储了一组 ActionFilter
+     * @param indexNameExpressionResolver
+     */
     public SnapshotShardsService(Settings settings, ClusterService clusterService, RepositoriesService repositoriesService,
                                  ThreadPool threadPool, TransportService transportService, IndicesService indicesService,
                                  ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver) {
@@ -125,6 +148,7 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
         this.transportService = transportService;
         this.clusterService = clusterService;
         this.threadPool = threadPool;
+        // 当本节点是数据节点时 会监听CS 变化
         if (DiscoveryNode.isDataNode(settings)) {
             // this is only useful on the nodes that can hold data
             clusterService.addListener(this);
@@ -150,16 +174,24 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
         clusterService.removeListener(this);
     }
 
+
+    /**
+     * 当本节点作为数据节点 感知到集群发生变化时触发
+     * @param event
+     */
     @Override
     public void clusterChanged(ClusterChangedEvent event) {
         try {
             SnapshotsInProgress previousSnapshots = event.previousState().custom(SnapshotsInProgress.TYPE);
             SnapshotsInProgress currentSnapshots = event.state().custom(SnapshotsInProgress.TYPE);
+            // 只关注快照相关的 发现inProgress 发生了变化
             if ((previousSnapshots == null && currentSnapshots != null)
                 || (previousSnapshots != null && previousSnapshots.equals(currentSnapshots) == false)) {
                 synchronized (shardSnapshots) {
+                    // 某些快照此时已经停止了 将它们从 shardSnapshots中移除
                     cancelRemoved(currentSnapshots);
                     if (currentSnapshots != null) {
+                        // 可能开启了一些新的快照 为他们初始化 status对象 并设置到容器中
                         startNewSnapshots(currentSnapshots);
                     }
                 }
@@ -168,6 +200,7 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
             String previousMasterNodeId = event.previousState().nodes().getMasterNodeId();
             String currentMasterNodeId = event.state().nodes().getMasterNodeId();
             if (currentMasterNodeId != null && currentMasterNodeId.equals(previousMasterNodeId) == false) {
+                // 当leader节点发生变化时 根据inProgress得知此时有哪些快照的信息是需要被追踪的  将这些快照最新的运行状态上报给leader节点
                 syncShardStatsOnNewMaster(event);
             }
 
@@ -176,6 +209,12 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
         }
     }
 
+    /**
+     * 当某个分片在关闭前触发
+     * @param shardId
+     * @param indexShard The index shard
+     * @param indexSettings
+     */
     @Override
     public void beforeIndexShardClosed(ShardId shardId, @Nullable IndexShard indexShard, Settings indexSettings) {
         // abort any snapshots occurring on the soon-to-be closed shard
@@ -185,6 +224,7 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
                 if (shards.containsKey(shardId)) {
                     logger.debug("[{}] shard closing, abort snapshotting for snapshot [{}]",
                         shardId, snapshotShards.getKey().getSnapshotId());
+                    // 将快照标记成禁止状态
                     shards.get(shardId).abortIfNotCompleted("shard is closing, aborting");
                 }
             }
@@ -207,12 +247,17 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
         }
     }
 
+    /**
+     * 不在inProgress内部的快照就移除掉
+     * @param snapshotsInProgress
+     */
     private void cancelRemoved(@Nullable SnapshotsInProgress snapshotsInProgress) {
         // First, remove snapshots that are no longer there
         Iterator<Map.Entry<Snapshot, Map<ShardId, IndexShardSnapshotStatus>>> it = shardSnapshots.entrySet().iterator();
         while (it.hasNext()) {
             final Map.Entry<Snapshot, Map<ShardId, IndexShardSnapshotStatus>> entry = it.next();
             final Snapshot snapshot = entry.getKey();
+            // 如果 inProgress 本身为null 可以理解为所有快照都可以被移除了
             if (snapshotsInProgress == null || snapshotsInProgress.snapshot(snapshot) == null) {
                 // abort any running snapshots of shards for the removed entry;
                 // this could happen if for some reason the cluster state update for aborting
@@ -220,12 +265,17 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
                 // state update, which is being processed here
                 it.remove();
                 for (IndexShardSnapshotStatus snapshotStatus : entry.getValue().values()) {
+                    // 因为某些地方可能还在用这个status 所以将其设置为abort  避免已经获取到引用的线程继续执行操作
                     snapshotStatus.abortIfNotCompleted("snapshot has been removed in cluster state, aborting");
                 }
             }
         }
     }
 
+    /**
+     * 检测新增的快照
+     * @param snapshotsInProgress
+     */
     private void startNewSnapshots(SnapshotsInProgress snapshotsInProgress) {
         // For now we will be mostly dealing with a single snapshot at a time but might have multiple simultaneously running
         // snapshots in the future
@@ -233,28 +283,36 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
         final String localNodeId = clusterService.localNode().getId();
         for (SnapshotsInProgress.Entry entry : snapshotsInProgress.entries()) {
             final State entryState = entry.state();
+            // 找到记录快照进程相关的信息实体  找到处于started阶段的entry
             if (entryState == State.STARTED) {
                 Map<ShardId, IndexShardSnapshotStatus> startedShards = null;
                 final Snapshot snapshot = entry.snapshot();
+                // 该快照可能之前已经设置到shardSnapshots了  也可能没有设置进去
                 Map<ShardId, IndexShardSnapshotStatus> snapshotShards = shardSnapshots.getOrDefault(snapshot, emptyMap());
                 for (ObjectObjectCursor<ShardId, ShardSnapshotStatus> shard : entry.shards()) {
                     // Add all new shards to start processing on
                     final ShardId shardId = shard.key;
                     final ShardSnapshotStatus shardSnapshotStatus = shard.value;
+                    // 每个status 中会标记这个分片存在于哪个节点上 只有确定了 该分片确实属于该节点 才会进行创建
                     if (localNodeId.equals(shardSnapshotStatus.nodeId())
+                        // 必须在init阶段才能插入  有没有可能跳过init阶段  ???
                         && shardSnapshotStatus.state() == ShardState.INIT
+                        // 此时shardSnapshots 中还没有设置该快照
                         && snapshotShards.containsKey(shardId) == false) {
                         logger.trace("[{}] - Adding shard to the queue", shardId);
                         if (startedShards == null) {
-                             startedShards = new HashMap<>();
+                            startedShards = new HashMap<>();
                         }
+                        // 生成一个处于初始节点的status对象 并填充到容器中
                         startedShards.put(shardId, IndexShardSnapshotStatus.newInitializing(shardSnapshotStatus.generation()));
                     }
                 }
                 if (startedShards != null && startedShards.isEmpty() == false) {
                     shardSnapshots.computeIfAbsent(snapshot, s -> new HashMap<>()).putAll(startedShards);
+                    // 这里执行新的快照任务
                     startNewShards(entry, startedShards);
                 }
+                // 代表该快照任务需要被终止
             } else if (entryState == State.ABORTED) {
                 // Abort all running shards for this snapshot
                 final Snapshot snapshot = entry.snapshot();
@@ -264,10 +322,12 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
                     if (snapshotStatus == null) {
                         // due to CS batching we might have missed the INIT state and straight went into ABORTED
                         // notify master that abort has completed by moving to FAILED
+                        // 代表此时处于预期外的情况 选择将失败信息通知到leader节点
                         if (shard.value.state() == ShardState.ABORTED) {
                             notifyFailedSnapshotShard(snapshot, shard.key, shard.value.reason());
                         }
                     } else {
+                        // 将此时存在的status 设置成abort
                         snapshotStatus.abortIfNotCompleted("snapshot has been aborted");
                     }
                 }
@@ -275,19 +335,30 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
         }
     }
 
+    /**
+     * 启动本次新的快照任务
+     * @param entry  代表某次快照任务  因为在一次CS变化中可能携带了多个 Entry 代表多个快照任务  怎么处理呢 多个快照任务???
+     * @param startedShards  内部包含了本次接收CS 变化产生的新的快照任务
+     */
     private void startNewShards(SnapshotsInProgress.Entry entry, Map<ShardId, IndexShardSnapshotStatus> startedShards) {
         threadPool.executor(ThreadPool.Names.SNAPSHOT).execute(() -> {
             final Snapshot snapshot = entry.snapshot();
+
+            // 将本次快照相关的所有索引抽取出来
             final Map<String, IndexId> indicesMap =
                 entry.indices().stream().collect(Collectors.toMap(IndexId::getName, Function.identity()));
             for (final Map.Entry<ShardId, IndexShardSnapshotStatus> shardEntry : startedShards.entrySet()) {
                 final ShardId shardId = shardEntry.getKey();
                 final IndexShardSnapshotStatus snapshotStatus = shardEntry.getValue();
+                // 本次分片对应的索引
                 final IndexId indexId = indicesMap.get(shardId.getIndexName());
                 assert indexId != null;
                 assert SnapshotsService.useShardGenerations(entry.version()) || snapshotStatus.generation() == null :
                     "Found non-null shard generation [" + snapshotStatus.generation() + "] for snapshot with old-format compatibility";
+
+                // 开始创建快照了
                 snapshot(shardId, snapshot, indexId, entry.userMetadata(), snapshotStatus, entry.version(),
+                    // 在本次快照的结果生成后 发送到leader节点上
                     new ActionListener<>() {
                         @Override
                         public void onResponse(String newGeneration) {
@@ -318,20 +389,26 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
      *
      * @param snapshot       snapshot
      * @param snapshotStatus snapshot status
+     *                       开始执行快照任务 并且在任务产生结果时(成功/失败) 通知到leader节点
+     *                       在这里才会详细检测分片的状态
      */
     private void snapshot(final ShardId shardId, final Snapshot snapshot, final IndexId indexId, final Map<String, Object> userMetadata,
                           final IndexShardSnapshotStatus snapshotStatus, Version version, ActionListener<String> listener) {
         try {
+            // indicesService 内部管理了每个索引 以及他们下面的所有分片
             final IndexShard indexShard = indicesService.indexServiceSafe(shardId.getIndex()).getShardOrNull(shardId.id());
+            // 只有主分片才有生成快照的必要 ???
             if (indexShard.routingEntry().primary() == false) {
                 throw new IndexShardSnapshotFailedException(shardId, "snapshot should be performed only on primary");
             }
+            // 如果正处于重定位的状态 无法生成快照
             if (indexShard.routingEntry().relocating()) {
                 // do not snapshot when in the process of relocation of primaries so we won't get conflicts
                 throw new IndexShardSnapshotFailedException(shardId, "cannot snapshot while relocating");
             }
 
             final IndexShardState indexShardState = indexShard.state();
+            // 以下2种状态 不允许执行快照操作
             if (indexShardState == IndexShardState.CREATED || indexShardState == IndexShardState.RECOVERING) {
                 // shard has just been created, or still recovering
                 throw new IndexShardSnapshotFailedException(shardId, "shard didn't fully recover yet");
@@ -341,6 +418,7 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
             Engine.IndexCommitRef snapshotRef = null;
             try {
                 // we flush first to make sure we get the latest writes snapshotted
+                // 获取最近一次flush的索引文件
                 snapshotRef = indexShard.acquireLastIndexCommit(true);
                 final IndexCommit snapshotIndexCommit = snapshotRef.getIndexCommit();
                 repository.snapshotShard(indexShard.store(), indexShard.mapperService(), snapshot.getSnapshotId(), indexId,
@@ -382,6 +460,7 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
 
     /**
      * Checks if any shards were processed that the new master doesn't know about
+     * 当leader节点发生变化时触发函数
      */
     private void syncShardStatsOnNewMaster(ClusterChangedEvent event) {
         SnapshotsInProgress snapshotsInProgress = event.state().custom(SnapshotsInProgress.TYPE);
@@ -391,29 +470,33 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
 
         // Clear request deduplicator since we need to send all requests that were potentially not handled by the previous
         // master again
+        // 因为leader节点发生了变化 所以之前发往leader的请求就不需要处理了
         remoteFailedRequestDeduplicator.clear();
         for (SnapshotsInProgress.Entry snapshot : snapshotsInProgress.entries()) {
             if (snapshot.state() == State.STARTED || snapshot.state() == State.ABORTED) {
+                // 找到本次快照所有的分片
                 Map<ShardId, IndexShardSnapshotStatus> localShards = currentSnapshotShards(snapshot.snapshot());
                 if (localShards != null) {
                     ImmutableOpenMap<ShardId, ShardSnapshotStatus> masterShards = snapshot.shards();
                     for(Map.Entry<ShardId, IndexShardSnapshotStatus> localShard : localShards.entrySet()) {
                         ShardId shardId = localShard.getKey();
                         ShardSnapshotStatus masterShard = masterShards.get(shardId);
+                        // 只有未完成的快照需要做处理
                         if (masterShard != null && masterShard.state().completed() == false) {
                             final IndexShardSnapshotStatus.Copy indexShardSnapshotStatus = localShard.getValue().asCopy();
                             final Stage stage = indexShardSnapshotStatus.getStage();
                             // Master knows about the shard and thinks it has not completed
+                            // 每个节点将这些正在处理中的快照的最新进度上报给leader节点
                             if (stage == Stage.DONE) {
                                 // but we think the shard is done - we need to make new master know that the shard is done
                                 logger.debug("[{}] new master thinks the shard [{}] is not completed but the shard is done locally, " +
-                                             "updating status on the master", snapshot.snapshot(), shardId);
+                                    "updating status on the master", snapshot.snapshot(), shardId);
                                 notifySuccessfulSnapshotShard(snapshot.snapshot(), shardId, localShard.getValue().generation());
 
                             } else if (stage == Stage.FAILURE) {
                                 // but we think the shard failed - we need to make new master know that the shard failed
                                 logger.debug("[{}] new master thinks the shard [{}] is not completed but the shard failed locally, " +
-                                             "updating status on master", snapshot.snapshot(), shardId);
+                                    "updating status on master", snapshot.snapshot(), shardId);
                                 notifyFailedSnapshotShard(snapshot.snapshot(), shardId, indexShardSnapshotStatus.getFailure());
                             }
                         }
@@ -425,10 +508,14 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
 
     /**
      * Internal request that is used to send changes in snapshot status to master
+     * 这个一个更新集群状态的请求
      */
     public static class UpdateIndexShardSnapshotStatusRequest extends MasterNodeRequest<UpdateIndexShardSnapshotStatusRequest> {
         private final Snapshot snapshot;
         private final ShardId shardId;
+        /**
+         * 将leader上的快照状态更新成该值
+         */
         private final ShardSnapshotStatus status;
 
         public UpdateIndexShardSnapshotStatusRequest(StreamInput in) throws IOException {
@@ -501,16 +588,26 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
             new ShardSnapshotStatus(clusterService.localNode().getId(), ShardState.SUCCESS, generation));
     }
 
-    /** Notify the master node that the given shard failed to be snapshotted **/
+    /**
+     * Notify the master node that the given shard failed to be snapshotted
+     * @param snapshot 本次失败的快照信息
+     * @param shardId  具体是哪个分片失败
+     * @param failure  失败原因
+     * 主节点通知某个快照失败了
+     */
     private void notifyFailedSnapshotShard(final Snapshot snapshot, final ShardId shardId, final String failure) {
         sendSnapshotShardUpdate(snapshot, shardId,
             new ShardSnapshotStatus(clusterService.localNode().getId(), ShardState.FAILED, failure, null));
     }
 
-    /** Updates the shard snapshot status by sending a {@link UpdateIndexShardSnapshotStatusRequest} to the master node */
+    /**
+     * Updates the shard snapshot status by sending a {@link UpdateIndexShardSnapshotStatusRequest} to the master node
+     * 将更新快照status的请求发送到leader
+     */
     private void sendSnapshotShardUpdate(final Snapshot snapshot, final ShardId shardId, final ShardSnapshotStatus status) {
         remoteFailedRequestDeduplicator.executeOnce(
             new UpdateIndexShardSnapshotStatusRequest(snapshot, shardId, status),
+            // 当任务完成时触发监听器  只是打印日志
             new ActionListener<>() {
                 @Override
                 public void onResponse(Void aVoid) {
@@ -523,6 +620,7 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
                         () -> new ParameterizedMessage("[{}] [{}] failed to update snapshot state", snapshot, status), e);
                 }
             },
+            // 在短时间内重复插入req 只有第一个会触发回调函数  将请求发给自己么
             (req, reqListener) -> transportService.sendRequest(transportService.getLocalNode(), UPDATE_SNAPSHOT_STATUS_ACTION_NAME, req,
                 new TransportResponseHandler<UpdateIndexShardSnapshotStatusResponse>() {
                     @Override
@@ -578,7 +676,7 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
 
         @Override
         public ClusterTasksResult<UpdateIndexShardSnapshotStatusRequest>
-                        execute(ClusterState currentState, List<UpdateIndexShardSnapshotStatusRequest> tasks) {
+        execute(ClusterState currentState, List<UpdateIndexShardSnapshotStatusRequest> tasks) {
             final SnapshotsInProgress snapshots = currentState.custom(SnapshotsInProgress.TYPE);
             if (snapshots != null) {
                 int changedCount = 0;
@@ -638,12 +736,12 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
 
     private class UpdateSnapshotStatusAction
         extends TransportMasterNodeAction<UpdateIndexShardSnapshotStatusRequest, UpdateIndexShardSnapshotStatusResponse> {
-            UpdateSnapshotStatusAction(TransportService transportService, ClusterService clusterService,
-                ThreadPool threadPool, ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver) {
-                    super(
-                        SnapshotShardsService.UPDATE_SNAPSHOT_STATUS_ACTION_NAME, false, transportService, clusterService, threadPool,
-                        actionFilters, UpdateIndexShardSnapshotStatusRequest::new, indexNameExpressionResolver
-                    );
+        UpdateSnapshotStatusAction(TransportService transportService, ClusterService clusterService,
+                                   ThreadPool threadPool, ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver) {
+            super(
+                SnapshotShardsService.UPDATE_SNAPSHOT_STATUS_ACTION_NAME, false, transportService, clusterService, threadPool,
+                actionFilters, UpdateIndexShardSnapshotStatusRequest::new, indexNameExpressionResolver
+            );
         }
 
         @Override

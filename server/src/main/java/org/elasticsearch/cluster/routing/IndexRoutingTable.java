@@ -423,6 +423,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
          * 从快照中恢复数据
          */
         public Builder initializeAsNewRestore(IndexMetadata indexMetadata, SnapshotRecoverySource recoverySource, IntSet ignoreShards) {
+            // 这里创建了一个未分配的新分片  并标明是从 restore中生成的
             final UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.NEW_INDEX_RESTORED,
                 "restore_source[" + recoverySource.snapshot().getRepository() + "/" +
                  recoverySource.snapshot().getSnapshotId().getName() + "]");
@@ -441,12 +442,13 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         /**
          * Initializes an index, to be restored from snapshot
-         * @param asNew  代表本次索引是否是新建的
+         * @param asNew  代表本次索引是否是新建的  如果是false 代表是从restore中产生的分片
          * 指定了从快照中恢复数据
          */
         private Builder initializeAsRestore(IndexMetadata indexMetadata, SnapshotRecoverySource recoverySource, IntSet ignoreShards,
                                             boolean asNew, UnassignedInfo unassignedInfo) {
             assert indexMetadata.getIndex().equals(index);
+            // 代表已经执行过初始化了
             if (!shards.isEmpty()) {
                 throw new IllegalStateException("trying to initialize an index with fresh shards, but already has shards created");
             }

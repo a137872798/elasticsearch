@@ -19,8 +19,16 @@
 
 package org.elasticsearch.common.cache;
 
+/**
+ * 代表缓存中哪组键值对被移除了
+ * @param <K>
+ * @param <V>
+ */
 public class RemovalNotification<K, V> {
-    public enum RemovalReason {REPLACED, INVALIDATED, EVICTED}
+
+
+    public enum RemovalReason {
+        /** 更新 */REPLACED, /** 过期 */INVALIDATED, /** 移除 */EVICTED}
 
     private final K key;
     private final V value;

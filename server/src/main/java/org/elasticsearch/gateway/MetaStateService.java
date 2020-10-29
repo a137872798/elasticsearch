@@ -40,6 +40,7 @@ import java.util.function.Predicate;
 
 /**
  * Handles writing and loading {@link Manifest}, {@link Metadata} and {@link IndexMetadata}
+ * 元数据状态服务
  */
 public class MetaStateService {
     private static final Logger logger = LogManager.getLogger(MetaStateService.class);
@@ -158,15 +159,21 @@ public class MetaStateService {
 
     /**
      * Loads all indices states available on disk
+     * @param excludeIndexPathIdsPredicate 在该列表中的索引要排除在外
+     * 加载此时所有的索引
      */
     List<IndexMetadata> loadIndicesStates(Predicate<String> excludeIndexPathIdsPredicate) throws IOException {
         List<IndexMetadata> indexMetadataList = new ArrayList<>();
+        // 遍历所有找到的索引文件夹
         for (String indexFolderName : nodeEnv.availableIndexFolders(excludeIndexPathIdsPredicate)) {
             assert excludeIndexPathIdsPredicate.test(indexFolderName) == false :
                     "unexpected folder " + indexFolderName + " which should have been excluded";
+            // 这个索引目录下应该有各个不同gen的数据    这里是取出gen最大的索引数据
             IndexMetadata indexMetadata = INDEX_METADATA_FORMAT.loadLatestState(logger, namedXContentRegistry,
+                    // 这里应该是吧文件夹名 转换成完整路径
                     nodeEnv.resolveIndexFolder(indexFolderName));
             if (indexMetadata != null) {
+                // 当文件夹名称与 uuid匹配时加入到列表中
                 final String indexPathId = indexMetadata.getIndex().getUUID();
                 if (indexFolderName.equals(indexPathId)) {
                     indexMetadataList.add(indexMetadata);

@@ -66,15 +66,29 @@ public class GatewayAllocator implements ExistingShardsAllocator {
 
     private final RerouteService rerouteService;
 
+    /**
+     * 主分片使用该对象进行分配
+     */
     private final PrimaryShardAllocator primaryShardAllocator;
+    /**
+     * 分配副本
+     */
     private final ReplicaShardAllocator replicaShardAllocator;
 
+    // 这2个容器被认为是缓存容器
+    // AsyncShardFetch 代表从集群相关节点中获取有关该分片的数据
     private final ConcurrentMap<ShardId, AsyncShardFetch<NodeGatewayStartedShards>>
         asyncFetchStarted = ConcurrentCollections.newConcurrentMap();
     private final ConcurrentMap<ShardId, AsyncShardFetch<NodeStoreFilesMetadata>>
         asyncFetchStore = ConcurrentCollections.newConcurrentMap();
+
     private Set<String> lastSeenEphemeralIds = Collections.emptySet();
 
+    /**
+     * 这些实例是什么时候加入到bean容器的
+     * @param rerouteService
+     * @param client
+     */
     @Inject
     public GatewayAllocator(RerouteService rerouteService, NodeClient client) {
         this.rerouteService = rerouteService;
@@ -97,6 +111,11 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         this.replicaShardAllocator = null;
     }
 
+    /**
+     * 返回此时总计有多少请求发出还未收到结果
+     * 每个fetch 每次会向所有相关节点发送请求 所以可能有多个inflight请求
+     * @return
+     */
     @Override
     public int getNumberOfInFlightFetches() {
         int count = 0;
@@ -116,12 +135,18 @@ public class GatewayAllocator implements ExistingShardsAllocator {
      */
     @Override
     public void applyStartedShards(final List<ShardRouting> startedShards, final RoutingAllocation allocation) {
+        // 为啥分片启动了 就要关闭相关的fetch任务啊
         for (ShardRouting startedShard : startedShards) {
             Releasables.close(asyncFetchStarted.remove(startedShard.shardId()));
             Releasables.close(asyncFetchStore.remove(startedShard.shardId()));
         }
     }
 
+    /**
+     * 当分片失败时 也在相关容器中移除并触发close
+     * @param failedShards
+     * @param allocation
+     */
     @Override
     public void applyFailedShards(final List<FailedShard> failedShards, final RoutingAllocation allocation) {
         for (FailedShard failedShard : failedShards) {
@@ -130,6 +155,10 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         }
     }
 
+    /**
+     * 在开启一轮新的分配前 先触发该函数
+     * @param allocation
+     */
     @Override
     public void beforeAllocation(final RoutingAllocation allocation) {
         assert primaryShardAllocator != null;
@@ -137,9 +166,14 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         ensureAsyncFetchStorePrimaryRecency(allocation);
     }
 
+    /**
+     * 当主分片分配完成 而副本分片还未分配完成的时候触发
+     * @param allocation
+     */
     @Override
     public void afterPrimariesBeforeReplicas(RoutingAllocation allocation) {
         assert replicaShardAllocator != null;
+        // 本次本次分配结果中存在失活的分片
         if (allocation.routingNodes().hasInactiveShards()) {
             // cancel existing recoveries if we have a better match
             replicaShardAllocator.processExistingRecoveries(allocation);
@@ -183,10 +217,14 @@ public class GatewayAllocator implements ExistingShardsAllocator {
 
     /**
      * Clear the fetched data for the primary to ensure we do not cancel recoveries based on excessively stale data.
+     * 检测最近是否发生过 主分片的拉取任务
      */
     private void ensureAsyncFetchStorePrimaryRecency(RoutingAllocation allocation) {
+        // 本次分配涉及到的所有node
         DiscoveryNodes nodes = allocation.nodes();
+        // 代表有新的node
         if (hasNewNodes(nodes)) {
+            // 将每个node 的ephemeralId 取出来
             final Set<String> newEphemeralIds = StreamSupport.stream(nodes.getDataNodes().spliterator(), false)
                 .map(node -> node.value.getEphemeralId()).collect(Collectors.toSet());
             // Invalidate the cache if a data node has been added to the cluster. This ensures that we do not cancel a recovery if a node
@@ -201,6 +239,11 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         }
     }
 
+    /**
+     * 某些node已经收到结果了 所以将相关信息从 目标分片关联的nodes中移除
+     * @param fetch
+     * @param allocation
+     */
     private static void clearCacheForPrimary(AsyncShardFetch<TransportNodesListShardStoreMetadata.NodeStoreFilesMetadata> fetch,
                                              RoutingAllocation allocation) {
         ShardRouting primary = allocation.routingNodes().activePrimary(fetch.shardId);
@@ -209,6 +252,11 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         }
     }
 
+    /**
+     * 只要本次有某个node 没有在lastSeenEphemeralIds 中找到对应的id 就代表本次node是新增的
+     * @param nodes
+     * @return
+     */
     private boolean hasNewNodes(DiscoveryNodes nodes) {
         for (ObjectObjectCursor<String, DiscoveryNode> node : nodes.getDataNodes()) {
             if (lastSeenEphemeralIds.contains(node.value.getEphemeralId()) == false) {

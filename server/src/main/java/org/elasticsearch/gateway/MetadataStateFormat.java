@@ -344,16 +344,20 @@ public abstract class MetadataStateFormat<T> {
      * @param locations - paths to directories with state folder
      * @return maximum id of state file or -1 if no such files are found
      * @throws IOException if IOException occurs
+     *
      */
     private long findMaxGenerationId(final String prefix, Path... locations) throws IOException {
         long maxId = -1;
         for (Path dataLocation : locations) {
+            // 每个索引目录下 可能还有一个 _state目录吧
             final Path resolve = dataLocation.resolve(STATE_DIR_NAME);
             if (Files.exists(resolve)) {
+                // 遍历该 _state 下所有以  state_ 为前缀的文件
                 try (DirectoryStream<Path> stream = Files.newDirectoryStream(resolve, prefix + "*")) {
                     for (Path stateFile : stream) {
                         final Matcher matcher = stateFilePattern.matcher(stateFile.getFileName().toString());
                         if (matcher.matches()) {
+                            // 获取末尾的gen
                             final long id = Long.parseLong(matcher.group(1));
                             maxId = Math.max(maxId, id);
                         }
@@ -394,6 +398,7 @@ public abstract class MetadataStateFormat<T> {
      * @param generation the generation to be loaded.
      * @param dataLocations the data-locations to try.
      * @return the state of asked generation or <code>null</code> if no state was found.
+     * 将数据流通过format转换成实体对象
      */
     public T loadGeneration(Logger logger, NamedXContentRegistry namedXContentRegistry, long generation, Path... dataLocations) {
         List<Path> stateFiles = findStateFilesByGeneration(generation, dataLocations);
@@ -426,10 +431,13 @@ public abstract class MetadataStateFormat<T> {
      * @param logger        a logger instance.
      * @param dataLocations the data-locations to try.
      * @return tuple of the latest state and generation. (-1, null) if no state is found.
+     * 从一组候选path中 找到最大gen对应的数据
      */
     public Tuple<T, Long> loadLatestStateWithGeneration(Logger logger, NamedXContentRegistry namedXContentRegistry, Path... dataLocations)
             throws IOException {
+        // 这个前缀就是 "state-"   获取_state 目录下所有 state-gen 文件下最大的gen
         long generation = findMaxGenerationId(prefix, dataLocations);
+        // 读取数据流并反序列化成目标对象
         T state = loadGeneration(logger, namedXContentRegistry, generation, dataLocations);
 
         if (generation > -1 && state == null) {

@@ -196,6 +196,10 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
     private final ImmutableOpenMap<String, Custom> customs;
 
     private final transient int totalNumberOfShards; // Transient ? not serializable anyway?
+
+    /**
+     * 当前总计有多少分片处于打开状态
+     */
     private final int totalOpenIndexShards;
 
     private final String[] allIndices;
@@ -1048,6 +1052,12 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
             return this;
         }
 
+        /**
+         * 在当前metadata上 追加一个indexMetadata
+         * @param indexMetadata
+         * @param incrementVersion  在插入时可以选择是否将版本号+1
+         * @return
+         */
         public Builder put(IndexMetadata indexMetadata, boolean incrementVersion) {
             if (indices.get(indexMetadata.getIndex().getName()) == indexMetadata) {
                 return this;

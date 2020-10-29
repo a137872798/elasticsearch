@@ -49,6 +49,9 @@ public enum SnapshotState {
 
     private final boolean completed;
 
+    /**
+     * 描述能否通过该快照还原数据
+     */
     private final boolean restorable;
 
     SnapshotState(byte value, boolean completed, boolean restorable) {

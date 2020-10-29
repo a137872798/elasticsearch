@@ -999,7 +999,8 @@ public final class NodeEnvironment  implements Closeable {
 
     /**
      * Returns folder names in ${data.paths}/indices folder that don't match the given predicate.
-     * @param excludeIndexPathIdsPredicate folder names to exclude
+     * @param excludeIndexPathIdsPredicate folder names to exclude   在该列表内的索引会被排除
+     *                                     找到当前节点下声明的所有索引
      */
     public Set<String> availableIndexFolders(Predicate<String> excludeIndexPathIdsPredicate) throws IOException {
         if (nodePaths == null || locks == null) {
@@ -1008,6 +1009,7 @@ public final class NodeEnvironment  implements Closeable {
         assertEnvIsLocked();
         Set<String> indexFolders = new HashSet<>();
         for (NodePath nodePath : nodePaths) {
+            // 每个路径下 可能都会有一组声明的索引
             indexFolders.addAll(availableIndexFoldersForPath(nodePath, excludeIndexPathIdsPredicate));
         }
         return indexFolders;
@@ -1032,6 +1034,7 @@ public final class NodeEnvironment  implements Closeable {
      * @param excludeIndexPathIdsPredicate folder names to exclude
      * @return all directories that could be indices for the given node path.
      * @throws IOException if an I/O exception occurs traversing the filesystem
+     * 以某个工作路径为单位 返回除了exclude内所有的索引
      */
     public Set<String> availableIndexFoldersForPath(final NodePath nodePath, Predicate<String> excludeIndexPathIdsPredicate)
         throws IOException {
@@ -1040,9 +1043,11 @@ public final class NodeEnvironment  implements Closeable {
         }
         assertEnvIsLocked();
         final Set<String> indexFolders = new HashSet<>();
+        // path 内部还管理了多个子级路径 这里是专门获取有关索引的路径
         Path indicesLocation = nodePath.indicesPath;
         if (Files.isDirectory(indicesLocation)) {
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(indicesLocation)) {
+                // 遍历所有子级目录
                 for (Path index : stream) {
                     final String fileName = index.getFileName().toString();
                     if (excludeIndexPathIdsPredicate.test(fileName) == false && Files.isDirectory(index)) {
@@ -1064,6 +1069,7 @@ public final class NodeEnvironment  implements Closeable {
         assertEnvIsLocked();
         List<Path> paths = new ArrayList<>(nodePaths.length);
         for (NodePath nodePath : nodePaths) {
+            // 遍历每个数据
             Path indexFolder = nodePath.indicesPath.resolve(indexFolderName);
             if (Files.exists(indexFolder)) {
                 paths.add(indexFolder);

@@ -101,6 +101,10 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
          * 本次快照相关的所有索引
          */
         private final List<IndexId> indices;
+
+        /**
+         * 什么时候生成这种 waiting索引
+         */
         private final ImmutableOpenMap<String, List<ShardId>> waitingIndices;
         private final long startTime;
         /**

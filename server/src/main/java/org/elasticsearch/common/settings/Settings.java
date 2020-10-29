@@ -1279,6 +1279,7 @@ public final class Settings implements ToXContentFragment {
          * Checks that all settings in the builder start with the specified prefix.
          *
          * If a setting doesn't start with the prefix, the builder appends the prefix to such setting.
+         * 如果配置不包含指定前缀   全部加上前缀
          */
         public Builder normalizePrefix(String prefix) {
             Map<String, Object> replacements = new HashMap<>();
