@@ -19,6 +19,9 @@
 
 package org.elasticsearch.index;
 
+/**
+ * 索引模块相关的组件  可以通过api 获取到index信息
+ */
 public interface IndexComponent {
 
     Index index();

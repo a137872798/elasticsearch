@@ -156,7 +156,7 @@ public class ParseField {
         Objects.requireNonNull(fieldName, "fieldName cannot be null");
         // if this parse field has not been completely deprecated then try to
         // match the preferred name
-        // 正常情况下 只有name 匹配时 才返回true
+        // 正常情况下直接匹配到name  不会使用DeprecationHandler
         if (fullyDeprecated == false && allReplacedWith == null && fieldName.equals(name)) {
             return true;
         }
@@ -164,6 +164,7 @@ public class ParseField {
         // the parse field is entirely deprecated (allReplacedWith != null) all
         // fields will be in the deprecatedNames array
 
+        // 匹配上 deprecatedName 还是返回true 但是会使用deprecationHandler 进行处理
         for (String depName : deprecatedNames) {
             // 当匹配到丢弃的name时
             if (fieldName.equals(depName)) {

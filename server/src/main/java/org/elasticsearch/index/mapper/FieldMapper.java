@@ -53,11 +53,18 @@ import java.util.Objects;
 import java.util.TreeMap;
 import java.util.stream.StreamSupport;
 
+/**
+ * 普通的mapper对象只是定义了一些基础属性
+ * FieldMapper 是以field为单位进行映射的
+ * fieldMapper 感觉像是从一组doc中抽取符合条件的field 并进行处理  这个过程被称为 parse
+ */
 public abstract class FieldMapper extends Mapper implements Cloneable {
     public static final Setting<Boolean> IGNORE_MALFORMED_SETTING =
         Setting.boolSetting("index.mapping.ignore_malformed", false, Property.IndexScope);
     public static final Setting<Boolean> COERCE_SETTING =
         Setting.boolSetting("index.mapping.coerce", false, Property.IndexScope);
+
+
     public abstract static class Builder<T extends Builder, Y extends FieldMapper> extends Mapper.Builder<T, Y> {
 
         protected final MappedFieldType fieldType;
@@ -66,7 +73,15 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
         protected boolean omitNormsSet = false;
         protected boolean indexOptionsSet = false;
         protected boolean docValuesSet = false;
+
+        /**
+         * 该对象内部维护了一组field
+         */
         protected final MultiFields.Builder multiFieldsBuilder;
+
+        /**
+         * 可以简单理解为一个 List<String>
+         */
         protected CopyTo copyTo = CopyTo.empty();
 
         protected Builder(String name, MappedFieldType fieldType, MappedFieldType defaultFieldType) {
@@ -82,6 +97,11 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
             return fieldType;
         }
 
+        /**
+         * 根据是否要根据field内部的数据去索引doc 更改IndexOptions
+         * @param index
+         * @return
+         */
         public T index(boolean index) {
             if (index) {
                 if (fieldType.indexOptions() == IndexOptions.NONE) {
@@ -215,6 +235,7 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
         protected void setupFieldType(BuilderContext context) {
             fieldType.setName(buildFullName(context));
             if (fieldType.indexAnalyzer() == null && fieldType.tokenized() == false && fieldType.indexOptions() != IndexOptions.NONE) {
+                // 这里没有使用标准分词器  而是用了一个keyword分词器
                 fieldType.setIndexAnalyzer(Lucene.KEYWORD_ANALYZER);
                 fieldType.setSearchAnalyzer(Lucene.KEYWORD_ANALYZER);
             }
@@ -233,6 +254,10 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
     }
 
     protected final Version indexCreatedVersion;
+
+    /**
+     * 每个针对field 进行映射的对象会有自己的 fieldType
+     */
     protected MappedFieldType fieldType;
     protected final MappedFieldType defaultFieldType;
     protected MultiFields multiFields;
@@ -246,6 +271,7 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
         if (simpleName.isEmpty()) {
             throw new IllegalArgumentException("name cannot be empty string");
         }
+        // 当调用 freeze后 再执行任何修改都会抛出异常
         fieldType.freeze();
         this.fieldType = fieldType;
         defaultFieldType.freeze();
@@ -277,11 +303,15 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
 
     /**
      * Parse the field value using the provided {@link ParseContext}.
+     * @param context 内部存储了一组
+     * 使用该mapper对象处理待解析的数据
      */
     public void parse(ParseContext context) throws IOException {
         final List<IndexableField> fields = new ArrayList<>(2);
         try {
+            // TODO 这里创建了2个特殊的field
             parseCreateField(context, fields);
+            // 为解析上下文当前的doc 追加了这个field
             for (IndexableField field : fields) {
                 context.doc().add(field);
             }
@@ -305,6 +335,7 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
                 "Preview of field's value: '{}'", e, fieldType().name(), fieldType().typeName(),
                 context.sourceToParse().id(), valuePreview);
         }
+
         multiFields.parse(this, context);
     }
 
@@ -316,6 +347,7 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
      */
     protected abstract void parseCreateField(ParseContext context, List<IndexableField> fields) throws IOException;
 
+    // TODO
     protected void createFieldNamesField(ParseContext context, List<IndexableField> fields) {
         FieldNamesFieldType fieldNamesFieldType = (FieldNamesFieldMapper.FieldNamesFieldType) context.docMapper()
                 .metadataMapper(FieldNamesFieldMapper.class).fieldType();
@@ -326,6 +358,10 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
         }
     }
 
+    /**
+     * 每个FieldMapper 关联到一个 multiField对象上 并且通过它来迭代更多的mapper
+     * @return
+     */
     @Override
     public Iterator<Mapper> iterator() {
         return multiFields.iterator();
@@ -340,6 +376,11 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
         }
     }
 
+    /**
+     * 使用merge函数时 也采用拷贝方式
+     * @param mergeWith
+     * @return
+     */
     @Override
     public FieldMapper merge(Mapper mergeWith) {
         FieldMapper merged = clone();
@@ -360,9 +401,11 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
                 + "], merged_type [" + mergedType + "]");
         }
         FieldMapper fieldMergeWith = (FieldMapper) mergeWith;
+        // 每个mapper 可以通过multiFields 关联到一组mapper
         multiFields = multiFields.merge(fieldMergeWith.multiFields);
 
         // apply changeable values
+        // 这里是直接使用另一个mapper对象的属性去覆盖当前属性
         this.fieldType = fieldMergeWith.fieldType;
         this.copyTo = fieldMergeWith.copyTo;
     }
@@ -378,10 +421,13 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
             throw new IllegalStateException("Mixing up field types: " +
                 fieldType.getClass() + " != " + newFieldType.getClass() + " on field " + fieldType.name());
         }
+
+        // 在通过上面的校验后 也是使用multiField 进行更新
         MultiFields updatedMultiFields = multiFields.updateFieldType(fullNameToFieldType);
         if (fieldType == newFieldType && multiFields == updatedMultiFields) {
             return this; // no change
         }
+        // 生成一个副本 不修改对象
         FieldMapper updated = clone();
         updated.fieldType = newFieldType;
         updated.multiFields = updatedMultiFields;
@@ -510,44 +556,78 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
 
     protected abstract String contentType();
 
+    /**
+     * 内部维护了一组field
+     */
     public static class MultiFields {
 
+        /**
+         * 该 multiFields 中没有任何mapper对象
+         * @return
+         */
         public static MultiFields empty() {
             return new MultiFields(ImmutableOpenMap.<String, FieldMapper>of());
         }
 
         public static class Builder {
 
+            /**
+             * Mapper.Builder 原本是用来生成 Mapper的  这里应该生成 FieldMapper对象
+             */
             private final ImmutableOpenMap.Builder<String, Mapper.Builder> mapperBuilders = ImmutableOpenMap.builder();
 
+            /**
+             * 将某个builder对象追加到 map中
+             * @param builder
+             * @return
+             */
             public Builder add(Mapper.Builder builder) {
                 mapperBuilders.put(builder.name(), builder);
                 return this;
             }
 
+            /**
+             *
+             * @param mainFieldBuilder  在这组field中 有一个被称为  mainField
+             * @param context   内部存储了一组path 以及一个settings
+             * @return
+             */
             @SuppressWarnings("unchecked")
             public MultiFields build(FieldMapper.Builder mainFieldBuilder, BuilderContext context) {
                 if (mapperBuilders.isEmpty()) {
                     return empty();
                 } else {
+                    // 将上下文内的path信息拼接起来
                     context.path().add(mainFieldBuilder.name());
                     ImmutableOpenMap.Builder mapperBuilders = this.mapperBuilders;
                     for (ObjectObjectCursor<String, Mapper.Builder> cursor : this.mapperBuilders) {
                         String key = cursor.key;
                         Mapper.Builder value = cursor.value;
+                        // 每个builder对象通过上下文生成mapper  并且此时的context path是拼接上  mainFieldBuilder.name的
+                        // 这里生成的要求是FieldMapper
                         Mapper mapper = value.build(context);
                         assert mapper instanceof FieldMapper;
                         mapperBuilders.put(key, mapper);
                     }
+                    // 将mainFieldBuilder.name() 移除
                     context.path().remove();
+
+                    // 简单来讲就是往MultiFields.Builder 中插入了各种 Mapper.Builder 在build时 将之前存储的Builder转换成Mapper对象后生成MultiFields
                     ImmutableOpenMap.Builder<String, FieldMapper> mappers = mapperBuilders.cast();
                     return new MultiFields(mappers.build());
                 }
             }
         }
 
+        /**
+         * 内部存储了一组 FieldMapper
+         */
         private final ImmutableOpenMap<String, FieldMapper> mappers;
 
+        /**
+         * 拷贝了一个副本 而不会修改原对象
+         * @param mappers
+         */
         private MultiFields(ImmutableOpenMap<String, FieldMapper> mappers) {
             ImmutableOpenMap.Builder<String, FieldMapper> builder = new ImmutableOpenMap.Builder<>();
             // we disable the all in multi-field mappers
@@ -557,6 +637,12 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
             this.mappers = builder.build();
         }
 
+        /**
+         * 调用解析方法时  会需要一个 parseContext   而在构建Mapper对象时 会需要一个BuilderContext
+         * @param mainField
+         * @param context   该对象内部包含了一组doc
+         * @throws IOException
+         */
         public void parse(FieldMapper mainField, ParseContext context) throws IOException {
             // TODO: multi fields are really just copy fields, we just need to expose "sub fields" or something that can be part
             // of the mappings
@@ -564,10 +650,13 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
                 return;
             }
 
+            // 生成一个支持 multiField的上下文对象 实际上就是加了一层过滤 同时将 multiField 修改成true
             context = context.createMultiFieldContext();
 
+            // 在解析前 拼接完整path
             context.path().add(mainField.simpleName());
             for (ObjectCursor<FieldMapper> cursor : mappers.values()) {
+                // 看来fieldMapper 会拦截doc中相关的field 并进行XXX操作
                 cursor.value.parse(context);
             }
             context.path().remove();
@@ -591,6 +680,11 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
             return new MultiFields(mappers);
         }
 
+        /**
+         * 每个fieldMapper对象 支持通过MappedFieldType 进行更新
+         * @param fullNameToFieldType
+         * @return
+         */
         public MultiFields updateFieldType(Map<String, MappedFieldType> fullNameToFieldType) {
             ImmutableOpenMap.Builder<String, FieldMapper> newMappersBuilder = null;
 

@@ -28,6 +28,7 @@ public interface NamedWriteable extends Writeable {
 
     /**
      * Returns the name of the writeable object
+     * 返回可写入对象的名字
      */
     String getWriteableName();
 }

@@ -23,6 +23,7 @@ import java.util.Locale;
 
 /**
  * Shape types supported by elasticsearch
+ * 支持的几何形状
  */
 public enum ShapeType {
     POINT,

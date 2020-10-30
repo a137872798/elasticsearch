@@ -31,10 +31,16 @@ import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
+/**
+ * 每个mapper 还是一个迭代器 并且迭代对象还是mapper
+ */
 public abstract class Mapper implements ToXContentFragment, Iterable<Mapper> {
 
     public static class BuilderContext {
         private final Settings indexSettings;
+        /**
+         * 该对象内部就是一个 String[]
+         */
         private final ContentPath contentPath;
 
         public BuilderContext(Settings indexSettings, ContentPath contentPath) {

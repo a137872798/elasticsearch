@@ -27,7 +27,9 @@ package org.elasticsearch.common;
  * When merging conflicting configuration settings such as
  * field mapping settings it is preferable to preserve an explicit
  * choice rather than a choice made only made implicitly by defaults. 
- * 
+ * 代表一个 显式的/非显式的对象
+ * 非显式时 一般是一个默认值
+ * 显式时 代表一个用户设置的值
  */
 public class Explicit<T> {
 

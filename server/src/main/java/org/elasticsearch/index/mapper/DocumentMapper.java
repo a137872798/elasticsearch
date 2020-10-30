@@ -54,6 +54,9 @@ import java.util.Objects;
 import java.util.stream.Stream;
 
 
+/**
+ * 针对doc级别的映射对象    还有fieldMapper
+ */
 public class DocumentMapper implements ToXContentFragment {
 
     public static class Builder {

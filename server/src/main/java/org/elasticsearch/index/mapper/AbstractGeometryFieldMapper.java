@@ -43,6 +43,7 @@ import java.util.Map;
 
 /**
  * Base field mapper class for all spatial field types
+ * 几何 fieldMapper
  */
 public abstract class AbstractGeometryFieldMapper extends FieldMapper {
 
@@ -56,6 +57,11 @@ public abstract class AbstractGeometryFieldMapper extends FieldMapper {
         public static final Explicit<Boolean> IGNORE_Z_VALUE = new Explicit<>(true, false);
     }
 
+    /**
+     * 创建几何mapper对象 在fieldMapper的基础上增加了 ignoreMalformed/ignoreZValue
+     * @param <T>
+     * @param <Y>
+     */
     public abstract static class Builder<T extends Builder, Y extends AbstractGeometryFieldMapper>
             extends FieldMapper.Builder<T, Y> {
         protected Boolean ignoreMalformed;
@@ -78,9 +84,12 @@ public abstract class AbstractGeometryFieldMapper extends FieldMapper {
         }
 
         protected Explicit<Boolean> ignoreMalformed(BuilderContext context) {
+            // 代表使用了用户指定的值
             if (ignoreMalformed != null) {
                 return new Explicit<>(ignoreMalformed, true);
             }
+
+            // 代表是从配置中或者常量中获取的默认值
             if (context.indexSettings() != null) {
                 return new Explicit<>(IGNORE_MALFORMED_SETTING.get(context.indexSettings()), false);
             }
@@ -125,26 +134,48 @@ public abstract class AbstractGeometryFieldMapper extends FieldMapper {
         }
     }
 
+    /**
+     * 在 Mapper中定义了一个 TypeParser 接口 仅包含一个parse方法
+     * @param <T>
+     */
     public abstract static class TypeParser<T extends Builder> implements Mapper.TypeParser {
+
+        /**
+         * 通过一个name 以及一些参数信息 可以生成一个Builder对象
+         * @param name
+         * @param params
+         * @return
+         */
         protected abstract T newBuilder(String name, Map<String, Object> params);
 
         public T parse(String name, Map<String, Object> node, Map<String, Object> params, ParserContext parserContext) {
             for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
                 Map.Entry<String, Object> entry = iterator.next();
+
+                // nodeName, node
                 String propName = entry.getKey();
                 Object propNode = entry.getValue();
 
+                // 下面的逻辑主要是检测 node中的信息有没有命中这2个 ParserField的 如果有的话转换后填充到params中
+
+                // 尝试用node 名去 匹配这个 parserField
+                // 因为有可能匹配上 丢弃名 这时从 iterator 转移到params中
                 if (Names.IGNORE_MALFORMED.match(propName, LoggingDeprecationHandler.INSTANCE)) {
+                    // XContentMapValues.nodeBooleanValue 将目标值转换成 boolean
                     params.put(Names.IGNORE_MALFORMED.getPreferredName(), XContentMapValues.nodeBooleanValue(propNode,
                         name + ".ignore_malformed"));
                     iterator.remove();
+                // 如果 推荐名匹配成功了  同样从iterator 转移到params中
                 } else if (Names.IGNORE_Z_VALUE.getPreferredName().equals(propName)) {
                     params.put(GeoPointFieldMapper.Names.IGNORE_Z_VALUE.getPreferredName(),
                         XContentMapValues.nodeBooleanValue(propNode, name + "." + Names.IGNORE_Z_VALUE.getPreferredName()));
                     iterator.remove();
                 }
             }
+            // 根据相关参数构建 builder对象  (这个builder对象是用于创建 Mapper对象的)
             T builder = newBuilder(name, params);
+
+            // 如果包含相关参数 追加到builder中
             if (params.containsKey(GeoPointFieldMapper.Names.IGNORE_Z_VALUE.getPreferredName())) {
                 builder.ignoreZValue((Boolean)params.get(GeoPointFieldMapper.Names.IGNORE_Z_VALUE.getPreferredName()));
             }
@@ -155,6 +186,14 @@ public abstract class AbstractGeometryFieldMapper extends FieldMapper {
             return builder;
         }
 
+        /**
+         * 适配父类的 parser 在执行时传入了一个空的map
+         * @param name
+         * @param node
+         * @param parserContext
+         * @return
+         * @throws MapperParsingException
+         */
         @Override
         @SuppressWarnings("rawtypes")
         public T parse(String name, Map<String, Object> node, ParserContext parserContext)
@@ -164,7 +203,14 @@ public abstract class AbstractGeometryFieldMapper extends FieldMapper {
         }
     }
 
+    /**
+     * fieldType 本身就是修饰field的   比如这个field会存储哪些信息
+     */
     public abstract static class AbstractGeometryFieldType extends MappedFieldType {
+
+        /**
+         * 追加了一个 查询处理器
+         */
         protected QueryProcessor geometryQueryBuilder;
 
         protected AbstractGeometryFieldType() {
@@ -191,6 +237,14 @@ public abstract class AbstractGeometryFieldMapper extends FieldMapper {
          * interface representing a query builder that generates a query from the given geometry
          */
         public interface QueryProcessor {
+            /**
+             * 通过几何形状  形状关系 上下文等生成查询对象
+             * @param shape
+             * @param fieldName
+             * @param relation
+             * @param context
+             * @return
+             */
             Query process(Geometry shape, String fieldName, ShapeRelation relation, QueryShardContext context);
 
             @Deprecated
@@ -200,6 +254,11 @@ public abstract class AbstractGeometryFieldMapper extends FieldMapper {
             }
         }
 
+        /**
+         * 这里生成一个基于term 进行查询的对象
+         * @param context
+         * @return
+         */
         @Override
         public Query existsQuery(QueryShardContext context) {
             return new TermQuery(new Term(FieldNamesFieldMapper.NAME, name()));
@@ -229,6 +288,7 @@ public abstract class AbstractGeometryFieldMapper extends FieldMapper {
         super.doMerge(mergeWith);
         AbstractGeometryFieldMapper gsfm = (AbstractGeometryFieldMapper)mergeWith;
 
+        // 如果被merge的对象属性是用户设置的 那么进行覆盖
         if (gsfm.ignoreMalformed.explicit()) {
             this.ignoreMalformed = gsfm.ignoreMalformed;
         }

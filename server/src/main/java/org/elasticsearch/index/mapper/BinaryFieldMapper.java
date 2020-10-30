@@ -51,10 +51,17 @@ import java.util.Map;
 
 import static org.elasticsearch.index.mapper.TypeParsers.parseField;
 
+/**
+ * 明确该field的值为byte[]
+ * 每个mapper 会包含一个 MultiFields(该对象内部存储了一组mapper)
+ */
 public class BinaryFieldMapper extends FieldMapper {
 
     public static final String CONTENT_TYPE = "binary";
 
+    /**
+     * 默认情况下 二进制数据流是不将数据存储到索引文件中的
+     */
     public static class Defaults {
         public static final MappedFieldType FIELD_TYPE = new BinaryFieldType();
 
@@ -64,6 +71,9 @@ public class BinaryFieldMapper extends FieldMapper {
         }
     }
 
+    /**
+     * builder对象是用来生成mapper的
+     */
     public static class Builder extends FieldMapper.Builder<Builder, BinaryFieldMapper> {
 
         public Builder(String name) {
@@ -89,6 +99,9 @@ public class BinaryFieldMapper extends FieldMapper {
         }
     }
 
+    /**
+     * 该mapper对象相关的 fieldType
+     */
     static final class BinaryFieldType extends MappedFieldType {
 
         BinaryFieldType() {}
@@ -102,12 +115,21 @@ public class BinaryFieldMapper extends FieldMapper {
             return new BinaryFieldType(this);
         }
 
-
+        /**
+         * 返回 field.value 的类型
+         * @return
+         */
         @Override
         public String typeName() {
             return CONTENT_TYPE;
         }
 
+        /**
+         * DocValueFormat 可以将field.value 格式化
+         * @param format
+         * @param timeZone
+         * @return
+         */
         @Override
         public DocValueFormat docValueFormat(String format, ZoneId timeZone) {
             return DocValueFormat.BINARY;

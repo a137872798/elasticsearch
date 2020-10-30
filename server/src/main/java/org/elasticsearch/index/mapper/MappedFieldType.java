@@ -61,6 +61,7 @@ import java.util.Objects;
 
 /**
  * This defines the core properties and functions to operate on a field.
+ * fieldType 原本是描述某个field的值类型 以及会存储什么信息
  */
 public abstract class MappedFieldType extends FieldType {
 
@@ -68,9 +69,15 @@ public abstract class MappedFieldType extends FieldType {
     private float boost;
     // TODO: remove this docvalues flag and use docValuesType
     private boolean docValues;
+
+    // 每个fieldType 会跟随3个特殊的分析器
     private NamedAnalyzer indexAnalyzer;
     private NamedAnalyzer searchAnalyzer;
     private NamedAnalyzer searchQuoteAnalyzer;
+
+    /**
+     * 通过该对象可以获取一个打分器对象
+     */
     private SimilarityProvider similarity;
     private Object nullValue;
     private String nullValueAsString; // for sending null value to _all field

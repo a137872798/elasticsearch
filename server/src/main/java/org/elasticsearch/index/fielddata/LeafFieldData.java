@@ -24,11 +24,13 @@ import org.elasticsearch.common.lease.Releasable;
 
 /**
  * The thread safe {@link org.apache.lucene.index.LeafReader} level cache of the data.
+ * 每个leaf好像都对应一个field
  */
 public interface LeafFieldData extends Accountable, Releasable {
 
     /**
      * Returns field values for use in scripting.
+     * 使用脚本处理器处理后的数据
      */
     ScriptDocValues<?> getScriptValues();
 

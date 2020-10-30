@@ -45,6 +45,7 @@ import org.elasticsearch.geometry.utils.WellKnownText;
  * See {@link WellKnownText#toWKT(Geometry, StringBuilder)} for an example of how this interface is used.
  *
  * @see <a href="https://en.wikipedia.org/wiki/Visitor_pattern">Visitor Pattern</a>
+ * 该对象定义了 当从doc中解析出不同的几何图形时 应该怎么处理
  */
 public interface GeometryVisitor<T, E extends Exception> {
 

@@ -36,15 +36,35 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * 解析上下文  本身支持迭代一组doc
+ */
 public abstract class ParseContext implements Iterable<ParseContext.Document>{
 
-    /** Fork of {@link org.apache.lucene.document.Document} with additional functionality. */
+    /**
+     * Fork of {@link org.apache.lucene.document.Document} with additional functionality.
+     * 该对象在lucene定义的doc下又追加了其他属性 但是定位是一样的 也是内部维护了一组field
+     * */
     public static class Document implements Iterable<IndexableField> {
 
+        /**
+         * doc 本身会形成链式结构么  之前应该是不需要的
+         */
         private final Document parent;
+        /**
+         * 该doc的数据存储在哪个路径下
+         */
         private final String path;
         private final String prefix;
+
+        /**
+         * 当前doc下所有的field信息
+         */
         private final List<IndexableField> fields;
+
+        /**
+         * 支持通过关键字查询field
+         */
         private ObjectObjectMap<Object, IndexableField> keyedFields;
 
         private Document(String path, Document parent) {
@@ -54,6 +74,9 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
             this.parent = parent;
         }
 
+        /**
+         * 默认情况下创建的doc 是单层级的 同时path为""
+         */
         public Document() {
             this("", null);
         }
@@ -88,6 +111,10 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
             return fields;
         }
 
+        /**
+         * 在当前doc下追加一个field
+         * @param field
+         */
         public void add(IndexableField field) {
             // either a meta fields or starts with the prefix
             assert field.name().startsWith("_") || field.name().startsWith(prefix) : field.name() + " " + prefix;
@@ -101,15 +128,24 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
             } else if (keyedFields.containsKey(key)) {
                 throw new IllegalStateException("Only one field can be stored per key");
             }
+            // 将field 存储到map中  并且会间接加入到list中
             keyedFields.put(key, field);
             add(field);
         }
 
-        /** Get back fields that have been previously added with {@link #addWithKey(Object, IndexableField)}. */
+        /**
+         * Get back fields that have been previously added with {@link #addWithKey(Object, IndexableField)}.
+         * 通过 key查找field
+         */
         public IndexableField getByKey(Object key) {
             return keyedFields == null ? null : keyedFields.get(key);
         }
 
+        /**
+         * 找到该doc 下所有名字相同的field  我记得在lucene中不同field 要求名字不能相同  也就是这里是查询在该doc下相同的field出现了多少次
+         * @param name
+         * @return
+         */
         public IndexableField[] getFields(String name) {
             List<IndexableField> f = new ArrayList<>();
             for (IndexableField field : fields) {
@@ -120,6 +156,11 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
             return f.toArray(new IndexableField[f.size()]);
         }
 
+        /**
+         * 找到第一个名字匹配的field
+         * @param name
+         * @return
+         */
         public IndexableField getField(String name) {
             for (IndexableField field : fields) {
                 if (field.name().equals(name)) {
@@ -129,6 +170,11 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
             return null;
         }
 
+        /**
+         * 如果field 存储的数据可以转换成string类型 则将命中的field.value 返回
+         * @param name
+         * @return
+         */
         public String get(String name) {
             for (IndexableField f : fields) {
                 if (f.name().equals(name) && f.stringValue() != null) {
@@ -138,6 +184,11 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
             return null;
         }
 
+        /**
+         * 将field的二进制数据返回
+         * @param name
+         * @return
+         */
         public BytesRef getBinaryValue(String name) {
             for (IndexableField f : fields) {
                 if (f.name().equals(name) && f.binaryValue() != null) {
@@ -149,6 +200,9 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
 
     }
 
+    /**
+     * 追加一层过滤功能
+     */
     private static class FilterParseContext extends ParseContext {
 
         private final ParseContext in;
@@ -283,32 +337,72 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
         }
     }
 
+    /**
+     * 每个解析上下文 应当存储了一组doc  每个doc下又存储了一组field   在parseContext中doc可能存在父子级关系
+     */
     public static class InternalParseContext extends ParseContext {
 
+        /**
+         * TODO
+         */
         private final DocumentMapper docMapper;
 
+        /**
+         * TODO
+         */
         private final DocumentMapperParser docMapperParser;
 
+        /**
+         * 指定的是doc的路径么
+         */
         private final ContentPath path;
 
+        /**
+         * 将格式化字符串转换成实体 比如json字符串转换成 bean
+         */
         private final XContentParser parser;
 
+        /**
+         * 代表root doc
+         */
         private Document document;
 
+        /**
+         * 因为 parseContext 实现了 Doc迭代器接口
+         */
         private final List<Document> documents;
 
+        /**
+         * 所以相关的全部配置都可以从对象中获取
+         */
         private final IndexSettings indexSettings;
 
+        /**
+         * 该对象内存储了一个数据流 以及转换器对象
+         * 该对象还包含了routing信息
+         */
         private final SourceToParse sourceToParse;
 
         private Field version;
 
+        /**
+         * TODO
+         */
         private SeqNoFieldMapper.SequenceIDFields seqID;
 
+        /**
+         * doc最大嵌套层数
+         */
         private final long maxAllowedNumNestedDocs;
 
+        /**
+         * 当前有多少doc嵌套  实际上就是docs的列表长度
+         */
         private long numNestedDocs;
 
+        /**
+         * 动态映射器
+         */
         private final List<Mapper> dynamicMappers;
 
         private boolean docsReversed = false;
@@ -322,12 +416,14 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
             this.docMapperParser = docMapperParser;
             this.path = new ContentPath(0);
             this.parser = parser;
+            // 初始阶段生成了一个空的doc
             this.document = new Document();
             this.documents = new ArrayList<>();
             this.documents.add(document);
             this.version = null;
             this.sourceToParse = source;
             this.dynamicMappers = new ArrayList<>();
+            // 从配置项中获取最大嵌套层数
             this.maxAllowedNumNestedDocs = indexSettings.getValue(MapperService.INDEX_MAPPING_NESTED_DOCS_LIMIT_SETTING);
             this.numNestedDocs = 0L;
         }
@@ -366,6 +462,10 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
             return this.documents;
         }
 
+        /**
+         * 返回 root doc
+         * @return
+         */
         @Override
         public Document doc() {
             return this.document;
@@ -383,16 +483,28 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
             this.documents.add(doc);
         }
 
+        /**
+         * DocMapper 包含一个根映射对象 类型是 RootObjectMapper
+         * @return
+         */
         @Override
         public RootObjectMapper root() {
             return docMapper.root();
         }
 
+        /**
+         * 所有doc 共用一个 docMapper
+         * @return
+         */
         @Override
         public DocumentMapper docMapper() {
             return this.docMapper;
         }
 
+        /**
+         * 获取到关联的映射服务
+         * @return
+         */
         @Override
         public MapperService mapperService() {
             return docMapperParser.mapperService;
@@ -428,6 +540,10 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
             return dynamicMappers;
         }
 
+        /**
+         * 返回除了 root doc 外的其他doc
+         * @return
+         */
         @Override
         public Iterable<Document> nonRootDocuments() {
             if (docsReversed) {
@@ -449,6 +565,7 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
         /**
          * Returns a copy of the provided {@link List} where parent documents appear
          * after their children.
+         * TODO 离开了使用场景暂时看不懂这个
          */
         private List<Document> reorderParent(List<Document> docs) {
             List<Document> newDocs = new ArrayList<>(docs.size());
@@ -517,6 +634,7 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
 
     /**
      * Return a new context that will be within multi-fields.
+     * 将当前上下文包装成支持 multiField
      */
     public final ParseContext createMultiFieldContext() {
         return new FilterParseContext(this) {
@@ -531,6 +649,7 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
      * Return a new context that will be used within a nested document.
      */
     public final ParseContext createNestedContext(String fullPath) {
+        // 将rootDoc 追加fullPath后重新返回并加入到list中
         final Document doc = new Document(fullPath, doc());
         addDoc(doc);
         return switchDoc(doc);
@@ -538,6 +657,7 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
 
     /**
      * Return a new context that has the provided document as the current document.
+     * 切换doc() 函数返回的doc变量  原本默认是返回rootDoc
      */
     public final ParseContext switchDoc(final Document document) {
         return new FilterParseContext(this) {
@@ -550,6 +670,7 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
 
     /**
      * Return a new context that will have the provided path.
+     * 更改path 返回的属性
      */
     public final ParseContext overridePath(final ContentPath path) {
         return new FilterParseContext(this) {
@@ -594,6 +715,7 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
 
     /**
      * Return a new context that will have the external value set.
+     * 可以从外部设置value的 parseContext
      */
     public final ParseContext createExternalValueContext(final Object externalValue) {
         return new FilterParseContext(this) {
@@ -620,6 +742,7 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
      * Try to parse an externalValue if any
      * @param clazz Expected class for external value
      * @return null if no external value has been set or the value
+     * 尝试将 externalValue 转换成目标类型
      */
     public final <T> T parseExternalValue(Class<T> clazz) {
         if (!externalValueSet() || externalValue() == null) {

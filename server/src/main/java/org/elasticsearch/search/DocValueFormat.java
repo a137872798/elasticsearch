@@ -46,7 +46,10 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.function.LongSupplier;
 
-/** A formatter for values as returned by the fielddata/doc-values APIs. */
+/**
+ * A formatter for values as returned by the fielddata/doc-values APIs.
+ * 可以将doc的值进行格式化
+ */
 public interface DocValueFormat extends NamedWriteable {
 
     /** Format a long value. This is used by terms and histogram aggregations
@@ -158,6 +161,11 @@ public interface DocValueFormat extends NamedWriteable {
         public void writeTo(StreamOutput out) {
         }
 
+        /**
+         * 该format对象 支持将byte流转换成字符串
+         * @param value
+         * @return
+         */
         @Override
         public String format(BytesRef value) {
             return Base64.getEncoder()

@@ -28,21 +28,39 @@ import java.util.Objects;
 
 public class SourceToParse {
 
+    /**
+     * 原始数据流
+     */
     private final BytesReference source;
 
     private final String index;
 
     private final String id;
 
+    /**
+     * 路由信息指什么
+     */
     private final @Nullable String routing;
 
+    /**
+     * 这组数据流是什么格式的  比如 JSON/YML
+     */
     private final XContentType xContentType;
 
+    /**
+     * 根据原始数据流 以及格式化类型生成该对象
+     * @param index
+     * @param id
+     * @param source
+     * @param xContentType
+     * @param routing
+     */
     public SourceToParse(String index, String id, BytesReference source, XContentType xContentType, @Nullable String routing) {
         this.index = Objects.requireNonNull(index);
         this.id = Objects.requireNonNull(id);
         // we always convert back to byte array, since we store it and Field only supports bytes..
         // so, we might as well do it here, and improve the performance of working with direct byte arrays
+        // 代表内部的数据流 由一个 bytes[] 填装
         this.source = new BytesArray(Objects.requireNonNull(source).toBytesRef());
         this.xContentType = Objects.requireNonNull(xContentType);
         this.routing = routing;

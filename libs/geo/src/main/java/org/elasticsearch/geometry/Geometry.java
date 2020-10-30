@@ -21,11 +21,24 @@ package org.elasticsearch.geometry;
 
 /**
  * Base class for all Geometry objects supported by elasticsearch
+ * 几何对象
  */
 public interface Geometry {
 
+    /**
+     * 该几何图形的形状   比如线性/圆形 等等
+     * @return
+     */
     ShapeType type();
 
+    /**
+     *
+     * @param visitor  该对象定义了各种几何图形的处理逻辑
+     * @param <T>
+     * @param <E>
+     * @return
+     * @throws E
+     */
     <T, E extends Exception> T visit(GeometryVisitor<T, E> visitor) throws E;
 
     boolean isEmpty();

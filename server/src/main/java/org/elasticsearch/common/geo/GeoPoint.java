@@ -43,9 +43,19 @@ import java.util.Locale;
 
 import static org.elasticsearch.index.mapper.GeoPointFieldMapper.Names.IGNORE_Z_VALUE;
 
+/**
+ * 标记一个经纬度
+ * 有关经纬度的解析就不细看了
+ */
 public final class GeoPoint implements ToXContentFragment {
 
+    /**
+     * 纬度
+     */
     private double lat;
+    /**
+     * 经度
+     */
     private double lon;
 
     public GeoPoint() {
@@ -86,6 +96,11 @@ public final class GeoPoint implements ToXContentFragment {
         return this;
     }
 
+    /**
+     * 从一个格式化字符串中还原经纬度
+     * @param value
+     * @return
+     */
     public GeoPoint resetFromString(String value) {
         return resetFromString(value, false, EffectivePoint.BOTTOM_LEFT);
     }

@@ -33,6 +33,7 @@ import java.util.function.Predicate;
 
 /**
  * A registry for all field mappers.
+ * 每个field都会对应一个 mapper对象
  */
 public final class MapperRegistry {
 
