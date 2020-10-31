@@ -39,12 +39,23 @@ import org.elasticsearch.search.sort.SortOrder;
 
 import java.io.IOException;
 
+/**
+ * 指定了数据都是二进制
+ */
 public class BytesBinaryDVIndexFieldData extends DocValuesIndexFieldData implements IndexFieldData<BytesBinaryDVLeafFieldData> {
 
     public BytesBinaryDVIndexFieldData(Index index, String fieldName) {
         super(index, fieldName);
     }
 
+    /**
+     * 二进制数据不支持排序
+     * @param missingValue 当某个doc下不存在该field 那么使用什么值来排序
+     * @param sortMode 每个doc中 指定的field下通过分词器可以解析出很多词 这里是在排序时该如何利用这些值  (求和，中位数，最大值等等)
+     * @param nested
+     * @param reverse
+     * @return
+     */
     @Override
     public SortField sortField(@Nullable Object missingValue, MultiValueMode sortMode, Nested nested, boolean reverse) {
         throw new IllegalArgumentException("can't sort on binary field");
@@ -59,6 +70,7 @@ public class BytesBinaryDVIndexFieldData extends DocValuesIndexFieldData impleme
     @Override
     public BytesBinaryDVLeafFieldData load(LeafReaderContext context) {
         try {
+            // 内部的BinaryDocValues是lucene的类 就是可以迭代该field下所有的doc数据
             return new BytesBinaryDVLeafFieldData(DocValues.getBinary(context.reader(), fieldName));
         } catch (IOException e) {
             throw new IllegalStateException("Cannot load doc values", e);
@@ -72,6 +84,15 @@ public class BytesBinaryDVIndexFieldData extends DocValuesIndexFieldData impleme
 
     public static class Builder implements IndexFieldData.Builder {
 
+        /**
+         * 修改了返回值类型
+         * @param indexSettings  包含所有索引的配置项
+         * @param fieldType   描述该field的信息  并且该类型是ES增强过的
+         * @param cache
+         * @param breakerService  熔断器
+         * @param mapperService  映射服务
+         * @return
+         */
         @Override
         public IndexFieldData<?> build(IndexSettings indexSettings, MappedFieldType fieldType, IndexFieldDataCache cache,
                                        CircuitBreakerService breakerService, MapperService mapperService) {

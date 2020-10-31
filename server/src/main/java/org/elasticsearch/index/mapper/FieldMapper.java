@@ -309,9 +309,9 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
     public void parse(ParseContext context) throws IOException {
         final List<IndexableField> fields = new ArrayList<>(2);
         try {
-            // TODO 这里创建了2个特殊的field
+            // 子类会负责解析context 并将结果包装成field存入 fields中 目前只看到2个field
             parseCreateField(context, fields);
-            // 为解析上下文当前的doc 追加了这个field
+            // 为解析上下文当前的doc
             for (IndexableField field : fields) {
                 context.doc().add(field);
             }
@@ -344,10 +344,16 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
      *
      * Implementations of this method should ensure that on failing to parse parser.currentToken() must be the
      * current failing token
+     * 解析并填充field
      */
     protected abstract void parseCreateField(ParseContext context, List<IndexableField> fields) throws IOException;
 
-    // TODO
+    /**
+     * TODO
+     * 当该field 没有存储docValue 时 会调用该方法
+     * @param context
+     * @param fields
+     */
     protected void createFieldNamesField(ParseContext context, List<IndexableField> fields) {
         FieldNamesFieldType fieldNamesFieldType = (FieldNamesFieldMapper.FieldNamesFieldType) context.docMapper()
                 .metadataMapper(FieldNamesFieldMapper.class).fieldType();

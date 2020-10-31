@@ -39,9 +39,15 @@ import java.util.function.Function;
 import static java.util.Collections.unmodifiableSet;
 import static org.elasticsearch.common.util.set.Sets.newHashSet;
 
-/** {@link IndexFieldData} impl based on Lucene's doc values. Caching is done on the Lucene side. */
+/**
+ * {@link IndexFieldData} impl based on Lucene's doc values. Caching is done on the Lucene side.
+ * 存储doc下归属于某个field的所有数据
+ */
 public abstract class DocValuesIndexFieldData {
 
+    /**
+     * 每个数据都会归属于一个index
+     */
     protected final Index index;
     protected final String fieldName;
 
@@ -67,6 +73,9 @@ public abstract class DocValuesIndexFieldData {
         return index;
     }
 
+    /**
+     * 默认的builder对象
+     */
     public static class Builder implements IndexFieldData.Builder {
         private static final Set<String> BINARY_INDEX_FIELD_NAMES = unmodifiableSet(newHashSet(IdFieldMapper.NAME));
 

@@ -46,10 +46,12 @@ import java.util.Locale;
 
 /**
  * Defines what values to pick in the case a document contains multiple values for a particular field.
+ * 当每个doc下存在多个值时 以什么形式处理
  */
 public enum MultiValueMode implements Writeable {
     /**
      * Pick the sum of all the values.
+     * 将所有数据求和
      */
     SUM {
         @Override
@@ -119,6 +121,7 @@ public enum MultiValueMode implements Writeable {
 
     /**
      * Pick the average of all the values.
+     * 计算doc下所有数据的平均值
      */
     AVG {
         @Override
@@ -192,6 +195,7 @@ public enum MultiValueMode implements Writeable {
 
     /**
      * Pick the median of the values.
+     * 获取这些数据的中位数
      */
     MEDIAN {
         @Override
@@ -223,6 +227,7 @@ public enum MultiValueMode implements Writeable {
 
     /**
      * Pick the lowest value.
+     * 获取最小值
      */
     MIN {
         @Override

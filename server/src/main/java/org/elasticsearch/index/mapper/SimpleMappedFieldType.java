@@ -28,6 +28,7 @@ import java.time.ZoneId;
 
 /**
  * {@link MappedFieldType} base impl for field types that are neither dates nor ranges.
+ * 代表 field是简单的类型 也就是非范围/日期类型
  */
 public abstract class SimpleMappedFieldType extends MappedFieldType {
 
@@ -39,6 +40,18 @@ public abstract class SimpleMappedFieldType extends MappedFieldType {
         super(ref);
     }
 
+    /**
+     * 当尝试获取范围查询的query时抛出异常
+     * @param lowerTerm
+     * @param upperTerm
+     * @param includeLower
+     * @param includeUpper
+     * @param relation the relation, nulls should be interpreted like INTERSECTS
+     * @param timeZone
+     * @param parser
+     * @param context
+     * @return
+     */
     @Override
     public final Query rangeQuery(Object lowerTerm, Object upperTerm, boolean includeLower, boolean includeUpper,
                                   ShapeRelation relation, ZoneId timeZone, DateMathParser parser, QueryShardContext context) {

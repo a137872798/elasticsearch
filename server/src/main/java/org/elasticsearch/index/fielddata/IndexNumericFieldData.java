@@ -19,6 +19,9 @@
 
 package org.elasticsearch.index.fielddata;
 
+/**
+ * 某个field对应的数据类型
+ */
 public interface IndexNumericFieldData extends IndexFieldData<LeafNumericFieldData> {
 
     enum NumericType {

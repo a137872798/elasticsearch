@@ -24,7 +24,7 @@ import org.elasticsearch.common.lease.Releasable;
 
 /**
  * The thread safe {@link org.apache.lucene.index.LeafReader} level cache of the data.
- * 每个leaf好像都对应一个field
+ * 该对象代表某个field下所有的doc
  */
 public interface LeafFieldData extends Accountable, Releasable {
 
@@ -36,6 +36,7 @@ public interface LeafFieldData extends Accountable, Releasable {
 
     /**
      * Return a String representation of the values.
+     * 将该field下所有的doc 按照某种规则排序后 以迭代器形式返回
      */
     SortedBinaryDocValues getBytesValues();
 

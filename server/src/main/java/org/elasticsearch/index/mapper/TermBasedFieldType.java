@@ -31,7 +31,9 @@ import org.elasticsearch.common.lucene.BytesRefs;
 import org.elasticsearch.index.query.QueryShardContext;
 
 /** Base {@link MappedFieldType} implementation for a field that is indexed
- *  with the inverted index. */
+ *  with the inverted index.
+ *  基于倒排数据结构进行查询 实际上就是基于Term进行查询
+ *  */
 abstract class TermBasedFieldType extends SimpleMappedFieldType {
 
     TermBasedFieldType() {}
@@ -47,16 +49,30 @@ abstract class TermBasedFieldType extends SimpleMappedFieldType {
         return BytesRefs.toBytesRef(value);
     }
 
+    /**
+     * 生成一个 TermQuery对象
+     * @param value
+     * @param context
+     * @return
+     */
     @Override
     public Query termQuery(Object value, QueryShardContext context) {
         failIfNotIndexed();
+        // indexedValueForSearch 将value转换成term的类型（BytesRef）
         Query query = new TermQuery(new Term(name(), indexedValueForSearch(value)));
+        // 代表权重值需要调整 就再包装一层
         if (boost() != 1f) {
             query = new BoostQuery(query, boost());
         }
         return query;
     }
 
+    /**
+     * TermInSetQuery 那时候没看 推测是要同时满足这么多term 才能查询到
+     * @param values
+     * @param context
+     * @return
+     */
     @Override
     public Query termsQuery(List<?> values, QueryShardContext context) {
         failIfNotIndexed();

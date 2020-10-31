@@ -93,6 +93,7 @@ public class BinaryFieldMapper extends FieldMapper {
         @Override
         public BinaryFieldMapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext)
                 throws MapperParsingException {
+            // 先创建一个空的builder对象 之后解析参数 并将相关信息填充到builder中
             BinaryFieldMapper.Builder builder = new BinaryFieldMapper.Builder(name);
             parseField(builder, name, node, parserContext);
             return builder;
@@ -154,8 +155,15 @@ public class BinaryFieldMapper extends FieldMapper {
             return bytes;
         }
 
+        /**
+         * 该builder对象传入相关参数可以生成 DVIndexFieldData
+         * @param fullyQualifiedIndexName the name of the index this field-data is build for
+         *
+         * @return
+         */
         @Override
         public IndexFieldData.Builder fielddataBuilder(String fullyQualifiedIndexName) {
+            // 如果当前field 没有存储docValue 不允许调用该函数
             failIfNoDocValues();
             return new BytesBinaryDVIndexFieldData.Builder();
         }
@@ -165,11 +173,19 @@ public class BinaryFieldMapper extends FieldMapper {
             return CoreValuesSourceType.BYTES;
         }
 
+        /**
+         * 生成查询对象
+         * @param context
+         * @return
+         */
         @Override
         public Query existsQuery(QueryShardContext context) {
+            // 如果保存了未分词的版本 也就是直接存储docValue
             if (hasDocValues()) {
+                // 那么生成针对整个doc数据进行查询的对象
                 return new DocValuesFieldExistsQuery(name());
             } else {
+                // 生成仅针对某个分词进行查询的对象
                 return new TermQuery(new Term(FieldNamesFieldMapper.NAME, name()));
             }
         }
@@ -185,29 +201,47 @@ public class BinaryFieldMapper extends FieldMapper {
         super(simpleName, fieldType, defaultFieldType, indexSettings, multiFields, copyTo);
     }
 
+    /**
+     * 使用Mapper 对下个解析context内存储的所有doc  并将结果填充到fields中
+     * @param context
+     * @param fields
+     * @throws IOException
+     */
     @Override
     protected void parseCreateField(ParseContext context, List<IndexableField> fields) throws IOException {
+        // 如果没有存储docValue 那么无法进行填充
         if (!fieldType().stored() && !fieldType().hasDocValues()) {
             return;
         }
+
+        // TODO 到底是在解析什么样的外部数据啊
+        // 将外部设置的值转换成byte[] 类型
         byte[] value = context.parseExternalValue(byte[].class);
         if (value == null) {
+            // doc内部的数据是从结构化数据还原的 比如json格式
             if (context.parser().currentToken() == XContentParser.Token.VALUE_NULL) {
                 return;
             } else {
+                // 将当前读取到的值转换成 byte[]
                 value = context.parser().binaryValue();
             }
         }
+        // 此时没有数据
         if (value == null) {
             return;
         }
+        // 如果是支持排序的
         if (fieldType().stored()) {
             fields.add(new Field(fieldType().name(), value, fieldType()));
         }
 
+        // 如果该field 存储的完整的数据
         if (fieldType().hasDocValues()) {
+            // 获取 field对应的docValue 列表
+            // doc内部的数据是预先存进去的
             CustomBinaryDocValuesField field = (CustomBinaryDocValuesField) context.doc().getByKey(fieldType().name());
             if (field == null) {
+                // 如果没有取到数据 构建一个空对象
                 field = new CustomBinaryDocValuesField(fieldType().name(), value);
                 context.doc().addWithKey(fieldType().name(), field);
             } else {
@@ -227,6 +261,9 @@ public class BinaryFieldMapper extends FieldMapper {
         return CONTENT_TYPE;
     }
 
+    /**
+     * 代表某个field下所有的docValue 都是二进制数据
+     */
     public static class CustomBinaryDocValuesField extends CustomDocValuesField {
 
         private final ObjectArrayList<byte[]> bytesList;

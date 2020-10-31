@@ -31,6 +31,9 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
 
+/**
+ * ES会包装lucene的BinaryDocValues 并对外开放一些便利的api
+ */
 final class BytesBinaryDVLeafFieldData implements LeafFieldData {
 
     private final BinaryDocValues values;
@@ -52,6 +55,10 @@ final class BytesBinaryDVLeafFieldData implements LeafFieldData {
 
     @Override
     public SortedBinaryDocValues getBytesValues() {
+
+        /**
+         * 基本就是转发给lucene的类
+         */
         return new SortedBinaryDocValues() {
 
             int count;
@@ -88,6 +95,10 @@ final class BytesBinaryDVLeafFieldData implements LeafFieldData {
         };
     }
 
+    /**
+     * 该对象可以将该field下每个doc 分词后生成的每个二进制流以BytesRef的形式返回
+     * @return
+     */
     @Override
     public ScriptDocValues<BytesRef> getScriptValues() {
         return new ScriptDocValues.BytesRefs(getBytesValues());

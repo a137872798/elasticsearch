@@ -171,8 +171,10 @@ public class TypeParsers {
 
     /**
      * Parse the {@code meta} key of the mapping.
+     * 将相关信息抽取出来设置到builder中
      */
     public static void parseMeta(FieldMapper.Builder<?,?> builder, String name, Map<String, Object> fieldNode) {
+        // 先找到描述元信息的对象  如果不存在直接返回
         Object metaObject = fieldNode.remove("meta");
         if (metaObject == null) {
             // no meta
@@ -184,10 +186,12 @@ public class TypeParsers {
         }
         @SuppressWarnings("unchecked")
         Map<String, ?> meta = (Map<String, ?>) metaObject;
+        // 元数据容量还有限制
         if (meta.size() > 5) {
             throw new MapperParsingException("[meta] can't have more than 5 entries, but got " + meta.size() + " on field [" +
                     name + "]");
         }
+        // 元数据的key不允许太长
         for (String key : meta.keySet()) {
             if (key.codePointCount(0, key.length()) > 20) {
                 throw new MapperParsingException("[meta] keys can't be longer than 20 chars, but got [" + key +
@@ -210,6 +214,7 @@ public class TypeParsers {
         }
         final Function<Map.Entry<String, ?>, Object> entryValueFunction = Map.Entry::getValue;
         final Function<Object, String> stringCast = String.class::cast;
+        // 将元数据的value 都转换成String
         Map<String, String> checkedMeta = meta.entrySet().stream()
                 .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, entryValueFunction.andThen(stringCast)));
         builder.meta(checkedMeta);
@@ -217,6 +222,7 @@ public class TypeParsers {
 
     /**
      * Parse common field attributes such as {@code doc_values} or {@code store}.
+     * 将解析出来的参数填充到 builder中
      */
     public static void parseField(FieldMapper.Builder<?,?> builder, String name, Map<String, Object> fieldNode,
                                   Mapper.TypeParser.ParserContext parserContext) {

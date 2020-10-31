@@ -53,37 +53,47 @@ import java.io.IOException;
 /**
  * Thread-safe utility class that allows to get per-segment values via the
  * {@link #load(LeafReaderContext)} method.
+ * 该对象代表可以读取索引下某个field的数据
  */
 public interface IndexFieldData<FD extends LeafFieldData> extends IndexComponent {
 
     /**
      * The field name.
+     * 当前field的名字
      */
     String getFieldName();
 
     /**
      * Loads the atomic field data for the reader, possibly cached.
+     * 读取该field下的数据  如果允许的话 使用缓存
      */
     FD load(LeafReaderContext context);
 
     /**
      * Loads directly the atomic field data for the reader, ignoring any caching involved.
+     * 读取field下的数据 并且不使用缓存
      */
     FD loadDirect(LeafReaderContext context) throws Exception;
 
     /**
      * Returns the {@link SortField} to use for sorting.
+     * @param missingValue 当某个doc下不存在该field 那么使用什么值来排序
+     * @param sortMode 每个doc中 指定的field下通过分词器可以解析出很多词 这里是在排序时该如何利用这些值  (求和，中位数，最大值等等)
+     * 获取这组field下数据的排序规则
      */
     SortField sortField(@Nullable Object missingValue, MultiValueMode sortMode, Nested nested, boolean reverse);
 
     /**
      * Build a sort implementation specialized for aggregations.
+     * @param bigArrays 该对象可以分配数组 并且内部利用了内存池技术 减少GC
+     * 一个使用桶排序算法的模板
      */
     BucketedSort newBucketedSort(BigArrays bigArrays, @Nullable Object missingValue, MultiValueMode sortMode,
             Nested nested, SortOrder sortOrder, DocValueFormat format, int bucketSize, BucketedSort.ExtraData extra);
 
     /**
      * Clears any resources associated with this field data.
+     * 将关联的field下所有的数据都清理
      */
     void clear();
 
@@ -116,12 +126,23 @@ public interface IndexFieldData<FD extends LeafFieldData> extends IndexComponent
          * R will be in the parent filter and its children documents will be the
          * documents that are contained in the inner set between the previous
          * parent + 1, or 0 if there is no previous parent, and R (excluded).
+         * 代表一种嵌套体
          */
         public static class Nested {
 
+            /**
+             * 通过传入某个segment的上下文信息 (LeafReaderContext)
+             * 获取一个位图对象
+             */
             private final BitSetProducer rootFilter;
+            /**
+             * 查询条件对象
+             */
             private final Query innerQuery;
             private final NestedSortBuilder nestedSort;
+            /**
+             * 查询对象
+             */
             private final IndexSearcher searcher;
 
             public Nested(BitSetProducer rootFilter, Query innerQuery, NestedSortBuilder nestedSort, IndexSearcher searcher) {
@@ -247,6 +268,15 @@ public interface IndexFieldData<FD extends LeafFieldData> extends IndexComponent
 
     interface Builder {
 
+        /**
+         * builder对象 当传入相关参数时可以构建一个 存储该field下所有doc数据的对象
+         * @param indexSettings  包含所有索引的配置项
+         * @param fieldType   描述该field的信息  并且该类型是ES增强过的
+         * @param cache
+         * @param breakerService  熔断器
+         * @param mapperService  映射服务
+         * @return
+         */
         IndexFieldData<?> build(IndexSettings indexSettings, MappedFieldType fieldType, IndexFieldDataCache cache,
                              CircuitBreakerService breakerService, MapperService mapperService);
     }

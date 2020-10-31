@@ -23,6 +23,7 @@ import org.apache.lucene.index.SortedNumericDocValues;
 
 /**
  * Specialization of {@link LeafFieldData} for numeric data.
+ * 代表doc内的数据是数字类型的
  */
 public interface LeafNumericFieldData extends LeafFieldData {
 

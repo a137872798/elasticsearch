@@ -29,6 +29,7 @@ import org.apache.lucene.index.IndexableFieldType;
 import java.io.Reader;
 
 // used for binary, geo and range fields
+// 指定某个field下所有的docValue
 public abstract class CustomDocValuesField implements IndexableField {
 
     public static final FieldType TYPE = new FieldType();

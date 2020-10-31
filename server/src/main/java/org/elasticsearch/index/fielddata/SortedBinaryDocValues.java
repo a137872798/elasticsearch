@@ -27,6 +27,7 @@ import java.io.IOException;
  * A list of per-document binary values, sorted
  * according to {@link BytesRef#compareTo(BytesRef)}.
  * There might be dups however.
+ * 代表一组doc  并且每个doc下由一组 二进制数据组成
  */
 // TODO: Should it expose a count (current approach) or return null when there are no more values?
 public abstract class SortedBinaryDocValues {
@@ -34,6 +35,7 @@ public abstract class SortedBinaryDocValues {
     /**
      * Advance this instance to the given document id
      * @return true if there is a value for this document
+     * 检测该组doc下 指定docId的doc是否存在
      */
     public abstract boolean advanceExact(int doc) throws IOException;
 
@@ -42,6 +44,7 @@ public abstract class SortedBinaryDocValues {
      * be greater than zero.
      * It is illegal to call this method after {@link #advanceExact(int)}
      * returned {@code false}.
+     * 当前doc下总计有多少数据
      */
     public abstract int docValueCount();
 
@@ -49,6 +52,7 @@ public abstract class SortedBinaryDocValues {
      * Iterates to the next value in the current document. Do not call this more than
      * {@link #docValueCount} times for the document.
      * Note that the returned {@link BytesRef} might be reused across invocations.
+     * 获取该doc下的下一个值
      */
     public abstract BytesRef nextValue() throws IOException;
 

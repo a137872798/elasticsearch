@@ -29,8 +29,7 @@ import java.util.Locale;
 
 /**
  * A sorting order.
- *
- *
+ * 正序还是倒序
  */
 public enum SortOrder implements Writeable {
     /**
