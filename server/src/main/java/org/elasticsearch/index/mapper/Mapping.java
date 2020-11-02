@@ -39,6 +39,7 @@ import static java.util.Collections.unmodifiableMap;
 /**
  * Wrapper around everything that defines a mapping, without references to
  * utility classes like MapperService, ...
+ * 描述了将格式化数据解析的规则 比如什么key 对应的数据允许被解析 (通过Mapper.enabled 判断)
  */
 public final class Mapping implements ToXContentFragment {
 
@@ -48,6 +49,13 @@ public final class Mapping implements ToXContentFragment {
     final Map<Class<? extends MetadataFieldMapper>, MetadataFieldMapper> metadataMappersMap;
     final Map<String, Object> meta;
 
+    /**
+     *
+     * @param indexCreated
+     * @param rootObjectMapper  每个docMapper 会对应一个 RootObjectMapper
+     * @param metadataMappers   doc下每个field会对应一个mapper
+     * @param meta
+     */
     public Mapping(Version indexCreated, RootObjectMapper rootObjectMapper,
                    MetadataFieldMapper[] metadataMappers, Map<String, Object> meta) {
         this.indexCreated = indexCreated;

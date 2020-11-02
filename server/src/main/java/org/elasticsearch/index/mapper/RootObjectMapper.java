@@ -44,6 +44,9 @@ import java.util.Map;
 import static org.elasticsearch.common.xcontent.support.XContentMapValues.nodeBooleanValue;
 import static org.elasticsearch.index.mapper.TypeParsers.parseDateTimeFormatter;
 
+/**
+ * 根映射对象
+ */
 public class RootObjectMapper extends ObjectMapper {
 
     private static final Logger LOGGER = LogManager.getLogger(RootObjectMapper.class);
@@ -61,6 +64,7 @@ public class RootObjectMapper extends ObjectMapper {
 
     public static class Builder extends ObjectMapper.Builder<Builder, RootObjectMapper> {
 
+        // false 代表默认值 true代表用户指定的值
         protected Explicit<DynamicTemplate[]> dynamicTemplates = new Explicit<>(new DynamicTemplate[0], false);
         protected Explicit<DateFormatter[]> dynamicDateTimeFormatters = new Explicit<>(Defaults.DYNAMIC_DATE_TIME_FORMATTERS, false);
         protected Explicit<Boolean> dateDetection = new Explicit<>(Defaults.DATE_DETECTION, false);
@@ -96,16 +100,19 @@ public class RootObjectMapper extends ObjectMapper {
          * @param omb Builder whose children to check.
          * @param parentIncluded True iff node is a child of root or a node that is included in
          * root
+         *                       修复冗余的 includes???
          */
         @SuppressWarnings("rawtypes")
         private static void fixRedundantIncludes(ObjectMapper.Builder omb, boolean parentIncluded) {
             for (Object mapper : omb.mappersBuilders) {
+                // 如果该对象内部又插入了新的builder 那么他们将构成一个父子级关系
                 if (mapper instanceof ObjectMapper.Builder) {
                     ObjectMapper.Builder child = (ObjectMapper.Builder) mapper;
                     Nested nested = child.nested;
                     boolean isNested = nested.isNested();
                     boolean includeInRootViaParent = parentIncluded && isNested && nested.isIncludeInParent();
                     boolean includedInRoot = isNested && nested.isIncludeInRoot();
+                    // 这个属性有什么用???
                     if (includeInRootViaParent && includedInRoot) {
                         child.nested = Nested.newNested(true, false);
                     }
@@ -125,6 +132,9 @@ public class RootObjectMapper extends ObjectMapper {
         }
     }
 
+    /**
+     * TODO TypeParser 在什么时机使用呢
+     */
     public static class TypeParser extends ObjectMapper.TypeParser {
 
         @Override
@@ -137,6 +147,7 @@ public class RootObjectMapper extends ObjectMapper {
                 Map.Entry<String, Object> entry = iterator.next();
                 String fieldName = entry.getKey();
                 Object fieldNode = entry.getValue();
+                // 返回true 代表node中的数据 确实被使用到了 就可以被移除
                 if (parseObjectOrDocumentTypeProperties(fieldName, fieldNode, parserContext, builder)
                         || processField(builder, fieldName, fieldNode, parserContext)) {
                     iterator.remove();
@@ -145,6 +156,14 @@ public class RootObjectMapper extends ObjectMapper {
             return builder;
         }
 
+        /**
+         * 从 Map node  中解析相关属性并设置到builder中
+         * @param builder
+         * @param fieldName
+         * @param fieldNode
+         * @param parserContext
+         * @return
+         */
         @SuppressWarnings("unchecked")
         protected boolean processField(RootObjectMapper.Builder builder, String fieldName, Object fieldNode,
                                        ParserContext parserContext) {
@@ -155,12 +174,14 @@ public class RootObjectMapper extends ObjectMapper {
                         if (formatter.toString().startsWith("epoch_")) {
                             throw new MapperParsingException("Epoch ["+ formatter +"] is not supported as dynamic date format");
                         }
+                        // 将描述信息的所有字符串解析后设置到 list中
                         formatters.add(parseDateTimeFormatter(formatter));
                     }
                     builder.dynamicDateTimeFormatter(formatters);
                 } else if ("none".equals(fieldNode.toString())) {
                     builder.dynamicDateTimeFormatter(Collections.emptyList());
                 } else {
+                    // 将单个dateTimeFormat对象包装成容器后设置
                     builder.dynamicDateTimeFormatter(Collections.singleton(parseDateTimeFormatter(fieldNode)));
                 }
                 return true;
@@ -189,12 +210,14 @@ public class RootObjectMapper extends ObjectMapper {
                     Map.Entry<String, Object> entry = tmpl.entrySet().iterator().next();
                     String templateName = entry.getKey();
                     Map<String, Object> templateParams = (Map<String, Object>) entry.getValue();
+                    // 将 match， match_mapping_type, mapping 转换成template 对象
                     DynamicTemplate template = DynamicTemplate.parse(templateName, templateParams);
                     if (template != null) {
                         validateDynamicTemplate(parserContext, template);
                         templates.add(template);
                     }
                 }
+                // 当设置动态模板后返回
                 builder.dynamicTemplates(templates);
                 return true;
             } else if (fieldName.equals("date_detection")) {
@@ -225,10 +248,12 @@ public class RootObjectMapper extends ObjectMapper {
 
     @Override
     public ObjectMapper mappingUpdate(Mapper mapper) {
+        // 更新当前mapper的属性
         RootObjectMapper update = (RootObjectMapper) super.mappingUpdate(mapper);
         // for dynamic updates, no need to carry root-specific options, we just
         // set everything to they implicit default value so that they are not
         // applied at merge time
+        // TODO 这个方法意味着什么 相关属性都被重置了
         update.dynamicTemplates = new Explicit<>(new DynamicTemplate[0], false);
         update.dynamicDateTimeFormatters = new Explicit<>(Defaults.DYNAMIC_DATE_TIME_FORMATTERS, false);
         update.dateDetection = new Explicit<>(Defaults.DATE_DETECTION, false);
@@ -262,6 +287,7 @@ public class RootObjectMapper extends ObjectMapper {
      */
     @SuppressWarnings("rawtypes")
     public Mapper.Builder findTemplateBuilder(ParseContext context, String name, String dynamicType, XContentFieldType matchType) {
+        // 找到匹配的某个模板
         DynamicTemplate dynamicTemplate = findTemplate(context.path(), name, matchType);
         if (dynamicTemplate == null) {
             return null;
@@ -275,6 +301,13 @@ public class RootObjectMapper extends ObjectMapper {
         return typeParser.parse(name, dynamicTemplate.mappingForName(name, dynamicType), parserContext);
     }
 
+    /**
+     * 当传入的参数能够匹配上某个动态模板时 返回
+     * @param path
+     * @param name
+     * @param matchType
+     * @return
+     */
     public DynamicTemplate findTemplate(ContentPath path, String name, XContentFieldType matchType) {
         final String pathAsString = path.pathAsText(name);
         for (DynamicTemplate dynamicTemplate : dynamicTemplates.value()) {

@@ -30,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * Both {@link String} and {@link BytesReference} representation of the text. Starts with one of those, and if
  * the other is requests, caches the other one in a local reference so no additional conversion will be needed.
+ * 一个简单的文本对象 就是一个 byte[]
  */
 public final class Text implements Comparable<Text>, ToXContentFragment {
 

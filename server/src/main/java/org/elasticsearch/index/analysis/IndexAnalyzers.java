@@ -38,6 +38,7 @@ import static org.elasticsearch.index.analysis.AnalysisRegistry.DEFAULT_SEARCH_Q
  * access to individual tokenizers, char or token filter.
  *
  * @see AnalysisRegistry
+ * 该对象本身维护了各种analyzer
  */
 public final class IndexAnalyzers implements Closeable {
     private final Map<String, NamedAnalyzer> analyzers;

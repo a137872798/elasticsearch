@@ -28,11 +28,21 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
+/**
+ * 每个mapper对象好像都是只针对一个field  而 DocFieldMapper 就代表该doc下每个field对应的mapper
+ */
 public final class DocumentFieldMappers implements Iterable<Mapper> {
 
-    /** Full field name to mapper */
+    /**
+     * Full field name to mapper
+     * 存储了相关的映射关系
+     */
     private final Map<String, Mapper> fieldMappers;
 
+    /**
+     * 该对象以field 为单位 使用不同的analyzer进行分词
+     * 相当于 Map<String, Analyzer>
+     */
     private final FieldNameAnalyzer indexAnalyzer;
 
     private static void put(Map<String, Analyzer> analyzers, String key, Analyzer value, Analyzer defaultValue) {
@@ -42,6 +52,14 @@ public final class DocumentFieldMappers implements Iterable<Mapper> {
         analyzers.put(key, value);
     }
 
+    /**
+     * 以doc下每个field为单位 对应一个mapper对象
+     * @param mappers
+     * @param aliasMappers   除了针对field 进行匹配的mapper外 还有针对alias进行匹配的mapper
+     * @param defaultIndex     index为什么会需要analyzer呢???
+     * @param defaultSearch
+     * @param defaultSearchQuote
+     */
     public DocumentFieldMappers(Collection<FieldMapper> mappers,
                                 Collection<FieldAliasMapper> aliasMappers,
                                 Analyzer defaultIndex,
@@ -54,11 +72,13 @@ public final class DocumentFieldMappers implements Iterable<Mapper> {
         for (FieldMapper mapper : mappers) {
             fieldMappers.put(mapper.name(), mapper);
             MappedFieldType fieldType = mapper.fieldType();
+            // 每个mapperFieldType 支持定制analyzer 这里将相关映射关系添加到容器中
             put(indexAnalyzers, fieldType.name(), fieldType.indexAnalyzer(), defaultIndex);
             put(searchAnalyzers, fieldType.name(), fieldType.searchAnalyzer(), defaultSearch);
             put(searchQuoteAnalyzers, fieldType.name(), fieldType.searchQuoteAnalyzer(), defaultSearchQuote);
         }
 
+        // 别名不需要将analyzer的映射关系存储起来么
         for (FieldAliasMapper aliasMapper : aliasMappers) {
             fieldMappers.put(aliasMapper.name(), aliasMapper);
         }

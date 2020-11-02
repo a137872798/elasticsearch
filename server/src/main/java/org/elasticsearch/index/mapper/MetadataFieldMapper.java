@@ -27,11 +27,20 @@ import java.util.Map;
 
 /**
  * A mapper for a builtin field containing metadata about a document.
+ * 会携带一些元数据
  */
 public abstract class MetadataFieldMapper extends FieldMapper {
 
     public interface TypeParser extends Mapper.TypeParser {
 
+        /**
+         * override后 返回值更加精确
+         * @param name
+         * @param node
+         * @param parserContext
+         * @return
+         * @throws MapperParsingException
+         */
         @Override
         MetadataFieldMapper.Builder<?,?> parse(String name, Map<String, Object> node,
                                                ParserContext parserContext) throws MapperParsingException;
@@ -54,6 +63,8 @@ public abstract class MetadataFieldMapper extends FieldMapper {
     protected MetadataFieldMapper(String simpleName, MappedFieldType fieldType, MappedFieldType defaultFieldType, Settings indexSettings) {
         super(simpleName, fieldType, defaultFieldType, indexSettings, MultiFields.empty(), CopyTo.empty());
     }
+
+    // 在解析前后开放了2个钩子
 
     /**
      * Called before {@link FieldMapper#parse(ParseContext)} on the {@link RootObjectMapper}.

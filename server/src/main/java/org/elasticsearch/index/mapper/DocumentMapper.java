@@ -61,30 +61,51 @@ public class DocumentMapper implements ToXContentFragment {
 
     public static class Builder {
 
+        /**
+         * MetadataFieldMapper 主要在parse前后追加了2个钩子
+         */
         private Map<Class<? extends MetadataFieldMapper>, MetadataFieldMapper> metadataMappers = new LinkedHashMap<>();
 
+        /**
+         * 一个特殊的ObjectMapper 对象
+         */
         private final RootObjectMapper rootObjectMapper;
 
         private Map<String, Object> meta;
 
+        /**
+         * 每个Mapper 对应的builder对象需要借助这个context对象才能生成Mapper
+         */
         private final Mapper.BuilderContext builderContext;
 
+        /**
+         *
+         * @param builder
+         * @param mapperService
+         */
         public Builder(RootObjectMapper.Builder builder, MapperService mapperService) {
             final Settings indexSettings = mapperService.getIndexSettings().getSettings();
             this.builderContext = new Mapper.BuilderContext(indexSettings, new ContentPath(1));
+
+            // 构建RootObjectMapper 对象
             this.rootObjectMapper = builder.build(builderContext);
 
             final String type = rootObjectMapper.name();
+            // 通过mapper服务对象创建 docMapper
             final DocumentMapper existingMapper = mapperService.documentMapper();
             final Version indexCreatedVersion = mapperService.getIndexSettings().getIndexVersionCreated();
+
+            // 映射服务内为每个field 存储了一个TypeParser对象 该对象可以构建出 builder对象 之后builder又可以生成Mapper
             final Map<String, TypeParser> metadataMapperParsers =
                 mapperService.mapperRegistry.getMetadataMapperParsers(indexCreatedVersion);
             for (Map.Entry<String, MetadataFieldMapper.TypeParser> entry : metadataMapperParsers.entrySet()) {
                 final String name = entry.getKey();
+                // 先尝试从docFieldMapper中获取某个field相关的mapper
                 final MetadataFieldMapper existingMetadataMapper = existingMapper == null
                         ? null
                         : (MetadataFieldMapper) existingMapper.mappers().getMapper(name);
                 final MetadataFieldMapper metadataMapper;
+                // 当不存在时 通过TypeParser生成Mapper对象
                 if (existingMetadataMapper == null) {
                     final TypeParser parser = entry.getValue();
                     metadataMapper = parser.getDefault(mapperService.documentMapperParser().parserContext());
@@ -100,6 +121,11 @@ public class DocumentMapper implements ToXContentFragment {
             return this;
         }
 
+        /**
+         * 通过builder + builderContext 构建mapper对象 之后设置到map中
+         * @param mapper
+         * @return
+         */
         public Builder put(MetadataFieldMapper.Builder<?, ?> mapper) {
             MetadataFieldMapper metadataMapper = mapper.build(builderContext);
             metadataMappers.put(metadataMapper.getClass(), metadataMapper);
@@ -124,10 +150,16 @@ public class DocumentMapper implements ToXContentFragment {
 
     private final CompressedXContent mappingSource;
 
+    /**
+     * 记录该doc下每个field 对应的mapper对象
+     */
     private final Mapping mapping;
 
     private final DocumentParser documentParser;
 
+    /**
+     * 该对象好像也是存储field 与mapper的映射关系   该对象内部的mapper 都是fieldMapper
+     */
     private final DocumentFieldMappers fieldMappers;
 
     private final Map<String, ObjectMapper> objectMappers;
@@ -136,26 +168,36 @@ public class DocumentMapper implements ToXContentFragment {
     private final MetadataFieldMapper[] deleteTombstoneMetadataFieldMappers;
     private final MetadataFieldMapper[] noopTombstoneMetadataFieldMappers;
 
+    /**
+     * 使用映射服务 以及描述该doc下每个field与mapper对应关系的映射对象
+     * @param mapperService
+     * @param mapping
+     */
     public DocumentMapper(MapperService mapperService, Mapping mapping) {
         this.mapperService = mapperService;
+        // 对应RootObjectMapper的路径
         this.type = mapping.root().name();
         this.typeText = new Text(this.type);
         final IndexSettings indexSettings = mapperService.getIndexSettings();
         this.mapping = mapping;
+        // 将docMapperParser和本对象包装成 DocParser对象
         this.documentParser = new DocumentParser(indexSettings, mapperService.documentMapperParser(), this);
 
         // collect all the mappers for this type
         List<ObjectMapper> newObjectMappers = new ArrayList<>();
         List<FieldMapper> newFieldMappers = new ArrayList<>();
         List<FieldAliasMapper> newFieldAliasMappers = new ArrayList<>();
+        // 好像每个都对应一个field
         for (MetadataFieldMapper metadataMapper : this.mapping.metadataMappers) {
             if (metadataMapper instanceof FieldMapper) {
                 newFieldMappers.add(metadataMapper);
             }
         }
+        // 从root开始 将解析到的各种不同类型的mapper 设置到不同的容器中
         MapperUtils.collect(this.mapping.root,
             newObjectMappers, newFieldMappers, newFieldAliasMappers);
 
+        // 该对象可以按照不同的field 获取到不同的analyzer
         final IndexAnalyzers indexAnalyzers = mapperService.getIndexAnalyzers();
         this.fieldMappers = new DocumentFieldMappers(newFieldMappers,
                 newFieldAliasMappers,
@@ -172,15 +214,18 @@ public class DocumentMapper implements ToXContentFragment {
         }
 
         boolean hasNestedObjects = false;
+        // 将 root中有关ObjectMapper的取出来 单独存储到map中
         this.objectMappers = Collections.unmodifiableMap(builder);
         for (ObjectMapper objectMapper : newObjectMappers) {
             if (objectMapper.nested().isNested()) {
                 hasNestedObjects = true;
             }
         }
+        // 只要有一个mapper是嵌套的 就将标识修改成true
         this.hasNestedObjects = hasNestedObjects;
 
         try {
+            // 将本对象格式化后存储
             mappingSource = new CompressedXContent(this, XContentType.JSON, ToXContent.EMPTY_PARAMS);
         } catch (Exception e) {
             throw new ElasticsearchGenerationException("failed to serialize source for type [" + type + "]", e);
@@ -188,6 +233,7 @@ public class DocumentMapper implements ToXContentFragment {
 
         final Collection<String> deleteTombstoneMetadataFields = Arrays.asList(VersionFieldMapper.NAME, IdFieldMapper.NAME,
             TypeFieldMapper.NAME, SeqNoFieldMapper.NAME, SeqNoFieldMapper.PRIMARY_TERM_NAME, SeqNoFieldMapper.TOMBSTONE_NAME);
+        // 找到一些已经被删除的mapper  和一些 noop的mapper
         this.deleteTombstoneMetadataFieldMappers = Stream.of(mapping.metadataMappers)
             .filter(field -> deleteTombstoneMetadataFields.contains(field.name())).toArray(MetadataFieldMapper[]::new);
         final Collection<String> noopTombstoneMetadataFields = Arrays.asList(
@@ -257,7 +303,9 @@ public class DocumentMapper implements ToXContentFragment {
     }
 
     public ParsedDocument createDeleteTombstoneDoc(String index, String id) throws MapperParsingException {
+        // SourceToParse 包裹了一层格式化数据
         final SourceToParse emptySource = new SourceToParse(index, id, new BytesArray("{}"), XContentType.JSON);
+        // 通过解析对象解析格式化数据 并将结果包装成 ParsedDocument
         return documentParser.parseDocument(emptySource, deleteTombstoneMetadataFieldMappers).toTombstone();
     }
 

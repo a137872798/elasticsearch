@@ -31,6 +31,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+/**
+ * 动态模板
+ */
 public class DynamicTemplate implements ToXContentObject {
 
     public enum MatchType {

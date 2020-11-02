@@ -43,11 +43,17 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 
-/** A parser for documents, given mappings from a DocumentMapper */
+/**
+ * A parser for documents, given mappings from a DocumentMapper
+ * doc解析器
+ */
 final class DocumentParser {
 
     private final IndexSettings indexSettings;
     private final DocumentMapperParser docMapperParser;
+    /**
+     * 该对象维护了 各个Mapper之间的关系 (RootObjectMapper  FieldMapper 等等)
+     */
     private final DocumentMapper docMapper;
 
     DocumentParser(IndexSettings indexSettings, DocumentMapperParser docMapperParser, DocumentMapper docMapper) {
@@ -56,17 +62,32 @@ final class DocumentParser {
         this.docMapper = docMapper;
     }
 
+
+    /**
+     *
+     * @param source  提供格式化数据流
+     * @param metadataFieldsMappers   代表doc下每个field对应的mapper对象
+     * @return 代表解析后的结果
+     * @throws MapperParsingException
+     */
     ParsedDocument parseDocument(SourceToParse source, MetadataFieldMapper[] metadataFieldsMappers) throws MapperParsingException {
 
+        // 该对象内部存储了一组 MetadataFieldMapper
         final Mapping mapping = docMapper.mapping();
         final ParseContext.InternalParseContext context;
+
+        // 描述这组数据流一开始是什么格式的
         final XContentType xContentType = source.getXContentType();
 
         try (XContentParser parser = XContentHelper.createParser(docMapperParser.getXContentRegistry(),
             LoggingDeprecationHandler.INSTANCE, source.source(), xContentType)) {
+            // parser 对象负责解析数据流
             context = new ParseContext.InternalParseContext(indexSettings, docMapperParser, docMapper, source, parser);
+            // 确保首个token是 起始符号
             validateStart(parser);
+            // 开始解析数据流
             internalParseDocument(mapping, metadataFieldsMappers, context, parser);
+            // 确保解析到末尾
             validateEnd(parser);
         } catch (Exception e) {
             throw wrapInMapperParsingException(source, e);
@@ -81,8 +102,15 @@ final class DocumentParser {
         return parsedDocument(source, context, createDynamicUpdate(mapping, docMapper, context.getDynamicMappers()));
     }
 
+    /**
+     * 检测是否包含 enabled == false的mapper
+     * @param objectMapper
+     * @param subfields
+     * @return
+     */
     private static boolean containsDisabledObjectMapper(ObjectMapper objectMapper, String[] subfields) {
         for (int i = 0; i < subfields.length - 1; ++i) {
+            // TODO 什么情况下 会往 mapper中设置mapper[]  目前只看到 在ParserContext中嵌套创建doc
             Mapper mapper = objectMapper.getMapper(subfields[i]);
             if (mapper instanceof ObjectMapper == false) {
                 break;
@@ -95,20 +123,31 @@ final class DocumentParser {
         return false;
     }
 
+    /**
+     * DocumentParser 是整个解析的起始点   代表可以对某个doc进行解析
+     * @param mapping   该对象内部存储了一组MetadataFieldMapper
+     * @param metadataFieldsMappers
+     * @param context  存储了在解析过程中需要的各种参数
+     * @param parser  该对象负责解析格式化数据
+     * @throws IOException
+     */
     private static void internalParseDocument(Mapping mapping, MetadataFieldMapper[] metadataFieldsMappers,
                                               ParseContext.InternalParseContext context, XContentParser parser) throws IOException {
+        // 首先检测这个格式化数据是否是空的
         final boolean emptyDoc = isEmptyDoc(mapping, parser);
 
+        // MetadataFieldMapper的特点就是包含前后钩子
         for (MetadataFieldMapper metadataMapper : metadataFieldsMappers) {
             metadataMapper.preParse(context);
         }
 
+        // 不可用的话 直接就跳过内部的数据体
         if (mapping.root.isEnabled() == false) {
             // entire type is disabled
             parser.skipChildren();
         } else if (emptyDoc == false) {
             parseObjectOrNested(context, mapping.root);
-        }
+        } // 可以看到即使 emptyDoc 为true 还是会走完前后钩子
 
         for (MetadataFieldMapper metadataMapper : metadataFieldsMappers) {
             metadataMapper.postParse(context);
@@ -134,16 +173,20 @@ final class DocumentParser {
     }
 
     private static boolean isEmptyDoc(Mapping mapping, XContentParser parser) throws IOException {
+        // 首先确保允许解析数据  不允许的化 在后面的处理中 会直接 skipChild 所以这里是否为空就不重要了
         if (mapping.root.isEnabled()) {
             final XContentParser.Token token = parser.nextToken();
+            // 在解析完开始符 "{" 后 如果紧跟着"}" 代表本次解析的是一个空数据体
             if (token == XContentParser.Token.END_OBJECT) {
                 // empty doc, we can handle it...
                 return true;
+            // 要求必须是 key
             } else if (token != XContentParser.Token.FIELD_NAME) {
                 throw new MapperParsingException("Malformed content, after first object, either the type field"
                     + " or the actual properties should exist");
             }
         }
+        // 默认情况下认为不是空的
         return false;
     }
 
@@ -178,6 +221,7 @@ final class DocumentParser {
 
     private static String[] splitAndValidatePath(String fullFieldPath) {
         if (fullFieldPath.contains(".")) {
+            // 当存在 "." 时 先进行拆分
             String[] parts = fullFieldPath.split("\\.");
             for (String part : parts) {
                 if (Strings.hasText(part) == false) {
@@ -195,6 +239,7 @@ final class DocumentParser {
             if (Strings.isEmpty(fullFieldPath)) {
                 throw new IllegalArgumentException("field name cannot be an empty string");
             }
+            // 当 格式化数据的key 不包含"." 时 直接返回
             return new String[] {fullFieldPath};
         }
     }
@@ -345,38 +390,61 @@ final class DocumentParser {
         return parent.mappingUpdate(mapper);
     }
 
+    /**
+     * 正常解析时会进入这个方法
+     * @param context
+     * @param mapper
+     * @throws IOException
+     */
     static void parseObjectOrNested(ParseContext context, ObjectMapper mapper) throws IOException {
+
+        // 每个mapper 对象都有一个enabled 属性 用于判断可否被解析
         if (mapper.isEnabled() == false) {
             context.parser().skipChildren();
             return;
         }
+        // 从上下文中获取解析格式化数据流的parser对象
         XContentParser parser = context.parser();
         XContentParser.Token token = parser.currentToken();
+        // 代表对应的数据为null 也就无法解析
         if (token == XContentParser.Token.VALUE_NULL) {
             // the object is null ("obj1" : null), simply bail
             return;
         }
 
         String currentFieldName = parser.currentName();
+        // ObjectMapper 解析到的不应该是数值类型  必然是 JsonObject
         if (token.isValue()) {
             throw new MapperParsingException("object mapping for [" + mapper.name() + "] tried to parse field [" + currentFieldName
                 + "] as object, but found a concrete value");
         }
 
+        // 代表该key对应的数据内 是否还嵌套了其他数据  比如 jsonObject
+        /**
+         * "value":{
+         *     "param1":"",
+         *     "param2":""
+         * }
+         */
         ObjectMapper.Nested nested = mapper.nested();
+        // 内部还有嵌套数据
         if (nested.isNested()) {
+            // 将当前上下文替换成 嵌套的新上下文 并且设置了一些元数据 (元数据被包装成field add到doc中)
             context = nestedContext(context, mapper);
         }
 
         // if we are at the end of the previous object, advance
+        // 代表读取完了一个 jsonObject 读取下一个
         if (token == XContentParser.Token.END_OBJECT) {
             token = parser.nextToken();
         }
+        // 切换到 FIELD_NAME
         if (token == XContentParser.Token.START_OBJECT) {
             // if we are just starting an OBJECT, advance, this is the object we are parsing, we need the name first
             token = parser.nextToken();
         }
 
+        // 没有发生嵌套的时候 此时token应该就是 FIELD_NAME
         innerParseObject(context, mapper, parser, currentFieldName, token);
         // restore the enable path flag
         if (nested.isNested()) {
@@ -384,21 +452,36 @@ final class DocumentParser {
         }
     }
 
+    /**
+     * 开始解析数据流
+     * @param context
+     * @param mapper
+     * @param parser
+     * @param currentFieldName
+     * @param token
+     * @throws IOException
+     */
     private static void innerParseObject(ParseContext context, ObjectMapper mapper, XContentParser parser,
                                          String currentFieldName, XContentParser.Token token) throws IOException {
         assert token == XContentParser.Token.FIELD_NAME || token == XContentParser.Token.END_OBJECT;
         String[] paths = null;
+        // 因为START_OBJECT 后面可能就连接着END_OBJECT 那么就不用处理了
         while (token != XContentParser.Token.END_OBJECT) {
+            // 对应 key   json格式数据 key都被认为是一个path
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
+                // 如果key 不包含 "." 直接返回 否则使用dot进行拆分
                 paths = splitAndValidatePath(currentFieldName);
+                // 如果是 内置的元数据field 抛出异常 不允许在结构化数据中直接写入元数据
                 if (MapperService.isMetadataField(context.path().pathAsText(currentFieldName))) {
                     throw new MapperParsingException("Field [" + currentFieldName + "] is a metadata field and cannot be added inside"
                         + " a document. Use the index API request parameters.");
+                    // 只要拆分后的path中 有一个对应的mapper对象 enabled == false 就无法解析   跳过数据体
                 } else if (containsDisabledObjectMapper(mapper, paths)) {
                     parser.nextToken();
                     parser.skipChildren();
                 }
+            // 发生了嵌套
             } else if (token == XContentParser.Token.START_OBJECT) {
                 parseObject(context, mapper, currentFieldName, paths);
             } else if (token == XContentParser.Token.START_ARRAY) {
@@ -440,8 +523,17 @@ final class DocumentParser {
         }
     }
 
+    /**
+     * 当发生嵌套时 更新解析上下文
+     * @param context
+     * @param mapper
+     * @return
+     */
     private static ParseContext nestedContext(ParseContext context, ObjectMapper mapper) {
+
+        // 在处理后context.doc() 将会返回一个新的doc 并且它以外层的doc作为parent  在格式化数据中 每个jsonObject 都被看做一个doc 并且json是可以不断嵌套的
         context = context.createNestedContext(mapper.fullPath());
+        // 获取此时最新的doc 以及父级doc
         ParseContext.Document nestedDoc = context.doc();
         ParseContext.Document parentDoc = nestedDoc.getParent();
 
@@ -451,15 +543,20 @@ final class DocumentParser {
         // documents inside the Lucene index (document blocks) will be incorrect, as nested documents of different root
         // documents are then aligned with other root documents. This will lead tothe nested query, sorting, aggregations
         // and inner hits to fail or yield incorrect results.
+        // 当发生了嵌套时 可以确定的是 子级jsonObject 必然包含一个 _id 字段
+        // TODO 子级 doc在创建时 还没有声明任何field 那么父级doc 是在什么时候设置field的呢 ???
         IndexableField idField = parentDoc.getField(IdFieldMapper.NAME);
+        // json格式下数据是按字段拆分并存储到 lucene中的 而不是将整个数据体存入到lucene 那么怎么查询 怎么将数据合并
         if (idField != null) {
             // We just need to store the id as indexed field, so that IndexWriter#deleteDocuments(term) can then
             // delete it when the root document is deleted too.
+            // id被传递过去了
             nestedDoc.add(new Field(IdFieldMapper.NAME, idField.binaryValue(), IdFieldMapper.Defaults.NESTED_FIELD_TYPE));
         } else {
             throw new IllegalStateException("The root document of a nested document should have an _id field");
         }
 
+        // 将嵌套地址包装成一个field 并增加到 doc中  就是说 写入到lucene中的除了格式化数据外 一些元数据也会被包装成field对象 并加入到doc中
         nestedDoc.add(NestedPathFieldMapper.field(context.indexSettings().getSettings(), mapper.nestedTypePath()));
         return context;
     }
@@ -479,10 +576,19 @@ final class DocumentParser {
         }
     }
 
+    /**
+     * 在解析过程中
+     * @param context
+     * @param mapper
+     * @param currentFieldName
+     * @param paths
+     * @throws IOException
+     */
     private static void parseObject(final ParseContext context, ObjectMapper mapper, String currentFieldName,
                                     String[] paths) throws IOException {
         assert currentFieldName != null;
 
+        // 获取尾部path对应的mapper
         Mapper objectMapper = getMapper(mapper, currentFieldName, paths);
         if (objectMapper != null) {
             context.path().add(currentFieldName);
@@ -947,13 +1053,17 @@ final class DocumentParser {
     }
 
     // looks up a child mapper, but takes into account field names that expand to objects
+    // 从mapper 中获取关联的其他mapper
     private static Mapper getMapper(ObjectMapper objectMapper, String fieldName, String[] subfields) {
         for (int i = 0; i < subfields.length - 1; ++i) {
+            // TODO mapper是什么时候设置的啊
             Mapper mapper = objectMapper.getMapper(subfields[i]);
+            // 要求必须是 ObjectMapper类型
             if (mapper == null || (mapper instanceof ObjectMapper) == false) {
                 return null;
             }
             objectMapper = (ObjectMapper)mapper;
+            // 此时不允许出现嵌套了
             if (objectMapper.nested().isNested()) {
                 throw new MapperParsingException("Cannot add a value for field ["
                         + fieldName + "] since one of the intermediate objects is mapped as a nested object: ["

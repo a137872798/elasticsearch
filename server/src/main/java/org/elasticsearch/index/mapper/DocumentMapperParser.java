@@ -39,11 +39,23 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.function.Supplier;
 
+/**
+ * docMapper解析对象  从MapperService中获取
+ */
 public class DocumentMapperParser {
 
+    /**
+     * 对应创建该对象的映射服务
+     */
     final MapperService mapperService;
     private final NamedXContentRegistry xContentRegistry;
+    /**
+     * 获取打分对象的服务 可以先忽略
+     */
     private final SimilarityService similarityService;
+    /**
+     * 提供能够在创建分片级 lucene query对象的上下文
+     */
     private final Supplier<QueryShardContext> queryShardContextSupplier;
 
     private final RootObjectMapper.TypeParser rootObjectTypeParser = new RootObjectMapper.TypeParser();
@@ -64,15 +76,28 @@ public class DocumentMapperParser {
         this.rootTypeParsers = mapperRegistry.getMetadataMapperParsers(indexVersionCreated);
     }
 
+    /**
+     * 该对象负责生成解析上下文
+     * @return
+     */
     public Mapper.TypeParser.ParserContext parserContext() {
         return new Mapper.TypeParser.ParserContext(similarityService::getSimilarity, mapperService,
                 typeParsers::get, indexVersionCreated, queryShardContextSupplier);
     }
 
+    /**
+     *
+     * @param type
+     * @param source  内部存储了格式化后的数据流 (同时还采用压缩算法)
+     * @return
+     * @throws MapperParsingException
+     */
     public DocumentMapper parse(@Nullable String type, CompressedXContent source) throws MapperParsingException {
         Map<String, Object> mapping = null;
         if (source != null) {
+            // 将数据流还原成json字符串后 并将kv读取出来存储到map中
             Map<String, Object> root = XContentHelper.convertToMap(source.compressedReference(), true, XContentType.JSON).v2();
+            // 从root中取出key 对应的值  如果没有匹配到  value就是root
             Tuple<String, Map<String, Object>> t = extractMapping(type, root);
             type = t.v1();
             mapping = t.v2();
@@ -83,15 +108,24 @@ public class DocumentMapperParser {
         return parse(type, mapping);
     }
 
+    /**
+     * 针对核心数据进行解析
+     * @param type
+     * @param mapping
+     * @return
+     * @throws MapperParsingException
+     */
     @SuppressWarnings({"unchecked"})
     private DocumentMapper parse(String type, Map<String, Object> mapping) throws MapperParsingException {
         if (type == null) {
             throw new MapperParsingException("Failed to derive type");
         }
 
+        // 获取解析上下文
         Mapper.TypeParser.ParserContext parserContext = parserContext();
         // parse RootObjectMapper
         DocumentMapper.Builder docBuilder = new DocumentMapper.Builder(
+            // 使用typeParser 将数据流解析成builder对象  之后用 RootObjectMapper 和 MapperService 生成DocumentMapper.Builder
                 (RootObjectMapper.Builder) rootObjectTypeParser.parse(type, mapping, parserContext), mapperService);
         Iterator<Map.Entry<String, Object>> iterator = mapping.entrySet().iterator();
         // parse DocumentMapper
@@ -100,6 +134,7 @@ public class DocumentMapperParser {
             String fieldName = entry.getKey();
             Object fieldNode = entry.getValue();
 
+            // doc下每个field 都会对应一个mapper对象
             MetadataFieldMapper.TypeParser typeParser = rootTypeParsers.get(fieldName);
             if (typeParser != null) {
                 iterator.remove();
@@ -107,12 +142,16 @@ public class DocumentMapperParser {
                     throw new IllegalArgumentException("[_parent] must be an object containing [type]");
                 }
                 Map<String, Object> fieldNodeMap = (Map<String, Object>) fieldNode;
+                // 挨个生成fieldMapper对象
                 docBuilder.put(typeParser.parse(fieldName, fieldNodeMap, parserContext));
+                // 这个type对应什么 ???
                 fieldNodeMap.remove("type");
+                // 确保fieldNodeMap中所有 entry都被使用完
                 checkNoRemainingFields(fieldName, fieldNodeMap, parserContext.indexVersionCreated());
             }
         }
 
+        // 将元数据信息写入到 docMapper中
         Map<String, Object> meta = (Map<String, Object>) mapping.remove("_meta");
         if (meta != null) {
             /*
@@ -134,6 +173,7 @@ public class DocumentMapperParser {
 
         checkNoRemainingFields(mapping, parserContext.indexVersionCreated(), "Root mapping definition has unsupported parameters: ");
 
+        // 通过docBuilder 生成docMapper
         return docBuilder.build(mapperService);
     }
 
@@ -192,9 +232,11 @@ public class DocumentMapperParser {
 
         String rootName = root.keySet().iterator().next();
         Tuple<String, Map<String, Object>> mapping;
+        // 代表可以从root中 获取key对应的value 将他们包装成一个 tuple对象后返回
         if (type == null || type.equals(rootName) || mapperService.resolveDocumentType(type).equals(rootName)) {
             mapping = new Tuple<>(rootName, (Map<String, Object>) root.get(rootName));
         } else {
+            // 直接返回 kv
             mapping = new Tuple<>(type, root);
         }
         return mapping;

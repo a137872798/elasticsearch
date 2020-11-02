@@ -37,6 +37,8 @@ import java.util.List;
  * cheap. In particular they should not read data from disk or perform a
  * network call. Furthermore they may only return a {@link MatchAllDocsQuery}
  * or a {@link MatchNoDocsQuery}.
+ * 被该类型修饰的field 代表在所有doc下的值都是一样的
+ * 这样就可以快速的用 matchAllDocQuery|MatchNoDocsQuery 进行查询了
  */
 public abstract class ConstantFieldType extends MappedFieldType {
 
@@ -75,6 +77,12 @@ public abstract class ConstantFieldType extends MappedFieldType {
                 : value.toString();
     }
 
+    /**
+     * 根据传入的值 包装成一个query对象
+     * @param value
+     * @param context
+     * @return
+     */
     @Override
     public final Query termQuery(Object value, QueryShardContext context) {
         String pattern = valueToString(value);

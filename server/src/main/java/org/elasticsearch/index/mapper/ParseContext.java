@@ -43,8 +43,8 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
 
     /**
      * Fork of {@link org.apache.lucene.document.Document} with additional functionality.
-     * 该对象在lucene定义的doc下又追加了其他属性 但是定位是一样的 也是内部维护了一组field
-     * */
+     * 在解析格式化数据的过程中 每个 jsonObject 都被认为是一个document 每当发生嵌套时 就会生成一个新的document
+     */
     public static class Document implements Iterable<IndexableField> {
 
         /**
@@ -409,6 +409,15 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
 
         private final Set<String> ignoredFields = new HashSet<>();
 
+
+        /**
+         *
+         * @param indexSettings
+         * @param docMapperParser
+         * @param docMapper
+         * @param source
+         * @param parser  负责解析数据流
+         */
         public InternalParseContext(IndexSettings indexSettings, DocumentMapperParser docMapperParser, DocumentMapper docMapper,
                                     SourceToParse source, XContentParser parser) {
             this.indexSettings = indexSettings;
@@ -471,6 +480,10 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
             return this.document;
         }
 
+        /**
+         * 每当格式化数据产生一次嵌套时 就会生成一个新的doc 并且以之前的doc作为parent
+         * @param doc
+         */
         @Override
         protected void addDoc(Document doc) {
             numNestedDocs ++;
@@ -647,9 +660,12 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
 
     /**
      * Return a new context that will be used within a nested document.
+     * @param fullPath 当前mapper所在的路径
+     * 在解析嵌套的格式化数据时 比如某个 jsonObject 内部又嵌套了一个jsonObject
      */
     public final ParseContext createNestedContext(String fullPath) {
         // 将rootDoc 追加fullPath后重新返回并加入到list中
+        // doc() 负责获取上下文当前正在使用的doc  并且它会作为新的doc的parent
         final Document doc = new Document(fullPath, doc());
         addDoc(doc);
         return switchDoc(doc);

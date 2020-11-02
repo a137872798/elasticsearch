@@ -42,6 +42,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+/**
+ * 之前看到的mapper都是针对field   而且都包含一个parse方法
+ * 那么ObjectMapper 是指不需要做解析么
+ */
 public class ObjectMapper extends Mapper implements Cloneable {
     private static final DeprecationLogger deprecationLogger = new DeprecationLogger(LogManager.getLogger(ObjectMapper.class));
 
@@ -57,9 +61,15 @@ public class ObjectMapper extends Mapper implements Cloneable {
     public enum Dynamic {
         TRUE,
         FALSE,
+        /**
+         * 严格的???
+         */
         STRICT
     }
 
+    /**
+     * 仅仅是描述一种嵌套的状态 比如是否开启嵌套 是否包含parent/root
+     */
     public static class Nested {
 
         public static final Nested NO = new Nested(false, false, false);
@@ -93,6 +103,11 @@ public class ObjectMapper extends Mapper implements Cloneable {
         }
     }
 
+    /**
+     * 在每个mapper中 都有一个对应的builder对象 用于构建mapper
+     * @param <T>
+     * @param <Y>
+     */
     @SuppressWarnings("rawtypes")
     public static class Builder<T extends Builder, Y extends ObjectMapper> extends Mapper.Builder<T, Y> {
 
@@ -102,6 +117,9 @@ public class ObjectMapper extends Mapper implements Cloneable {
 
         protected Dynamic dynamic = Defaults.DYNAMIC;
 
+        /**
+         * 该容器内部的属性是从外部插入的
+         */
         protected final List<Mapper.Builder> mappersBuilders = new ArrayList<>();
 
         @SuppressWarnings("unchecked")
@@ -133,6 +151,7 @@ public class ObjectMapper extends Mapper implements Cloneable {
         @Override
         @SuppressWarnings("unchecked")
         public Y build(BuilderContext context) {
+            // 套路都是一样的 在使用前都要在path上追加什么 之后在builder后 又将name移除
             context.path().add(name);
 
             Map<String, Mapper> mappers = new HashMap<>();
@@ -158,16 +177,21 @@ public class ObjectMapper extends Mapper implements Cloneable {
         }
     }
 
+    /**
+     * 类型解析器的作用好像就是从 解析上下文中抽取相关信息 并生成builder对象 而通过builder对象 就可以创建Mapper了
+     */
     public static class TypeParser implements Mapper.TypeParser {
         @Override
         @SuppressWarnings("rawtypes")
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
             ObjectMapper.Builder builder = new Builder(name);
+            // 从node中获取有关嵌套的信息 并设置到builder中
             parseNested(name, node, builder);
             for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
                 Map.Entry<String, Object> entry = iterator.next();
                 String fieldName = entry.getKey();
                 Object fieldNode = entry.getValue();
+                // 返回true 代表是builder需要的属性 那么在设置完后就可以从迭代器中移除了  看来是有一个很大的数据流 从上往下传入到不同的builder中进行解析
                 if (parseObjectOrDocumentTypeProperties(fieldName, fieldNode, parserContext, builder)) {
                     iterator.remove();
                 }
@@ -175,9 +199,18 @@ public class ObjectMapper extends Mapper implements Cloneable {
             return builder;
         }
 
+        /**
+         * 传入的 fieldName fieldNode 是在node 剔除掉无关参数后剩余的数据
+         * @param fieldName
+         * @param fieldNode
+         * @param parserContext 包含了解析过程中需要的参数
+         * @param builder
+         * @return
+         */
         @SuppressWarnings({"unchecked", "rawtypes"})
         protected static boolean parseObjectOrDocumentTypeProperties(String fieldName, Object fieldNode, ParserContext parserContext,
                                                                      ObjectMapper.Builder builder) {
+            // 设置dynamic 属性
             if (fieldName.equals("dynamic")) {
                 String value = fieldNode.toString();
                 if (value.equalsIgnoreCase("strict")) {
@@ -207,6 +240,12 @@ public class ObjectMapper extends Mapper implements Cloneable {
             return false;
         }
 
+        /**
+         * 解析出有关嵌套的信息
+         * @param name
+         * @param node 这个node好像是代表格式化数据解析后的结果 比如解析完json字符串后各个字段以及对应的值被设置到容器中  而不是分布式中节点的意思
+         * @param builder
+         */
         @SuppressWarnings("rawtypes")
         protected static void parseNested(String name, Map<String, Object> node, ObjectMapper.Builder builder) {
             boolean nested = false;
@@ -215,8 +254,10 @@ public class ObjectMapper extends Mapper implements Cloneable {
             Object fieldNode = node.get("type");
             if (fieldNode!=null) {
                 String type = fieldNode.toString();
+                // 对象类型是不使用嵌套的
                 if (type.equals(CONTENT_TYPE)) {
                     builder.nested = Nested.NO;
+                // 当类型中声明了嵌套时 使用嵌套数据
                 } else if (type.equals(NESTED_CONTENT_TYPE)) {
                     nested = true;
                 } else {
@@ -240,6 +281,12 @@ public class ObjectMapper extends Mapper implements Cloneable {
 
         }
 
+        /**
+         * 当某个node 对应的value为 properties时触发该方法
+         * @param objBuilder
+         * @param propsNode
+         * @param parserContext
+         */
         @SuppressWarnings("rawtypes")
         protected static void parseProperties(ObjectMapper.Builder objBuilder, Map<String, Object> propsNode, ParserContext parserContext) {
             Iterator<Map.Entry<String, Object>> iterator = propsNode.entrySet().iterator();
@@ -272,20 +319,25 @@ public class ObjectMapper extends Mapper implements Cloneable {
                         }
                     }
 
+                    // 生成不同的类型解析器
                     Mapper.TypeParser typeParser = parserContext.typeParser(type);
                     if (typeParser == null) {
                         throw new MapperParsingException("No handler for type [" + type + "] declared on field [" + fieldName + "]");
                     }
+                    // 如果field可能是一个长字符串 在拆解后才获取到真正的field信息
                     String[] fieldNameParts = fieldName.split("\\.");
                     String realFieldName = fieldNameParts[fieldNameParts.length - 1];
                     Mapper.Builder<?,?> fieldBuilder = typeParser.parse(realFieldName, propNode, parserContext);
                     for (int i = fieldNameParts.length - 2; i >= 0; --i) {
+                        // TODO 这一层层嵌套啥意思啊  builder0->builder1->builder2 每个builder中嵌套了 下一层的builder
                         ObjectMapper.Builder<?, ?> intermediate = new ObjectMapper.Builder<>(fieldNameParts[i]);
                         intermediate.add(fieldBuilder);
                         fieldBuilder = intermediate;
                     }
+                    // 最后将这个层层嵌套的builder 设置到ObjectMapper.Builder 内部
                     objBuilder.add(fieldBuilder);
                     propNode.remove("type");
+                    // 要求propNode 内的参数在typeParser.parse 后都被使用完 否则抛出异常
                     DocumentMapperParser.checkNoRemainingFields(fieldName, propNode, parserContext.indexVersionCreated());
                     iterator.remove();
                 } else if (isEmptyList) {
@@ -305,8 +357,15 @@ public class ObjectMapper extends Mapper implements Cloneable {
 
     private final String fullPath;
 
+    /**
+     * 每个mapper 对象都有一个enabled属性 代表对应的格式化数据是否允许被解析
+     */
     private final boolean enabled;
 
+    /**
+     * 对应的格式化数据内 可能还嵌套了其他的数据 比如 key:jsonObject
+     * 该对象只是描述了 嵌套的状态 比如是否嵌套
+     */
     private final Nested nested;
 
     private final String nestedTypePath;
@@ -317,6 +376,15 @@ public class ObjectMapper extends Mapper implements Cloneable {
 
     private volatile CopyOnWriteHashMap<String, Mapper> mappers;
 
+    /**
+     * @param name
+     * @param fullPath
+     * @param enabled
+     * @param nested
+     * @param dynamic
+     * @param mappers  builder 内 MapperBuilder容器生成的Mapper对象会存储到这里
+     * @param settings
+     */
     ObjectMapper(String name, String fullPath, boolean enabled, Nested nested, Dynamic dynamic,
             Map<String, Mapper> mappers, Settings settings) {
         super(name);
@@ -354,6 +422,7 @@ public class ObjectMapper extends Mapper implements Cloneable {
 
     /**
      * Build a mapping update with the provided sub mapping update.
+     * 直接往 ObjectMapper对象中插入新的mapper
      */
     public ObjectMapper mappingUpdate(Mapper mapper) {
         ObjectMapper mappingUpdate = clone();
@@ -413,11 +482,14 @@ public class ObjectMapper extends Mapper implements Cloneable {
     /**
      * Returns the parent {@link ObjectMapper} instance of the specified object mapper or <code>null</code> if there
      * isn't any.
+     * TODO 映射服务的职能是???
      */
     public ObjectMapper getParentObjectMapper(MapperService mapperService) {
         int indexOfLastDot = fullPath().lastIndexOf('.');
         if (indexOfLastDot != -1) {
+            // 截取出最低层外的其他path
             String parentNestObjectPath = fullPath().substring(0, indexOfLastDot);
+            // 获取对应的ObjectMapper对象 并返回
             return mapperService.getObjectMapper(parentNestObjectPath);
         } else {
             return null;
@@ -426,8 +498,10 @@ public class ObjectMapper extends Mapper implements Cloneable {
 
     /**
      * Returns whether all parent objects fields are nested too.
+     * 检测是否所有的父级都是嵌套的
      */
     public boolean parentObjectMapperAreNested(MapperService mapperService) {
+        // 从上层开始 继续往上层获取 直接达到最高层
         for (ObjectMapper parent = getParentObjectMapper(mapperService);
              parent != null;
              parent = parent.getParentObjectMapper(mapperService)) {
@@ -499,10 +573,16 @@ public class ObjectMapper extends Mapper implements Cloneable {
         }
     }
 
+    /**
+     *
+     * @param fullNameToFieldType
+     * @return
+     */
     @Override
     public ObjectMapper updateFieldType(Map<String, MappedFieldType> fullNameToFieldType) {
         List<Mapper> updatedMappers = null;
         for (Mapper mapper : this) {
+            // 内部每个mapper 都是fieldMapper对象 这里是更新field的 fieldType属性
             Mapper updated = mapper.updateFieldType(fullNameToFieldType);
             if (mapper != updated) {
                 if (updatedMappers == null) {
@@ -514,6 +594,7 @@ public class ObjectMapper extends Mapper implements Cloneable {
         if (updatedMappers == null) {
             return this;
         }
+        // 将更新后的mapper设置到容器中
         ObjectMapper updated = clone();
         for (Mapper updatedMapper : updatedMappers) {
             updated.putMapper(updatedMapper);

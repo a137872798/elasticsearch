@@ -37,6 +37,9 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 嵌套地址被存储在lucene中
+ */
 public class NestedPathFieldMapper extends MetadataFieldMapper {
 
     public static final String NAME_PRE_V8 = "_type";
@@ -49,6 +52,12 @@ public class NestedPathFieldMapper extends MetadataFieldMapper {
         return NAME;
     }
 
+    /**
+     * 生成一个将嵌套路径作为 term的查询对象  应该有一种特殊的文档专门用于存储所有的嵌套路径
+     * @param settings
+     * @param path
+     * @return
+     */
     public static Query filter(Settings settings, String path) {
         return new TermQuery(new Term(name(settings), new BytesRef(path)));
     }

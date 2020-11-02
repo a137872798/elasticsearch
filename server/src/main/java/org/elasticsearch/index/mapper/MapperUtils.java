@@ -44,6 +44,7 @@ enum MapperUtils {
         }
 
 
+        // 每个mapper 还可能包含了一组mapper 所以这里递归调用
         for (Mapper child : mapper) {
             collect(child, objectMappers, fieldMappers, fieldAliasMappers);
         }

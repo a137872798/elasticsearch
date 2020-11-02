@@ -64,6 +64,7 @@ import java.util.Map;
  * A mapper for the _id field. It does nothing since _id is neither indexed nor
  * stored, but we need to keep it so that its FieldType can be used to generate
  * queries.
+ * 该对象专门负责映射 格式化数据中的 "_id" 对应的数据
  */
 public class IdFieldMapper extends MetadataFieldMapper {
     private static final DeprecationLogger deprecationLogger = new DeprecationLogger(LogManager.getLogger(IdFieldMapper.class));
