@@ -44,6 +44,7 @@ import java.util.Objects;
  * to have fast <code>exists</code> and <code>missing</code> queries/filters.
  *
  * Added in Elasticsearch 1.3.
+ * MetadataFieldMapper 相比 FieldMapper 就是多了2个钩子
  */
 public class FieldNamesFieldMapper extends MetadataFieldMapper {
 

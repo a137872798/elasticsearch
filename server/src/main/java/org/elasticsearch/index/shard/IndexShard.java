@@ -185,11 +185,23 @@ import java.util.stream.StreamSupport;
 import static org.elasticsearch.index.seqno.RetentionLeaseActions.RETAIN_ALL;
 import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
 
+/**
+ * 索引分片对象
+ */
 public class IndexShard extends AbstractIndexShardComponent implements IndicesClusterStateService.Shard {
 
     private final ThreadPool threadPool;
+    /**
+     * 映射服务 内部就是各种mapper对象 现在还不知道怎么用
+     */
     private final MapperService mapperService;
+    /**
+     * 索引相关的缓存
+     */
     private final IndexCache indexCache;
+    /**
+     * 存储模块
+     */
     private final Store store;
     private final InternalIndexingStats internalIndexingStats;
     private final ShardSearchStats searchStats = new ShardSearchStats();

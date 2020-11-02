@@ -85,13 +85,14 @@ public class DocumentMapper implements ToXContentFragment {
          */
         public Builder(RootObjectMapper.Builder builder, MapperService mapperService) {
             final Settings indexSettings = mapperService.getIndexSettings().getSettings();
+            // 生成构建 DocumentMapper时使用的 builderContext
             this.builderContext = new Mapper.BuilderContext(indexSettings, new ContentPath(1));
 
             // 构建RootObjectMapper 对象
             this.rootObjectMapper = builder.build(builderContext);
 
             final String type = rootObjectMapper.name();
-            // 通过mapper服务对象创建 docMapper
+            // 首次调用时  mapperService是没有documentMapper对象的
             final DocumentMapper existingMapper = mapperService.documentMapper();
             final Version indexCreatedVersion = mapperService.getIndexSettings().getIndexVersionCreated();
 
@@ -100,7 +101,7 @@ public class DocumentMapper implements ToXContentFragment {
                 mapperService.mapperRegistry.getMetadataMapperParsers(indexCreatedVersion);
             for (Map.Entry<String, MetadataFieldMapper.TypeParser> entry : metadataMapperParsers.entrySet()) {
                 final String name = entry.getKey();
-                // 先尝试从docFieldMapper中获取某个field相关的mapper
+                // 如果 mapperService之前已经存在 docMapper了 那么从之前的对象中获取mapper
                 final MetadataFieldMapper existingMetadataMapper = existingMapper == null
                         ? null
                         : (MetadataFieldMapper) existingMapper.mappers().getMapper(name);
@@ -108,8 +109,10 @@ public class DocumentMapper implements ToXContentFragment {
                 // 当不存在时 通过TypeParser生成Mapper对象
                 if (existingMetadataMapper == null) {
                     final TypeParser parser = entry.getValue();
+                    // 解析生成 mapper对象
                     metadataMapper = parser.getDefault(mapperService.documentMapperParser().parserContext());
                 } else {
+                    // 如果之前数据不为空 则复用
                     metadataMapper = existingMetadataMapper;
                 }
                 metadataMappers.put(metadataMapper.getClass(), metadataMapper);
@@ -122,7 +125,7 @@ public class DocumentMapper implements ToXContentFragment {
         }
 
         /**
-         * 通过builder + builderContext 构建mapper对象 之后设置到map中
+         * 在解析数据流时 尽可能将所有的key 都去 MapperRegistry中获取 TypeParser并生成builder 然后填充到这里
          * @param mapper
          * @return
          */
@@ -132,6 +135,11 @@ public class DocumentMapper implements ToXContentFragment {
             return this;
         }
 
+        /**
+         * 在处理完数据流后 各种信息填充到docMapper.Builder后 生成docMapper对象
+         * @param mapperService  本次相关的 MapperService
+         * @return
+         */
         public DocumentMapper build(MapperService mapperService) {
             Objects.requireNonNull(rootObjectMapper, "Mapper builder must have the root object mapper set");
             Mapping mapping = new Mapping(
@@ -169,25 +177,24 @@ public class DocumentMapper implements ToXContentFragment {
     private final MetadataFieldMapper[] noopTombstoneMetadataFieldMappers;
 
     /**
-     * 使用映射服务 以及描述该doc下每个field与mapper对应关系的映射对象
      * @param mapperService
      * @param mapping
      */
     public DocumentMapper(MapperService mapperService, Mapping mapping) {
         this.mapperService = mapperService;
-        // 对应RootObjectMapper的路径
+        // 对应RootObjectMapper.fullPath
         this.type = mapping.root().name();
         this.typeText = new Text(this.type);
         final IndexSettings indexSettings = mapperService.getIndexSettings();
         this.mapping = mapping;
         // 将docMapperParser和本对象包装成 DocParser对象
+        // documentParser 对象负责解析结构化数据
         this.documentParser = new DocumentParser(indexSettings, mapperService.documentMapperParser(), this);
 
         // collect all the mappers for this type
         List<ObjectMapper> newObjectMappers = new ArrayList<>();
         List<FieldMapper> newFieldMappers = new ArrayList<>();
         List<FieldAliasMapper> newFieldAliasMappers = new ArrayList<>();
-        // 好像每个都对应一个field
         for (MetadataFieldMapper metadataMapper : this.mapping.metadataMappers) {
             if (metadataMapper instanceof FieldMapper) {
                 newFieldMappers.add(metadataMapper);

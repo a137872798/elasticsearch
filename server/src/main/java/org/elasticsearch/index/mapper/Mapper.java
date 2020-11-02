@@ -82,6 +82,9 @@ public abstract class Mapper implements ToXContentFragment, Iterable<Mapper> {
 
     public interface TypeParser {
 
+        /**
+         * 在解析过程中包含各种参数的上下文
+         */
         class ParserContext {
 
             private final Function<String, SimilarityProvider> similarityLookupService;
@@ -94,6 +97,14 @@ public abstract class Mapper implements ToXContentFragment, Iterable<Mapper> {
 
             private final Supplier<QueryShardContext> queryShardContextSupplier;
 
+            /**
+             * 构造函数只是设置了一些基础参数 没什么特殊的
+             * @param similarityLookupService
+             * @param mapperService
+             * @param typeParsers   根据传入的fieldName 可以找到对应的typeParser
+             * @param indexVersionCreated
+             * @param queryShardContextSupplier
+             */
             public ParserContext(Function<String, SimilarityProvider> similarityLookupService,
                                  MapperService mapperService, Function<String, TypeParser> typeParsers,
                                  Version indexVersionCreated, Supplier<QueryShardContext> queryShardContextSupplier) {

@@ -401,7 +401,7 @@ public abstract class ParseContext implements Iterable<ParseContext.Document>{
         private long numNestedDocs;
 
         /**
-         * 动态映射器
+         * 某些mapper对象是动态创建的 之后会设置到parseContext中
          */
         private final List<Mapper> dynamicMappers;
 

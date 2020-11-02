@@ -40,7 +40,7 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 /**
- * docMapper解析对象  从MapperService中获取
+ * 该对象负责解析数据流 并生成DocumentMapper对象
  */
 public class DocumentMapperParser {
 
@@ -63,8 +63,21 @@ public class DocumentMapperParser {
     private final Version indexVersionCreated;
 
     private final Map<String, Mapper.TypeParser> typeParsers;
+
+    /**
+     * 该对象是从 mapperRegistry 中取出来的
+     */
     private final Map<String, MetadataFieldMapper.TypeParser> rootTypeParsers;
 
+    /**
+     * 当MapperService初始化时 会创建该对象
+     * @param indexSettings
+     * @param mapperService
+     * @param xContentRegistry
+     * @param similarityService  TODO 打分对象先忽略
+     * @param mapperRegistry  该对象存储了与TypeParser的映射关系
+     * @param queryShardContextSupplier
+     */
     public DocumentMapperParser(IndexSettings indexSettings, MapperService mapperService, NamedXContentRegistry xContentRegistry,
             SimilarityService similarityService, MapperRegistry mapperRegistry, Supplier<QueryShardContext> queryShardContextSupplier) {
         this.mapperService = mapperService;
@@ -86,7 +99,8 @@ public class DocumentMapperParser {
     }
 
     /**
-     *
+     * 在MapperService 感知到IndexMetadata发生变化时 会检测内部的mapping属性 也就是一个格式化数据流 并用它来merge当前的DocMapper对象
+     * 首先需要通过该对象 对数据流进行解析
      * @param type
      * @param source  内部存储了格式化后的数据流 (同时还采用压缩算法)
      * @return
@@ -97,7 +111,8 @@ public class DocumentMapperParser {
         if (source != null) {
             // 将数据流还原成json字符串后 并将kv读取出来存储到map中
             Map<String, Object> root = XContentHelper.convertToMap(source.compressedReference(), true, XContentType.JSON).v2();
-            // 从root中取出key 对应的值  如果没有匹配到  value就是root
+            // 从root中取出type 对应的值  如果没有匹配到  value就是root
+            // TODO 现在还不知道 type 的选择范围  以及设置时机  extractMapping大体就是尽可能获取type对应的精确的数据
             Tuple<String, Map<String, Object>> t = extractMapping(type, root);
             type = t.v1();
             mapping = t.v2();
@@ -124,9 +139,11 @@ public class DocumentMapperParser {
         // 获取解析上下文
         Mapper.TypeParser.ParserContext parserContext = parserContext();
         // parse RootObjectMapper
+        // 初始化DocumentMapper.Builder 后 内部已经存储了 各种MetadataFieldMapper
         DocumentMapper.Builder docBuilder = new DocumentMapper.Builder(
-            // 使用typeParser 将数据流解析成builder对象  之后用 RootObjectMapper 和 MapperService 生成DocumentMapper.Builder
-                (RootObjectMapper.Builder) rootObjectTypeParser.parse(type, mapping, parserContext), mapperService);
+            // 生成了已经填充完各种参数的builder对象
+            (RootObjectMapper.Builder) rootObjectTypeParser.parse(type, mapping, parserContext),
+            mapperService);
         Iterator<Map.Entry<String, Object>> iterator = mapping.entrySet().iterator();
         // parse DocumentMapper
         while(iterator.hasNext()) {
@@ -134,7 +151,8 @@ public class DocumentMapperParser {
             String fieldName = entry.getKey();
             Object fieldNode = entry.getValue();
 
-            // doc下每个field 都会对应一个mapper对象
+            // rootTypeParsers 是从mapperRegistry中获取的
+            // 这里认为每个kv 都对应一个 TypeParser 以及调用parse 时需要的各种参数
             MetadataFieldMapper.TypeParser typeParser = rootTypeParsers.get(fieldName);
             if (typeParser != null) {
                 iterator.remove();
@@ -142,9 +160,9 @@ public class DocumentMapperParser {
                     throw new IllegalArgumentException("[_parent] must be an object containing [type]");
                 }
                 Map<String, Object> fieldNodeMap = (Map<String, Object>) fieldNode;
-                // 挨个生成fieldMapper对象
+                // 套路也是类似的 就是从node中抽取各种属性 填充到typeParser生成的builder中
                 docBuilder.put(typeParser.parse(fieldName, fieldNodeMap, parserContext));
-                // 这个type对应什么 ???
+                // TODO 这个type对应什么 ???
                 fieldNodeMap.remove("type");
                 // 确保fieldNodeMap中所有 entry都被使用完
                 checkNoRemainingFields(fieldName, fieldNodeMap, parserContext.indexVersionCreated());

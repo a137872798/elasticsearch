@@ -301,9 +301,13 @@ public class DynamicTemplate implements ToXContentObject {
         return processMap(mapping, name, dynamicType);
     }
 
+    /**
+     * 生成 typeParser在解析时需要的各种参数
+     */
     private Map<String, Object> processMap(Map<String, Object> map, String name, String dynamicType) {
         Map<String, Object> processedMap = new HashMap<>();
         for (Map.Entry<String, Object> entry : map.entrySet()) {
+            // 将替换符 全部转换成实际参数 所以叫动态模板么
             String key = entry.getKey().replace("{name}", name).replace("{dynamic_type}", dynamicType)
                 .replace("{dynamicType}", dynamicType);
             Object value = entry.getValue();

@@ -39,6 +39,7 @@ import java.io.IOException;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -46,6 +47,7 @@ import java.util.List;
 /**
  * A parser for documents, given mappings from a DocumentMapper
  * doc解析器
+ * TODO mapper内部的mapper是什么时候设置的  dynamic又是什么意思
  */
 final class DocumentParser {
 
@@ -64,9 +66,8 @@ final class DocumentParser {
 
 
     /**
-     *
-     * @param source  提供格式化数据流
-     * @param metadataFieldsMappers   代表doc下每个field对应的mapper对象
+     * @param source                提供格式化数据流
+     * @param metadataFieldsMappers 代表doc下每个field对应的mapper对象
      * @return 代表解析后的结果
      * @throws MapperParsingException
      */
@@ -104,6 +105,7 @@ final class DocumentParser {
 
     /**
      * 检测是否包含 enabled == false的mapper
+     *
      * @param objectMapper
      * @param subfields
      * @return
@@ -125,10 +127,11 @@ final class DocumentParser {
 
     /**
      * DocumentParser 是整个解析的起始点   代表可以对某个doc进行解析
-     * @param mapping   该对象内部存储了一组MetadataFieldMapper
+     *
+     * @param mapping               该对象内部存储了一组MetadataFieldMapper
      * @param metadataFieldsMappers
-     * @param context  存储了在解析过程中需要的各种参数
-     * @param parser  该对象负责解析格式化数据
+     * @param context               存储了在解析过程中需要的各种参数
+     * @param parser                该对象负责解析格式化数据
      * @throws IOException
      */
     private static void internalParseDocument(Mapping mapping, MetadataFieldMapper[] metadataFieldsMappers,
@@ -180,7 +183,7 @@ final class DocumentParser {
             if (token == XContentParser.Token.END_OBJECT) {
                 // empty doc, we can handle it...
                 return true;
-            // 要求必须是 key
+                // 要求必须是 key
             } else if (token != XContentParser.Token.FIELD_NAME) {
                 throw new MapperParsingException("Malformed content, after first object, either the type field"
                     + " or the actual properties should exist");
@@ -228,10 +231,10 @@ final class DocumentParser {
                     // check if the field name contains only whitespace
                     if (Strings.isEmpty(part) == false) {
                         throw new IllegalArgumentException(
-                                "object field cannot contain only whitespace: ['" + fullFieldPath + "']");
+                            "object field cannot contain only whitespace: ['" + fullFieldPath + "']");
                     }
                     throw new IllegalArgumentException(
-                            "object field starting or ending with a [.] makes object resolution ambiguous: [" + fullFieldPath + "]");
+                        "object field starting or ending with a [.] makes object resolution ambiguous: [" + fullFieldPath + "]");
                 }
             }
             return parts;
@@ -240,11 +243,14 @@ final class DocumentParser {
                 throw new IllegalArgumentException("field name cannot be an empty string");
             }
             // 当 格式化数据的key 不包含"." 时 直接返回
-            return new String[] {fullFieldPath};
+            return new String[]{fullFieldPath};
         }
     }
 
-    /** Creates a Mapping containing any dynamically added fields, or returns null if there were no dynamic mappings. */
+    /**
+     * Creates a Mapping containing any dynamically added fields, or returns null if there were no dynamic mappings.
+     * @param dynamicMappers 在解析过程中创建的 动态mapper
+     */
     static Mapping createDynamicUpdate(Mapping mapping, DocumentMapper docMapper, List<Mapper> dynamicMappers) {
         if (dynamicMappers.isEmpty()) {
             return null;
@@ -252,7 +258,7 @@ final class DocumentParser {
         // We build a mapping by first sorting the mappers, so that all mappers containing a common prefix
         // will be processed in a contiguous block. When the prefix is no longer seen, we pop the extra elements
         // off the stack, merging them upwards into the existing mappers.
-        Collections.sort(dynamicMappers, (Mapper o1, Mapper o2) -> o1.name().compareTo(o2.name()));
+        Collections.sort(dynamicMappers, Comparator.comparing(Mapper::name));
         Iterator<Mapper> dynamicMapperItr = dynamicMappers.iterator();
         List<ObjectMapper> parentMappers = new ArrayList<>();
         Mapper firstUpdate = dynamicMapperItr.next();
@@ -292,7 +298,7 @@ final class DocumentParser {
             }
 
             if (newMapper instanceof ObjectMapper) {
-                parentMappers.add((ObjectMapper)newMapper);
+                parentMappers.add((ObjectMapper) newMapper);
             } else {
                 addToLastMapper(parentMappers, newMapper, true);
             }
@@ -356,7 +362,9 @@ final class DocumentParser {
         return i;
     }
 
-    /** Creates an update for intermediate object mappers that are not on the stack, but parents of newMapper. */
+    /**
+     * Creates an update for intermediate object mappers that are not on the stack, but parents of newMapper.
+     */
     private static ObjectMapper createExistingMapperUpdate(List<ObjectMapper> parentMappers, String[] nameParts, int i,
                                                            DocumentMapper docMapper, Mapper newMapper) {
         String updateParentName = nameParts[i];
@@ -370,7 +378,9 @@ final class DocumentParser {
         return createUpdate(updateParent, nameParts, i + 1, newMapper);
     }
 
-    /** Build an update for the parent which will contain the given mapper and any intermediate fields. */
+    /**
+     * Build an update for the parent which will contain the given mapper and any intermediate fields.
+     */
     private static ObjectMapper createUpdate(ObjectMapper parent, String[] nameParts, int i, Mapper mapper) {
         List<ObjectMapper> parentMappers = new ArrayList<>();
         ObjectMapper previousIntermediate = parent;
@@ -378,8 +388,8 @@ final class DocumentParser {
             Mapper intermediate = previousIntermediate.getMapper(nameParts[i]);
             assert intermediate != null : "Field " + previousIntermediate.name() + " does not have a subfield " + nameParts[i];
             assert intermediate instanceof ObjectMapper;
-            parentMappers.add((ObjectMapper)intermediate);
-            previousIntermediate = (ObjectMapper)intermediate;
+            parentMappers.add((ObjectMapper) intermediate);
+            previousIntermediate = (ObjectMapper) intermediate;
         }
         if (parentMappers.isEmpty() == false) {
             // add the new mapper to the stack, and pop down to the original parent level
@@ -392,6 +402,7 @@ final class DocumentParser {
 
     /**
      * 正常解析时会进入这个方法
+     *
      * @param context
      * @param mapper
      * @throws IOException
@@ -447,6 +458,7 @@ final class DocumentParser {
         // 没有发生嵌套的时候 此时token应该就是 FIELD_NAME
         innerParseObject(context, mapper, parser, currentFieldName, token);
         // restore the enable path flag
+        // 将嵌套doc的数据提取到父doc中
         if (nested.isNested()) {
             nested(context, nested);
         }
@@ -454,6 +466,7 @@ final class DocumentParser {
 
     /**
      * 开始解析数据流
+     *
      * @param context
      * @param mapper
      * @param parser
@@ -469,6 +482,7 @@ final class DocumentParser {
         while (token != XContentParser.Token.END_OBJECT) {
             // 对应 key   json格式数据 key都被认为是一个path
             if (token == XContentParser.Token.FIELD_NAME) {
+                // 更新fieldName
                 currentFieldName = parser.currentName();
                 // 如果key 不包含 "." 直接返回 否则使用dot进行拆分
                 paths = splitAndValidatePath(currentFieldName);
@@ -481,16 +495,19 @@ final class DocumentParser {
                     parser.nextToken();
                     parser.skipChildren();
                 }
-            // 发生了嵌套
+                // 当内部还是jsonObject时 开始解析
             } else if (token == XContentParser.Token.START_OBJECT) {
                 parseObject(context, mapper, currentFieldName, paths);
+                // 解析数组
             } else if (token == XContentParser.Token.START_ARRAY) {
                 parseArray(context, mapper, currentFieldName, paths);
+                // 如果是null
             } else if (token == XContentParser.Token.VALUE_NULL) {
                 parseNullValue(context, mapper, currentFieldName, paths);
             } else if (token == null) {
                 throw new MapperParsingException("object mapping for [" + mapper.name() + "] tried to parse field [" + currentFieldName
                     + "] as object, but got EOF, has a concrete value been provided to it?");
+                // 如果是值类型
             } else if (token.isValue()) {
                 parseValue(context, mapper, currentFieldName, token, paths);
             }
@@ -498,13 +515,20 @@ final class DocumentParser {
         }
     }
 
+    /**
+     * 将嵌套doc的数据提取到父doc中
+     * @param context
+     * @param nested
+     */
     private static void nested(ParseContext context, ObjectMapper.Nested nested) {
         ParseContext.Document nestedDoc = context.doc();
         ParseContext.Document parentDoc = nestedDoc.getParent();
         Settings settings = context.indexSettings().getSettings();
+
         if (nested.isIncludeInParent()) {
             addFields(settings, nestedDoc, parentDoc);
         }
+        // 将嵌套doc内的field转移到root中
         if (nested.isIncludeInRoot()) {
             ParseContext.Document rootDoc = context.rootDoc();
             // don't add it twice, if its included in parent, and we are handling the master doc...
@@ -515,7 +539,9 @@ final class DocumentParser {
     }
 
     private static void addFields(Settings settings, ParseContext.Document nestedDoc, ParseContext.Document rootDoc) {
+        // 获取地址的key
         String nestedPathFieldName = NestedPathFieldMapper.name(settings);
+        // 把除了地址外的其他field 都转移到parent中了
         for (IndexableField field : nestedDoc.getFields()) {
             if (field.name().equals(nestedPathFieldName) == false) {
                 rootDoc.add(field);
@@ -525,6 +551,7 @@ final class DocumentParser {
 
     /**
      * 当发生嵌套时 更新解析上下文
+     *
      * @param context
      * @param mapper
      * @return
@@ -561,9 +588,16 @@ final class DocumentParser {
         return context;
     }
 
+    /**
+     * @param context coontext 内部有读取格式化数据的parser对象
+     * @param mapper  该对象则定义了解析的规则
+     * @throws IOException
+     */
     private static void parseObjectOrField(ParseContext context, Mapper mapper) throws IOException {
+        // 本身在解析jsonObject时 可以继续嵌套 所以进入递归
         if (mapper instanceof ObjectMapper) {
             parseObjectOrNested(context, (ObjectMapper) mapper);
+            // TODO
         } else if (mapper instanceof FieldMapper) {
             FieldMapper fieldMapper = (FieldMapper) mapper;
             fieldMapper.parse(context);
@@ -577,7 +611,8 @@ final class DocumentParser {
     }
 
     /**
-     * 在解析过程中
+     * 当解析jsonObject时 进入该方法
+     *
      * @param context
      * @param mapper
      * @param currentFieldName
@@ -591,17 +626,22 @@ final class DocumentParser {
         // 获取尾部path对应的mapper
         Mapper objectMapper = getMapper(mapper, currentFieldName, paths);
         if (objectMapper != null) {
+            // 在调用下面的方法前 先修改path
             context.path().add(currentFieldName);
             parseObjectOrField(context, objectMapper);
             context.path().remove();
         } else {
             currentFieldName = paths[paths.length - 1];
+            // 获取动态映射对象
             Tuple<Integer, ObjectMapper> parentMapperTuple = getDynamicParentMapper(context, paths, mapper);
+            // 在生成了动态映射对象后
             ObjectMapper parentMapper = parentMapperTuple.v2();
+            // 又获取了dynamic 并判断是否是 STRICT 并抛出异常
             ObjectMapper.Dynamic dynamic = dynamicOrDefault(parentMapper, context);
             if (dynamic == ObjectMapper.Dynamic.STRICT) {
                 throw new StrictDynamicMappingException(mapper.fullPath(), currentFieldName);
             } else if (dynamic == ObjectMapper.Dynamic.TRUE) {
+                // 又创建了动态Mapper 并进行解析
                 Mapper.Builder builder = context.root().findTemplateBuilder(context, currentFieldName, XContentFieldType.OBJECT);
                 if (builder == null) {
                     builder = new ObjectMapper.Builder(currentFieldName).enabled(true);
@@ -614,6 +654,7 @@ final class DocumentParser {
                 context.path().remove();
             } else {
                 // not dynamic, read everything up to end object
+                // 无法生成动态mapper对象了只能放弃解析
                 context.parser().skipChildren();
             }
             for (int i = 0; i < parentMapperTuple.v1(); i++) {
@@ -622,10 +663,19 @@ final class DocumentParser {
         }
     }
 
+    /**
+     * 解析格式化数组
+     * @param context
+     * @param parentMapper
+     * @param lastFieldName  此时 jsonArray对应的key
+     * @param paths  lastFieldName 使用"." 拆解后的结果
+     * @throws IOException
+     */
     private static void parseArray(ParseContext context, ObjectMapper parentMapper, String lastFieldName,
                                    String[] paths) throws IOException {
         String arrayFieldName = lastFieldName;
 
+        // 套路每次都是先从父级mapper中 获取子级mapper
         Mapper mapper = getMapper(parentMapper, lastFieldName, paths);
         if (mapper != null) {
             // There is a concrete mapper for this field already. Need to check if the mapper
@@ -637,10 +687,12 @@ final class DocumentParser {
                 parseNonDynamicArray(context, parentMapper, lastFieldName, arrayFieldName);
             }
         } else {
+            // 此时需要动态生成mapper
             arrayFieldName = paths[paths.length - 1];
             lastFieldName = arrayFieldName;
             Tuple<Integer, ObjectMapper> parentMapperTuple = getDynamicParentMapper(context, paths, parentMapper);
             parentMapper = parentMapperTuple.v2();
+            // 这里的代码是类似的 又创建了一次ObjectMapper对象
             ObjectMapper.Dynamic dynamic = dynamicOrDefault(parentMapper, context);
             if (dynamic == ObjectMapper.Dynamic.STRICT) {
                 throw new StrictDynamicMappingException(parentMapper.fullPath(), arrayFieldName);
@@ -675,6 +727,7 @@ final class DocumentParser {
                                              final String lastFieldName, String arrayFieldName) throws IOException {
         XContentParser parser = context.parser();
         XContentParser.Token token;
+        // 按照"."拆分fieldName
         final String[] paths = splitAndValidatePath(lastFieldName);
         while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
             if (token == XContentParser.Token.START_OBJECT) {
@@ -693,6 +746,9 @@ final class DocumentParser {
         }
     }
 
+    /**
+     * 解析数值类型
+     */
     private static void parseValue(final ParseContext context, ObjectMapper parentMapper,
                                    String currentFieldName, XContentParser.Token token, String[] paths) throws IOException {
         if (currentFieldName == null) {
@@ -713,6 +769,14 @@ final class DocumentParser {
         }
     }
 
+    /**
+     * 解析null
+     * @param context
+     * @param parentMapper
+     * @param lastFieldName
+     * @param paths
+     * @throws IOException
+     */
     private static void parseNullValue(ParseContext context, ObjectMapper parentMapper, String lastFieldName,
                                        String[] paths) throws IOException {
         // we can only handle null values if we have mappings for them
@@ -725,39 +789,39 @@ final class DocumentParser {
         }
     }
 
-    private static Mapper.Builder<?,?> createBuilderFromFieldType(final ParseContext context,
-                                                                  MappedFieldType fieldType, String currentFieldName) {
+    private static Mapper.Builder<?, ?> createBuilderFromFieldType(final ParseContext context,
+                                                                   MappedFieldType fieldType, String currentFieldName) {
         Mapper.Builder builder = null;
         if (fieldType instanceof TextFieldType) {
             builder = context.root().findTemplateBuilder(context, currentFieldName, "text", XContentFieldType.STRING);
             if (builder == null) {
                 builder = new TextFieldMapper.Builder(currentFieldName)
-                        .addMultiField(new KeywordFieldMapper.Builder("keyword").ignoreAbove(256));
+                    .addMultiField(new KeywordFieldMapper.Builder("keyword").ignoreAbove(256));
             }
         } else if (fieldType instanceof KeywordFieldType) {
             builder = context.root().findTemplateBuilder(context, currentFieldName, "keyword", XContentFieldType.STRING);
         } else {
             switch (fieldType.typeName()) {
-            case DateFieldMapper.CONTENT_TYPE:
-                builder = context.root().findTemplateBuilder(context, currentFieldName, XContentFieldType.DATE);
-                break;
-            case "long":
-                builder = context.root().findTemplateBuilder(context, currentFieldName, "long", XContentFieldType.LONG);
-                break;
-            case "double":
-                builder = context.root().findTemplateBuilder(context, currentFieldName, "double", XContentFieldType.DOUBLE);
-                break;
-            case "integer":
-                builder = context.root().findTemplateBuilder(context, currentFieldName, "integer", XContentFieldType.LONG);
-                break;
-            case "float":
-                builder = context.root().findTemplateBuilder(context, currentFieldName, "float", XContentFieldType.DOUBLE);
-                break;
-            case BooleanFieldMapper.CONTENT_TYPE:
-                builder = context.root().findTemplateBuilder(context, currentFieldName, "boolean", XContentFieldType.BOOLEAN);
-                break;
-            default:
-                break;
+                case DateFieldMapper.CONTENT_TYPE:
+                    builder = context.root().findTemplateBuilder(context, currentFieldName, XContentFieldType.DATE);
+                    break;
+                case "long":
+                    builder = context.root().findTemplateBuilder(context, currentFieldName, "long", XContentFieldType.LONG);
+                    break;
+                case "double":
+                    builder = context.root().findTemplateBuilder(context, currentFieldName, "double", XContentFieldType.DOUBLE);
+                    break;
+                case "integer":
+                    builder = context.root().findTemplateBuilder(context, currentFieldName, "integer", XContentFieldType.LONG);
+                    break;
+                case "float":
+                    builder = context.root().findTemplateBuilder(context, currentFieldName, "float", XContentFieldType.DOUBLE);
+                    break;
+                case BooleanFieldMapper.CONTENT_TYPE:
+                    builder = context.root().findTemplateBuilder(context, currentFieldName, "boolean", XContentFieldType.BOOLEAN);
+                    break;
+                default:
+                    break;
             }
         }
         if (builder == null) {
@@ -788,9 +852,9 @@ final class DocumentParser {
         return builder;
     }
 
-    private static Mapper.Builder<?,?> createBuilderFromDynamicValue(final ParseContext context,
-                                                                     XContentParser.Token token,
-                                                                     String currentFieldName) throws IOException {
+    private static Mapper.Builder<?, ?> createBuilderFromDynamicValue(final ParseContext context,
+                                                                      XContentParser.Token token,
+                                                                      String currentFieldName) throws IOException {
         if (token == XContentParser.Token.VALUE_STRING) {
             String text = context.parser().text();
 
@@ -850,22 +914,22 @@ final class DocumentParser {
             Mapper.Builder builder = context.root().findTemplateBuilder(context, currentFieldName, XContentFieldType.STRING);
             if (builder == null) {
                 builder = new TextFieldMapper.Builder(currentFieldName)
-                        .addMultiField(new KeywordFieldMapper.Builder("keyword").ignoreAbove(256));
+                    .addMultiField(new KeywordFieldMapper.Builder("keyword").ignoreAbove(256));
             }
             return builder;
         } else if (token == XContentParser.Token.VALUE_NUMBER) {
             XContentParser.NumberType numberType = context.parser().numberType();
             if (numberType == XContentParser.NumberType.INT
-                    || numberType == XContentParser.NumberType.LONG
-                    || numberType == XContentParser.NumberType.BIG_INTEGER) {
+                || numberType == XContentParser.NumberType.LONG
+                || numberType == XContentParser.NumberType.BIG_INTEGER) {
                 Mapper.Builder builder = context.root().findTemplateBuilder(context, currentFieldName, XContentFieldType.LONG);
                 if (builder == null) {
                     builder = newLongBuilder(currentFieldName);
                 }
                 return builder;
             } else if (numberType == XContentParser.NumberType.FLOAT
-                    || numberType == XContentParser.NumberType.DOUBLE
-                    || numberType == XContentParser.NumberType.BIG_DECIMAL) {
+                || numberType == XContentParser.NumberType.DOUBLE
+                || numberType == XContentParser.NumberType.BIG_DECIMAL) {
                 Mapper.Builder builder = context.root().findTemplateBuilder(context, currentFieldName, XContentFieldType.DOUBLE);
                 if (builder == null) {
                     // no templates are defined, we use float by default instead of double
@@ -927,7 +991,9 @@ final class DocumentParser {
         parseObjectOrField(context, mapper);
     }
 
-    /** Creates instances of the fields that the current field should be copied to */
+    /**
+     * Creates instances of the fields that the current field should be copied to
+     */
     private static void parseCopyFields(ParseContext context, List<String> copyToFields) throws IOException {
         if (!context.isWithinCopyTo() && copyToFields.isEmpty() == false) {
             context = context.createCopyToContext();
@@ -953,7 +1019,9 @@ final class DocumentParser {
         }
     }
 
-    /** Creates an copy of the current field with given field name and boost */
+    /**
+     * Creates an copy of the current field with given field name and boost
+     */
     private static void parseCopy(String field, ParseContext context) throws IOException {
         Mapper mapper = context.docMapper().mappers().getMapper(field);
         if (mapper != null) {
@@ -970,7 +1038,7 @@ final class DocumentParser {
             context = context.overridePath(new ContentPath(0));
 
             final String[] paths = splitAndValidatePath(field);
-            final String fieldName = paths[paths.length-1];
+            final String fieldName = paths[paths.length - 1];
             Tuple<Integer, ObjectMapper> parentMapperTuple = getDynamicParentMapper(context, paths, null);
             ObjectMapper objectMapper = parentMapperTuple.v2();
             parseDynamicValue(context, objectMapper, fieldName, context.parser().currentToken());
@@ -980,20 +1048,32 @@ final class DocumentParser {
         }
     }
 
+    /**
+     * 获取动态映射对象
+     *
+     * @param context
+     * @param paths
+     * @param currentParent
+     * @return
+     */
     private static Tuple<Integer, ObjectMapper> getDynamicParentMapper(ParseContext context, final String[] paths,
-            ObjectMapper currentParent) {
+                                                                       ObjectMapper currentParent) {
         ObjectMapper mapper = currentParent == null ? context.root() : currentParent;
         int pathsAdded = 0;
         ObjectMapper parent = mapper;
-        for (int i = 0; i < paths.length-1; i++) {
-        String currentPath = context.path().pathAsText(paths[i]);
-        Mapper existingFieldMapper = context.docMapper().mappers().getMapper(currentPath);
-        if (existingFieldMapper != null) {
-            throw new MapperParsingException(
+        for (int i = 0; i < paths.length - 1; i++) {
+            String currentPath = context.path().pathAsText(paths[i]);
+            // 这里获取的mapper都是 FieldMapper
+            Mapper existingFieldMapper = context.docMapper().mappers().getMapper(currentPath);
+            // 这里要求必须不存在是啥意思
+            if (existingFieldMapper != null) {
+                throw new MapperParsingException(
                     "Could not dynamically add mapping for field [{}]. Existing mapping for [{}] must be of type object but found [{}].",
                     null, String.join(".", paths), currentPath, existingFieldMapper.typeName());
-        }
-        mapper = context.docMapper().objectMappers().get(currentPath);
+            }
+            // 这里专门是存储 ObjectMapper的
+            mapper = context.docMapper().objectMappers().get(currentPath);
+            // 每次都是获取不到 ObjectMapper时 才会创建的
             if (mapper == null) {
                 // One mapping is missing, check if we are allowed to create a dynamic one.
                 ObjectMapper.Dynamic dynamic = dynamicOrDefault(parent, context);
@@ -1001,6 +1081,7 @@ final class DocumentParser {
                 switch (dynamic) {
                     case STRICT:
                         throw new StrictDynamicMappingException(parent.fullPath(), paths[i]);
+                        // 代表需要创建动态类型
                     case TRUE:
                         Mapper.Builder builder = context.root().findTemplateBuilder(context, paths[i], XContentFieldType.OBJECT);
                         if (builder == null) {
@@ -1008,6 +1089,7 @@ final class DocumentParser {
                         }
                         Mapper.BuilderContext builderContext = new Mapper.BuilderContext(context.indexSettings().getSettings(),
                             context.path());
+                        // 动态创建ObjectMapper对象  并且动态创建的ObjectMapper是不能嵌套的
                         mapper = (ObjectMapper) builder.build(builderContext);
                         if (mapper.nested() != ObjectMapper.Nested.NO) {
                             throw new MapperParsingException("It is forbidden to create dynamic nested objects (["
@@ -1016,21 +1098,32 @@ final class DocumentParser {
                         context.addDynamicMapper(mapper);
                         break;
                     case FALSE:
-                       // Should not dynamically create any more mappers so return the last mapper
-                    return new Tuple<>(pathsAdded, parent);
+                        // Should not dynamically create any more mappers so return the last mapper
+                        return new Tuple<>(pathsAdded, parent);
 
                 }
             }
             context.path().add(paths[i]);
             pathsAdded++;
+            // 每前进一步 parent都会更新为当前的mapper
+            // 只要路径上存在mapper 就会不断地循环 而当检测不到mapper时 就会主动创建 并返回结果
             parent = mapper;
         }
         return new Tuple<>(pathsAdded, mapper);
     }
 
-    // find what the dynamic setting is given the current parse context and parent
+    /**
+     * find what the dynamic setting is given the current parse context and parent
+     * TODO 暂时没理解在干什么
+     * 根据需要自动创建 ObjectMapper
+     * @param parentMapper  父级mapper对象
+     * @param context  从该对象中可以获取解析时需要的各种参数
+     * @return
+     */
     private static ObjectMapper.Dynamic dynamicOrDefault(ObjectMapper parentMapper, ParseContext context) {
+        // 这里是描述动态类型的枚举
         ObjectMapper.Dynamic dynamic = parentMapper.dynamic();
+        // 默认值为null
         while (dynamic == null) {
             int lastDotNdx = parentMapper.name().lastIndexOf('.');
             if (lastDotNdx == -1) {
@@ -1038,6 +1131,7 @@ final class DocumentParser {
                 break;
             }
             String parentName = parentMapper.name().substring(0, lastDotNdx);
+            // 先获取父级对象
             parentMapper = context.docMapper().objectMappers().get(parentName);
             if (parentMapper == null) {
                 // If parentMapper is ever null, it means the parent of the current mapper was dynamically created.
@@ -1062,12 +1156,12 @@ final class DocumentParser {
             if (mapper == null || (mapper instanceof ObjectMapper) == false) {
                 return null;
             }
-            objectMapper = (ObjectMapper)mapper;
+            objectMapper = (ObjectMapper) mapper;
             // 此时不允许出现嵌套了
             if (objectMapper.nested().isNested()) {
                 throw new MapperParsingException("Cannot add a value for field ["
-                        + fieldName + "] since one of the intermediate objects is mapped as a nested object: ["
-                        + mapper.name() + "]");
+                    + fieldName + "] since one of the intermediate objects is mapped as a nested object: ["
+                    + mapper.name() + "]");
             }
         }
         return objectMapper.getMapper(subfields[subfields.length - 1]);

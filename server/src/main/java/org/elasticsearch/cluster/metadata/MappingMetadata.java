@@ -40,6 +40,7 @@ import static org.elasticsearch.common.xcontent.support.XContentMapValues.nodeBo
 
 /**
  * Mapping configuration for a type.
+ * 有关mapping的元数据
  */
 public class MappingMetadata extends AbstractDiffable<MappingMetadata> {
 
@@ -47,6 +48,9 @@ public class MappingMetadata extends AbstractDiffable<MappingMetadata> {
 
     private final String type;
 
+    /**
+     * 格式化数据已经被压缩成数据流了
+     */
     private final CompressedXContent source;
 
     private final boolean routingRequired;

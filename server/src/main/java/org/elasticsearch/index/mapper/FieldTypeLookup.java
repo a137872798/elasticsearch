@@ -33,9 +33,13 @@ import java.util.Set;
 
 /**
  * An immutable container for looking up {@link MappedFieldType}s by their name.
+ * 这是一个查找对象 能够根据name找到对应的MappedFieldType
  */
 class FieldTypeLookup implements Iterable<MappedFieldType> {
 
+    /**
+     * 通过每个field的name  可以找到对应的fieldType
+     */
     final CopyOnWriteHashMap<String, MappedFieldType> fullNameToFieldType;
     private final CopyOnWriteHashMap<String, String> aliasToConcreteName;
     private final DynamicKeyFieldTypeLookup dynamicKeyLookup;
@@ -60,6 +64,7 @@ class FieldTypeLookup implements Iterable<MappedFieldType> {
      * from the provided mappers. If a field already exists, its field type will be updated
      * to use the new type from the given field mapper. Similarly if an alias already
      * exists, it will be updated to reference the field type from the new mapper.
+     * 将数据填充到 fieldTypeLookup中
      */
     public FieldTypeLookup copyAndAddAll(Collection<FieldMapper> fieldMappers,
                                          Collection<FieldAliasMapper> fieldAliasMappers) {

@@ -49,11 +49,15 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * 索引内存使用控制器
+ */
 public class IndexingMemoryController implements IndexingOperationListener, Closeable {
 
     private static final Logger logger = LogManager.getLogger(IndexingMemoryController.class);
 
     /** How much heap (% or bytes) we will share across all actively indexing shards on this node (default: 10%). */
+    // 该节点上最多允许使用 10%的内存
     public static final Setting<ByteSizeValue> INDEX_BUFFER_SIZE_SETTING =
             Setting.memorySizeSetting("indices.memory.index_buffer_size", "10%", Property.NodeScope);
 
@@ -108,6 +112,12 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
 
     private final ShardsIndicesStatusChecker statusChecker;
 
+    /**
+     * 内存控制对象
+     * @param settings
+     * @param threadPool
+     * @param indexServices   可以遍历一组分片
+     */
     IndexingMemoryController(Settings settings, ThreadPool threadPool, Iterable<IndexShard> indexServices) {
         this.indexShards = indexServices;
 
@@ -115,6 +125,7 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
 
         String indexingBufferSetting = settings.get(INDEX_BUFFER_SIZE_SETTING.getKey());
         // null means we used the default (10%)
+        // 调整到合适的范围
         if (indexingBufferSetting == null || indexingBufferSetting.endsWith("%")) {
             // We only apply the min/max when % value was used for the index buffer:
             ByteSizeValue minIndexingBuffer = MIN_INDEX_BUFFER_SIZE_SETTING.get(settings);
@@ -128,6 +139,7 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
         }
         this.indexingBuffer = indexingBuffer;
 
+        // 启动定时任务 定期检测内存的使用情况
         this.inactiveTime = SHARD_INACTIVE_TIME_SETTING.get(settings);
         // we need to have this relatively small to free up heap quickly enough
         this.interval = SHARD_MEMORY_INTERVAL_TIME_SETTING.get(settings);
@@ -245,7 +257,10 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
         }
     }
 
-    /** not static because we need access to many fields/methods from our containing class (IMC): */
+    /**
+     * not static because we need access to many fields/methods from our containing class (IMC):
+     * 分片索引状态检查对象
+     */
     final class ShardsIndicesStatusChecker implements Runnable {
 
         final AtomicLong bytesWrittenSinceCheck = new AtomicLong();

@@ -87,6 +87,7 @@ public class RootObjectMapper extends ObjectMapper {
 
         @Override
         public RootObjectMapper build(BuilderContext context) {
+            //TODO
             fixRedundantIncludes(this, true);
             return super.build(context);
         }
@@ -132,15 +133,22 @@ public class RootObjectMapper extends ObjectMapper {
         }
     }
 
-    /**
-     * TODO TypeParser 在什么时机使用呢
-     */
     public static class TypeParser extends ObjectMapper.TypeParser {
 
+
+        /**
+         * 作为RootObjectMapper.TypeParser 职责就是根据解析后的数据流 生成Builder对象
+         * @param name
+         * @param node 在收到新的IndexMetadata.mapping 数据流时 会将其转换成一个map对象
+         * @param parserContext  包含解析过程中需要的各种参数
+         * @return
+         * @throws MapperParsingException
+         */
         @Override
         @SuppressWarnings("rawtypes")
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
 
+            // 生成空的builder对象 并不断往内部填充参数
             RootObjectMapper.Builder builder = new Builder(name);
             Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator();
             while (iterator.hasNext()) {
@@ -148,6 +156,7 @@ public class RootObjectMapper extends ObjectMapper {
                 String fieldName = entry.getKey();
                 Object fieldNode = entry.getValue();
                 // 返回true 代表node中的数据 确实被使用到了 就可以被移除
+                // 就是在这里填充了 dynamicTemplate dynamic 等等重要属性
                 if (parseObjectOrDocumentTypeProperties(fieldName, fieldNode, parserContext, builder)
                         || processField(builder, fieldName, fieldNode, parserContext)) {
                     iterator.remove();
@@ -294,6 +303,7 @@ public class RootObjectMapper extends ObjectMapper {
         }
         Mapper.TypeParser.ParserContext parserContext = context.docMapperParser().parserContext();
         String mappingType = dynamicTemplate.mappingType(dynamicType);
+        // 这里应该就是 ObjectMapper.TypeParser
         Mapper.TypeParser typeParser = parserContext.typeParser(mappingType);
         if (typeParser == null) {
             throw new MapperParsingException("failed to find type parsed [" + mappingType + "] for [" + name + "]");

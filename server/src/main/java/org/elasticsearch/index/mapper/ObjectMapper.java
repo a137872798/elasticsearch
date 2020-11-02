@@ -80,8 +80,14 @@ public class ObjectMapper extends Mapper implements Cloneable {
 
         private final boolean nested;
 
+        /**
+         * 代表需要将嵌套doc的field 转移到 parentDoc中
+         */
         private final boolean includeInParent;
 
+        /**
+         * 代表嵌套doc的field 需要转移到 rootDoc中
+         */
         private final boolean includeInRoot;
 
         private Nested(boolean nested, boolean includeInParent, boolean includeInRoot) {
@@ -155,12 +161,14 @@ public class ObjectMapper extends Mapper implements Cloneable {
             context.path().add(name);
 
             Map<String, Mapper> mappers = new HashMap<>();
+            // 在解析数据流时 会将一些builder设置进去
             for (Mapper.Builder builder : mappersBuilders) {
                 Mapper mapper = builder.build(context);
                 Mapper existing = mappers.get(mapper.simpleName());
                 if (existing != null) {
                     mapper = existing.merge(mapper);
                 }
+                // 通过builder构建mapper对象 并设置到容器中
                 mappers.put(mapper.simpleName(), mapper);
             }
             context.path().remove();
@@ -324,7 +332,7 @@ public class ObjectMapper extends Mapper implements Cloneable {
                     if (typeParser == null) {
                         throw new MapperParsingException("No handler for type [" + type + "] declared on field [" + fieldName + "]");
                     }
-                    // 如果field可能是一个长字符串 在拆解后才获取到真正的field信息
+                    // field 如果使用了多个"." 那么需要做拆分
                     String[] fieldNameParts = fieldName.split("\\.");
                     String realFieldName = fieldNameParts[fieldNameParts.length - 1];
                     Mapper.Builder<?,?> fieldBuilder = typeParser.parse(realFieldName, propNode, parserContext);
