@@ -44,6 +44,7 @@ import java.util.Objects;
 
 /**
  * Context used for inner hits retrieval
+ * 内部命中检索的上下文
  */
 public final class InnerHitsContext {
     private final Map<String, InnerHitSubContext> innerHits;

@@ -24,11 +24,13 @@ import org.elasticsearch.tasks.Task;
 
 /**
  * Represents a phase of a search request e.g. query, fetch etc.
+ * 什么叫查询阶段
  */
 public interface SearchPhase {
 
     /**
      * Performs pre processing of the search context before the execute.
+     * 执行查询的过程中需要一个 SearchContext
      */
     void preProcess(SearchContext context);
 
@@ -37,6 +39,9 @@ public interface SearchPhase {
      */
     void execute(SearchContext context);
 
+    /**
+     * 该对象只是输出相关信息的
+     */
     class SearchContextSourcePrinter {
         private final SearchContext searchContext;
 

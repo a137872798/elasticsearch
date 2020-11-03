@@ -69,6 +69,7 @@ import java.util.Set;
 
 /**
  * Context-aware extension of {@link IndexSearcher}.
+ * 该对象内部包裹了 IndexSearcher
  */
 public class ContextIndexSearcher extends IndexSearcher {
     /**

@@ -78,6 +78,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * an external event.
  */
 // For reference why we use RefCounted here see #20095
+// 查询时的上下文对象
 public abstract class SearchContext extends AbstractRefCounted implements Releasable {
 
     public static final int DEFAULT_TERMINATE_AFTER = 0;
@@ -85,8 +86,15 @@ public abstract class SearchContext extends AbstractRefCounted implements Releas
     public static final int TRACK_TOTAL_HITS_DISABLED = -1;
     public static final int DEFAULT_TRACK_TOTAL_HITS_UP_TO = 10000;
 
+    /**
+     * 每个对象 按照lifetime 设置到map中  当执行完对应的阶段后 批量处理Releasable
+     */
     private Map<Lifetime, List<Releasable>> clearables = null;
     private final AtomicBoolean closed = new AtomicBoolean(false);
+
+    /**
+     * 有关检索的上下文
+     */
     private InnerHitsContext innerHitsContext;
 
     protected SearchContext() {
@@ -109,6 +117,7 @@ public abstract class SearchContext extends AbstractRefCounted implements Releas
     @Override
     protected final void closeInternal() {
         try {
+            // 当context 被关闭时 相关的 Releasable 需要被释放
             clearReleasables(Lifetime.CONTEXT);
         } finally {
             doClose();
@@ -363,6 +372,11 @@ public abstract class SearchContext extends AbstractRefCounted implements Releas
         releasables.add(releasable);
     }
 
+
+    /**
+     * 根据生命周期触发相关的Releasable
+     * @param lifetime
+     */
     public void clearReleasables(Lifetime lifetime) {
         if (clearables != null) {
             List<List<Releasable>>releasables = new ArrayList<>();
@@ -405,18 +419,22 @@ public abstract class SearchContext extends AbstractRefCounted implements Releas
 
     /**
      * The life time of an object that is used during search execution.
+     * 描述某个对象的存活周期
      */
     public enum Lifetime {
         /**
          * This life time is for objects that only live during collection time.
+         * 仅在采集数据时
          */
         COLLECTION,
         /**
          * This life time is for objects that need to live until the end of the current search phase.
+         * 代表整个查询阶段
          */
         PHASE,
         /**
          * This life time is for objects that need to live until the search context they are attached to is destroyed.
+         * 直到查询时传入的context 被销毁 才结束
          */
         CONTEXT
     }

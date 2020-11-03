@@ -76,6 +76,10 @@ public class ShardSearchRequest extends TransportRequest implements IndicesReque
     private final SearchType searchType;
     private final Scroll scroll;
     private final float indexBoost;
+
+    /**
+     * 是否允许使用缓存
+     */
     private final Boolean requestCache;
     private final long nowInMillis;
     private final boolean allowPartialSearchResults;

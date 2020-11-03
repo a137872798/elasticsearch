@@ -29,6 +29,8 @@ import java.util.Map;
 /**
  * Task storing information about a currently running search shard request.
  * See {@link ShardSearchRequest}, {@link ShardFetchSearchRequest}, ...
+ *
+ * 本次执行的查询任务
  */
 public class SearchShardTask extends CancellableTask {
 

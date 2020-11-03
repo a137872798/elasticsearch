@@ -92,12 +92,16 @@ import static org.elasticsearch.search.query.TopDocsCollectorContext.shortcutTot
 /**
  * Query phase of a search request, used to run the query and get back from each shard information about the matching documents
  * (document ids and score or sort criteria) so that matches can be reduced on the coordinating node
+ *
+ * SearchPhase 将查询动作拆分成2步   preProcess  execute  都需要用到 SearchContext
  */
 public class QueryPhase implements SearchPhase {
     private static final Logger LOGGER = LogManager.getLogger(QueryPhase.class);
     // TODO: remove this property in 8.0
     public static final boolean SYS_PROP_REWRITE_SORT = Booleans.parseBoolean(System.getProperty("es.search.rewrite_sort", "true"));
 
+
+    // QueryPhase 在执行查询的过程中  参杂了这3个对象相关的方法
     private final AggregationPhase aggregationPhase;
     private final SuggestPhase suggestPhase;
     private final RescorePhase rescorePhase;
@@ -111,7 +115,9 @@ public class QueryPhase implements SearchPhase {
     @Override
     public void preProcess(SearchContext context) {
         final Runnable cancellation;
+        // 低级别查询检查是什么
         if (context.lowLevelCancellation()) {
+            // 当查询过程中 reader对象被意外关闭了 触发钩子
             cancellation = context.searcher().addQueryCancellation(() -> {
                 SearchShardTask task = context.getTask();
                 if (task != null && task.isCancelled()) {
@@ -125,6 +131,7 @@ public class QueryPhase implements SearchPhase {
             context.preProcess(true);
         } finally {
             if (cancellation != null) {
+                // 整个过程执行完没有出现异常 移除 cancellation
                 context.searcher().removeQueryCancellation(cancellation);
             }
         }

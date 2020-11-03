@@ -1576,13 +1576,17 @@ public class IndicesService extends AbstractLifecycleComponent
         IndexSettings settings = context.indexShard().indexSettings();
         // if not explicitly set in the request, use the index setting, if not, use the request
         if (request.requestCache() == null) {
+            // 请求体中没有设置 走默认配置的值
             if (settings.getValue(IndicesRequestCache.INDEX_CACHE_REQUEST_ENABLED_SETTING) == false) {
                 return false;
+            // 如果携带了一些特殊的东西 不推荐使用缓存
             } else if (context.size() != 0) {
                 // If no request cache query parameter and shard request cache
                 // is enabled in settings don't cache for requests with size > 0
                 return false;
             }
+
+            // 不使用缓存 返回false
         } else if (request.requestCache() == false) {
             return false;
         }
@@ -1604,11 +1608,18 @@ public class IndicesService extends AbstractLifecycleComponent
      * value into the {@link SearchContext#queryResult() context's query result}. The combination of load + compute allows
      * to have a single load operation that will cause other requests with the same key to wait till its loaded an reuse
      * the same cache.
+     * @param request 发起查询的请求体
+     * @param context 查询过程中的上下文对象
+     * @param queryPhase  该对象定义了查询的2个阶段
+     * 从缓存中加载数据
      */
     public void loadIntoContext(ShardSearchRequest request, SearchContext context, QueryPhase queryPhase) throws Exception {
         assert canCache(request, context);
+
+        // 获取本次扫描的目录
         final DirectoryReader directoryReader = context.searcher().getDirectoryReader();
 
+        // 默认情况选择从缓存加载
         boolean[] loadedFromCache = new boolean[]{true};
         BytesReference bytesReference = cacheShardLevelResult(context.indexShard(), directoryReader, request.cacheKey(),
             () -> "Shard: " + request.shardId() + "\nSource:\n" + request.source(),
@@ -1675,8 +1686,15 @@ public class IndicesService extends AbstractLifecycleComponent
         return indicesRequestCache.getOrCompute(cacheEntity, supplier, reader, cacheKey, cacheKeyRenderer);
     }
 
+    /**
+     * 代表一个缓存体 内部包裹了分片数据
+     */
     static final class IndexShardCacheEntity extends AbstractIndexShardCacheEntity {
         private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(IndexShardCacheEntity.class);
+
+        /**
+         * 存储的索引分片数据
+         */
         private final IndexShard indexShard;
 
         protected IndexShardCacheEntity(IndexShard indexShard) {
