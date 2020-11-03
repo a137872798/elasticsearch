@@ -47,7 +47,14 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class ShardCoreKeyMap {
 
+    /**
+     * 代表这个缓存是针对哪个分片的
+     */
     private final Map<IndexReader.CacheKey, ShardId> coreKeyToShard;
+
+    /**
+     * 通过索引name 找到缓存键
+     */
     private final Map<String, Set<IndexReader.CacheKey>> indexToCoreKey;
 
     public ShardCoreKeyMap() {
@@ -58,8 +65,12 @@ public final class ShardCoreKeyMap {
     /**
      * Register a {@link LeafReader}. This is necessary so that the core cache
      * key of this reader can be found later using {@link #getCoreKeysForIndex(String)}.
+     * @param reader 在lucene中 每个leafReader对应一个segment 的数据
+     *               每当 IndicesQueryCache 包装后的Weight调用相关函数时 就会触发该方法
      */
     public void add(LeafReader reader) {
+
+        // 实际上这里要求传入的reader 必须是 ESReader
         final ShardId shardId = ShardUtils.extractShardId(reader);
         if (shardId == null) {
             throw new IllegalArgumentException("Could not extract shard id from " + reader);
@@ -77,9 +88,11 @@ public final class ShardCoreKeyMap {
             return;
         }
 
+        // 建立缓存键和 分片的映射关系
         final String index = shardId.getIndexName();
         synchronized (this) {
             if (coreKeyToShard.containsKey(coreKey) == false) {
+                // 先建立 index 与 CacheKey的映射关系
                 Set<IndexReader.CacheKey> objects = indexToCoreKey.get(index);
                 if (objects == null) {
                     objects = new HashSet<>();
@@ -87,9 +100,11 @@ public final class ShardCoreKeyMap {
                 }
                 final boolean added = objects.add(coreKey);
                 assert added;
+                // 当相关资源被关闭时 (reader被关闭)
                 IndexReader.ClosedListener listener = ownerCoreCacheKey -> {
                     assert coreKey == ownerCoreCacheKey;
                     synchronized (ShardCoreKeyMap.this) {
+                        // 移除映射关系
                         coreKeyToShard.remove(ownerCoreCacheKey);
                         final Set<IndexReader.CacheKey> coreKeys = indexToCoreKey.get(index);
                         final boolean removed = coreKeys.remove(coreKey);
@@ -109,6 +124,7 @@ public final class ShardCoreKeyMap {
                     // map (like the check just before this synchronized block),
                     // then it means that the closed listener has already been
                     // registered.
+                    // 建立缓存键与分片id的关系
                     ShardId previous = coreKeyToShard.put(coreKey, shardId);
                     assert previous == null;
                 } finally {

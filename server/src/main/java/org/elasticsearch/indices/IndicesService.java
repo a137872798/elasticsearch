@@ -19,6 +19,16 @@
 
 package org.elasticsearch.indices;
 
+import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
+import static java.util.Collections.unmodifiableMap;
+import static org.elasticsearch.common.util.CollectionUtils.arrayAsArrayList;
+import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
+import static org.elasticsearch.index.IndexService.IndexCreationContext.CREATE_INDEX;
+import static org.elasticsearch.index.IndexService.IndexCreationContext.METADATA_VERIFICATION;
+import static org.elasticsearch.index.query.AbstractQueryBuilder.parseInnerQueryBuilder;
+import static org.elasticsearch.search.SearchService.ALLOW_EXPENSIVE_QUERIES;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
@@ -35,7 +45,6 @@ import org.elasticsearch.action.admin.indices.stats.CommonStatsFlags;
 import org.elasticsearch.action.admin.indices.stats.CommonStatsFlags.Flag;
 import org.elasticsearch.action.admin.indices.stats.IndexShardStats;
 import org.elasticsearch.action.admin.indices.stats.ShardStats;
-import org.elasticsearch.index.bulk.stats.BulkStats;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.ClusterState;
@@ -84,14 +93,15 @@ import org.elasticsearch.core.internal.io.IOUtils;
 import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.env.ShardLock;
 import org.elasticsearch.env.ShardLockObtainFailedException;
-import org.elasticsearch.gateway.MetadataStateFormat;
 import org.elasticsearch.gateway.MetaStateService;
+import org.elasticsearch.gateway.MetadataStateFormat;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.analysis.AnalysisRegistry;
+import org.elasticsearch.index.bulk.stats.BulkStats;
 import org.elasticsearch.index.cache.request.ShardRequestCache;
 import org.elasticsearch.index.engine.CommitStats;
 import org.elasticsearch.index.engine.EngineFactory;
@@ -164,16 +174,6 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-import static java.util.Collections.emptyList;
-import static java.util.Collections.emptyMap;
-import static java.util.Collections.unmodifiableMap;
-import static org.elasticsearch.common.util.CollectionUtils.arrayAsArrayList;
-import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
-import static org.elasticsearch.index.IndexService.IndexCreationContext.CREATE_INDEX;
-import static org.elasticsearch.index.IndexService.IndexCreationContext.METADATA_VERIFICATION;
-import static org.elasticsearch.index.query.AbstractQueryBuilder.parseInnerQueryBuilder;
-import static org.elasticsearch.search.SearchService.ALLOW_EXPENSIVE_QUERIES;
-
 /**
  * 管理所有索引的服务
  */
@@ -212,6 +212,10 @@ public class IndicesService extends AbstractLifecycleComponent
     private final ScriptService scriptService;
     private final ClusterService clusterService;
     private final Client client;
+
+    /**
+     * key 对应 Index.uuid
+     */
     private volatile Map<String, IndexService> indices = emptyMap();
     private final Map<Index, List<PendingDelete>> pendingDeletes = new HashMap<>();
     private final AtomicInteger numUncompletedDeletes = new AtomicInteger();
@@ -237,6 +241,9 @@ public class IndicesService extends AbstractLifecycleComponent
     private ValuesSourceRegistry valuesSourceRegistry;
 
 
+    /**
+     * 启动时 开启缓存清理线程
+     */
     @Override
     protected void doStart() {
         // Start thread that will manage cleaning the field data cache periodically
@@ -245,6 +252,7 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * 初始化管理所有索引的服务
+     *
      * @param settings
      * @param pluginsService
      * @param nodeEnv
@@ -252,7 +260,7 @@ public class IndicesService extends AbstractLifecycleComponent
      * @param analysisRegistry
      * @param indexNameExpressionResolver
      * @param mapperRegistry
-     * @param namedWriteableRegistry
+     * @param namedWriteableRegistry      该对象是定义格式化数据该怎样解析的
      * @param threadPool
      * @param indexScopedSettings
      * @param circuitBreakerService
@@ -282,21 +290,37 @@ public class IndicesService extends AbstractLifecycleComponent
         this.analysisRegistry = analysisRegistry;
         this.indexNameExpressionResolver = indexNameExpressionResolver;
         this.indicesRequestCache = new IndicesRequestCache(settings);
+
+        // ES 增强了 lucene的QueryCache对象  增加了shard的维度
         this.indicesQueryCache = new IndicesQueryCache(settings);
         this.mapperRegistry = mapperRegistry;
         this.namedWriteableRegistry = namedWriteableRegistry;
+        // 该对象根据当前可用内存量 控制分片的写入操作
         indexingMemoryController = new IndexingMemoryController(settings, threadPool,
-                                                                // ensure we pull an iter with new shards - flatten makes a copy
-                                                                () -> Iterables.flatten(this).iterator());
+            // ensure we pull an iter with new shards - flatten makes a copy
+            () -> Iterables.flatten(this).iterator());
         this.indexScopedSettings = indexScopedSettings;
+        // 熔断器服务
         this.circuitBreakerService = circuitBreakerService;
+        // 该对象池化了各种数组 减少GC
         this.bigArrays = bigArrays;
         this.scriptService = scriptService;
         this.clusterService = clusterService;
         this.client = client;
         this.idFieldDataEnabled = INDICES_ID_FIELD_DATA_ENABLED_SETTING.get(clusterService.getSettings());
+        // 监听idFieldDataEnabled 配置的变化   并更新字段
         clusterService.getClusterSettings().addSettingsUpdateConsumer(INDICES_ID_FIELD_DATA_ENABLED_SETTING, this::setIdFieldDataEnabled);
+
+        // 该对象负责缓存 以field为单位的数据
         this.indicesFieldDataCache = new IndicesFieldDataCache(settings, new IndexFieldDataCache.Listener() {
+
+            /**
+             * 追加一个新的监听器 在缓存数据被清除时 同时修改熔断器的负载 以确保其他需要内存的任务可以正常执行
+             * @param shardId
+             * @param fieldName
+             * @param wasEvicted
+             * @param sizeInBytes
+             */
             @Override
             public void onRemoval(ShardId shardId, String fieldName, boolean wasEvicted, long sizeInBytes) {
                 assert sizeInBytes >= 0 : "When reducing circuit breaker, it should be adjusted with a number higher or " +
@@ -304,13 +328,20 @@ public class IndicesService extends AbstractLifecycleComponent
                 circuitBreakerService.getBreaker(CircuitBreaker.FIELDDATA).addWithoutBreaking(-sizeInBytes);
             }
         });
+
+        // 清理缓存的时间间隔
         this.cleanInterval = INDICES_CACHE_CLEAN_INTERVAL_SETTING.get(settings);
-        this.cacheCleaner = new CacheCleaner(indicesFieldDataCache, indicesRequestCache,  logger, threadPool, this.cleanInterval);
+        // 该对象就是创建一个定时任务 并定期执行缓存的清理工作
+        this.cacheCleaner = new CacheCleaner(indicesFieldDataCache, indicesRequestCache, logger, threadPool, this.cleanInterval);
         this.metaStateService = metaStateService;
+
+        // 这里有一组引擎工厂 每个引擎应该是针对最小单位的index
         this.engineFactoryProviders = engineFactoryProviders;
 
         // do not allow any plugin-provided index store type to conflict with a built-in type
+        // 基于插件拓展的 如何为每个分片创建 目录对象 或者说如何存储对象
         for (final String indexStoreType : directoryFactories.keySet()) {
+            // 因为ES已经内置了一些存储格式  所以外部自定义的存储方式 不能相同
             if (IndexModule.isBuiltinType(indexStoreType)) {
                 throw new IllegalStateException("registered index store type [" + indexStoreType + "] conflicts with a built-in type");
             }
@@ -326,13 +357,14 @@ public class IndicesService extends AbstractLifecycleComponent
             @Override
             protected void closeInternal() {
                 try {
+                    // 当索引服务的引用计数清0时 将一系列组件关闭
                     IOUtils.close(
-                            analysisRegistry,
-                            indexingMemoryController,
-                            indicesFieldDataCache,
-                            cacheCleaner,
-                            indicesRequestCache,
-                            indicesQueryCache);
+                        analysisRegistry,
+                        indexingMemoryController,
+                        indicesFieldDataCache,
+                        cacheCleaner,
+                        indicesRequestCache,
+                        indicesQueryCache);
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 } finally {
@@ -342,7 +374,11 @@ public class IndicesService extends AbstractLifecycleComponent
         };
 
         final String nodeName = Objects.requireNonNull(Node.NODE_NAME_SETTING.get(settings));
+
+        // 是否要写入摇摆索引信息
         nodeWriteDanglingIndicesInfo = WRITE_DANGLING_INDICES_INFO_SETTING.get(settings);
+
+        // 为什么手动开一个线程池啊
         danglingIndicesThreadPoolExecutor = nodeWriteDanglingIndicesInfo ? EsExecutors.newScaling(
             nodeName + "/" + DANGLING_INDICES_UPDATE_THREAD_NAME,
             1, 1,
@@ -350,22 +386,29 @@ public class IndicesService extends AbstractLifecycleComponent
             daemonThreadFactory(nodeName, DANGLING_INDICES_UPDATE_THREAD_NAME),
             threadPool.getThreadContext()) : null;
 
+        // 是否允许昂贵的查询???  可能就是比较耗时的查询
         this.allowExpensiveQueries = ALLOW_EXPENSIVE_QUERIES.get(clusterService.getSettings());
         clusterService.getClusterSettings().addSettingsUpdateConsumer(ALLOW_EXPENSIVE_QUERIES, this::setAllowExpensiveQueries);
     }
 
     private static final String DANGLING_INDICES_UPDATE_THREAD_NAME = "DanglingIndices#updateTask";
 
+    /**
+     * 当该对象被停止时触发
+     */
     @Override
     protected void doStop() {
+        // 关闭线程池
         ThreadPool.terminate(danglingIndicesThreadPoolExecutor, 10, TimeUnit.SECONDS);
 
         ExecutorService indicesStopExecutor =
             Executors.newFixedThreadPool(5, daemonThreadFactory(settings, "indices_shutdown"));
 
         // Copy indices because we modify it asynchronously in the body of the loop
+        // 找到每个索引服务单独进行关闭
         final Set<Index> indices = this.indices.values().stream().map(s -> s.index()).collect(Collectors.toSet());
         final CountDownLatch latch = new CountDownLatch(indices.size());
+        // 使用线程池 加速关闭
         for (final Index index : indices) {
             indicesStopExecutor.execute(() -> {
                 try {
@@ -377,7 +420,7 @@ public class IndicesService extends AbstractLifecycleComponent
         }
         try {
             if (latch.await(shardsClosedTimeout.seconds(), TimeUnit.SECONDS) == false) {
-              logger.warn("Not all shards are closed yet, waited {}sec - stopping service", shardsClosedTimeout.seconds());
+                logger.warn("Not all shards are closed yet, waited {}sec - stopping service", shardsClosedTimeout.seconds());
             }
         } catch (InterruptedException e) {
             // ignore
@@ -388,6 +431,7 @@ public class IndicesService extends AbstractLifecycleComponent
 
     @Override
     protected void doClose() throws IOException {
+        // 引用计数归0 会间接触发一系列组件的关闭
         indicesRefCount.decRef();
     }
 
@@ -396,6 +440,7 @@ public class IndicesService extends AbstractLifecycleComponent
      * are closed and all shard {@link CacheHelper#addClosedListener(org.apache.lucene.index.IndexReader.ClosedListener) closed
      * listeners} have run. However some {@link IndexEventListener#onStoreClosed(ShardId) shard closed listeners} might not have
      * run.
+     *
      * @return true if all shards closed within the given timeout, false otherwise
      * @throws InterruptedException if the current thread got interrupted while waiting for shards to close
      */
@@ -403,10 +448,16 @@ public class IndicesService extends AbstractLifecycleComponent
         return closeLatch.await(timeout, timeUnit);
     }
 
+    /**
+     * 获取操作类型的统计数据
+     * @param flags
+     * @return
+     */
     public NodeIndicesStats stats(CommonStatsFlags flags) {
         CommonStats commonStats = new CommonStats(flags);
         // the cumulative statistics also account for shards that are no longer on this node, which is tracked by oldShardsStats
         for (Flag flag : flags.getFlags()) {
+            // 找到stats下每种操作对应的 stats对象 并将数据填充进去
             switch (flag) {
                 case Get:
                     commonStats.get.add(oldShardsStats.getStats);
@@ -438,10 +489,17 @@ public class IndicesService extends AbstractLifecycleComponent
         return new NodeIndicesStats(commonStats, statsByShard(this, flags));
     }
 
+    /**
+     * 从索引服务中 获取相关的统计数据
+     * @param indicesService
+     * @param flags
+     * @return
+     */
     Map<Index, List<IndexShardStats>> statsByShard(final IndicesService indicesService, final CommonStatsFlags flags) {
         final Map<Index, List<IndexShardStats>> statsByShard = new HashMap<>();
 
         for (final IndexService indexService : indicesService) {
+            // 每个索引服务内部 有很多 indexShard 每个都会对应一个 indexShardStats
             for (final IndexShard indexShard : indexService) {
                 try {
                     final IndexShardStats indexShardStats = indicesService.indexShardStats(indicesService, indexShard, flags);
@@ -465,6 +523,13 @@ public class IndicesService extends AbstractLifecycleComponent
         return statsByShard;
     }
 
+    /**
+     * 抽取某个索引分片的统计信息
+     * @param indicesService
+     * @param indexShard
+     * @param flags
+     * @return
+     */
     IndexShardStats indexShardStats(final IndicesService indicesService, final IndexShard indexShard, final CommonStatsFlags flags) {
         if (indexShard.routingEntry() == null) {
             return null;
@@ -485,16 +550,16 @@ public class IndicesService extends AbstractLifecycleComponent
         }
 
         return new IndexShardStats(
-                indexShard.shardId(),
-                new ShardStats[]{
-                        new ShardStats(
-                                indexShard.routingEntry(),
-                                indexShard.shardPath(),
-                                new CommonStats(indicesService.getIndicesQueryCache(), indexShard, flags),
-                                commitStats,
-                                seqNoStats,
-                                retentionLeaseStats)
-                });
+            indexShard.shardId(),
+            new ShardStats[]{
+                new ShardStats(
+                    indexShard.routingEntry(),
+                    indexShard.shardPath(),
+                    new CommonStats(indicesService.getIndicesQueryCache(), indexShard, flags),
+                    commitStats,
+                    seqNoStats,
+                    retentionLeaseStats)
+            });
     }
 
     /**
@@ -508,6 +573,10 @@ public class IndicesService extends AbstractLifecycleComponent
         }
     }
 
+    /**
+     * 内部包含了各种索引服务
+     * @return
+     */
     @Override
     public Iterator<IndexService> iterator() {
         return indices.values().iterator();
@@ -528,6 +597,7 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * Returns an IndexService for the specified index if exists otherwise a {@link IndexNotFoundException} is thrown.
+     * 代表不允许返回null  提前抛出异常
      */
     public IndexService indexServiceSafe(Index index) {
         IndexService indexService = indices.get(index.getUUID());
@@ -542,29 +612,41 @@ public class IndicesService extends AbstractLifecycleComponent
     /**
      * Creates a new {@link IndexService} for the given metadata.
      *
-     * @param indexMetadata          the index metadata to create the index for
-     * @param builtInListeners       a list of built-in lifecycle {@link IndexEventListener} that should should be used along side with the
-     *                               per-index listeners
+     * @param indexMetadata    the index metadata to create the index for
+     * @param builtInListeners a list of built-in lifecycle {@link IndexEventListener} that should should be used along side with the
+     *                         per-index listeners
+     * @param writeDanglingIndices 是否是摇摆索引
      * @throws ResourceAlreadyExistsException if the index already exists.
+     * 每当传入一个索引相关的元数据时 就可以创建对应的IndexService对象
      */
     @Override
     public synchronized IndexService createIndex(
-            final IndexMetadata indexMetadata, final List<IndexEventListener> builtInListeners,
-            final boolean writeDanglingIndices) throws IOException {
+        final IndexMetadata indexMetadata, final List<IndexEventListener> builtInListeners,
+        final boolean writeDanglingIndices) throws IOException {
+
+        // 首先检测服务是否还在启用中
         ensureChangesAllowed();
         if (indexMetadata.getIndexUUID().equals(IndexMetadata.INDEX_UUID_NA_VALUE)) {
             throw new IllegalArgumentException("index must have a real UUID found value: [" + indexMetadata.getIndexUUID() + "]");
         }
         final Index index = indexMetadata.getIndex();
+        // 不允许重复创建
         if (hasIndex(index)) {
             throw new ResourceAlreadyExistsException(index);
         }
+        // 这组监听器就是监听该index相关事件的
         List<IndexEventListener> finalListeners = new ArrayList<>(builtInListeners);
         final IndexEventListener onStoreClose = new IndexEventListener() {
+
+            /**
+             * 每当有一个 store对象创建 就会依赖该对象
+             * @param shardId the shard ID the store belongs to  每个store都归属于一个shard么
+             */
             @Override
             public void onStoreCreated(ShardId shardId) {
                 indicesRefCount.incRef();
             }
+
             @Override
             public void onStoreClosed(ShardId shardId) {
                 try {
@@ -575,26 +657,31 @@ public class IndicesService extends AbstractLifecycleComponent
             }
         };
         finalListeners.add(onStoreClose);
+        // TODO 为啥都要加入这个特定的钩子
         finalListeners.add(oldShardsStats);
         final IndexService indexService =
-                createIndexService(
-                        CREATE_INDEX,
-                        indexMetadata,
-                        indicesQueryCache,
-                        indicesFieldDataCache,
-                        finalListeners,
-                        indexingMemoryController);
+            createIndexService(
+                CREATE_INDEX,
+                indexMetadata,
+                indicesQueryCache,
+                indicesFieldDataCache,
+                finalListeners,
+                indexingMemoryController);
         boolean success = false;
         try {
+            // 如果当前索引是摇摆索引
             if (writeDanglingIndices && nodeWriteDanglingIndicesInfo) {
+                // 追加了一个监听器 当索引的元数据发生变化时 会进行更新  摇摆索引可能就是指 会经常发生变化的索引
                 indexService.addMetadataListener(imd -> updateDanglingIndicesInfo(index));
             }
+            // 目前是 NOOP
             indexService.getIndexEventListener().afterIndexCreated(indexService);
             indices = Maps.copyMapWithAddedEntry(indices, index.getUUID(), indexService);
             if (writeDanglingIndices) {
                 if (nodeWriteDanglingIndicesInfo) {
                     updateDanglingIndicesInfo(index);
                 } else {
+                    // 当不允许写入 摇摆索引信息时 进行删除
                     indexService.deleteDanglingIndicesInfo();
                 }
             }
@@ -607,12 +694,23 @@ public class IndicesService extends AbstractLifecycleComponent
         }
     }
 
+    /**
+     * 这个方法应该只是检测能否正常使用 indexService吧
+     * @param indexMetadata
+     * @param indexServiceConsumer  该对象接收indexService 并返回给T 类型对象
+     * @param <T>
+     * @param <E>
+     * @return
+     * @throws IOException
+     * @throws E
+     */
     public <T, E extends Exception> T withTempIndexService(final IndexMetadata indexMetadata,
                                                            CheckedFunction<IndexService, T, E> indexServiceConsumer) throws IOException, E {
         final Index index = indexMetadata.getIndex();
         if (hasIndex(index)) {
             throw new ResourceAlreadyExistsException(index);
         }
+        // 创建了一个只要 create 就会抛出异常的监听器
         List<IndexEventListener> finalListeners = List.of(
             // double check that shard is not created.
             new IndexEventListener() {
@@ -629,6 +727,7 @@ public class IndicesService extends AbstractLifecycleComponent
                 }
             }
         );
+
         final IndexService indexService =
             createIndexService(
                 CREATE_INDEX,
@@ -644,6 +743,8 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * This creates a new IndexService without registering it
+     * @param indexingOperationListeners  监控有关索引的操作 比如 indexingMemoryController 每当索引写入或者删除的时候 在内存中就会反映出变化
+     * 根据元数据信息 以及各种缓存对象创建 IndexService
      */
     private synchronized IndexService createIndexService(IndexService.IndexCreationContext indexCreationContext,
                                                          IndexMetadata indexMetadata,
@@ -660,65 +761,72 @@ public class IndicesService extends AbstractLifecycleComponent
             idxSettings.getNumberOfReplicas(),
             indexCreationContext);
 
+        // 先创建索引模块
         final IndexModule indexModule = new IndexModule(idxSettings, analysisRegistry, getEngineFactory(idxSettings),
-                directoryFactories, () -> allowExpensiveQueries, indexNameExpressionResolver);
+            directoryFactories, () -> allowExpensiveQueries, indexNameExpressionResolver);
         for (IndexingOperationListener operationListener : indexingOperationListeners) {
             indexModule.addIndexOperationListener(operationListener);
         }
+        // 很多插件会监听索引模块 并作出相关处理
         pluginsService.onIndexModule(indexModule);
         for (IndexEventListener listener : builtInListeners) {
             indexModule.addIndexEventListener(listener);
         }
         return indexModule.newIndexService(
-                indexCreationContext,
-                nodeEnv,
-                xContentRegistry,
-                this,
-                circuitBreakerService,
-                bigArrays,
-                threadPool,
-                scriptService,
-                clusterService,
-                client,
-                indicesQueryCache,
-                mapperRegistry,
-                indicesFieldDataCache,
-                namedWriteableRegistry,
-                this::isIdFieldDataEnabled,
-                valuesSourceRegistry
+            indexCreationContext,
+            nodeEnv,
+            xContentRegistry,
+            this,
+            circuitBreakerService,
+            bigArrays,
+            threadPool,
+            scriptService,
+            clusterService,
+            client,
+            indicesQueryCache,
+            mapperRegistry,
+            indicesFieldDataCache,
+            namedWriteableRegistry,
+            this::isIdFieldDataEnabled,
+            valuesSourceRegistry
         );
     }
 
     private EngineFactory getEngineFactory(final IndexSettings idxSettings) {
         final IndexMetadata indexMetadata = idxSettings.getIndexMetadata();
+        // 如果索引已经被关闭
         if (indexMetadata != null && indexMetadata.getState() == IndexMetadata.State.CLOSE) {
             // NoOpEngine takes precedence as long as the index is closed
             return NoOpEngine::new;
         }
 
+        // 使用函数处理 indexSettings 并生成EngineFactory
         final List<Optional<EngineFactory>> engineFactories =
-                engineFactoryProviders
-                        .stream()
-                        .map(engineFactoryProvider -> engineFactoryProvider.apply(idxSettings))
-                        .filter(maybe -> Objects.requireNonNull(maybe).isPresent())
-                        .collect(Collectors.toList());
+            engineFactoryProviders
+                .stream()
+                .map(engineFactoryProvider -> engineFactoryProvider.apply(idxSettings))
+                .filter(maybe -> Objects.requireNonNull(maybe).isPresent())
+                .collect(Collectors.toList());
+
+        // 当外部没有设置可用的engineFactory 使用内置引擎工厂
         if (engineFactories.isEmpty()) {
             return new InternalEngineFactory();
         } else if (engineFactories.size() == 1) {
             assert engineFactories.get(0).isPresent();
             return engineFactories.get(0).get();
         } else {
+            // 不允许超过1个
             final String message = String.format(
-                    Locale.ROOT,
-                    "multiple engine factories provided for %s: %s",
-                    idxSettings.getIndex(),
-                    engineFactories
-                            .stream()
-                            .map(t -> {
-                                assert t.isPresent();
-                                return "[" + t.get().getClass().getName() + "]";
-                            })
-                            .collect(Collectors.joining(",")));
+                Locale.ROOT,
+                "multiple engine factories provided for %s: %s",
+                idxSettings.getIndex(),
+                engineFactories
+                    .stream()
+                    .map(t -> {
+                        assert t.isPresent();
+                        return "[" + t.get().getClass().getName() + "]";
+                    })
+                    .collect(Collectors.joining(",")));
             throw new IllegalStateException(message);
         }
     }
@@ -726,13 +834,14 @@ public class IndicesService extends AbstractLifecycleComponent
     /**
      * creates a new mapper service for the given index, in order to do administrative work like mapping updates.
      * This *should not* be used for document parsing. Doing so will result in an exception.
-     *
+     * <p>
      * Note: the returned {@link MapperService} should be closed when unneeded.
+     * MapperService 也是由 indexModule 创建
      */
     public synchronized MapperService createIndexMapperService(IndexMetadata indexMetadata) throws IOException {
         final IndexSettings idxSettings = new IndexSettings(indexMetadata, this.settings, indexScopedSettings);
         final IndexModule indexModule = new IndexModule(idxSettings, analysisRegistry, getEngineFactory(idxSettings),
-                directoryFactories, () -> allowExpensiveQueries, indexNameExpressionResolver);
+            directoryFactories, () -> allowExpensiveQueries, indexNameExpressionResolver);
         pluginsService.onIndexModule(indexModule);
         return indexModule.newIndexMapperService(xContentRegistry, mapperRegistry, scriptService);
     }
@@ -752,9 +861,11 @@ public class IndicesService extends AbstractLifecycleComponent
             IndicesQueryCache indicesQueryCache = new IndicesQueryCache(settings);
             closeables.add(indicesQueryCache);
             // this will also fail if some plugin fails etc. which is nice since we can verify that early
+            // 由于校验元数据 而创建indexService时 使用的context不同
             final IndexService service =
                 createIndexService(METADATA_VERIFICATION, metadata, indicesQueryCache, indicesFieldDataCache, emptyList());
             closeables.add(() -> service.close("metadata verification", false));
+            // 将元数据合并
             service.mapperService().merge(metadata, MapperService.MergeReason.MAPPING_RECOVERY);
             if (metadata.equals(metadataUpdate) == false) {
                 service.updateMetadata(metadata, metadataUpdate);
@@ -764,24 +875,39 @@ public class IndicesService extends AbstractLifecycleComponent
         }
     }
 
+    /**
+     * 根据路由信息等 创建一个新的 indexShard
+     * @param shardRouting           the shard routing
+     * @param recoveryState          the recovery state
+     * @param recoveryTargetService  recovery service for the target
+     * @param recoveryListener       a callback when recovery changes state (finishes or fails)
+     * @param repositoriesService    service responsible for snapshot/restore
+     * @param onShardFailure         a callback when this shard fails
+     * @param globalCheckpointSyncer a callback when this shard syncs the global checkpoint
+     * @param retentionLeaseSyncer   a callback when this shard syncs retention leases
+     * @return
+     * @throws IOException
+     */
     @Override
     public IndexShard createShard(
-            final ShardRouting shardRouting,
-            final RecoveryState recoveryState,
-            final PeerRecoveryTargetService recoveryTargetService,
-            final PeerRecoveryTargetService.RecoveryListener recoveryListener,
-            final RepositoriesService repositoriesService,
-            final Consumer<IndexShard.ShardFailure> onShardFailure,
-            final Consumer<ShardId> globalCheckpointSyncer,
-            final RetentionLeaseSyncer retentionLeaseSyncer) throws IOException {
+        final ShardRouting shardRouting,
+        final RecoveryState recoveryState,
+        final PeerRecoveryTargetService recoveryTargetService,
+        final PeerRecoveryTargetService.RecoveryListener recoveryListener,
+        final RepositoriesService repositoriesService,
+        final Consumer<IndexShard.ShardFailure> onShardFailure,
+        final Consumer<ShardId> globalCheckpointSyncer,
+        final RetentionLeaseSyncer retentionLeaseSyncer) throws IOException {
         Objects.requireNonNull(retentionLeaseSyncer);
         ensureChangesAllowed();
+        // 获取之前为该index 创建的 indexService
         IndexService indexService = indexService(shardRouting.index());
         IndexShard indexShard = indexService.createShard(shardRouting, globalCheckpointSyncer, retentionLeaseSyncer);
         indexShard.addShardFailureCallback(onShardFailure);
+        // 从某个地方恢复数据  当失败时触发相关钩子
         indexShard.startRecovery(recoveryState, recoveryTargetService, recoveryListener, repositoriesService,
             mapping -> {
-                assert recoveryState.getRecoverySource().getType() == RecoverySource.Type.LOCAL_SHARDS:
+                assert recoveryState.getRecoverySource().getType() == RecoverySource.Type.LOCAL_SHARDS :
                     "mapping update consumer only required by local shards recovery";
                 client.admin().indices().preparePutMapping()
                     .setConcreteIndex(shardRouting.index()) // concrete index - no name clash, it uses uuid
@@ -791,6 +917,13 @@ public class IndicesService extends AbstractLifecycleComponent
         return indexShard;
     }
 
+    /**
+     * 当某个索引不再使用时触发
+     * 当indicesService终止时 也会触发该方法 将所有索引移除
+     * @param index the index to remove
+     * @param reason the reason to remove the index
+     * @param extraInfo extra information that will be used for logging and reporting
+     */
     @Override
     public void removeIndex(final Index index, final IndexRemovalReason reason, final String extraInfo) {
         final String indexName = index.getName();
@@ -810,12 +943,15 @@ public class IndicesService extends AbstractLifecycleComponent
                 listener = indexService.getIndexEventListener();
             }
 
+            // 在前后触发listener的钩子
             listener.beforeIndexRemoved(indexService, reason);
             logger.debug("{} closing index service (reason [{}][{}])", index, reason, extraInfo);
+            // 关闭索引服务
             indexService.close(extraInfo, reason == IndexRemovalReason.DELETED);
             logger.debug("{} closed... (reason [{}][{}])", index, reason, extraInfo);
             final IndexSettings indexSettings = indexService.getIndexSettings();
             listener.afterIndexRemoved(indexService.index(), indexSettings, reason);
+            // 如果移除原因指明是删除
             if (reason == IndexRemovalReason.DELETED) {
                 // now we are done - try to wipe data on disk if possible
                 deleteIndexStore(extraInfo, indexService.index(), indexSettings);
@@ -837,8 +973,12 @@ public class IndicesService extends AbstractLifecycleComponent
         return indicesQueryCache;
     }
 
+    /**
+     * IndexEventListener 负责监听索引的各种变化
+     */
     static class OldShardsStats implements IndexEventListener {
 
+        // 针对不同的操作类型有自己的统计对象
         final SearchStats searchStats = new SearchStats();
         final GetStats getStats = new GetStats();
         final IndexingStats indexingStats = new IndexingStats();
@@ -848,8 +988,15 @@ public class IndicesService extends AbstractLifecycleComponent
         final RecoveryStats recoveryStats = new RecoveryStats();
         final BulkStats bulkStats = new BulkStats();
 
+        /**
+         * 当某个分片被关闭前触发
+         * @param shardId  每个分片都属于某个index  index到底是什么
+         * @param indexShard The index shard
+         * @param indexSettings
+         */
         @Override
         public synchronized void beforeIndexShardClosed(ShardId shardId, @Nullable IndexShard indexShard, Settings indexSettings) {
+            // TODO 都要关闭了为什么要把统计数据加上去啊
             if (indexShard != null) {
                 getStats.addTotals(indexShard.getStats());
                 indexingStats.addTotals(indexShard.indexingStats());
@@ -872,16 +1019,19 @@ public class IndicesService extends AbstractLifecycleComponent
     /**
      * Deletes an index that is not assigned to this node. This method cleans up all disk folders relating to the index
      * but does not deal with in-memory structures. For those call {@link #removeIndex(Index, IndexRemovalReason, String)}
+     * 删除某些为分配的index
      */
     @Override
     public void deleteUnassignedIndex(String reason, IndexMetadata metadata, ClusterState clusterState) {
+        // 首先确保 node文件存在 才有删除的必要
         if (nodeEnv.hasNodeFile()) {
             String indexName = metadata.getIndex().getName();
             try {
+                // 未分配的索引对象 不应该存在元数据信息
                 if (clusterState.metadata().hasIndex(indexName)) {
                     final IndexMetadata index = clusterState.metadata().index(indexName);
                     throw new IllegalStateException("Can't delete unassigned index store for [" + indexName + "] - it's still part of " +
-                                                    "the cluster state [" + index.getIndexUUID() + "] [" + metadata.getIndexUUID() + "]");
+                        "the cluster state [" + index.getIndexUUID() + "] [" + metadata.getIndexUUID() + "]");
                 }
                 deleteIndexStore(reason, metadata);
             } catch (Exception e) {
@@ -894,7 +1044,7 @@ public class IndicesService extends AbstractLifecycleComponent
     /**
      * Deletes the index store trying to acquire all shards locks for this index.
      * This method will delete the metadata for the index even if the actual shards can't be locked.
-     *
+     * <p>
      * Package private for testing
      */
     void deleteIndexStore(String reason, IndexMetadata metadata) throws IOException {
@@ -907,15 +1057,32 @@ public class IndicesService extends AbstractLifecycleComponent
                         "] - it's still part of the indices service [" + localUUid + "] [" + metadata.getIndexUUID() + "]");
                 }
             }
+            // 从metadata中解析出 indexSettings
             final IndexSettings indexSettings = buildIndexSettings(metadata);
             deleteIndexStore(reason, indexSettings.getIndex(), indexSettings);
         }
     }
 
+    /**
+     * 删除某个索引的仓库
+     * @param reason
+     * @param index
+     * @param indexSettings
+     * @throws IOException
+     */
     private void deleteIndexStore(String reason, Index index, IndexSettings indexSettings) throws IOException {
-       deleteIndexStoreIfDeletionAllowed(reason, index, indexSettings, DEFAULT_INDEX_DELETION_PREDICATE);
+        deleteIndexStoreIfDeletionAllowed(reason, index, indexSettings, DEFAULT_INDEX_DELETION_PREDICATE);
     }
 
+
+    /**
+     * 删除某个index 对应的仓库
+     * @param reason
+     * @param index
+     * @param indexSettings
+     * @param predicate
+     * @throws IOException
+     */
     private void deleteIndexStoreIfDeletionAllowed(final String reason, final Index index, final IndexSettings indexSettings,
                                                    final IndexDeletionAllowedPredicate predicate) throws IOException {
         boolean success = false;
@@ -926,6 +1093,7 @@ public class IndicesService extends AbstractLifecycleComponent
             logger.debug("{} deleting index store reason [{}]", index, reason);
             if (predicate.apply(index, indexSettings)) {
                 // its safe to delete all index metadata and shard data
+                // 删除索引目录
                 nodeEnv.deleteIndexDirectorySafe(index, 0, indexSettings);
             }
             success = true;
@@ -946,8 +1114,9 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * Deletes the shard with an already acquired shard lock.
-     * @param reason the reason for the shard deletion
-     * @param lock the lock of the shard to delete
+     *
+     * @param reason        the reason for the shard deletion
+     * @param lock          the lock of the shard to delete   该对象内部包含了 shardId
      * @param indexSettings the shards index settings.
      * @throws IOException if an IOException occurs
      */
@@ -955,6 +1124,7 @@ public class IndicesService extends AbstractLifecycleComponent
     public void deleteShardStore(String reason, ShardLock lock, IndexSettings indexSettings) throws IOException {
         ShardId shardId = lock.getShardId();
         logger.trace("{} deleting shard reason [{}]", shardId, reason);
+        // 删除存储目录
         nodeEnv.deleteShardDirectoryUnderLock(lock, indexSettings);
     }
 
@@ -962,20 +1132,23 @@ public class IndicesService extends AbstractLifecycleComponent
      * This method deletes the shard contents on disk for the given shard ID. This method will fail if the shard deleting
      * is prevented by {@link #canDeleteShardContent(ShardId, IndexSettings)}
      * of if the shards lock can not be acquired.
-     *
+     * <p>
      * On data nodes, if the deleted shard is the last shard folder in its index, the method will attempt to remove
      * the index folder as well.
      *
-     * @param reason the reason for the shard deletion
-     * @param shardId the shards ID to delete
+     * @param reason       the reason for the shard deletion
+     * @param shardId      the shards ID to delete
      * @param clusterState . This is required to access the indexes settings etc.
      * @throws IOException if an IOException occurs
+     * 删除某个分片的 store
      */
     public void deleteShardStore(String reason, ShardId shardId, ClusterState clusterState)
-            throws IOException, ShardLockObtainFailedException {
+        throws IOException, ShardLockObtainFailedException {
         final IndexMetadata metadata = clusterState.getMetadata().indices().get(shardId.getIndexName());
 
+        // 通过元数据信息 构造indexSettings
         final IndexSettings indexSettings = buildIndexSettings(metadata);
+        // 检测是否有数据可以删除
         ShardDeletionCheckResult shardDeletionCheckResult = canDeleteShardContent(shardId, indexSettings);
         if (shardDeletionCheckResult != ShardDeletionCheckResult.FOLDER_FOUND_CAN_DELETE) {
             throw new IllegalStateException("Can't delete shard " + shardId + " (cause: " + shardDeletionCheckResult + ")");
@@ -984,6 +1157,7 @@ public class IndicesService extends AbstractLifecycleComponent
         logger.debug("{} deleted shard reason [{}]", shardId, reason);
 
         if (canDeleteIndexContents(shardId.getIndex(), indexSettings)) {
+            // 当该索引下还有分片信息就不能删除
             if (nodeEnv.findAllShardIds(shardId.getIndex()).isEmpty()) {
                 try {
                     // note that deleteIndexStore have more safety checks and may throw an exception if index was concurrently created.
@@ -1002,14 +1176,17 @@ public class IndicesService extends AbstractLifecycleComponent
      * This method returns true if the current node is allowed to delete the given index.
      * This is the case if the index is deleted in the metadata or there is no allocation
      * on the local node and the index isn't on a shared file system.
-     * @param index {@code Index} to check whether deletion is allowed
+     *
+     * @param index         {@code Index} to check whether deletion is allowed
      * @param indexSettings {@code IndexSettings} for the given index
      * @return true if the index can be deleted on this node
+     * 检测该索引是否可以删除
      */
     public boolean canDeleteIndexContents(Index index, IndexSettings indexSettings) {
         // index contents can be deleted if its an already closed index (so all its resources have
         // already been relinquished)
         final IndexService indexService = indexService(index);
+        // 首先 indexService 已经被移除 代表不再被引用了 就可以删除 其次 node文件还存在才有删除的必要
         if (indexService == null && nodeEnv.hasNodeFile()) {
             return true;
         }
@@ -1020,9 +1197,11 @@ public class IndicesService extends AbstractLifecycleComponent
      * Verify that the contents on disk for the given index is deleted; if not, delete the contents.
      * This method assumes that an index is already deleted in the cluster state and/or explicitly
      * through index tombstones.
-     * @param index {@code Index} to make sure its deleted from disk
+     *
+     * @param index        {@code Index} to make sure its deleted from disk
      * @param clusterState {@code ClusterState} to ensure the index is not part of it
      * @return IndexMetadata for the index loaded from disk
+     * 检测某个索引是否已经被删除
      */
     @Override
     @Nullable
@@ -1058,6 +1237,7 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * result type returned by {@link #canDeleteShardContent signaling different reasons why a shard can / cannot be deleted}
+     * 在尝试删除 store时 会检测是否有目录
      */
     public enum ShardDeletionCheckResult {
         FOLDER_FOUND_CAN_DELETE, // shard data exists and can be deleted
@@ -1068,15 +1248,18 @@ public class IndicesService extends AbstractLifecycleComponent
     /**
      * Returns <code>ShardDeletionCheckResult</code> signaling whether the shards content for the given shard can be deleted.
      *
-     * @param shardId the shard to delete.
+     * @param shardId       the shard to delete.
      * @param indexSettings the shards's relevant {@link IndexSettings}. This is required to access the indexes settings etc.
+     *                      检测是否可以删除 分片的内容
      */
     public ShardDeletionCheckResult canDeleteShardContent(ShardId shardId, IndexSettings indexSettings) {
         assert shardId.getIndex().equals(indexSettings.getIndex());
         final IndexService indexService = indexService(shardId.getIndex());
+        // 如果分片还存储在 indexService中 那么不允许删除
         final boolean isAllocated = indexService != null && indexService.hasShard(shardId.id());
         if (isAllocated) {
             return ShardDeletionCheckResult.STILL_ALLOCATED; // we are allocated - can't delete the shard
+            // 如果有自定义路径 找到则可删除 否则 无数据可删
         } else if (indexSettings.hasCustomDataPath()) {
             // lets see if it's on a custom path (return false if the shared doesn't exist)
             // we don't need to delete anything that is not there
@@ -1116,6 +1299,7 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * Adds a pending delete for the given index.
+     * 当无法正常删除某个index 对应的目录时  加入到pendingDelete中
      */
     public void addPendingDelete(Index index, IndexSettings settings) {
         PendingDelete pendingDelete = new PendingDelete(index, settings);
@@ -1134,6 +1318,10 @@ public class IndicesService extends AbstractLifecycleComponent
         }
     }
 
+
+    /**
+     * 代表某个待删除的目录
+     */
     private static final class PendingDelete implements Comparable<PendingDelete> {
         final Index index;
         final int shardId;
@@ -1182,14 +1370,17 @@ public class IndicesService extends AbstractLifecycleComponent
      * they are used by a different process ie. on Windows where files might still be open by a virus scanner. On a shared
      * filesystem a replica might not have been closed when the primary is deleted causing problems on delete calls so we
      * schedule there deletes later.
-     * @param index the index to process the pending deletes for
+     *
+     * @param index   the index to process the pending deletes for
      * @param timeout the timeout used for processing pending deletes
+     *                处理待删除的对象
      */
     @Override
     public void processPendingDeletes(Index index, IndexSettings indexSettings, TimeValue timeout)
-            throws IOException, InterruptedException, ShardLockObtainFailedException {
+        throws IOException, InterruptedException, ShardLockObtainFailedException {
         logger.debug("{} processing pending deletes", index);
         final long startTimeNS = System.nanoTime();
+        // 获取这个索引下所有的分片
         final List<ShardLock> shardLocks = nodeEnv.lockAllForIndex(index, indexSettings, "process pending deletes", timeout.millis());
         int numRemoved = 0;
         try {
@@ -1199,7 +1390,8 @@ public class IndicesService extends AbstractLifecycleComponent
             }
             final List<PendingDelete> remove;
             synchronized (pendingDeletes) {
-                 remove = pendingDeletes.remove(index);
+                // 把该index 下所有待删除的delete 返回
+                remove = pendingDeletes.remove(index);
             }
             if (remove != null && remove.isEmpty() == false) {
                 numRemoved = remove.size();
@@ -1284,14 +1476,26 @@ public class IndicesService extends AbstractLifecycleComponent
      * periodically. In this case it is the field data cache, because a cache that
      * has an entry invalidated may not clean up the entry if it is not read from
      * or written to after invalidation.
+     * 该对象负责定时清理缓存的数据   cache对象对外开放了一个强制清理缓存的api
      */
     private static final class CacheCleaner implements Runnable, Releasable {
 
+        /**
+         * 内部按照field为单位存储数据
+         */
         private final IndicesFieldDataCache cache;
         private final Logger logger;
         private final ThreadPool threadPool;
+
+        /**
+         * 触发间隔
+         */
         private final TimeValue interval;
         private final AtomicBoolean closed = new AtomicBoolean(false);
+
+        /**
+         * 暂时还没明白这个缓存是做什么的
+         */
         private final IndicesRequestCache requestCache;
 
         CacheCleaner(IndicesFieldDataCache cache,
@@ -1313,6 +1517,7 @@ public class IndicesService extends AbstractLifecycleComponent
                 logger.trace("running periodic field data cache cleanup");
             }
             try {
+                // 每隔一定时间 定期清理缓存
                 this.cache.getCache().refresh();
             } catch (Exception e) {
                 logger.warn("Exception during periodic field data cache cleanup:", e);
@@ -1342,11 +1547,13 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * Can the shard request be cached at all?
+     * 当针对某个分片发起了查询请求时 会检测能否进行缓存
      */
     public boolean canCache(ShardSearchRequest request, SearchContext context) {
         // Queries that create a scroll context cannot use the cache.
         // They modify the search context during their execution so using the cache
         // may invalidate the scroll for the next query.
+        // 存在滚动信息就不允许缓存 什么鬼
         if (request.scroll() != null) {
             return false;
         }
@@ -1355,11 +1562,13 @@ public class IndicesService extends AbstractLifecycleComponent
         // on the overridden statistics. So if you ran two queries on the same index with different stats
         // (because an other shard was updated) you would get wrong results because of the scores
         // (think about top_hits aggs or scripts using the score)
+        // TODO
         if (SearchType.QUERY_THEN_FETCH != context.searchType()) {
             return false;
         }
 
         // Profiled queries should not use the cache
+        // profile 不能使用缓存
         if (request.source() != null && request.source().profile()) {
             return false;
         }
@@ -1400,14 +1609,14 @@ public class IndicesService extends AbstractLifecycleComponent
         assert canCache(request, context);
         final DirectoryReader directoryReader = context.searcher().getDirectoryReader();
 
-        boolean[] loadedFromCache = new boolean[] { true };
+        boolean[] loadedFromCache = new boolean[]{true};
         BytesReference bytesReference = cacheShardLevelResult(context.indexShard(), directoryReader, request.cacheKey(),
             () -> "Shard: " + request.shardId() + "\nSource:\n" + request.source(),
             out -> {
-            queryPhase.execute(context);
-            context.queryResult().writeToNoId(out);
-            loadedFromCache[0] = false;
-        });
+                queryPhase.execute(context);
+                context.queryResult().writeToNoId(out);
+                loadedFromCache[0] = false;
+            });
 
         if (loadedFromCache[0]) {
             // restore the cached query result into the context
@@ -1426,7 +1635,7 @@ public class IndicesService extends AbstractLifecycleComponent
             indicesRequestCache.invalidate(new IndexShardCacheEntity(context.indexShard()), directoryReader, request.cacheKey());
             if (logger.isTraceEnabled()) {
                 logger.trace("Query timed out, invalidating cache entry for request on shard [{}]:\n {}", request.shardId(),
-                        request.source());
+                    request.source());
             }
         }
     }
@@ -1437,14 +1646,15 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * Cache something calculated at the shard level.
-     * @param shard the shard this item is part of
-     * @param reader a reader for this shard. Used to invalidate the cache when there are changes.
+     *
+     * @param shard    the shard this item is part of
+     * @param reader   a reader for this shard. Used to invalidate the cache when there are changes.
      * @param cacheKey key for the thing being cached within this shard
-     * @param loader loads the data into the cache if needed
+     * @param loader   loads the data into the cache if needed
      * @return the contents of the cache or the result of calling the loader
      */
     private BytesReference cacheShardLevelResult(IndexShard shard, DirectoryReader reader, BytesReference cacheKey,
-            Supplier<String> cacheKeyRenderer, CheckedConsumer<StreamOutput, IOException> loader) throws Exception {
+                                                 Supplier<String> cacheKeyRenderer, CheckedConsumer<StreamOutput, IOException> loader) throws Exception {
         IndexShardCacheEntity cacheEntity = new IndexShardCacheEntity(shard);
         CheckedSupplier<BytesReference, IOException> supplier = () -> {
             /* BytesStreamOutput allows to pass the expected size but by default uses
@@ -1510,7 +1720,7 @@ public class IndicesService extends AbstractLifecycleComponent
          * of dependencies we pass in a function that can perform the parsing. */
         CheckedFunction<byte[], QueryBuilder, IOException> filterParser = bytes -> {
             try (XContentParser parser = XContentFactory.xContent(bytes)
-                    .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, bytes)) {
+                .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, bytes)) {
                 return parseInnerQueryBuilder(parser);
             }
         };
@@ -1530,7 +1740,7 @@ public class IndicesService extends AbstractLifecycleComponent
      * Clears the caches for the given shard id if the shard is still allocated on this node
      */
     public void clearIndexShardCache(ShardId shardId, boolean queryCache, boolean fieldDataCache, boolean requestCache,
-                                     String...fields) {
+                                     String... fields) {
         final IndexService service = indexService(shardId.getIndex());
         if (service != null) {
             IndexShard shard = service.getShardOrNull(shardId.id());
@@ -1574,8 +1784,8 @@ public class IndicesService extends AbstractLifecycleComponent
      * Checks to see if an operation can be performed without taking the cluster over the cluster-wide shard limit. Adds a deprecation
      * warning or returns an error message as appropriate
      *
-     * @param newShards         The number of shards to be added by this operation   本次要新增的分片
-     * @param state             The current cluster state
+     * @param newShards The number of shards to be added by this operation   本次要新增的分片
+     * @param state     The current cluster state
      * @return If present, an error message to be given as the reason for failing
      * an operation. If empty, a sign that the operation is valid.
      * 检测当前集群能否承载这么多分片
@@ -1605,6 +1815,11 @@ public class IndicesService extends AbstractLifecycleComponent
         return Optional.empty();
     }
 
+    /**
+     * 更新摇摆索引的数据
+     * 这里只是将数据写入到某个地方
+     * @param index
+     */
     private void updateDanglingIndicesInfo(Index index) {
         assert DiscoveryNode.isDataNode(settings) : "dangling indices information should only be persisted on data nodes";
         assert nodeWriteDanglingIndicesInfo : "writing dangling indices info is not enabled";
@@ -1613,6 +1828,7 @@ public class IndicesService extends AbstractLifecycleComponent
             logger.trace("triggered dangling indices update for {}", index);
             final long triggeredTimeMillis = threadPool.relativeTimeInMillis();
             try {
+                // 看来是异步处理的
                 danglingIndicesThreadPoolExecutor.execute(new AbstractRunnable() {
                     @Override
                     public void onFailure(Exception e) {
@@ -1621,8 +1837,10 @@ public class IndicesService extends AbstractLifecycleComponent
 
                     @Override
                     protected void doRun() {
+                        // 确保此时index 还没有被处理
                         final boolean exists = danglingIndicesToWrite.remove(index);
                         assert exists : "removed non-existing item for " + index;
+                        // 找到对应的服务对象
                         final IndexService indexService = indices.get(index.getUUID());
                         if (indexService != null) {
                             final long executedTimeMillis = threadPool.relativeTimeInMillis();

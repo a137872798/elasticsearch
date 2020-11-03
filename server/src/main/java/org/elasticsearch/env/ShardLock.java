@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * before executing any write operations on the shards data directory.
  *
  * @see NodeEnvironment
+ * 针对某个shard
  */
 public abstract class ShardLock implements Closeable {
 

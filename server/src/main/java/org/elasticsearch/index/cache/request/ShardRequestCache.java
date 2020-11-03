@@ -25,10 +25,14 @@ import org.elasticsearch.common.metrics.CounterMetric;
 
 /**
  * Tracks the portion of the request cache in use for a particular shard.
+ * 该对象维护了各种统计信息
  */
 public final class ShardRequestCache {
 
     final CounterMetric evictionsMetric = new CounterMetric();
+    /**
+     * 这是记录总的缓存占用多少bytes的
+     */
     final CounterMetric totalMetric = new CounterMetric();
     final CounterMetric hitCount = new CounterMetric();
     final CounterMetric missCount = new CounterMetric();
@@ -49,6 +53,12 @@ public final class ShardRequestCache {
         totalMetric.inc(key.ramBytesUsed() + value.ramBytesUsed());
     }
 
+    /**
+     * 当缓存被移除时 从计数器中减去对应的数值
+     * @param key
+     * @param value
+     * @param evicted
+     */
     public void onRemoval(Accountable key, BytesReference value, boolean evicted) {
         if (evicted) {
             evictionsMetric.inc();

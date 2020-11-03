@@ -256,8 +256,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
     }
 
     /**
-     * TODO 先忽略该方法的作用
-     * 指定所有插件此时的 索引模块
+     * 将索引模块注入到各个插件上
      * @param indexModule
      */
     public void onIndexModule(IndexModule indexModule) {

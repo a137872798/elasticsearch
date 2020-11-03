@@ -27,6 +27,7 @@ import java.util.Objects;
 
 /**
  * Base class for rollover request conditions
+ * 请求条件对象
  */
 public abstract class Condition<T> implements NamedWriteable, ToXContentFragment {
 

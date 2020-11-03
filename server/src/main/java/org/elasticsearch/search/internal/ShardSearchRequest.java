@@ -67,6 +67,7 @@ import static org.elasticsearch.search.internal.SearchContext.TRACK_TOTAL_HITS_D
  * Shard level request that represents a search.
  * It provides all the methods that the {@link SearchContext} needs.
  * Provides a cache key based on its content that can be used to cache shard level response.
+ * 针对某个节点发起的查询索引的请求
  */
 public class ShardSearchRequest extends TransportRequest implements IndicesRequest {
     private final String clusterAlias;

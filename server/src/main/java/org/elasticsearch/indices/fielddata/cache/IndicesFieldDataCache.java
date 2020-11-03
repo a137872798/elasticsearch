@@ -49,15 +49,28 @@ import java.util.Collections;
 import java.util.List;
 import java.util.function.ToLongBiFunction;
 
+/**
+ * 这里的field是lucene中的field么 ???
+ */
 public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCache.Key, Accountable>, Releasable{
 
     private static final Logger logger = LogManager.getLogger(IndicesFieldDataCache.class);
 
     public static final Setting<ByteSizeValue> INDICES_FIELDDATA_CACHE_SIZE_KEY =
         Setting.memorySizeSetting("indices.fielddata.cache.size", new ByteSizeValue(-1), Property.NodeScope);
+
+    /**
+     * 当插入缓存/移除缓存时触发
+     */
     private final IndexFieldDataCache.Listener indicesFieldDataCacheListener;
     private final Cache<Key, Accountable> cache;
 
+
+    /**
+     *
+     * @param settings
+     * @param indicesFieldDataCacheListener  该监听器包含 添加缓存/移除缓存时的钩子
+     */
     public IndicesFieldDataCache(Settings settings, IndexFieldDataCache.Listener indicesFieldDataCacheListener) {
         this.indicesFieldDataCacheListener = indicesFieldDataCacheListener;
         final long sizeInBytes = INDICES_FIELDDATA_CACHE_SIZE_KEY.get(settings).getBytes();
@@ -74,6 +87,13 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
         cache.invalidateAll();
     }
 
+    /**
+     * 生成针对field 级别的缓存对象
+     * @param listener
+     * @param index
+     * @param fieldName
+     * @return
+     */
     public IndexFieldDataCache buildIndexFieldDataCache(IndexFieldDataCache.Listener listener, Index index, String fieldName) {
         return new IndexFieldCache(logger, cache, index, fieldName, indicesFieldDataCacheListener, listener);
     }
@@ -82,12 +102,17 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
         return cache;
     }
 
+    /**
+     * 当某个键值对从缓存中移除时触发
+     * @param notification
+     */
     @Override
     public void onRemoval(RemovalNotification<Key, Accountable> notification) {
         Key key = notification.getKey();
         assert key != null && key.listeners != null;
         IndexFieldCache indexCache = key.indexCache;
         final Accountable value = notification.getValue();
+        // 批量触发 key内部维护的监听器
         for (IndexFieldDataCache.Listener listener : key.listeners) {
             try {
                 listener.onRemoval(
@@ -101,9 +126,15 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
         }
     }
 
+    /**
+     * 负责计算权重值
+     * 默认情况下 cache中每个kv 的权重值都是固定的
+     * 当权重值超过了缓存的最大权重时 就会触发清理操作
+     */
     public static class FieldDataWeigher implements ToLongBiFunction<Key, Accountable> {
         @Override
         public long applyAsLong(Key key, Accountable ramUsage) {
+            // 每个缓存对象根据内存使用量来计算权重
             int weight = (int) Math.min(ramUsage.ramBytesUsed(), Integer.MAX_VALUE);
             return weight == 0 ? 1 : weight;
         }
@@ -111,14 +142,33 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
 
     /**
      * A specific cache instance for the relevant parameters of it (index, fieldNames, fieldType).
+     * 针对field级别创建的缓存
      */
     static class IndexFieldCache implements IndexFieldDataCache, IndexReader.ClosedListener {
         private final Logger logger;
         final Index index;
         final String fieldName;
+
+        /**
+         * 基于lru算法实现的缓存
+         * 每个indexFieldCache 对象的缓存 都是从 IndicesFieldDataCache中获取过来的
+         */
         private final Cache<Key, Accountable> cache;
+
+        /**
+         * 生成缓存 以及移除缓存时的钩子
+         */
         private final Listener[] listeners;
 
+
+        /**
+         *
+         * @param logger
+         * @param cache
+         * @param index  对应index
+         * @param fieldName  该缓存对应的field
+         * @param listeners
+         */
         IndexFieldCache(Logger logger,final Cache<Key, Accountable> cache, Index index, String fieldName, Listener... listeners) {
             this.logger = logger;
             this.listeners = listeners;
@@ -131,15 +181,20 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
         @SuppressWarnings("unchecked")
         public <FD extends LeafFieldData, IFD extends IndexFieldData<FD>> FD load(final LeafReaderContext context,
                                                                                   final IFD indexFieldData) throws Exception {
+            // 此时的reader对象一定是ES 封装过的 所以可以获取到分片id
             final ShardId shardId = ShardUtils.extractShardId(context.reader());
             final IndexReader.CacheHelper cacheHelper = context.reader().getCoreCacheHelper();
             if (cacheHelper == null) {
                 throw new IllegalArgumentException("Reader " + context.reader() + " does not support caching");
             }
+            // 生成缓存键
             final Key key = new Key(this, cacheHelper.getKey(), shardId);
+            // 这里是加载某个field的数据 并存储到缓存中
             final Accountable accountable = cache.computeIfAbsent(key, k -> {
                 cacheHelper.addClosedListener(IndexFieldCache.this);
+                // 将监听器转移到 key中
                 Collections.addAll(k.listeners, this.listeners);
+                // 通过 indexFieldData 加载数据
                 final LeafFieldData fieldData = indexFieldData.loadDirect(context);
                 for (Listener listener : k.listeners) {
                     try {
@@ -154,6 +209,16 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
             return (FD) accountable;
         }
 
+        /**
+         * 都是通过 indexFieldData 从某个reader中加载某个field的数据 并存储在缓存中
+         * Global 对应的是所有segment    DirectoryReader 就能获取某个目录下所有的reader对象
+         * @param indexReader
+         * @param indexFieldData
+         * @param <FD>
+         * @param <IFD>
+         * @return
+         * @throws Exception
+         */
         @Override
         @SuppressWarnings("unchecked")
         public <FD extends LeafFieldData, IFD extends IndexFieldData.Global<FD>> IFD load(final DirectoryReader indexReader,
@@ -165,8 +230,10 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
             }
             final Key key = new Key(this, cacheHelper.getKey(), shardId);
             final Accountable accountable = cache.computeIfAbsent(key, k -> {
+                // 将自身作为监听器 设置到 reader上 并且将内部的监听器转移到 key.listener上
                 ElasticsearchDirectoryReader.addReaderCloseListener(indexReader, IndexFieldCache.this);
                 Collections.addAll(k.listeners, this.listeners);
+                // 获取到数据后 触发钩子
                 final Accountable ifd = (Accountable) indexFieldData.localGlobalDirect(indexReader);
                 for (Listener listener : k.listeners) {
                     try {
@@ -181,6 +248,10 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
             return (IFD) accountable;
         }
 
+        /**
+         * 当某个field相关的数据被移除时 清除相关的缓存   在cache对象中每个数据都是某个fieldData
+         * @param key
+         */
         @Override
         public void onClose(CacheKey key) {
             cache.invalidate(new Key(this, key, null));
@@ -190,11 +261,13 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
         @Override
         public void clear() {
             for (Key key : cache.keys()) {
+                // 找到外层 存储所有fieldData中 匹配的数据 进行清理
                 if (key.indexCache.index.equals(index)) {
                     cache.invalidate(key);
                 }
             }
             // force eviction
+            // 清除过期数据
             cache.refresh();
         }
 
@@ -214,9 +287,19 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
         }
     }
 
+    /**
+     * 该缓存对象内存储的是另一个缓存 (IndexFieldCache)
+     */
     public static class Key {
+
+        /**
+         * 针对field级别的缓存对象
+         */
         public final IndexFieldCache indexCache;
         public final IndexReader.CacheKey readerKey;
+        /**
+         * 分片id
+         */
         public final ShardId shardId;
 
         public final List<IndexFieldDataCache.Listener> listeners = new ArrayList<>();

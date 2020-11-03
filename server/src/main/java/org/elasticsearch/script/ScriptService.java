@@ -58,6 +58,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * 脚本服务是做什么的
+ */
 public class ScriptService implements Closeable, ClusterStateApplier {
 
     private static final Logger logger = LogManager.getLogger(ScriptService.class);

@@ -30,6 +30,9 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
 
+/**
+ * 该对象可以转换为格式化数据  便于向外部展示
+ */
 public class QueryCacheStats implements Writeable, ToXContentFragment {
 
     private long ramBytesUsed;

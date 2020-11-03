@@ -1085,6 +1085,7 @@ public final class NodeEnvironment  implements Closeable {
      * @param index the index to filter shards
      * @return a set of shard IDs
      * @throws IOException if an IOException occurs
+     * 找到该索引下所有的分片信息
      */
     public Set<ShardId> findAllShardIds(final Index index) throws IOException {
         assert index != null;
@@ -1094,6 +1095,7 @@ public final class NodeEnvironment  implements Closeable {
         assertEnvIsLocked();
         final Set<ShardId> shardIds = new HashSet<>();
         final String indexUniquePathId = index.getUUID();
+        // 该索引下对应的所有目录
         for (final NodePath nodePath : nodePaths) {
             Path location = nodePath.indicesPath;
             if (Files.isDirectory(location)) {

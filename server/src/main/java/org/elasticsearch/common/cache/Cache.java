@@ -214,7 +214,7 @@ public class Cache<K, V> {
      *
      * @param <K> the type of the keys
      * @param <V> the type of the values
-     *           Cache 本身是拆分成多个片段的
+     *           分段减少锁冲突
      */
     private static class CacheSegment<K, V> {
         // read/write lock protecting mutations to the segment

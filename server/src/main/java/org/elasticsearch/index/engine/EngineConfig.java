@@ -52,6 +52,7 @@ import java.util.function.Supplier;
  * Holds all the configuration that is used to create an {@link Engine}.
  * Once {@link Engine} has been created with this object, changes to this
  * object will affect the {@link Engine} instance.
+ * 创建引擎时需要的配置
  */
 public final class EngineConfig {
     private final ShardId shardId;

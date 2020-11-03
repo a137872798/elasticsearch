@@ -37,6 +37,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * 代表某一分片的路径
+ */
 public final class ShardPath {
     public static final String INDEX_FOLDER_NAME = "index";
     public static final String TRANSLOG_FOLDER_NAME = "translog";

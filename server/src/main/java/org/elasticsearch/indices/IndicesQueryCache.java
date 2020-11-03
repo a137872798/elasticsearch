@@ -50,6 +50,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 
+/**
+ * 查询索引数据时的缓存
+ */
 public class IndicesQueryCache implements QueryCache, Closeable {
 
     private static final Logger logger = LogManager.getLogger(IndicesQueryCache.class);
@@ -64,8 +67,16 @@ public class IndicesQueryCache implements QueryCache, Closeable {
     public static final Setting<Boolean> INDICES_QUERIES_CACHE_ALL_SEGMENTS_SETTING = 
             Setting.boolSetting("indices.queries.cache.all_segments", false, Property.NodeScope);
 
+    /**
+     * lucene 内置的缓存对象   缓存了 Query在某个segment下命中的 doc (docIdSet)
+     * 只有不打分的Query才能够使用缓存
+     */
     private final LRUQueryCache cache;
     private final ShardCoreKeyMap shardKeyMap = new ShardCoreKeyMap();
+
+    /**
+     * 每个分片都有一个关联的 统计对象
+     */
     private final Map<ShardId, Stats> shardStats = new ConcurrentHashMap<>();
     private volatile long sharedRamBytesUsed;
 
@@ -74,11 +85,17 @@ public class IndicesQueryCache implements QueryCache, Closeable {
     // See onDocIdSetEviction for more info
     private final Map<Object, StatsAndCount> stats2 = Collections.synchronizedMap(new IdentityHashMap<>());
 
+    /**
+     *
+     * @param settings
+     */
     public IndicesQueryCache(Settings settings) {
+        // 分别是缓存数据的总大小 和 缓存的query数量 (每个query对应一个docIdSet结果集)
         final ByteSizeValue size = INDICES_CACHE_QUERY_SIZE_SETTING.get(settings);
         final int count = INDICES_CACHE_QUERY_COUNT_SETTING.get(settings);
         logger.debug("using [node] query cache with size [{}] max filter count [{}]",
                 size, count);
+        // all segment 缓存是啥意思
         if (INDICES_QUERIES_CACHE_ALL_SEGMENTS_SETTING.get(settings)) {
             cache = new ElasticsearchLRUQueryCache(count, size.getBytes(), context -> true, 1f);
         } else {
@@ -87,8 +104,12 @@ public class IndicesQueryCache implements QueryCache, Closeable {
         sharedRamBytesUsed = 0;
     }
 
-    /** Get usage statistics for the given shard. */
+    /**
+     * Get usage statistics for the given shard.
+     * 获取某个分片相关的统计信息
+     */
     public QueryCacheStats getStats(ShardId shard) {
+        // 生成副本
         final Map<ShardId, QueryCacheStats> stats = new HashMap<>();
         for (Map.Entry<ShardId, Stats> entry : shardStats.entrySet()) {
             stats.put(entry.getKey(), entry.getValue().toQueryCacheStats());
@@ -102,6 +123,7 @@ public class IndicesQueryCache implements QueryCache, Closeable {
 
         // We also have some shared ram usage that we try to distribute to
         // proportionally to their number of cache entries of each shard
+        // 这里有一个额外值 要累加上去
         long totalSize = 0;
         for (QueryCacheStats s : stats.values()) {
             totalSize += s.getCacheSize();
@@ -119,12 +141,17 @@ public class IndicesQueryCache implements QueryCache, Closeable {
         while (weight instanceof CachingWeightWrapper) {
             weight = ((CachingWeightWrapper) weight).in;
         }
+        // 委托实现
         final Weight in = cache.doCache(weight, policy);
         // We wrap the weight to track the readers it sees and map them with
         // the shards they belong to
         return new CachingWeightWrapper(in);
     }
 
+    /**
+     * 封装后的该对象 在执行相关函数时 会向 shardKeyMap中插入 reader
+     * 在shardKeyMap中会建立 index -> cacheKey -> shardId 之间的映射关系
+     */
     private class CachingWeightWrapper extends Weight {
 
         private final Weight in;
@@ -197,6 +224,9 @@ public class IndicesQueryCache implements QueryCache, Closeable {
         cache.clear();
     }
 
+    /**
+     * 统计缓存命中/占用内存 等等信息
+     */
     private static class Stats implements Cloneable {
 
         final ShardId shardId;
@@ -248,6 +278,11 @@ public class IndicesQueryCache implements QueryCache, Closeable {
         shardStats.remove(shardId);
     }
 
+    /**
+     * 继承自 LRUQueryCache
+     * 这个对象只是拓展了父类的钩子
+     * 同时修改了相关的参数信息
+     */
     private class ElasticsearchLRUQueryCache extends LRUQueryCache {
 
         ElasticsearchLRUQueryCache(int maxSize, long maxRamBytesUsed, Predicate<LeafReaderContext> leavesToCache, float skipFactor) {

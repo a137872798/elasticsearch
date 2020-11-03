@@ -36,6 +36,9 @@ import org.elasticsearch.indices.cluster.IndicesClusterStateService.AllocatedInd
  * local state via their arguments. Yet, if an instance is shared across indices they might be called concurrently and should not
  * modify local state without sufficient synchronization.
  * </p>
+ * 有关索引的事件监听器
+ * 比如某个索引被创建 或者某索引的路由信息发生了变化
+ * 在响应的操作前后都设有钩子
  */
 public interface IndexEventListener {
 

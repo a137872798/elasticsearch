@@ -32,6 +32,9 @@ public class IndexShardStats implements Iterable<ShardStats>, Writeable {
 
     private ShardId shardId;
 
+    /**
+     * 该对象还以分片为单位 进一步进行划分
+     */
     private ShardStats[] shards;
 
     public IndexShardStats(StreamInput in) throws IOException {

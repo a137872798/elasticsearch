@@ -72,6 +72,8 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
             }
         }, Property.Dynamic, Property.NodeScope);
 
+
+    // 针对存储 fielddata 有自己的熔断器
     public static final Setting<ByteSizeValue> FIELDDATA_CIRCUIT_BREAKER_LIMIT_SETTING =
         Setting.memorySizeSetting("indices.breaker.fielddata.limit", "40%", Property.Dynamic, Property.NodeScope);
     public static final Setting<Double> FIELDDATA_CIRCUIT_BREAKER_OVERHEAD_SETTING =
@@ -112,9 +114,8 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
     private final AtomicLong parentTripCount = new AtomicLong(0);
 
     /**
-     *
-     * @param settings   包含从配置文件中抽取的配置
-     * @param clusterSettings    集群相关配置
+     * @param settings        包含从配置文件中抽取的配置
+     * @param clusterSettings 集群相关配置
      */
     public HierarchyCircuitBreakerService(Settings settings, ClusterSettings clusterSettings) {
         super();
@@ -122,36 +123,36 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
         // 会被断路的操作类型有很多种  这里根据不同操作类型 获取不同的settings
 
         this.fielddataSettings = new BreakerSettings(CircuitBreaker.FIELDDATA,
-                FIELDDATA_CIRCUIT_BREAKER_LIMIT_SETTING.get(settings).getBytes(),
-                FIELDDATA_CIRCUIT_BREAKER_OVERHEAD_SETTING.get(settings),
-                FIELDDATA_CIRCUIT_BREAKER_TYPE_SETTING.get(settings),
-                CircuitBreaker.Durability.PERMANENT
+            FIELDDATA_CIRCUIT_BREAKER_LIMIT_SETTING.get(settings).getBytes(),
+            FIELDDATA_CIRCUIT_BREAKER_OVERHEAD_SETTING.get(settings),
+            FIELDDATA_CIRCUIT_BREAKER_TYPE_SETTING.get(settings),
+            CircuitBreaker.Durability.PERMANENT
         );
 
         this.inFlightRequestsSettings = new BreakerSettings(CircuitBreaker.IN_FLIGHT_REQUESTS,
-                IN_FLIGHT_REQUESTS_CIRCUIT_BREAKER_LIMIT_SETTING.get(settings).getBytes(),
-                IN_FLIGHT_REQUESTS_CIRCUIT_BREAKER_OVERHEAD_SETTING.get(settings),
-                IN_FLIGHT_REQUESTS_CIRCUIT_BREAKER_TYPE_SETTING.get(settings),
-                CircuitBreaker.Durability.TRANSIENT
+            IN_FLIGHT_REQUESTS_CIRCUIT_BREAKER_LIMIT_SETTING.get(settings).getBytes(),
+            IN_FLIGHT_REQUESTS_CIRCUIT_BREAKER_OVERHEAD_SETTING.get(settings),
+            IN_FLIGHT_REQUESTS_CIRCUIT_BREAKER_TYPE_SETTING.get(settings),
+            CircuitBreaker.Durability.TRANSIENT
         );
 
         this.requestSettings = new BreakerSettings(CircuitBreaker.REQUEST,
-                REQUEST_CIRCUIT_BREAKER_LIMIT_SETTING.get(settings).getBytes(),
-                REQUEST_CIRCUIT_BREAKER_OVERHEAD_SETTING.get(settings),
-                REQUEST_CIRCUIT_BREAKER_TYPE_SETTING.get(settings),
-                CircuitBreaker.Durability.TRANSIENT
+            REQUEST_CIRCUIT_BREAKER_LIMIT_SETTING.get(settings).getBytes(),
+            REQUEST_CIRCUIT_BREAKER_OVERHEAD_SETTING.get(settings),
+            REQUEST_CIRCUIT_BREAKER_TYPE_SETTING.get(settings),
+            CircuitBreaker.Durability.TRANSIENT
         );
 
         this.accountingSettings = new BreakerSettings(CircuitBreaker.ACCOUNTING,
-                ACCOUNTING_CIRCUIT_BREAKER_LIMIT_SETTING.get(settings).getBytes(),
-                ACCOUNTING_CIRCUIT_BREAKER_OVERHEAD_SETTING.get(settings),
-                ACCOUNTING_CIRCUIT_BREAKER_TYPE_SETTING.get(settings),
-                CircuitBreaker.Durability.PERMANENT
+            ACCOUNTING_CIRCUIT_BREAKER_LIMIT_SETTING.get(settings).getBytes(),
+            ACCOUNTING_CIRCUIT_BREAKER_OVERHEAD_SETTING.get(settings),
+            ACCOUNTING_CIRCUIT_BREAKER_TYPE_SETTING.get(settings),
+            CircuitBreaker.Durability.PERMANENT
         );
 
         this.parentSettings = new BreakerSettings(CircuitBreaker.PARENT,
-                TOTAL_CIRCUIT_BREAKER_LIMIT_SETTING.get(settings).getBytes(), 1.0,
-                CircuitBreaker.Type.PARENT, null);
+            TOTAL_CIRCUIT_BREAKER_LIMIT_SETTING.get(settings).getBytes(), 1.0,
+            CircuitBreaker.Type.PARENT, null);
 
         if (logger.isTraceEnabled()) {
             logger.trace("parent circuit breaker with settings {}", this.parentSettings);
@@ -181,7 +182,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
 
     private void setRequestBreakerLimit(ByteSizeValue newRequestMax, Double newRequestOverhead) {
         BreakerSettings newRequestSettings = new BreakerSettings(CircuitBreaker.REQUEST, newRequestMax.getBytes(), newRequestOverhead,
-                this.requestSettings.getType(), this.requestSettings.getDurability());
+            this.requestSettings.getType(), this.requestSettings.getDurability());
         registerBreaker(newRequestSettings);
         this.requestSettings = newRequestSettings;
         logger.info("Updated breaker settings request: {}", newRequestSettings);
@@ -198,6 +199,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
 
     /**
      * 代表有关field数据的配置发生了变化 更新熔断器
+     *
      * @param newFielddataMax
      * @param newFielddataOverhead
      */
@@ -207,7 +209,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
         newFielddataOverhead = newFielddataOverhead == null ?
             HierarchyCircuitBreakerService.this.fielddataSettings.getOverhead() : newFielddataOverhead;
         BreakerSettings newFielddataSettings = new BreakerSettings(CircuitBreaker.FIELDDATA, newFielddataLimitBytes, newFielddataOverhead,
-                this.fielddataSettings.getType(), this.fielddataSettings.getDurability());
+            this.fielddataSettings.getType(), this.fielddataSettings.getDurability());
         registerBreaker(newFielddataSettings);
         HierarchyCircuitBreakerService.this.fielddataSettings = newFielddataSettings;
         logger.info("Updated breaker settings field data: {}", newFielddataSettings);
@@ -304,7 +306,6 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
     }
 
     /**
-     *
      * @param newBytesReserved
      * @return
      */
@@ -315,7 +316,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
 
         for (CircuitBreaker breaker : this.breakers.values()) {
             // 找到所有熔断器此时已经使用的bytes
-            long breakerUsed = (long)(breaker.getUsed() * breaker.getOverhead());
+            long breakerUsed = (long) (breaker.getUsed() * breaker.getOverhead());
             if (breaker.getDurability() == CircuitBreaker.Durability.TRANSIENT) {
                 transientUsage += breakerUsed;
             } else if (breaker.getDurability() == CircuitBreaker.Durability.PERMANENT) {
@@ -362,9 +363,9 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
         if (memoryUsed.totalUsage > parentLimit) {
             this.parentTripCount.incrementAndGet();
             final StringBuilder message = new StringBuilder("[parent] Data too large, data for [" + label + "]" +
-                    " would be [" + memoryUsed.totalUsage + "/" + new ByteSizeValue(memoryUsed.totalUsage) + "]" +
-                    ", which is larger than the limit of [" +
-                    parentLimit + "/" + new ByteSizeValue(parentLimit) + "]");
+                " would be [" + memoryUsed.totalUsage + "/" + new ByteSizeValue(memoryUsed.totalUsage) + "]" +
+                ", which is larger than the limit of [" +
+                parentLimit + "/" + new ByteSizeValue(parentLimit) + "]");
             if (this.trackRealMemoryUsage) {
                 final long realUsage = memoryUsed.baseUsage;
                 message.append(", real usage: [");
@@ -381,7 +382,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
             message.append(String.join(", ",
                 this.breakers.entrySet().stream().map(e -> {
                     final CircuitBreaker breaker = e.getValue();
-                    final long breakerUsed = (long)(breaker.getUsed() * breaker.getOverhead());
+                    final long breakerUsed = (long) (breaker.getUsed() * breaker.getOverhead());
                     return e.getKey() + "=" + breakerUsed + "/" + new ByteSizeValue(breakerUsed);
                 })
                     .collect(Collectors.toList())));
@@ -403,7 +404,7 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
     @Override
     public void registerBreaker(BreakerSettings breakerSettings) {
         // Validate the settings
-        validateSettings(new BreakerSettings[] {breakerSettings});
+        validateSettings(new BreakerSettings[]{breakerSettings});
 
         if (breakerSettings.getType() == CircuitBreaker.Type.NOOP) {
             CircuitBreaker breaker = new NoopCircuitBreaker(breakerSettings.getName());
@@ -411,19 +412,19 @@ public class HierarchyCircuitBreakerService extends CircuitBreakerService {
         } else {
             CircuitBreaker oldBreaker;
             CircuitBreaker breaker = new ChildMemoryCircuitBreaker(breakerSettings,
-                    LogManager.getLogger(CHILD_LOGGER_PREFIX + breakerSettings.getName()),
-                    this, breakerSettings.getName());
+                LogManager.getLogger(CHILD_LOGGER_PREFIX + breakerSettings.getName()),
+                this, breakerSettings.getName());
 
-            for (;;) {
+            for (; ; ) {
                 oldBreaker = breakers.putIfAbsent(breakerSettings.getName(), breaker);
                 if (oldBreaker == null) {
                     return;
                 }
                 // 如果之前已经存在熔断器了 从之前的对象中拷贝相关信息
                 breaker = new ChildMemoryCircuitBreaker(breakerSettings,
-                        (ChildMemoryCircuitBreaker)oldBreaker,
-                        LogManager.getLogger(CHILD_LOGGER_PREFIX + breakerSettings.getName()),
-                        this, breakerSettings.getName());
+                    (ChildMemoryCircuitBreaker) oldBreaker,
+                    LogManager.getLogger(CHILD_LOGGER_PREFIX + breakerSettings.getName()),
+                    this, breakerSettings.getName());
 
                 if (breakers.replace(breakerSettings.getName(), oldBreaker, breaker)) {
                     return;

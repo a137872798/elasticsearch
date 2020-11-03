@@ -241,8 +241,14 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             indexCreationContext == IndexCreationContext.CREATE_INDEX); // metadata verification needs a mapper service
     }
 
+    /**
+     * 创建还分为2种么
+     */
     public enum IndexCreationContext {
         CREATE_INDEX,
+        /**
+         * 元数据校验是什么
+         */
         METADATA_VERIFICATION
     }
 
@@ -339,6 +345,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     }
 
     // method is synchronized so that IndexService can't be closed while we're writing out dangling indices information
+    // 首先本index是一个摇摆索引 并且当收到最新的 indexMetadata时 会触发该方法
     public synchronized void writeDanglingIndicesInfo() {
         if (closed.get()) {
             return;
@@ -351,6 +358,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     }
 
     // method is synchronized so that IndexService can't be closed while we're deleting dangling indices information
+    // 如果 indicesService 不支持使用摇摆索引 那么进行删除
     public synchronized void deleteDanglingIndicesInfo() {
         if (closed.get()) {
             return;
@@ -713,6 +721,12 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         metadataListeners.add(listener);
     }
 
+
+    /**
+     * 根据前后变化的元数据 更新indexService
+     * @param currentIndexMetadata the current index metadata
+     * @param newIndexMetadata the new index metadata
+     */
     @Override
     public synchronized void updateMetadata(final IndexMetadata currentIndexMetadata, final IndexMetadata newIndexMetadata) {
         final boolean updateIndexSettings = indexSettings.updateIndexMetadata(newIndexMetadata);

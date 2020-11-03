@@ -55,9 +55,13 @@ import java.util.Map;
 
 /**
  * Global information on indices stats running on a specific node.
+ * 对应索引服务下所有索引针对某种操作类型的统计信息
  */
 public class NodeIndicesStats implements Writeable, ToXContentFragment {
 
+    /**
+     * 所有索引共享的部分
+     */
     private CommonStats stats;
     private Map<Index, List<IndexShardStats>> statsByShard;
 

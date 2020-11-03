@@ -210,6 +210,9 @@ public class CommonStatsFlags implements Writeable, Cloneable {
         }
     }
 
+    /**
+     * 针对索引的各种操作类型
+     */
     public enum Flag {
         Store("store", 0),
         Indexing("indexing", 1),

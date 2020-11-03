@@ -19,6 +19,9 @@
 
 package org.elasticsearch.index.engine;
 
+/**
+ * ES内置的引擎工厂
+ */
 public class InternalEngineFactory implements EngineFactory {
     @Override
     public Engine newReadWriteEngine(EngineConfig config) {

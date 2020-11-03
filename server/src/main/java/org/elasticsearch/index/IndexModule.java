@@ -389,6 +389,27 @@ public final class IndexModule {
         }
     }
 
+    /**
+     * 根据相关属性生成 indexService
+     * @param indexCreationContext
+     * @param environment
+     * @param xContentRegistry
+     * @param shardStoreDeleter
+     * @param circuitBreakerService
+     * @param bigArrays
+     * @param threadPool
+     * @param scriptService
+     * @param clusterService
+     * @param client
+     * @param indicesQueryCache
+     * @param mapperRegistry
+     * @param indicesFieldDataCache
+     * @param namedWriteableRegistry
+     * @param idFieldDataEnabled
+     * @param valuesSourceRegistry
+     * @return
+     * @throws IOException
+     */
     public IndexService newIndexService(IndexService.IndexCreationContext indexCreationContext,
                                         NodeEnvironment environment,
                                         NamedXContentRegistry xContentRegistry,

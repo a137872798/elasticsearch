@@ -54,6 +54,9 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.stream.Stream;
 
+/**
+ * 共有的统计数据
+ */
 public class CommonStats implements Writeable, ToXContentFragment {
 
     @Nullable

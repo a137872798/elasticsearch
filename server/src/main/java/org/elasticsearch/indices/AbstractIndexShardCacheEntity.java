@@ -31,9 +31,15 @@ abstract class AbstractIndexShardCacheEntity implements IndicesRequestCache.Cach
 
     /**
      * Get the {@linkplain ShardRequestCache} used to track cache statistics.
+     * ShardRequestCache 存储了各种统计信息
      */
     protected abstract ShardRequestCache stats();
 
+    /**
+     * onCached的触发时机是 当数据首次被加入到缓存时
+     * @param key
+     * @param value
+     */
     @Override
     public final void onCached(IndicesRequestCache.Key key, BytesReference value) {
         stats().onCached(key, value);

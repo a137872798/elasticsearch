@@ -1803,8 +1803,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Called by {@link IndexingMemoryController} to check whether more than {@code inactiveTimeNS} has passed since the last
      * indexing operation, so we can flush the index.
+     * 当当前时间距离上次写入时间 超过了静默时间后 允许将数据刷盘
      */
     public void flushOnIdle(long inactiveTimeNS) {
+        // 首先确保engine没有被关闭
         Engine engineOrNull = getEngineOrNull();
         if (engineOrNull != null && System.nanoTime() - engineOrNull.getLastWriteNanos() >= inactiveTimeNS) {
             boolean wasActive = active.getAndSet(false);
@@ -1818,6 +1820,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         }
                     }
 
+                    /**
+                     * 异步执行刷盘操作
+                     */
                     @Override
                     protected void doRun() {
                         flush(new FlushRequest().waitIfOngoing(false).force(false));
@@ -1977,6 +1982,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return indexEventListener;
     }
 
+    /**
+     * 某个分片的刷盘操作被延后时触发
+     */
     public void activateThrottling() {
         try {
             getEngine().activateThrottling();
@@ -1985,6 +1993,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 当此时buffer中有足够的空间 就允许之前被暂停的刷盘任务继续执行
+     */
     public void deactivateThrottling() {
         try {
             getEngine().deactivateThrottling();
@@ -2018,6 +2029,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Called when our shard is using too much heap and should move buffered indexed/deleted documents to disk.
+     * 将分片内部的数据写入到 buffer中
      */
     public void writeIndexingBuffer() {
         try {

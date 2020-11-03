@@ -95,6 +95,9 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
 
     private final ThreadPool threadPool;
 
+    /**
+     * 内部还包含了一组分片
+     */
     private final Iterable<IndexShard> indexShards;
 
     private final ByteSizeValue indexingBuffer;
@@ -102,11 +105,20 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
     private final TimeValue inactiveTime;
     private final TimeValue interval;
 
-    /** Contains shards currently being throttled because we can't write segments quickly enough */
+    /**
+     * Contains shards currently being throttled because we can't write segments quickly enough
+     * 当内存不足时 分片对象会存储在这里set中
+     */
     private final Set<IndexShard> throttled = new HashSet<>();
 
+    /**
+     * 通过该对象可以关闭定时任务
+     */
     private final Cancellable scheduler;
 
+    /**
+     * 只有 恢复中 恢复完成 使用中可以写入到 buffer中
+     */
     private static final EnumSet<IndexShardState> CAN_WRITE_INDEX_BUFFER_STATES = EnumSet.of(
             IndexShardState.RECOVERING, IndexShardState.POST_RECOVERY, IndexShardState.STARTED);
 
@@ -116,11 +128,12 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
      * 内存控制对象
      * @param settings
      * @param threadPool
-     * @param indexServices   可以遍历一组分片
+     * @param indexServices  在初始过程中 先传入了一组分片对象
      */
     IndexingMemoryController(Settings settings, ThreadPool threadPool, Iterable<IndexShard> indexServices) {
         this.indexShards = indexServices;
 
+        // 获取缓冲区的大小
         ByteSizeValue indexingBuffer = INDEX_BUFFER_SIZE_SETTING.get(settings);
 
         String indexingBufferSetting = settings.get(INDEX_BUFFER_SIZE_SETTING.getKey());
@@ -139,9 +152,9 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
         }
         this.indexingBuffer = indexingBuffer;
 
-        // 启动定时任务 定期检测内存的使用情况
         this.inactiveTime = SHARD_INACTIVE_TIME_SETTING.get(settings);
         // we need to have this relatively small to free up heap quickly enough
+        // 启动定时任务 定期检测内存的使用情况
         this.interval = SHARD_MEMORY_INTERVAL_TIME_SETTING.get(settings);
 
         this.statusChecker = new ShardsIndicesStatusChecker();
@@ -174,6 +187,10 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
         return indexingBuffer;
     }
 
+    /**
+     * 将此时所有可写的分片返回
+     * @return
+     */
     protected List<IndexShard> availableShards() {
         List<IndexShard> availableShards = new ArrayList<>();
         for (IndexShard shard : indexShards) {
@@ -194,9 +211,16 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
         return shard.getWritingBytes();
     }
 
-    /** ask this shard to refresh, in the background, to free up heap */
+    /**
+     * ask this shard to refresh, in the background, to free up heap
+     * 当某个刷盘任务需要被放缓时 将数据转移到 indexingBuffer
+     */
     protected void writeIndexingBufferAsync(IndexShard shard) {
         threadPool.executor(ThreadPool.Names.REFRESH).execute(new AbstractRunnable() {
+
+            /**
+             * 这里会借助 engine对象 将shard数据写入到某个位置
+             */
             @Override
             public void doRun() {
                 shard.writeIndexingBuffer();
@@ -224,6 +248,12 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
         shard.deactivateThrottling();
     }
 
+    /**
+     * 当执行了一次索引操作后触发
+     * @param shardId
+     * @param index
+     * @param result
+     */
     @Override
     public void postIndex(ShardId shardId, Engine.Index index, Engine.IndexResult result) {
         recordOperationBytes(index, result);
@@ -234,13 +264,19 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
         recordOperationBytes(delete, result);
     }
 
-    /** called by IndexShard to record estimated bytes written to translog for the operation */
+    /**
+     * called by IndexShard to record estimated bytes written to translog for the operation
+     * 每当某个索引操作成功执行时 都会转发到该方法 更新此时使用的内存量
+     */
     private void recordOperationBytes(Engine.Operation operation, Engine.Result result) {
         if (result.getResultType() == Engine.Result.Type.SUCCESS) {
             statusChecker.bytesWritten(operation.estimatedSizeInBytes());
         }
     }
 
+    /**
+     * 代表某个分片此时的消耗量
+     */
     private static final class ShardAndBytesUsed implements Comparable<ShardAndBytesUsed> {
         final long bytesUsed;
         final IndexShard shard;
@@ -250,6 +286,11 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
             this.shard = shard;
         }
 
+        /**
+         * 从大到小的顺序
+         * @param other
+         * @return
+         */
         @Override
         public int compareTo(ShardAndBytesUsed other) {
             // Sort larger shards first:
@@ -259,17 +300,27 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
 
     /**
      * not static because we need access to many fields/methods from our containing class (IMC):
-     * 分片索引状态检查对象
+     * 内存使用检测对象
      */
     final class ShardsIndicesStatusChecker implements Runnable {
 
+        /**
+         * 记录上次检测的结果
+         */
         final AtomicLong bytesWrittenSinceCheck = new AtomicLong();
+        /**
+         * 因为用户可能会手动触发检测所以需要加锁
+         */
         final ReentrantLock runLock = new ReentrantLock();
 
-        /** Shard calls this on each indexing/delete op */
+        /**
+         * Shard calls this on each indexing/delete op
+         * 当发生 indexing/delete 操作时 bytes 已经发生了变化
+         */
         public void bytesWritten(int bytes) {
             long totalBytes = bytesWrittenSinceCheck.addAndGet(bytes);
             assert totalBytes >= 0;
+            // 当此时记录的总量超过了缓存区的 1/30
             while (totalBytes > indexingBuffer.getBytes()/30) {
 
                 if (runLock.tryLock()) {
@@ -277,12 +328,15 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
                         // Must pull this again because it may have changed since we first checked:
                         totalBytes = bytesWrittenSinceCheck.get();
                         if (totalBytes > indexingBuffer.getBytes()/30) {
+                            // 这里在减小统计的bytes数
                             bytesWrittenSinceCheck.addAndGet(-totalBytes);
                             // NOTE: this is only an approximate check, because bytes written is to the translog,
                             // vs indexing memory buffer which is typically smaller but can be larger in extreme
                             // cases (many unique terms).  This logic is here only as a safety against thread
                             // starvation or too infrequent checking, to ensure we are still checking periodically,
                             // in proportion to bytes processed by indexing:
+                            // runUnlocked()本身是检测此时buffer是否有足够空间 并选择将某些分片暂停或者唤醒 而每次发生操作时 每个分片此时占用的bytes都发生了变化
+                            // 就需要根据当前最新的状态来调整
                             runUnlocked();
                         }
                     } finally {
@@ -308,25 +362,36 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
             }
         }
 
+
+        /**
+         * 定期触发的函数
+         */
         private void runUnlocked() {
             // NOTE: even if we hit an errant exc here, our ThreadPool.scheduledWithFixedDelay will log the exception and re-invoke us
             // again, on schedule
 
             // First pass to sum up how much heap all shards' indexing buffers are using now, and how many bytes they are currently moving
             // to disk:
+            // 还未写入磁盘的数量总量
             long totalBytesUsed = 0;
+            // 正在刷盘的总量
             long totalBytesWriting = 0;
+            // 遍历所有此时在使用的分片
             for (IndexShard shard : availableShards()) {
 
                 // Give shard a chance to transition to inactive so we can flush
+                // TODO 好像是检测分片是否满足刷盘条件 并触发刷盘   也就是该对象会定期触发写入操作
                 checkIdle(shard, inactiveTime.nanos());
 
                 // How many bytes this shard is currently (async'd) moving from heap to disk:
+                // 正在刷盘的总量
                 long shardWritingBytes = getShardWritingBytes(shard);
 
                 // How many heap bytes this shard is currently using
+                // 此时针对该分片 还有多少数据在内存中
                 long shardBytesUsed = getIndexBufferRAMBytesUsed(shard);
 
+                // 这个应该是 还未写入磁盘的量
                 shardBytesUsed -= shardWritingBytes;
                 totalBytesWriting += shardWritingBytes;
 
@@ -347,10 +412,13 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
 
             // If we are using more than 50% of our budget across both indexing buffer and bytes we are still moving to disk, then we now
             // throttle the top shards to send back-pressure to ongoing indexing:
+            // totalBytesWriting + totalBytesUsed 代表此时有多少数据还必须留存在buffer中
             boolean doThrottle = (totalBytesWriting + totalBytesUsed) > 1.5 * indexingBuffer.getBytes();
 
+            // 当此时必须留存的量超过了buffer
             if (totalBytesUsed > indexingBuffer.getBytes()) {
                 // OK we are now over-budget; fill the priority queue and ask largest shard(s) to refresh:
+                // 从大到小 倒序排列
                 PriorityQueue<ShardAndBytesUsed> queue = new PriorityQueue<>();
 
                 for (IndexShard shard : availableShards()) {
@@ -361,6 +429,7 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
                     long shardBytesUsed = getIndexBufferRAMBytesUsed(shard);
 
                     // Only count up bytes not already being refreshed:
+                    // 还未准备刷盘的量 必须存在于内存中
                     shardBytesUsed -= shardWritingBytes;
 
                     // If the refresh completed just after we pulled shardWritingBytes and before we pulled shardBytesUsed, then we could
@@ -369,6 +438,7 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
                         continue;
                     }
 
+                    // 将每个携带 未写入数据的分片包装成 ShardAndBytesUsed 并传入到优先队列中
                     if (shardBytesUsed > 0) {
                         if (logger.isTraceEnabled()) {
                             if (shardWritingBytes != 0) {
@@ -386,10 +456,13 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
                     "currently writing bytes [{}], [{}] shards with non-zero indexing buffer", new ByteSizeValue(totalBytesUsed),
                     INDEX_BUFFER_SIZE_SETTING.getKey(), indexingBuffer, new ByteSizeValue(totalBytesWriting), queue.size());
 
+                // 应该是这样 在内存紧张的场景下 如果flush 某个分片 并不能使得内存量很好的降下去  那么应该晚执行 因为IO资源紧张，为这种分片刷盘 会间接减缓其他刷盘的任务
                 while (totalBytesUsed > indexingBuffer.getBytes() && queue.isEmpty() == false) {
                     ShardAndBytesUsed largest = queue.poll();
                     logger.debug("write indexing buffer to disk for shard [{}] to free up its [{}] indexing buffer",
                         largest.shard.shardId(), new ByteSizeValue(largest.bytesUsed));
+
+                    // 强制写入到 indexBuffer中  并标记该对象是被阻挡的
                     writeIndexingBufferAsync(largest.shard);
                     totalBytesUsed -= largest.bytesUsed;
                     if (doThrottle && throttled.contains(largest.shard) == false) {
@@ -400,6 +473,7 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
                 }
             }
 
+            // 不满足阻断条件
             if (doThrottle == false) {
                 for(IndexShard shard : throttled) {
                     logger.info("stop throttling indexing for shard [{}]", shard.shardId());

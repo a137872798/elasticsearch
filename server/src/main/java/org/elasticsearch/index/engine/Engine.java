@@ -353,6 +353,7 @@ public abstract class Engine implements Closeable {
      * Base class for index and delete operation results
      * Holds result meta data (e.g. translog location, updated version)
      * for an executed write {@link Operation}
+     * 代表某次索引操作的结果
      **/
     public abstract static class Result {
         private final Operation.TYPE operationType;
@@ -1200,9 +1201,15 @@ public abstract class Engine implements Closeable {
         }
     }
 
+    /**
+     * 索引引擎对象应该就是与lucene直接交互的对象
+     */
     public abstract static class Operation {
 
-        /** type of operation (index, delete), subclasses use static types */
+        /**
+         * type of operation (index, delete), subclasses use static types
+         * 内部包含了允许执行的操作类型
+         */
         public enum TYPE {
             INDEX, DELETE, NO_OP;
 
@@ -1271,6 +1278,10 @@ public abstract class Engine implements Closeable {
             return primaryTerm;
         }
 
+        /**
+         * 预计本次操作将会写入多少 bytes
+         * @return
+         */
         public abstract int estimatedSizeInBytes();
 
         public VersionType versionType() {

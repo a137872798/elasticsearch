@@ -31,7 +31,8 @@ import java.util.Objects;
  * A scroll enables scrolling of search request. It holds a {@link #keepAlive()} time that
  * will control how long to keep the scrolling resources open.
  *
- *
+ * 什么是滚动对象啊
+ * 滑动窗口???
  */
 public final class Scroll implements Writeable {
 

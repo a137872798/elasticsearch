@@ -33,6 +33,7 @@ public interface IndexStorePlugin {
 
     /**
      * An interface that describes how to create a new directory instance per shard.
+     * 描述如何为分片创建目录的工厂对象
      */
     @FunctionalInterface
     interface DirectoryFactory {

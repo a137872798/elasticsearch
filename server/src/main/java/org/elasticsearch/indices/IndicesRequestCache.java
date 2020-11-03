@@ -21,7 +21,6 @@ package org.elasticsearch.indices;
 
 import com.carrotsearch.hppc.ObjectHashSet;
 import com.carrotsearch.hppc.ObjectSet;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.DirectoryReader;
@@ -105,6 +104,7 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
 
     /**
      * 通过settings的缓存配置初始化缓存
+     *
      * @param settings
      */
     IndicesRequestCache(Settings settings) {
@@ -143,6 +143,7 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
 
     /**
      * 每个缓存数据被移除时触发的逻辑就是由 cacheEntry决定的
+     *
      * @param notification
      */
     @Override
@@ -157,7 +158,7 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
                                 DirectoryReader reader, BytesReference cacheKey, Supplier<String> cacheKeyRenderer) throws Exception {
         assert reader.getReaderCacheHelper() != null;
         // 在默认的 standardDirectoryReader中 好像没有看到cache
-        final Key key =  new Key(cacheEntity, reader.getReaderCacheHelper().getKey(), cacheKey);
+        final Key key = new Key(cacheEntity, reader.getReaderCacheHelper().getKey(), cacheKey);
 
         // 将外部传入的 key->value 转换函数包装成loader (做了一层适配 因为cache只能使用CacheLoader)
         Loader cacheLoader = new Loader(cacheEntity, loader);
@@ -195,10 +196,11 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
 
     /**
      * Invalidates the given the cache entry for the given key and it's context
+     *
      * @param cacheEntity the cache entity to invalidate for
-     * @param reader the reader to invalidate the cache entry for
-     * @param cacheKey the cache key to invalidate
-     *                 将某个缓存标记成无效
+     * @param reader      the reader to invalidate the cache entry for
+     * @param cacheKey    the cache key to invalidate
+     *                    将某个缓存标记成无效
      */
     void invalidate(CacheEntity cacheEntity, DirectoryReader reader, BytesReference cacheKey) {
         assert reader.getReaderCacheHelper() != null;
@@ -400,6 +402,8 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
                 currentKeysToClean.add(cleanupKey);
             }
         }
+
+        // 某些满足条件的key 会直接从lru链表中移除
         if (!currentKeysToClean.isEmpty() || !currentFullClean.isEmpty()) {
             for (Iterator<Key> iterator = cache.keys().iterator(); iterator.hasNext(); ) {
                 Key key = iterator.next();
@@ -414,6 +418,7 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
             }
         }
 
+        // 检测是否有长时间未使用的 也进行清理
         cache.refresh();
     }
 
