@@ -289,6 +289,29 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private final RefreshPendingLocationListener refreshPendingLocationListener;
     private volatile boolean useRetentionLeasesInPeerRecovery;
 
+    /**
+     *
+     * @param shardRouting
+     * @param indexSettings
+     * @param path
+     * @param store
+     * @param indexSortSupplier
+     * @param indexCache
+     * @param mapperService
+     * @param similarityService
+     * @param engineFactory
+     * @param indexEventListener
+     * @param indexReaderWrapper
+     * @param threadPool
+     * @param bigArrays
+     * @param warmer
+     * @param searchOperationListener
+     * @param listeners
+     * @param globalCheckpointSyncer
+     * @param retentionLeaseSyncer
+     * @param circuitBreakerService
+     * @throws IOException
+     */
     public IndexShard(
             final ShardRouting shardRouting,
             final IndexSettings indexSettings,
@@ -1320,6 +1343,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     }
 
+    /**
+     * 当removeShard时 会调用该方法
+     * @param reason
+     * @param flushEngine
+     * @throws IOException
+     */
     public void close(String reason, boolean flushEngine) throws IOException {
         synchronized (engineMutex) {
             try {

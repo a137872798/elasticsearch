@@ -35,10 +35,16 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
+/**
+ * 代表一个数据流
+ */
 public final class DataStream extends AbstractDiffable<DataStream> implements ToXContentObject {
 
     private final String name;
     private final String timeStampField;
+    /**
+     * 内部关联的一组索引
+     */
     private final List<Index> indices;
     private long generation;
 

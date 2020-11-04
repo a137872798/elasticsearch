@@ -63,6 +63,9 @@ import java.util.stream.StreamSupport;
 public class IndexNameExpressionResolver {
 
     private final DateMathExpressionResolver dateMathExpressionResolver = new DateMathExpressionResolver();
+    /**
+     * 先使用日期格式解析器 之后使用通配符解析器
+     */
     private final List<ExpressionResolver> expressionResolvers = List.of(dateMathExpressionResolver, new WildcardExpressionResolver());
 
     /**
@@ -95,6 +98,7 @@ public class IndexNameExpressionResolver {
      * contains no indices and the indices options in the context don't allow such a case.
      * @throws IllegalArgumentException if one of the aliases resolve to multiple indices and the provided
      * indices options in the context don't allow such a case.
+     * 将传入的索引表达式转换成 匹配的实际存在的索引
      */
     public String[] concreteIndexNames(ClusterState state, IndicesOptions options, String... indexExpressions) {
         Context context = new Context(state, options);
@@ -146,18 +150,29 @@ public class IndexNameExpressionResolver {
         return names;
     }
 
+    /**
+     * 根据索引表达式找到所有匹配的索引
+     * @param context
+     * @param indexExpressions
+     * @return
+     */
     Index[] concreteIndices(Context context, String... indexExpressions) {
+        // 如果没有传入索引表达式 默认就是全匹配
         if (indexExpressions == null || indexExpressions.length == 0) {
             indexExpressions = new String[]{Metadata.ALL};
         }
         Metadata metadata = context.getState().metadata();
         IndicesOptions options = context.getOptions();
+        // 禁止关闭的索引 且 不忽略无法使用的索引
         final boolean failClosed = options.forbidClosedIndices() && options.ignoreUnavailable() == false;
         // If only one index is specified then whether we fail a request if an index is missing depends on the allow_no_indices
         // option. At some point we should change this, because there shouldn't be a reason why whether a single index
         // or multiple indices are specified yield different behaviour.
+        // 如果只传入了一个表达式  那么不允许NoIndices  找不到匹配索引就直接失败
+        // 当传入了多个表达式 就变成了看是否忽略不可用的索引
         final boolean failNoIndices = indexExpressions.length == 1 ? !options.allowNoIndices() : !options.ignoreUnavailable();
         List<String> expressions = Arrays.asList(indexExpressions);
+        // 从这里可以看出下一个resolver处理的数据是由上一个resolver加工后的  实际上是一个链式调用
         for (ExpressionResolver expressionResolver : expressionResolvers) {
             expressions = expressionResolver.resolve(context, expressions);
         }
@@ -611,8 +626,14 @@ public class IndexNameExpressionResolver {
         return false;
     }
 
+    /**
+     * 在匹配过程中需要的上下文信息 只是一个Bean对象
+     */
     public static class Context {
 
+        /**
+         * 此时的集群状态  包含了所有注册的index
+         */
         private final ClusterState state;
         private final IndicesOptions options;
         private final long startTime;
@@ -670,6 +691,9 @@ public class IndexNameExpressionResolver {
         }
     }
 
+    /**
+     * 表达式解析器对象 在ES中的作用就是将表达式转换成准确的indexName
+     */
     private interface ExpressionResolver {
 
         /**
@@ -684,6 +708,7 @@ public class IndexNameExpressionResolver {
 
     /**
      * Resolves alias/index name expressions with wildcards into the corresponding concrete indices/aliases
+     * 基于通配符找到匹配的indexName
      */
     static final class WildcardExpressionResolver implements ExpressionResolver {
 
@@ -693,22 +718,28 @@ public class IndexNameExpressionResolver {
             Metadata metadata = context.getState().metadata();
             // only check open/closed since if we do not expand to open or closed it doesn't make sense to
             // expand to hidden
+            // expandWildcardsXXX  代表通配符允许匹配的索引范围  在集群中一共有3种状态的索引  打开的OPEN 已被关闭的CLOSED 被隐藏的 HIDDEN
             if (options.expandWildcardsClosed() == false && options.expandWildcardsOpen() == false) {
                 return expressions;
             }
 
+            // 代表表达式为空 或者是 "*" 或者 ALL
             if (isEmptyOrTrivialWildcard(expressions)) {
+                // 如果不包含数据流 但是数据流不为空 抛出异常
                 if (options.includeDataStreams() == false && metadata.dataStreams().isEmpty() == false) {
                     throw dataStreamsNotSupportedException(expressions.toString());
                 }
+                // 配合options 返回符合条件的IndexName
                 return resolveEmptyOrTrivialWildcard(options, metadata);
             }
 
             Set<String> result = innerResolve(context, expressions, options, metadata);
 
+            // 当没有解析出结果时 返回原数据 因为在外层是链式解析 交由下一环解析就好
             if (result == null) {
                 return expressions;
             }
+            // 当没有解析到任何index时 且!allowNoIndices 抛出异常
             if (result.isEmpty() && !options.allowNoIndices()) {
                 IndexNotFoundException infe = new IndexNotFoundException((String)null);
                 infe.setResources("index_or_alias", expressions.toArray(new String[0]));
@@ -717,22 +748,35 @@ public class IndexNameExpressionResolver {
             return new ArrayList<>(result);
         }
 
+        /**
+         * 将通配符表达式转换成indexName
+         * @param context
+         * @param expressions
+         * @param options
+         * @param metadata
+         * @return
+         */
         private Set<String> innerResolve(Context context, List<String> expressions, IndicesOptions options, Metadata metadata) {
             Set<String> result = null;
             boolean wildcardSeen = false;
             for (int i = 0; i < expressions.size(); i++) {
                 String expression = expressions.get(i);
+                // 不允许传入无效的表达式
                 if (Strings.isEmpty(expression)) {
                     throw indexNotFoundException(expression);
                 }
+                // 如果以"_"开头直接抛出异常
                 validateAliasOrIndex(expression);
+                // 检查是否直接命中了 name or alias
                 if (aliasOrIndexExists(options, metadata, expression)) {
                     if (result != null) {
                         result.add(expression);
                     }
                     continue;
                 }
+                // 在没有直接命中的情况下 尝试进行解析
                 final boolean add;
+                // 代表要从符合条件的结果集中排除掉命中的indexName
                 if (expression.charAt(0) == '-' && wildcardSeen) {
                     add = false;
                     expression = expression.substring(1);
@@ -741,9 +785,12 @@ public class IndexNameExpressionResolver {
                 }
                 if (result == null) {
                     // add all the previous ones...
+                    // 之前的都已经解析完毕了 首次进入到下面
                     result = new HashSet<>(expressions.subList(0, i));
                 }
+                // 代表不包含 *
                 if (Regex.isSimpleMatchPattern(expression) == false) {
+                    // 下面的逻辑和直接匹配是一样的
                     //TODO why does wildcard resolver throw exceptions regarding non wildcarded expressions? This should not be done here.
                     if (options.ignoreUnavailable() == false) {
                         IndexAbstraction indexAbstraction = metadata.getIndicesLookup().get(expression);
@@ -756,6 +803,7 @@ public class IndexNameExpressionResolver {
                             throw dataStreamsNotSupportedException(expression);
                         }
                     }
+                    // 根据expression 前面是否携带 "-" 从结果集中 增加/减少数据
                     if (add) {
                         result.add(expression);
                     } else {
@@ -764,6 +812,7 @@ public class IndexNameExpressionResolver {
                     continue;
                 }
 
+                // 代表哪类index 需要被排除
                 final IndexMetadata.State excludeState = excludeState(options);
                 final Map<String, IndexAbstraction> matches = matches(context, metadata, expression);
                 Set<String> expand = expand(context, excludeState, matches, expression, options.expandWildcardsHidden());
@@ -792,6 +841,13 @@ public class IndexNameExpressionResolver {
             }
         }
 
+        /**
+         * 检测表达式是否直接命中了 别名或者indexName
+         * @param options
+         * @param metadata
+         * @param expression
+         * @return
+         */
         private static boolean aliasOrIndexExists(IndicesOptions options, Metadata metadata, String expression) {
             IndexAbstraction indexAbstraction = metadata.getIndicesLookup().get(expression);
             if (indexAbstraction == null) {
@@ -799,10 +855,12 @@ public class IndexNameExpressionResolver {
             }
 
             //treat aliases as unavailable indices when ignoreAliases is set to true (e.g. delete index and update aliases api)
+            // 如果匹配上的index是别名  且设置了要忽略别名 那么就不需要处理了
             if (indexAbstraction.getType() == IndexAbstraction.Type.ALIAS && options.ignoreAliases()) {
                 return false;
             }
 
+            // 如果是数据流 且设置了不包含 则返回false
             if (indexAbstraction.getType() == IndexAbstraction.Type.DATA_STREAM && options.includeDataStreams() == false) {
                 return false;
             }
@@ -831,6 +889,13 @@ public class IndexNameExpressionResolver {
             return excludeState;
         }
 
+        /**
+         * 代表包含通配符  将符合条件的所有index 查询出来
+         * @param context
+         * @param metadata
+         * @param expression
+         * @return
+         */
         public static Map<String, IndexAbstraction> matches(Context context, Metadata metadata, String expression) {
             if (Regex.isMatchAllPattern(expression)) {
                 return filterIndicesLookup(metadata.getIndicesLookup(), null, expression, context.getOptions());
@@ -918,11 +983,22 @@ public class IndexNameExpressionResolver {
                 Regex.isMatchAllPattern(expressions.get(0))));
         }
 
+        /**
+         * 处理表达式为空 或者 "*" ALL   根据options中的信息返回不同的IndexName
+         * @param options
+         * @param metadata
+         * @return
+         */
         private static List<String> resolveEmptyOrTrivialWildcard(IndicesOptions options, Metadata metadata) {
+            // 同时开启3种状态
             if (options.expandWildcardsOpen() && options.expandWildcardsClosed() && options.expandWildcardsHidden()) {
+                // 获取所有索引
                 return Arrays.asList(metadata.getConcreteAllIndices());
+                // 只设置了 OPEN CLOSED
             } else if (options.expandWildcardsOpen() && options.expandWildcardsClosed()) {
+                // 获取所有可见的索引(非隐藏的)
                 return Arrays.asList(metadata.getConcreteVisibleIndices());
+                // 获取打开和隐藏的
             } else if (options.expandWildcardsOpen() && options.expandWildcardsHidden()) {
                 return Arrays.asList(metadata.getConcreteAllOpenIndices());
             } else if (options.expandWildcardsOpen()) {
@@ -937,6 +1013,9 @@ public class IndexNameExpressionResolver {
         }
     }
 
+    /**
+     * 日期表达式解析器  于WildcardExpressionResolver之前起作用 就是先将日期部分解析出来  就不细看了
+     */
     public static final class DateMathExpressionResolver implements ExpressionResolver {
 
         private static final DateFormatter DEFAULT_DATE_FORMATTER = DateFormatter.forPattern("uuuu.MM.dd");
@@ -947,6 +1026,12 @@ public class IndexNameExpressionResolver {
         private static final char ESCAPE_CHAR = '\\';
         private static final char TIME_ZONE_BOUND = '|';
 
+        /**
+         * 解析方法
+         * @param context
+         * @param expressions
+         * @return
+         */
         @Override
         public List<String> resolve(final Context context, List<String> expressions) {
             List<String> result = new ArrayList<>(expressions.size());
@@ -956,8 +1041,14 @@ public class IndexNameExpressionResolver {
             return result;
         }
 
+        /**
+         * @param expression
+         * @param context
+         * @return
+         */
         @SuppressWarnings("fallthrough")
         String resolveExpression(String expression, final Context context) {
+            // 要求表达式 必须以 "<" ">" 作为开头和结尾
             if (expression.startsWith(EXPRESSION_LEFT_BOUND) == false || expression.endsWith(EXPRESSION_RIGHT_BOUND) == false) {
                 return expression;
             }

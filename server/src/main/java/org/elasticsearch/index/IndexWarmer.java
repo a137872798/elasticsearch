@@ -94,7 +94,7 @@ public final class IndexWarmer {
         final List<TerminationHandle> terminationHandles = new ArrayList<>();
         // get a handle on pending tasks
         for (final Listener listener : listeners) {
-            // 执行预热动作 并返回一个阻塞的api
+            // 预热工作是由监听器完成的
             terminationHandles.add(listener.warmReader(shard, reader));
         }
         // wait for termination

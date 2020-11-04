@@ -26,11 +26,13 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * A very simple single object cache that allows non-blocking refresh calls
  * triggered by expiry time.
+ * 利用写时复制技术 可以在刷新对象的同时非阻塞的读取最新对象
  */
 public abstract class SingleObjectCache<T>{
 
     private volatile T cached;
     private Lock refreshLock = new ReentrantLock();
+    // 刷新时间间隔 以及最近一次刷新时间
     private final TimeValue refreshInterval;
     protected long lastRefreshTimestamp = 0;
 
@@ -51,6 +53,7 @@ public abstract class SingleObjectCache<T>{
             if(refreshLock.tryLock()) {
                 try {
                     if (needsRefresh()) { // check again!
+                        // 获取最新的对象
                         cached = refresh();
                         assert cached != null;
                         lastRefreshTimestamp = System.currentTimeMillis();
@@ -78,10 +81,12 @@ public abstract class SingleObjectCache<T>{
      * Returns <code>true</code> iff the cache needs to be refreshed.
      */
     protected boolean needsRefresh() {
+        // 代表每次获取对象都需要刷新
         if (refreshInterval.millis() == 0) {
             return true;
         }
         final long currentTime = System.currentTimeMillis();
+        // 超过刷新时间间隔 需要刷新
         return (currentTime - lastRefreshTimestamp) > refreshInterval.millis();
     }
 }

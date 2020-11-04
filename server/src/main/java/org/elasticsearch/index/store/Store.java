@@ -136,6 +136,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
 
     /**
      * 统计数据的刷新时间间隔
+     * 主要是查看目录内部的文件数据大小等
      */
     public static final Setting<TimeValue> INDEX_STORE_STATS_REFRESH_INTERVAL_SETTING =
         Setting.timeSetting("index.store.stats_refresh_interval", TimeValue.timeValueSeconds(10), Property.IndexScope);
@@ -148,9 +149,6 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     private final StoreDirectory directory;
     private final ReentrantReadWriteLock metadataLock = new ReentrantReadWriteLock();
 
-    /**
-     * 什么是分片锁
-     */
     private final ShardLock shardLock;
     private final OnClose onClose;
 
@@ -169,16 +167,23 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         this(shardId, indexSettings, directory, shardLock, OnClose.EMPTY);
     }
 
+    /**
+     *
+     * @param shardId  代表本次目录对应的分片id
+     * @param indexSettings
+     * @param directory  存储数据的目录
+     * @param shardLock  想要通过IndexService访问某个分片需要对应的shardLock 只有释放该对象后 其他线程才可以访问
+     * @param onClose 当本对象被关闭时触发的钩子
+     */
     public Store(ShardId shardId, IndexSettings indexSettings, Directory directory, ShardLock shardLock,
                  OnClose onClose) {
         super(shardId, indexSettings);
-        // 从配置对象中获取统计数据刷新的时间间隔
         final TimeValue refreshInterval = indexSettings.getValue(INDEX_STORE_STATS_REFRESH_INTERVAL_SETTING);
         logger.debug("store stats are refreshed with refresh_interval [{}]", refreshInterval);
 
-        // 该目录对象是包装过的 会记录此时打开了多少输出流 总计修改了多少文件等
+        // 该目录会感知内部文件的变化
         ByteSizeCachingDirectory sizeCachingDir = new ByteSizeCachingDirectory(directory, refreshInterval);
-        // 在此之上又包装一层  变成一个分片目录
+        // 对外不允许调用close() 只能在内部调用
         this.directory = new StoreDirectory(sizeCachingDir, Loggers.getLogger("index.store.deletes", shardId));
         this.shardLock = shardLock;
         this.onClose = onClose;
@@ -762,7 +767,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
 
         /**
          *
-         * @param delegateDirectory  该对象会记录目录下修改的文件数量 大小等
+         * @param delegateDirectory  实际上包装的是 ByteSizeCachingDirectory
          * @param deletesLogger  日志对象 先忽略
          */
         StoreDirectory(ByteSizeCachingDirectory delegateDirectory, Logger deletesLogger) {
@@ -793,6 +798,10 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             deleteFile("StoreDirectory.deleteFile", name);
         }
 
+        /**
+         * 通过该方法来实现关闭目录 由 StoreDirectory自己调用
+         * @throws IOException
+         */
         private void innerClose() throws IOException {
             super.close();
         }

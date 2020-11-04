@@ -109,6 +109,7 @@ import static java.util.Collections.unmodifiableMap;
 /**
  * 索引服务
  * 每个节点下包含一个  IndicesService 之后针对每个index 会单独生成一个 IndexService
+ * 核心功能就是生成IndexShard 和移除IndexShard 看来跟lucene有关的还是要看IndexShard本身
  *
  * AllocatedIndex 接口代表着indexService对应的index 已经分配完成 并且该对象在indexMetadata发生变化时 可以作出处理 以及根据shardId 移除/获取 shard
  */
@@ -167,7 +168,14 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
      * 管理该index 下所有的分片
      */
     private volatile Map<Integer, IndexShard> shards = emptyMap();
+    /**
+     * 该index是否被关闭
+     */
     private final AtomicBoolean closed = new AtomicBoolean(false);
+
+    /**
+     * 代表这个index是否已经被丢弃???
+     */
     private final AtomicBoolean deleted = new AtomicBoolean(false);
     private final IndexSettings indexSettings;
 
@@ -580,22 +588,28 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 logger.debug("{} creating using an existing path [{}]", shardId, path);
             }
 
+            // 禁止重复为某个 shardId 创建分片
             if (shards.containsKey(shardId.id())) {
                 throw new IllegalStateException(shardId + " already exists");
             }
 
             logger.debug("creating shard_id {}", shardId);
             // if we are on a shared FS we only own the shard (ie. we can safely delete it) if we are the primary.
+            // 创建一个会针对reader 进行预热的对象
             final Engine.Warmer engineWarmer = (reader) -> {
                 IndexShard shard =  getShardOrNull(shardId.getId());
                 if (shard != null) {
                     warmer.warm(reader, shard, IndexService.this.indexSettings);
                 }
             };
+            // 通过路径打开目录对象
             Directory directory = directoryFactory.newDirectory(this.indexSettings, path);
             store = new Store(shardId, this.indexSettings, directory, lock,
+                    // 当该分片关联的store关闭时 触发监听器
                     new StoreCloseListener(shardId, () -> eventListener.onStoreClosed(shardId)));
+            // 创建完成后触发相关钩子
             eventListener.onStoreCreated(shardId);
+            // 分片对象
             indexShard = new IndexShard(
                     routing,
                     this.indexSettings,
@@ -618,6 +632,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                     circuitBreakerService);
             eventListener.indexShardStateChanged(indexShard, null, indexShard.state(), "shard created");
             eventListener.afterIndexShardCreated(indexShard);
+            // 更新shards
             shards = Maps.copyMapWithAddedEntry(shards, shardId.id(), indexShard);
             success = true;
             return indexShard;
@@ -633,6 +648,11 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
     }
 
+    /**
+     * 该索引不再维护某个分片
+     * @param shardId
+     * @param reason
+     */
     @Override
     public synchronized void removeShard(int shardId, String reason) {
         final ShardId sId = new ShardId(index(), shardId);
@@ -648,6 +668,14 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         logger.debug("[{}] closed (reason: [{}])", shardId, reason);
     }
 
+    /**
+     * 关闭某个之前创建的 IndexShard对象
+     * @param reason
+     * @param sId
+     * @param indexShard
+     * @param store
+     * @param listener
+     */
     private void closeShard(String reason, ShardId sId, IndexShard indexShard, Store store, IndexEventListener listener) {
         final int shardId = sId.id();
         final Settings indexSettings = this.getIndexSettings().getSettings();
@@ -660,6 +688,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 if (indexShard != null) {
                     try {
                         // only flush we are we closed (closed index or shutdown) and if we are not deleted
+                        // 在关闭 但是没有删除的情况下需要将数据刷盘
                         final boolean flushEngine = deleted.get() == false && closed.get();
                         indexShard.close(reason, flushEngine);
                     } catch (Exception e) {
@@ -672,6 +701,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             }
         } finally {
             try {
+                // 将关联的store 也关闭  实际上就是关闭目录 (目录本身是由store来维护的 写入读取数据才是通过IndexShard)
                 if (store != null) {
                     store.close();
                 } else {
@@ -686,12 +716,18 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     }
 
 
+    /**
+     * 当对应的shard被关闭时触发
+     * @param lock
+     */
     private void onShardClose(ShardLock lock) {
+        // 检测当前index是否被删除
         if (deleted.get()) { // we remove that shards content if this index has been deleted
             try {
                 try {
                     eventListener.beforeIndexShardDeleted(lock.getShardId(), indexSettings.getSettings());
                 } finally {
+                    // 当index本身被删除时 store也需要被删除
                     shardStoreDeleter.deleteShardStore("delete index", lock, indexSettings);
                     eventListener.afterIndexShardDeleted(lock.getShardId(), indexSettings.getSettings());
                 }
@@ -711,9 +747,9 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
 
     /**
      * Creates a new QueryShardContext.
-     *
      * Passing a {@code null} {@link IndexSearcher} will return a valid context, however it won't be able to make
      * {@link IndexReader}-specific optimizations, such as rewriting containing range queries.
+     * 生成一个新的查询用的上下文
      */
     public QueryShardContext newQueryShardContext(int shardId, IndexSearcher searcher, LongSupplier nowInMillis, String clusterAlias) {
         final SearchIndexNameMatcher indexNameMatcher =
@@ -761,6 +797,9 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         return mapperService.updateMapping(currentIndexMetadata, newIndexMetadata);
     }
 
+    /**
+     * 当存储对象被关闭时 会触发该监听器
+     */
     private class StoreCloseListener implements Store.OnClose {
         private final ShardId shardId;
         private final Closeable[] toClose;
@@ -774,6 +813,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         public void accept(ShardLock lock) {
             try {
                 assert lock.getShardId().equals(shardId) : "shard id mismatch, expected: " + shardId + " but got: " + lock.getShardId();
+                // 释放锁
                 onShardClose(lock);
             } finally {
                 try {

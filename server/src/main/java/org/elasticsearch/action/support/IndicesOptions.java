@@ -44,6 +44,7 @@ import static org.elasticsearch.common.xcontent.support.XContentMapValues.nodeSt
 public class IndicesOptions implements ToXContentFragment {
 
     public enum WildcardStates {
+        // 在通配符匹配时 处于选择返回的索引状态
         OPEN,
         CLOSED,
         HIDDEN;
@@ -97,10 +98,11 @@ public class IndicesOptions implements ToXContentFragment {
         }
     }
 
+    /**
+     * 这几个枚举值的含义还有待理解
+     */
     public enum Option {
-        /**
-         * 代表如果要求的索引在所有available中 没有找到 需要抛出异常
-         */
+
         IGNORE_UNAVAILABLE,
         IGNORE_ALIASES,
         ALLOW_NO_INDICES,

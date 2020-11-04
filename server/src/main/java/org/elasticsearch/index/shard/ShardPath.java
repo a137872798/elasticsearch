@@ -275,6 +275,7 @@ public final class ShardPath {
                                     pathToShardCount.getOrDefault(p2, 0L));
                                 if (cmp == 0) {
                                     // if the number of shards is equal, tie-break with the number of total shards
+                                    // TODO 2个Map 有啥区别
                                     cmp = Integer.compare(dataPathToShardCount.getOrDefault(p1.path, 0),
                                             dataPathToShardCount.getOrDefault(p2.path, 0));
                                     if (cmp == 0) {

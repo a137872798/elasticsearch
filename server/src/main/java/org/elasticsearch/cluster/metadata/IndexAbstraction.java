@@ -42,6 +42,7 @@ public interface IndexAbstraction {
 
     /**
      * @return the type of the index abstraction
+     * 该对象内部包含了实际的索引 但是 可以是使用name匹配上的 也可以是alias匹配上的
      */
     Type getType();
 

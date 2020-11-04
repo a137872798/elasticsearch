@@ -1705,6 +1705,7 @@ public abstract class Engine implements Closeable {
      * Called for each new opened engine reader to warm new segments
      *
      * @see EngineConfig#getWarmer()
+     * 每个reader 对象都可以进行预热
      */
     public interface Warmer {
         /**

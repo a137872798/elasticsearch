@@ -202,13 +202,34 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
      */
     private final int totalOpenIndexShards;
 
+    /**
+     * 所有索引 包含被隐藏的
+     */
     private final String[] allIndices;
+    /**
+     * 记录集群中能观测到的所有索引  包含此时打开的 以及被关闭的
+     */
     private final String[] visibleIndices;
+    /**
+     * OPEN + HIDDEN
+     */
     private final String[] allOpenIndices;
+    /**
+     * 只包含 OPEN
+     */
     private final String[] visibleOpenIndices;
+    /**
+     * CLOSED + HIDDEN
+     */
     private final String[] allClosedIndices;
+    /**
+     * CLOSED
+     */
     private final String[] visibleClosedIndices;
 
+    /**
+     * key 是index的 name or alias
+     */
     private final SortedMap<String, IndexAbstraction> indicesLookup;
 
     /**
@@ -527,6 +548,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
 
     /**
      * Returns all the concrete indices.
+     * 返回元数据下记录的所有索引
      */
     public String[] getConcreteAllIndices() {
         return allIndices;

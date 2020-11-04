@@ -29,11 +29,18 @@ import java.util.function.Predicate;
 
 /**
  * A predicate that checks whether an index pattern matches the current search shard target.
+ * 索引名称匹配器
  */
 public class SearchIndexNameMatcher implements Predicate<String> {
+    /**
+     * 匹配的索引名
+     */
     private final String indexName;
     private final String clusterAlias;
     private final ClusterService clusterService;
+    /**
+     * 索引名称解析器
+     */
     private final IndexNameExpressionResolver expressionResolver;
 
     /**
@@ -59,15 +66,18 @@ public class SearchIndexNameMatcher implements Predicate<String> {
      *
      *  If this shard represents a remote shard target, then in order to match the pattern contain
      *  the separator ':', and must match on both the cluster alias and index name.
+     *  检测是否匹配   字符串本身应该是一个 clusterAlias:xxx
      */
     public boolean test(String pattern) {
         int separatorIndex = pattern.indexOf(RemoteClusterAware.REMOTE_CLUSTER_INDEX_SEPARATOR);
         if (separatorIndex < 0) {
+            // 没有携带集群名的情况 直接匹配后半部分
             return clusterAlias == null && matchesIndex(pattern);
         } else {
             String clusterPattern = pattern.substring(0, separatorIndex);
             String indexPattern = pattern.substring(separatorIndex + 1);
 
+            // 集群名是正则匹配 后面的部分使用 expressionResolver 进行匹配
             return Regex.simpleMatch(clusterPattern, clusterAlias) && matchesIndex(indexPattern);
         }
     }

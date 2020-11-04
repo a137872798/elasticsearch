@@ -33,6 +33,10 @@ import java.io.UncheckedIOException;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.NoSuchFileException;
 
+/**
+ * 一个包装过的目录对象
+ * 该对象会检测目录下此时数据总大小 修改的文件数量等
+ */
 final class ByteSizeCachingDirectory extends FilterDirectory {
 
     private static class SizeAndModCount {
@@ -47,6 +51,12 @@ final class ByteSizeCachingDirectory extends FilterDirectory {
         }
     }
 
+    /**
+     * 这时没有走缓存
+     * @param directory
+     * @return
+     * @throws IOException
+     */
     private static long estimateSizeInBytes(Directory directory) throws IOException {
         long estimatedSize = 0;
         String[] files = directory.listAll();
@@ -64,10 +74,20 @@ final class ByteSizeCachingDirectory extends FilterDirectory {
     private final SingleObjectCache<SizeAndModCount> size;
     // Both these variables need to be accessed under `this` lock.
     private long modCount = 0;
+    /**
+     * 此时打开的句柄数  也就是该目录下有多少文件正在被写入
+     */
     private long numOpenOutputs = 0;
 
+    /**
+     *
+     * @param in
+     * @param refreshInterval 刷新统计数据的时间间隔
+     */
     ByteSizeCachingDirectory(Directory in, TimeValue refreshInterval) {
         super(in);
+
+        // 也就是每隔一定时间 重新获取最新的大小 和修改文件数
         size = new SingleObjectCache<SizeAndModCount>(refreshInterval, new SizeAndModCount(0L, -1L, true)) {
             @Override
             protected SizeAndModCount refresh() {
@@ -93,12 +113,17 @@ final class ByteSizeCachingDirectory extends FilterDirectory {
                 return new SizeAndModCount(size, modCount, pendingWrite);
             }
 
+            /**
+             * 检测是否满足刷新条件 默认实现是 距离上一次刷新时间超过规定间隔
+             * @return
+             */
             @Override
             protected boolean needsRefresh() {
                 if (super.needsRefresh() == false) {
                     // The size was computed recently, don't recompute
                     return false;
                 }
+                // 如果之前的缓存对象表示有文件正在被写入 那么此时很大概率这个数据已经发生变化了
                 SizeAndModCount cached = getNoRefresh();
                 if (cached.pendingWrite) {
                     // The cached entry was generated while there were pending
@@ -108,13 +133,17 @@ final class ByteSizeCachingDirectory extends FilterDirectory {
                 synchronized(ByteSizeCachingDirectory.this) {
                     // If there are pending writes or if new files have been
                     // written/deleted since last time: recompute
+                    // 有东西发生变化就要刷新
                     return numOpenOutputs != 0 || cached.modCount != modCount;
                 }
             }
         };
     }
 
-    /** Return the cumulative size of all files in this directory. */
+    /**
+     * Return the cumulative size of all files in this directory.
+     * 获取最新的文件总bytes数
+     */
     long estimateSizeInBytes() throws IOException {
         try {
             return size.getOrRefresh().size;
@@ -134,6 +163,11 @@ final class ByteSizeCachingDirectory extends FilterDirectory {
         return wrapIndexOutput(super.createTempOutput(prefix, suffix, context));
     }
 
+    /**
+     * 创建的输出流也会被包装 在执行相关钩子时 修改numOpenOutputs
+     * @param out
+     * @return
+     */
     private IndexOutput wrapIndexOutput(IndexOutput out) {
         synchronized (this) {
             numOpenOutputs++;
@@ -160,6 +194,7 @@ final class ByteSizeCachingDirectory extends FilterDirectory {
                 try {
                     super.close();
                 } finally {
+                    // 代表文件写入完成 释放openOutputs 同时增加修改的文件数
                     synchronized (ByteSizeCachingDirectory.this) {
                         numOpenOutputs--;
                         modCount++;

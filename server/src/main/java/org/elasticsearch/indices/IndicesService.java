@@ -1116,7 +1116,7 @@ public class IndicesService extends AbstractLifecycleComponent
      * Deletes the shard with an already acquired shard lock.
      *
      * @param reason        the reason for the shard deletion
-     * @param lock          the lock of the shard to delete   该对象内部包含了 shardId
+     * @param lock          the lock of the shard to delete   在创建分片时需要先获取锁
      * @param indexSettings the shards index settings.
      * @throws IOException if an IOException occurs
      */
