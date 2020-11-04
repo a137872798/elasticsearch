@@ -796,6 +796,7 @@ public final class NodeEnvironment  implements Closeable {
      * @param details information about why the shard is being locked
      * @param lockTimeoutMS the lock timeout in milliseconds
      * @return the shard lock. Call {@link ShardLock#close()} to release the lock
+     * 锁定分片对应的目录
      */
     public ShardLock shardLock(final ShardId shardId, final String details,
                                final long lockTimeoutMS) throws ShardLockObtainFailedException {
@@ -803,16 +804,21 @@ public final class NodeEnvironment  implements Closeable {
         final InternalShardLock shardLock;
         final boolean acquired;
         synchronized (shardLocks) {
+            // 先判断是否已经为该分片创建了锁
             if (shardLocks.containsKey(shardId)) {
                 shardLock = shardLocks.get(shardId);
+                // 如果存在锁 就进行等待
                 shardLock.incWaitCount();
                 acquired = false;
             } else {
+                // 代表该线程抢先创建了锁
+                // 首次创建默认就是获取锁成功 并且在构造函数中会获取锁
                 shardLock = new InternalShardLock(shardId, details);
                 shardLocks.put(shardId, shardLock);
                 acquired = true;
             }
         }
+        // 抢占失败的情况 就要阻塞等待
         if (acquired == false) {
             boolean success = false;
             try {
@@ -825,6 +831,7 @@ public final class NodeEnvironment  implements Closeable {
             }
         }
         logger.trace("successfully acquired shardlock for [{}]", shardId);
+        // 返回的lock包含一个 释放
         return new ShardLock(shardId) { // new instance prevents double closing
             @Override
             protected void closeInternal() {
@@ -853,6 +860,9 @@ public final class NodeEnvironment  implements Closeable {
         }
     }
 
+    /**
+     * 分片锁对象
+     */
     private final class InternalShardLock {
         /*
          * This class holds a mutex for exclusive access and timeout / wait semantics
@@ -861,12 +871,16 @@ public final class NodeEnvironment  implements Closeable {
          * that is used to mutate the map holding the shard locks to ensure exclusive access
          */
         private final Semaphore mutex = new Semaphore(1);
+        /**
+         * 此时有多少线程处于等待  包括了获取锁的线程
+         */
         private int waitCount = 1; // guarded by shardLocks
         private String lockDetails;
         private final ShardId shardId;
 
         InternalShardLock(final ShardId shardId, final String details) {
             this.shardId = shardId;
+            // 该对象在创建后先抢占一个门票
             mutex.acquireUninterruptibly();
             lockDetails = details;
         }
@@ -896,6 +910,12 @@ public final class NodeEnvironment  implements Closeable {
             }
         }
 
+        /**
+         * 外部线程在等待锁时 一般会先调用incWaitCount 之后调用该方法等待其他线程释放锁
+         * @param timeoutInMillis
+         * @param details
+         * @throws ShardLockObtainFailedException
+         */
         void acquire(long timeoutInMillis, final String details) throws ShardLockObtainFailedException {
             try {
                 if (mutex.tryAcquire(timeoutInMillis, TimeUnit.MILLISECONDS)) {
@@ -978,13 +998,15 @@ public final class NodeEnvironment  implements Closeable {
      *
      * @see IndexSettings#hasCustomDataPath()
      * @see #resolveCustomLocation(String, ShardId)
-     *
+     * 查找某个分片下所有的路径
      */
     public Path[] availableShardPaths(ShardId shardId) {
         assertEnvIsLocked();
+        // 返回当前所有上级目录
         final NodePath[] nodePaths = nodePaths();
         final Path[] shardLocations = new Path[nodePaths.length];
         for (int i = 0; i < nodePaths.length; i++) {
+            // 解析路径  ../indexName/shardId
             shardLocations[i] = nodePaths[i].resolve(shardId);
         }
         return shardLocations;
@@ -1116,6 +1138,7 @@ public final class NodeEnvironment  implements Closeable {
      * @param index the index by which to filter shards
      * @return a map of NodePath to count of the shards for the index on that path
      * @throws IOException if an IOException occurs
+     * 获取每个路径下的 shard数量
      */
     public Map<NodePath, Long> shardCountPerPath(final Index index) throws IOException {
         assert index != null;
@@ -1127,6 +1150,7 @@ public final class NodeEnvironment  implements Closeable {
         final String indexUniquePathId = index.getUUID();
         for (final NodePath nodePath : nodePaths) {
             Path indexLocation = nodePath.indicesPath.resolve(indexUniquePathId);
+            // 找到所有 /xxx/indexName 目录
             if (Files.isDirectory(indexLocation)) {
                 shardCountPerPath.put(nodePath, (long) findAllShardsForIndex(indexLocation, index).size());
             }
@@ -1134,6 +1158,13 @@ public final class NodeEnvironment  implements Closeable {
         return shardCountPerPath;
     }
 
+    /**
+     * 获取某个 /index 目录下所有分片id
+     * @param indexPath
+     * @param index
+     * @return
+     * @throws IOException
+     */
     private static Set<ShardId> findAllShardsForIndex(Path indexPath, Index index) throws IOException {
         assert indexPath.getFileName().toString().equals(index.getUUID());
         Set<ShardId> shardIds = new HashSet<>();
@@ -1141,6 +1172,7 @@ public final class NodeEnvironment  implements Closeable {
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(indexPath)) {
                 for (Path shardPath : stream) {
                     String fileName = shardPath.getFileName().toString();
+                    // 找到所有 shard目录
                     if (Files.isDirectory(shardPath) && fileName.chars().allMatch(Character::isDigit)) {
                         int shardId = Integer.parseInt(fileName);
                         ShardId id = new ShardId(index, shardId);

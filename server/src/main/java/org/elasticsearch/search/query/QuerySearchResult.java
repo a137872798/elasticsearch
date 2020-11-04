@@ -40,6 +40,9 @@ import java.io.IOException;
 import static org.elasticsearch.common.lucene.Lucene.readTopDocs;
 import static org.elasticsearch.common.lucene.Lucene.writeTopDocs;
 
+/**
+ * 代表查询结果
+ */
 public final class QuerySearchResult extends SearchPhaseResult {
 
     private int from;
@@ -59,6 +62,9 @@ public final class QuerySearchResult extends SearchPhaseResult {
     private DelayableWriteable<InternalAggregations> aggregations;
     private boolean hasAggs;
     private Suggest suggest;
+    /**
+     * 代表本次查询发生了超时
+     */
     private boolean searchTimedOut;
     private Boolean terminatedEarly = null;
     private ProfileShardResult profileShardResults;
@@ -301,8 +307,16 @@ public final class QuerySearchResult extends SearchPhaseResult {
         return hasScoreDocs || hasSuggestHits();
     }
 
+    /**
+     *
+     * @param id   本次查询过程中使用的上下文的id
+     * @param in  对应本次查询结果的数据流
+     * @throws IOException
+     */
     public void readFromWithId(SearchContextId id, StreamInput in) throws IOException {
         this.contextId = id;
+
+        // 下面就是用输入流填充字段的过程
         from = in.readVInt();
         size = in.readVInt();
         int numSortFieldsPlus1 = in.readVInt();

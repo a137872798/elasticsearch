@@ -52,11 +52,13 @@ import java.util.function.Function;
  *          for each field defined in `index.sort.field`
  *     </li>
  * </ul>
- *
+ * 有关索引排序的配置对象
 **/
 public final class IndexSortConfig {
     /**
      * The list of field names
+     * 在lucene中 写入doc时 会按照sort对象内定义的field排序规则进行排序
+     * 这里的list包含所有参与排序的field
      */
     public static final Setting<List<String>> INDEX_SORT_FIELD_SETTING =
         Setting.listSetting("index.sort.field", Collections.emptyList(),
@@ -64,6 +66,7 @@ public final class IndexSortConfig {
 
     /**
      * The {@link SortOrder} for each specified sort field (ie. <b>asc</b> or <b>desc</b>).
+     * 对应每个field的排序顺序
      */
     public static final Setting<List<SortOrder>> INDEX_SORT_ORDER_SETTING =
         Setting.listSetting("index.sort.order", Collections.emptyList(),
@@ -72,6 +75,7 @@ public final class IndexSortConfig {
 
     /**
      * The {@link MultiValueMode} for each specified sort field (ie. <b>max</b> or <b>min</b>).
+     * 如果指定的field下有多个值 如何将它们结合成一个用于排序的值的规则
      */
     public static final Setting<List<MultiValueMode>> INDEX_SORT_MODE_SETTING =
         Setting.listSetting("index.sort.mode", Collections.emptyList(),
@@ -79,6 +83,7 @@ public final class IndexSortConfig {
 
     /**
      * The missing value for each specified sort field (ie. <b>_first</b> or <b>_last</b>)
+     * 如果doc下没有该field 会排在前面还是后面
      */
     public static final Setting<List<String>> INDEX_SORT_MISSING_SETTING =
         Setting.listSetting("index.sort.missing", Collections.emptyList(),
@@ -110,17 +115,21 @@ public final class IndexSortConfig {
     }
 
     // visible for tests
+    // 每个对象对应某个field的排序规则
     final FieldSortSpec[] sortSpecs;
 
     public IndexSortConfig(IndexSettings indexSettings) {
         final Settings settings = indexSettings.getSettings();
+        // 获取所有参与排序的field字段
         List<String> fields = INDEX_SORT_FIELD_SETTING.get(settings);
+        // 这里是初始化 FieldSortSpec[] 还需要往内部填充属性
         this.sortSpecs = fields.stream()
             .map((name) -> new FieldSortSpec(name))
             .toArray(FieldSortSpec[]::new);
 
         if (INDEX_SORT_ORDER_SETTING.exists(settings)) {
             List<SortOrder> orders = INDEX_SORT_ORDER_SETTING.get(settings);
+            // 每个field 都需要对应一个order 如果数量不一致则抛出异常
             if (orders.size() != sortSpecs.length) {
                 throw new IllegalArgumentException("index.sort.field:" + fields +
                     " index.sort.order:" + orders.toString() + ", size mismatch");
@@ -164,6 +173,7 @@ public final class IndexSortConfig {
     /**
      * Builds the {@link Sort} order from the settings for this index
      * or returns null if this index has no sort.
+     * 根据内部包含的FieldSortSpec 信息 构建Sort对象
      */
     public Sort buildIndexSort(Function<String, MappedFieldType> fieldTypeLookup,
                                Function<MappedFieldType, IndexFieldData<?>> fieldDataLookup) {
@@ -171,9 +181,11 @@ public final class IndexSortConfig {
             return null;
         }
 
+        // SortField 定义了排序的规则
         final SortField[] sortFields = new SortField[sortSpecs.length];
         for (int i = 0; i < sortSpecs.length; i++) {
             FieldSortSpec sortSpec = sortSpecs[i];
+            // 找到 MapperService中 描述每个fieldType的  MappedFieldType  它增强了Lucene的 FieldType
             final MappedFieldType ft = fieldTypeLookup.apply(sortSpec.field);
             if (ft == null) {
                 throw new IllegalArgumentException("unknown index sort field:[" + sortSpec.field + "]");
@@ -183,6 +195,7 @@ public final class IndexSortConfig {
             if (mode == null) {
                 mode = reverse ? MultiValueMode.MAX : MultiValueMode.MIN;
             }
+            // IndexFieldDataService内部的数据是什么时候填充的 ???
             IndexFieldData<?> fieldData;
             try {
                 fieldData = fieldDataLookup.apply(ft);
@@ -192,6 +205,7 @@ public final class IndexSortConfig {
             if (fieldData == null) {
                 throw new IllegalArgumentException("docvalues not found for index sort field:[" + sortSpec.field + "]");
             }
+            // 检验是否是允许的排序类型
             sortFields[i] = fieldData.sortField(sortSpec.missingValue, mode, null, reverse);
             validateIndexSortField(sortFields[i]);
         }
@@ -205,6 +219,9 @@ public final class IndexSortConfig {
         }
     }
 
+    /**
+     * 某组doc的排序可能受到多个field的影响 这里指代表某个field下的排序规则
+     */
     static class FieldSortSpec {
         final String field;
         SortOrder order;
@@ -216,7 +233,10 @@ public final class IndexSortConfig {
         }
     }
 
-    /** We only allow index sorting on these types */
+    /**
+     * We only allow index sorting on these types
+     * 支持使用的所有排序类型 不在范围内的将抛出异常
+     */
     private static final EnumSet<SortField.Type> ALLOWED_INDEX_SORT_TYPES = EnumSet.of(
         SortField.Type.STRING,
         SortField.Type.LONG,

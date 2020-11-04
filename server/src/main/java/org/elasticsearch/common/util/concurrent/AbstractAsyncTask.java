@@ -30,14 +30,24 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A base class for tasks that need to repeat.
+ * 代表一个可重复执行的异步任务
  */
 public abstract class AbstractAsyncTask implements Runnable, Closeable {
 
     private final Logger logger;
     private final ThreadPool threadPool;
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    /**
+     * 区分是否是定时任务
+     */
     private final boolean autoReschedule;
+    /**
+     * 用于关闭定时任务
+     */
     private volatile Scheduler.Cancellable cancellable;
+    /**
+     * 反映当前task的状态
+     */
     private volatile boolean isScheduledOrRunning;
     private volatile Exception lastThrownException;
     private volatile TimeValue interval;
@@ -53,6 +63,7 @@ public abstract class AbstractAsyncTask implements Runnable, Closeable {
      * Change the interval between runs.
      * If a future run is scheduled then this will reschedule it.
      * @param interval The new interval between runs.
+     *                 当更新了间隔时间的时候 会判断是否需要重新执行任务 需要的话 会将当前任务关闭 并以新的时间间隔执行任务
      */
     public synchronized void setInterval(TimeValue interval) {
         this.interval = interval;
@@ -71,6 +82,7 @@ public abstract class AbstractAsyncTask implements Runnable, Closeable {
      * the task is closed, as being closed automatically prevents
      * scheduling.
      * @return Should the task be scheduled to run?
+     * 用于判断是否需要重新执行任务
      */
     protected abstract boolean mustReschedule();
 
@@ -79,11 +91,13 @@ public abstract class AbstractAsyncTask implements Runnable, Closeable {
      * is not closed and any further conditions imposed by derived
      * classes are met.  Any previously scheduled invocation is
      * cancelled.
+     * 是否需要重新启动任务
      */
     public synchronized void rescheduleIfNecessary() {
         if (isClosed()) {
             return;
         }
+        // 将当前任务关闭
         if (cancellable != null) {
             cancellable.cancel();
         }
@@ -131,6 +145,9 @@ public abstract class AbstractAsyncTask implements Runnable, Closeable {
         return this.closed.get();
     }
 
+    /**
+     * 执行任务
+     */
     @Override
     public final void run() {
         synchronized (this) {

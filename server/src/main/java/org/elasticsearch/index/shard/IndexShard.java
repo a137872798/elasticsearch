@@ -1082,6 +1082,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * checks and removes translog files that no longer need to be retained. See
      * {@link org.elasticsearch.index.translog.TranslogDeletionPolicy} for details
+     * 在 IndexService中 会开启定时任务 定期裁剪掉无用的事务日志
      */
     public void trimTranslog() {
         verifyNotClosed();
@@ -2221,6 +2222,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Syncs the current retention leases to all replicas.
+     * 在 IndexService中会定期执行续约任务
      */
     public void syncRetentionLeases() {
         assert assertPrimaryMode();
@@ -2310,6 +2312,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Syncs the global checkpoint to the replicas if the global checkpoint on at least one replica is behind the global checkpoint on the
      * primary.
+     * 在该indexShard相关的 IndexService中 每间隔一段时间就会触发该函数 同步全局检查点
      */
     public void maybeSyncGlobalCheckpoint(final String reason) {
         verifyNotClosed();
@@ -2807,8 +2810,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * try-with-resources closing the releasable after executing the runnable on successfully acquiring the permit, an otherwise calling
      * back the failure callback.
      *
-     * @param runnable the runnable to execute under permit
-     * @param onFailure the callback on failure
+     * @param runnable the runnable to execute under permit    执行的函数
+     * @param onFailure the callback on failure   当出现异常时 触发该函数
      * @param executorOnDelay the executor to execute the runnable on if permit acquisition is blocked
      * @param debugInfo debug info
      */
@@ -3069,6 +3072,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         translogSyncProcessor.put(location, syncListener);
     }
 
+    /**
+     * 将事务日志刷盘
+     * @throws IOException
+     */
     public void sync() throws IOException {
         verifyNotClosed();
         getEngine().syncTranslog();
@@ -3200,6 +3207,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Executes a scheduled refresh if necessary.
      *
      * @return <code>true</code> iff the engine got refreshed otherwise <code>false</code>
+     * 执行刷新任务
      */
     public boolean scheduledRefresh() {
         verifyNotClosed();

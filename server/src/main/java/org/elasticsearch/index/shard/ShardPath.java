@@ -49,6 +49,12 @@ public final class ShardPath {
     private final Path shardStatePath;
     private final boolean isCustomDataPath;
 
+    /**
+     * @param isCustomDataPath 是否设置了自定义路径
+     * @param dataPath   当没有使用自定义路径时 使用该路径
+     * @param shardStatePath   自定义路径
+     * @param shardId   分片id
+     */
     public ShardPath(boolean isCustomDataPath, Path dataPath, Path shardStatePath, ShardId shardId) {
         assert dataPath.getFileName().toString().equals(Integer.toString(shardId.id())) :
             "dataPath must end with the shard ID but didn't: " + dataPath.toString();
@@ -119,10 +125,13 @@ public final class ShardPath {
      * This method walks through the nodes shard paths to find the data and state path for the given shard. If multiple
      * directories with a valid shard state exist the one with the highest version will be used.
      * <b>Note:</b> this method resolves custom data locations for the shard if such a custom data path is provided.
+     * 根据当前环境 已经自定义数据路径 以及分片id 生成属于该分片的路径
      */
     public static ShardPath loadShardPath(Logger logger, NodeEnvironment env,
                                           ShardId shardId, String customDataPath) throws IOException {
+        // 生成 shard级别的路径
         final Path[] paths = env.availableShardPaths(shardId);
+        // 这是存储共享数据的路径
         final Path sharedDataPath = env.sharedDataPath();
         return loadShardPath(logger, shardId, customDataPath, paths, sharedDataPath);
     }
@@ -131,13 +140,17 @@ public final class ShardPath {
      * This method walks through the nodes shard paths to find the data and state path for the given shard. If multiple
      * directories with a valid shard state exist the one with the highest version will be used.
      * <b>Note:</b> this method resolves custom data locations for the shard.
+     * @param availableShardPaths 所有分片路径
+     * @param sharedDataPath 共享数据路径
      */
     public static ShardPath loadShardPath(Logger logger, ShardId shardId, String customDataPath, Path[] availableShardPaths,
                                           Path sharedDataPath) throws IOException {
         final String indexUUID = shardId.getIndex().getUUID();
         Path loadedPath = null;
+        // 每个路径都是在一个nodePath下拼接成的  这里预期只会找到一个路径
         for (Path path : availableShardPaths) {
             // EMPTY is safe here because we never call namedObject
+            // 读取每个目录下的数据流 并转换成 metadata对象
             ShardStateMetadata load = ShardStateMetadata.FORMAT.loadLatestState(logger, NamedXContentRegistry.EMPTY, path);
             if (load != null) {
                 if (load.indexUUID.equals(indexUUID) == false && IndexMetadata.INDEX_UUID_NA_VALUE.equals(load.indexUUID) == false) {
@@ -160,6 +173,7 @@ public final class ShardPath {
         } else {
             final Path dataPath;
             final Path statePath = loadedPath;
+            // 如果存在自定义路径 将路径拼接到 sharedDataPath 后面 之后再追加上 index/shardId
             final boolean hasCustomDataPath = Strings.isNotEmpty(customDataPath);
             if (hasCustomDataPath) {
                 dataPath = NodeEnvironment.resolveCustomLocation(customDataPath, shardId, sharedDataPath);
@@ -193,6 +207,17 @@ public final class ShardPath {
         }
     }
 
+
+    /**
+     *
+     * @param env
+     * @param shardId
+     * @param indexSettings
+     * @param avgShardSizeInBytes  分片的预计大小
+     * @param dataPathToShardCount  该shard 所属index 下其他shard的路径  value代表使用该路径的shard数量
+     * @return
+     * @throws IOException
+     */
     public static ShardPath selectNewPathForShard(NodeEnvironment env, ShardId shardId, IndexSettings indexSettings,
                                                   long avgShardSizeInBytes, Map<Path,Integer> dataPathToShardCount) throws IOException {
 
@@ -201,9 +226,11 @@ public final class ShardPath {
 
         if (indexSettings.hasCustomDataPath()) {
             dataPath = env.resolveCustomLocation(indexSettings.customDataPath(), shardId);
+            // TODO 什么意思???
             statePath = env.nodePaths()[0].resolve(shardId);
         } else {
             BigInteger totFreeSpace = BigInteger.ZERO;
+            // 计算所有目录的可用空间
             for (NodeEnvironment.NodePath nodePath : env.nodePaths()) {
                 totFreeSpace = totFreeSpace.add(BigInteger.valueOf(nodePath.fileStore.getUsableSpace()));
             }
@@ -213,18 +240,23 @@ public final class ShardPath {
 
             // Very rough heuristic of how much disk space we expect the shard will use over its lifetime, the max of current average
             // shard size across the cluster and 5% of the total available free space on this node:
+            // 生成一个更合理的大小
             BigInteger estShardSizeInBytes = BigInteger.valueOf(avgShardSizeInBytes).max(totFreeSpace.divide(BigInteger.valueOf(20)));
 
             // TODO - do we need something more extensible? Yet, this does the job for now...
             final NodeEnvironment.NodePath[] paths = env.nodePaths();
 
             // If no better path is chosen, use the one with the most space by default
+            // 找到空间最大的目录
             NodeEnvironment.NodePath bestPath = getPathWithMostFreeSpace(env);
 
+            // 代表此时还有很多竞选的目录
             if (paths.length != 1) {
+                // 获取每个index目录下的分片数量
                 Map<NodeEnvironment.NodePath, Long> pathToShardCount = env.shardCountPerPath(shardId.getIndex());
 
                 // Compute how much space there is on each path
+                // 存储每个路径的可用空间
                 final Map<NodeEnvironment.NodePath, BigInteger> pathsToSpace = new HashMap<>(paths.length);
                 for (NodeEnvironment.NodePath nodePath : paths) {
                     FileStore fileStore = nodePath.fileStore;
@@ -234,9 +266,11 @@ public final class ShardPath {
 
                 bestPath = Arrays.stream(paths)
                         // Filter out paths that have enough space
+                        // 首先该目录应当有足够的空间
                         .filter((path) -> pathsToSpace.get(path).subtract(estShardSizeInBytes).compareTo(BigInteger.ZERO) > 0)
                         // Sort by the number of shards for this index
                         .sorted((p1, p2) -> {
+                                // 优先选择分片数小的
                                 int cmp = Long.compare(pathToShardCount.getOrDefault(p1, 0L),
                                     pathToShardCount.getOrDefault(p2, 0L));
                                 if (cmp == 0) {
@@ -256,12 +290,19 @@ public final class ShardPath {
                         .orElse(bestPath);
             }
 
+            // 当只有一个path时 使用该path 生成有关新分片的目录
             statePath = bestPath.resolve(shardId);
             dataPath = statePath;
         }
         return new ShardPath(indexSettings.hasCustomDataPath(), dataPath, statePath, shardId);
     }
 
+    /**
+     * 占到剩余空间最大的目录
+     * @param env
+     * @return
+     * @throws IOException
+     */
     static NodeEnvironment.NodePath getPathWithMostFreeSpace(NodeEnvironment env) throws IOException {
         final NodeEnvironment.NodePath[] paths = env.nodePaths();
         NodeEnvironment.NodePath bestPath = null;

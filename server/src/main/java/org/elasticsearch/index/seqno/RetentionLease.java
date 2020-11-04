@@ -36,9 +36,14 @@ import java.util.Objects;
  * that all operations with sequence number at least that retaining sequence number will be retained during merge operations (which could
  * otherwise merge away operations that have been soft deleted). Each retention lease contains a unique identifier, the retaining sequence
  * number, the timestamp of when the lease was created or renewed, and the source of the retention lease (e.g., "ccr").
+ * 推测是针对某个shard的续约消息
+ * 只是一个简单的bean对象
  */
 public final class RetentionLease implements ToXContentObject, Writeable {
 
+    /**
+     * 该续约信息的唯一标识
+     */
     private final String id;
 
     /**
@@ -50,6 +55,9 @@ public final class RetentionLease implements ToXContentObject, Writeable {
         return id;
     }
 
+    /**
+     * 续约的序列号
+     */
     private final long retainingSequenceNumber;
 
     /**

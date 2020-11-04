@@ -341,6 +341,10 @@ public final class IndexSettings {
     private final boolean defaultAllowUnmappedFields;
     private volatile Translog.Durability durability;
     private volatile TimeValue syncInterval;
+
+    /**
+     * 只要不是 -1 就代表允许定时refresh
+     */
     private volatile TimeValue refreshInterval;
     private volatile ByteSizeValue flushThresholdSize;
     private volatile ByteSizeValue generationThresholdSize;
@@ -691,6 +695,7 @@ public final class IndexSettings {
 
     /**
      * Returns the translog durability for this index.
+     * 事务日志的耐久性???
      */
     public Translog.Durability getTranslogDurability() {
         return durability;

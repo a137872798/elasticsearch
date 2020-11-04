@@ -50,6 +50,7 @@ import java.util.Objects;
 /**
  * Base class for all classes producing lucene queries.
  * Supports conversion to BytesReference and creation of lucene Query objects.
+ * 按照指定条件可以构建Query对象
  */
 public abstract class AbstractQueryBuilder<QB extends AbstractQueryBuilder<QB>> implements QueryBuilder {
 

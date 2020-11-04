@@ -154,10 +154,10 @@ public final class IndicesRequestCache implements RemovalListener<IndicesRequest
     // NORELEASE The cacheKeyRenderer has been added in order to debug
     // https://github.com/elastic/elasticsearch/issues/32827, it should be
     // removed when this issue is solved
+    // 从缓存中获取数据 如果不存在则使用函数生成数据
     BytesReference getOrCompute(CacheEntity cacheEntity, CheckedSupplier<BytesReference, IOException> loader,
                                 DirectoryReader reader, BytesReference cacheKey, Supplier<String> cacheKeyRenderer) throws Exception {
         assert reader.getReaderCacheHelper() != null;
-        // 在默认的 standardDirectoryReader中 好像没有看到cache
         final Key key = new Key(cacheEntity, reader.getReaderCacheHelper().getKey(), cacheKey);
 
         // 将外部传入的 key->value 转换函数包装成loader (做了一层适配 因为cache只能使用CacheLoader)

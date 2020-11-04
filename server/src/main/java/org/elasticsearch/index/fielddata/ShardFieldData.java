@@ -50,6 +50,12 @@ public class ShardFieldData implements IndexFieldDataCache.Listener {
             new FieldMemoryStats(fieldTotals));
     }
 
+    /**
+     * 当该field相关的数据被设置到缓存时触发
+     * @param shardId
+     * @param fieldName
+     * @param ramUsage
+     */
     @Override
     public void onCache(ShardId shardId, String fieldName, Accountable ramUsage) {
         totalMetric.inc(ramUsage.ramBytesUsed());
@@ -66,6 +72,13 @@ public class ShardFieldData implements IndexFieldDataCache.Listener {
         }
     }
 
+    /**
+     * 相关数据移出缓存时触发
+     * @param shardId
+     * @param fieldName
+     * @param wasEvicted
+     * @param sizeInBytes
+     */
     @Override
     public void onRemoval(ShardId shardId, String fieldName, boolean wasEvicted, long sizeInBytes) {
         if (wasEvicted) {

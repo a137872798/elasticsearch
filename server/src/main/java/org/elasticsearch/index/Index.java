@@ -35,6 +35,7 @@ import java.util.Objects;
 /**
  * A value class representing the basic required properties of an Elasticsearch index.
  * 表示某个索引对象
+ * index 本身没有任何分片相关的信息 (无法从index反推shard信息)
  */
 public class Index implements Writeable, ToXContentObject {
 

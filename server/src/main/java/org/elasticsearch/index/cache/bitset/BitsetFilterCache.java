@@ -72,12 +72,19 @@ import java.util.concurrent.Executor;
  * {@link org.elasticsearch.index.cache.query.QueryCache} should be used instead.
  */
 public final class BitsetFilterCache extends AbstractIndexComponent
-        implements IndexReader.ClosedListener, RemovalListener<IndexReader.CacheKey, Cache<Query, BitsetFilterCache.Value>>, Closeable {
+    implements IndexReader.ClosedListener, RemovalListener<IndexReader.CacheKey, Cache<Query, BitsetFilterCache.Value>>, Closeable {
 
     public static final Setting<Boolean> INDEX_LOAD_RANDOM_ACCESS_FILTERS_EAGERLY_SETTING =
         Setting.boolSetting("index.load_fixed_bitset_filters_eagerly", true, Property.IndexScope);
 
+    /**
+     * 这是什么意思 如果是false 就不能预热了
+     */
     private final boolean loadRandomAccessFiltersEagerly;
+    /**
+     * 每个缓存键 对应一个缓存对象  缓存键应该是以index为维度进行划分的
+     * 而在二级缓存中 又是以Query作为key
+     */
     private final Cache<IndexReader.CacheKey, Cache<Query, Value>> loadedFilters;
     private final Listener listener;
 
@@ -92,6 +99,7 @@ public final class BitsetFilterCache extends AbstractIndexComponent
     }
 
     public static BitSet bitsetFromQuery(Query query, LeafReaderContext context) throws IOException {
+        // 获取最上层的 reader对象  在使用过程中 还没有看到以 父子级关系连接的逻辑
         final IndexReaderContext topLevelContext = ReaderUtil.getTopLevelContext(context);
         final IndexSearcher searcher = new IndexSearcher(topLevelContext);
         searcher.setQueryCache(null);
@@ -100,6 +108,7 @@ public final class BitsetFilterCache extends AbstractIndexComponent
         if (s == null) {
             return null;
         } else {
+            // 代表query 查询到了数据 将docIdSet 和最大的doc号 封装成一个位图对象
             return BitSet.of(s.iterator(), context.reader().maxDoc());
         }
     }
@@ -128,19 +137,30 @@ public final class BitsetFilterCache extends AbstractIndexComponent
         loadedFilters.invalidateAll();
     }
 
+    /**
+     * 通过 query 去context内部的reader中读取数据 并将结果docIdSet 包装成位图  以及存储到缓存中
+     *
+     * @param query
+     * @param context
+     * @return
+     * @throws ExecutionException
+     */
     private BitSet getAndLoadIfNotPresent(final Query query, final LeafReaderContext context) throws ExecutionException {
         final IndexReader.CacheHelper cacheHelper = context.reader().getCoreCacheHelper();
         if (cacheHelper == null) {
+            // 如果不支持缓存会直接抛出异常
             throw new IllegalArgumentException("Reader " + context.reader() + " does not support caching");
         }
         final IndexReader.CacheKey coreCacheReader = cacheHelper.getKey();
+        // 从reader上获取分片id
         final ShardId shardId = ShardUtils.extractShardId(context.reader());
         if (indexSettings.getIndex().equals(shardId.getIndex()) == false) {
             // insanity
             throw new IllegalStateException("Trying to load bit set for index " + shardId.getIndex()
-                    + " with cache of index " + indexSettings.getIndex());
+                + " with cache of index " + indexSettings.getIndex());
         }
         Cache<Query, Value> filterToFbs = loadedFilters.computeIfAbsent(coreCacheReader, key -> {
+            // 当reader资源关闭时 触发钩子
             cacheHelper.addClosedListener(BitsetFilterCache.this);
             return CacheBuilder.<Query, Value>builder().build();
         });
@@ -153,6 +173,12 @@ public final class BitsetFilterCache extends AbstractIndexComponent
         }).bitset;
     }
 
+    /**
+     * 当某个缓存移除时触发
+     * 因为这里使用的是二级缓存  代表当某个reader过期时  就要将下面所有的基于 query查询的缓存结果移除
+     *
+     * @param notification
+     */
     @Override
     public void onRemoval(RemovalNotification<IndexReader.CacheKey, Cache<Query, Value>> notification) {
         if (notification.getKey() == null) {
@@ -170,6 +196,9 @@ public final class BitsetFilterCache extends AbstractIndexComponent
         }
     }
 
+    /**
+     * 包装了 某个query查询到的 docIdSet  以及reader相关的分片
+     */
     public static final class Value {
 
         final BitSet bitset;
@@ -181,6 +210,9 @@ public final class BitsetFilterCache extends AbstractIndexComponent
         }
     }
 
+    /**
+     * 通过readerContext 对象 可以使用query查询数据 并将结果docIdSet存入到缓存中
+     */
     final class QueryWrapperBitSetProducer implements BitSetProducer {
 
         final Query query;
@@ -215,6 +247,10 @@ public final class BitsetFilterCache extends AbstractIndexComponent
         }
     }
 
+    /**
+     * 该对象本身实现了 预热对象的监听器接口  可以针对indexShard进行预热
+     * 默认的预热实现就是将数据提前加载到内存中
+     */
     final class BitSetProducerWarmer implements IndexWarmer.Listener {
 
         private final Executor executor;
@@ -223,6 +259,13 @@ public final class BitsetFilterCache extends AbstractIndexComponent
             this.executor = threadPool.executor(ThreadPool.Names.WARMER);
         }
 
+        /**
+         * 进行预热操作
+         *
+         * @param indexShard
+         * @param reader
+         * @return
+         */
         @Override
         public IndexWarmer.TerminationHandle warmReader(final IndexShard indexShard, final ElasticsearchDirectoryReader reader) {
             if (indexSettings.getIndex().equals(indexShard.indexSettings().getIndex()) == false) {
@@ -238,6 +281,7 @@ public final class BitsetFilterCache extends AbstractIndexComponent
             final Set<Query> warmUp = new HashSet<>();
             final MapperService mapperService = indexShard.mapperService();
             DocumentMapper docMapper = mapperService.documentMapper();
+            // TODO 什么鬼 ???
             if (docMapper != null) {
                 if (docMapper.hasNestedObjects()) {
                     hasNested = true;
@@ -257,6 +301,7 @@ public final class BitsetFilterCache extends AbstractIndexComponent
             }
 
             final CountDownLatch latch = new CountDownLatch(reader.leaves().size() * warmUp.size());
+            // 预热的实现是类似的 只是变成了通过query 定位数据
             for (final LeafReaderContext ctx : reader.leaves()) {
                 for (final Query filterToWarm : warmUp) {
                     executor.execute(() -> {
@@ -286,18 +331,21 @@ public final class BitsetFilterCache extends AbstractIndexComponent
     }
 
     /**
-     *  A listener interface that is executed for each onCache / onRemoval event
+     * A listener interface that is executed for each onCache / onRemoval event
      */
     public interface Listener {
         /**
          * Called for each cached bitset on the cache event.
-         * @param shardId the shard id the bitset was cached for. This can be <code>null</code>
+         *
+         * @param shardId     the shard id the bitset was cached for. This can be <code>null</code>
          * @param accountable the bitsets ram representation
          */
         void onCache(ShardId shardId, Accountable accountable);
+
         /**
          * Called for each cached bitset on the removal event.
-         * @param shardId the shard id the bitset was cached for. This can be <code>null</code>
+         *
+         * @param shardId     the shard id the bitset was cached for. This can be <code>null</code>
          * @param accountable the bitsets ram representation
          */
         void onRemoval(ShardId shardId, Accountable accountable);

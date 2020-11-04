@@ -1619,22 +1619,27 @@ public class IndicesService extends AbstractLifecycleComponent
         // 获取本次扫描的目录
         final DirectoryReader directoryReader = context.searcher().getDirectoryReader();
 
-        // 默认情况选择从缓存加载
+        // 代表返回的结果是否是从缓存中获取的
         boolean[] loadedFromCache = new boolean[]{true};
         BytesReference bytesReference = cacheShardLevelResult(context.indexShard(), directoryReader, request.cacheKey(),
             () -> "Shard: " + request.shardId() + "\nSource:\n" + request.source(),
             out -> {
                 queryPhase.execute(context);
+                // 将查询结果写入到给定的输出流中  并且代表本次是通过queryPhase加载的数据 而不是从缓存
+                // TODO out的大小是固定的 如果数据流写不下在 writeToNoId 中会怎么处理
                 context.queryResult().writeToNoId(out);
                 loadedFromCache[0] = false;
             });
 
+        // 代表是从缓存中获取的数据
         if (loadedFromCache[0]) {
             // restore the cached query result into the context
+            // 需要将结果写入到 QuerySearchResult 中
             final QuerySearchResult result = context.queryResult();
             StreamInput in = new NamedWriteableAwareStreamInput(bytesReference.streamInput(), namedWriteableRegistry);
             result.readFromWithId(context.id(), in);
             result.setSearchShardTarget(context.shardTarget());
+        // 当本次查询超时了  这个异常的结果此时还存储在缓存中 那么就需要做清理  (无论是否是好的结果 都在之前已经存入缓存了)
         } else if (context.queryResult().searchTimedOut()) {
             // we have to invalidate the cache entry if we cached a query result form a request that timed out.
             // we can't really throw exceptions in the loading part to signal a timed out search to the outside world since if there are
@@ -1661,12 +1666,18 @@ public class IndicesService extends AbstractLifecycleComponent
      * @param shard    the shard this item is part of
      * @param reader   a reader for this shard. Used to invalidate the cache when there are changes.
      * @param cacheKey key for the thing being cached within this shard
+     *                 用于获取缓存键 通过缓存键可以查询数据
      * @param loader   loads the data into the cache if needed
      * @return the contents of the cache or the result of calling the loader
+     * 从缓存或者reader中查询数据
      */
     private BytesReference cacheShardLevelResult(IndexShard shard, DirectoryReader reader, BytesReference cacheKey,
                                                  Supplier<String> cacheKeyRenderer, CheckedConsumer<StreamOutput, IOException> loader) throws Exception {
+
+        // 先将本次分片数据包装成一个 缓存键
         IndexShardCacheEntity cacheEntity = new IndexShardCacheEntity(shard);
+
+        // 这里将从loader中加载数据 并写入到out的动作封装成了一个函数
         CheckedSupplier<BytesReference, IOException> supplier = () -> {
             /* BytesStreamOutput allows to pass the expected size but by default uses
              * BigArrays.PAGE_SIZE_IN_BYTES which is 16k. A common cached result ie.
@@ -1683,6 +1694,7 @@ public class IndicesService extends AbstractLifecycleComponent
                 return out.bytes();
             }
         };
+        // 下面的逻辑就是先从缓存中获取数据 没有则通过函数生成 顺便将数据插入到缓存
         return indicesRequestCache.getOrCompute(cacheEntity, supplier, reader, cacheKey, cacheKeyRenderer);
     }
 
@@ -1733,6 +1745,14 @@ public class IndicesService extends AbstractLifecycleComponent
         (Index index, IndexSettings indexSettings) -> canDeleteIndexContents(index, indexSettings);
     private final IndexDeletionAllowedPredicate ALWAYS_TRUE = (Index index, IndexSettings indexSettings) -> true;
 
+
+    /**
+     * 通过一组正则规则构建别名过滤器
+     * @param state
+     * @param index
+     * @param resolvedExpressions
+     * @return
+     */
     public AliasFilter buildAliasFilter(ClusterState state, String index, Set<String> resolvedExpressions) {
         /* Being static, parseAliasFilter doesn't have access to whatever guts it needs to parse a query. Instead of passing in a bunch
          * of dependencies we pass in a function that can perform the parsing. */
@@ -1756,13 +1776,22 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * Clears the caches for the given shard id if the shard is still allocated on this node
+     * @param shardId 本次要清除的目标分片
+     * @param queryCache
+     * @param fieldDataCache
+     * @param requestCache  3个boolean 参数分别代表是否要清除对应的缓存
+     *                如果这个分片还存在于这个node时 清除这个分片相关的缓存
      */
     public void clearIndexShardCache(ShardId shardId, boolean queryCache, boolean fieldDataCache, boolean requestCache,
                                      String... fields) {
         final IndexService service = indexService(shardId.getIndex());
         if (service != null) {
+            // 首先确保索引服务存在   最上层是 index 往下是shard  这里检测shard是否还存在
             IndexShard shard = service.getShardOrNull(shardId.id());
+
+            // queryCache | fieldDataCache  其中有一个为true
             final boolean clearedAtLeastOne = service.clearCaches(queryCache, fieldDataCache, fields);
+            // 为什么要分成3个级别的 cache   requestCache是按照req来匹配么  认为req相同的条件是什么
             if ((requestCache || (clearedAtLeastOne == false && fields.length == 0)) && shard != null) {
                 indicesRequestCache.clear(new IndexShardCacheEntity(shard));
             }
@@ -1775,6 +1804,7 @@ public class IndicesService extends AbstractLifecycleComponent
      * The predicate receives the field name as input argument. In case multiple plugins register a field filter through
      * {@link org.elasticsearch.plugins.MapperPlugin#getFieldFilter()}, only fields that match all the registered filters will be
      * returned by get mappings, get index, get field mappings and field capabilities API.
+     * 获取一组 field过滤器
      */
     public Function<String, Predicate<String>> getFieldFilter() {
         return mapperRegistry.getFieldFilter();

@@ -23,6 +23,9 @@ import org.elasticsearch.index.IndexComponent;
 
 import java.io.Closeable;
 
+/**
+ * 以query为单位存储各种数据
+ */
 public interface QueryCache extends IndexComponent, Closeable, org.apache.lucene.search.QueryCache {
 
     void clear(String reason);

@@ -28,6 +28,9 @@ import java.io.IOException;
 import java.util.Objects;
 
 
+/**
+ * 对应某个 SearchContext的id
+ */
 public final class SearchContextId implements Writeable {
     private final String readerId;
     private final long id;

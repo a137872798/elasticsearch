@@ -28,9 +28,18 @@ import org.elasticsearch.index.shard.ShardId;
 
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 该服务本身是针对shard 级别的
+ */
 public class ShardIndexWarmerService extends AbstractIndexShardComponent {
 
+    /**
+     * 统计当前正在预热的数量
+     */
     private final CounterMetric current = new CounterMetric();
+    /**
+     * 记录预热的耗时
+     */
     private final MeanMetric warmerMetric = new MeanMetric();
 
     public ShardIndexWarmerService(ShardId shardId, IndexSettings indexSettings) {

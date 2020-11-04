@@ -59,7 +59,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 脚本服务是做什么的
+ * 脚本服务
  */
 public class ScriptService implements Closeable, ClusterStateApplier {
 

@@ -157,6 +157,7 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
 
         /**
          * 生成缓存 以及移除缓存时的钩子
+         * 对应 FieldDataCacheListener
          */
         private final Listener[] listeners;
 

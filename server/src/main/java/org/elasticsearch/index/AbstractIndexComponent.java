@@ -23,6 +23,9 @@ import org.apache.logging.log4j.Logger;
 import org.elasticsearch.common.logging.DeprecationLogger;
 import org.elasticsearch.common.logging.Loggers;
 
+/**
+ * 这里定义了 index 信息是从indexSettings中获取的
+ */
 public abstract class AbstractIndexComponent implements IndexComponent {
 
     protected final Logger logger;

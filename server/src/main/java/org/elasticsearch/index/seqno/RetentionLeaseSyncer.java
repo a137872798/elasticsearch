@@ -26,6 +26,9 @@ import org.elasticsearch.index.shard.ShardId;
 
 import java.util.Objects;
 
+/**
+ * 续约同步器
+ */
 public class RetentionLeaseSyncer {
     private final SyncAction syncAction;
     private final BackgroundSyncAction backgroundSyncAction;
@@ -56,6 +59,7 @@ public class RetentionLeaseSyncer {
     /**
      * Represents an action that is invoked to sync retention leases to replica shards after a retention lease is added
      * or removed on the primary. The specified listener is invoked when the syncing completes with success or failure.
+     * 代表一个同步执行的动作
      */
     public interface SyncAction {
         void sync(ShardId shardId, String primaryAllocationId, long primaryTerm,

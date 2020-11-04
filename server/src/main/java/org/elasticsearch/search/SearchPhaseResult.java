@@ -35,6 +35,7 @@ import java.io.IOException;
  * request ID is particularly important since it is used to reference and maintain a context
  * across search phases to ensure the same point in time snapshot is used for querying and
  * fetching etc.
+ * 代表查询结果
  */
 public abstract class SearchPhaseResult extends TransportResponse {
 

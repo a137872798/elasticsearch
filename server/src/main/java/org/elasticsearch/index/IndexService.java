@@ -106,48 +106,158 @@ import java.util.function.Supplier;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.unmodifiableMap;
 
+/**
+ * 索引服务
+ * 每个节点下包含一个  IndicesService 之后针对每个index 会单独生成一个 IndexService
+ *
+ * AllocatedIndex 接口代表着indexService对应的index 已经分配完成 并且该对象在indexMetadata发生变化时 可以作出处理 以及根据shardId 移除/获取 shard
+ */
 public class IndexService extends AbstractIndexComponent implements IndicesClusterStateService.AllocatedIndex<IndexShard> {
 
+    /**
+     * 该对象监听 index 发生的各种事件
+     */
     private final IndexEventListener eventListener;
+    /**
+     * 该对象可以以field为单位查询数据  并且内部还嵌入了缓存功能
+     */
     private final IndexFieldDataService indexFieldData;
+
+    /**
+     * 就没看到哪里体现了 filter  内部以query为单位进行预热 提前将数据存入到缓存中
+     */
     private final BitsetFilterCache bitsetFilterCache;
     private final NodeEnvironment nodeEnv;
+    /**
+     * 这个就是indicesService
+     * 可以删除 shardStore 或者addPendingDelete
+     */
     private final ShardStoreDeleter shardStoreDeleter;
+
+    /**
+     * 通过 shardPath 可以获取到该分片数据所在的目录
+     */
     private final IndexStorePlugin.DirectoryFactory directoryFactory;
+
+    /**
+     * 对reader对象进行包装  应该就是 ESReader
+     */
     private final CheckedFunction<DirectoryReader, DirectoryReader, IOException> readerWrapper;
+
+    /**
+     * 该对象内部整合了 queryCache/bitsetFilterCache
+     */
     private final IndexCache indexCache;
     private final MapperService mapperService;
     private final NamedXContentRegistry xContentRegistry;
     private final NamedWriteableRegistry namedWriteableRegistry;
+    /**
+     * 先忽略这啥因子的
+     */
     private final SimilarityService similarityService;
+    /**
+     * 每个索引对应一个引擎对象
+     */
     private final EngineFactory engineFactory;
+    /**
+     * 预热对象 实际上就是提前将数据加载到缓存中
+     */
     private final IndexWarmer warmer;
+    /**
+     * 管理该index 下所有的分片
+     */
     private volatile Map<Integer, IndexShard> shards = emptyMap();
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final AtomicBoolean deleted = new AtomicBoolean(false);
     private final IndexSettings indexSettings;
+
+    /**
+     * 当发生查询操作时 触发相关的钩子
+     */
     private final List<SearchOperationListener> searchOperationListeners;
+    /**
+     * 针对索引操作的钩子
+     */
     private final List<IndexingOperationListener> indexingOperationListeners;
     private final BooleanSupplier allowExpensiveQueries;
+    /**
+     * 定期触发所有 indexShard 的刷新任务
+     */
     private volatile AsyncRefreshTask refreshTask;
     private volatile AsyncTranslogFSync fsyncTask;
+    /**
+     * 同步全局检查点的定时任务
+     */
     private volatile AsyncGlobalCheckpointTask globalCheckpointTask;
+
+    /**
+     * 续约任务 为分片做续约么  跟eureka类似的套路???
+     */
     private volatile AsyncRetentionLeaseSyncTask retentionLeaseSyncTask;
 
     // don't convert to Setting<> and register... we only set this in tests and register via a plugin
     private final String INDEX_TRANSLOG_RETENTION_CHECK_INTERVAL_SETTING = "index.translog.retention.check_interval";
 
+    /**
+     * 定期裁剪事务日志的任务
+     */
     private final AsyncTrimTranslogTask trimTranslogTask;
     private final ThreadPool threadPool;
+    /**
+     * 做了池化处理 减少GC压力
+     */
     private final BigArrays bigArrays;
+    /**
+     * 脚本服务 还不知道是做什么的
+     */
     private final ScriptService scriptService;
+    /**
+     * 该对象负责感知集群中的变化
+     */
     private final ClusterService clusterService;
+    /**
+     * 向其他node 发起请求的client
+     */
     private final Client client;
     private final CircuitBreakerService circuitBreakerService;
     private final IndexNameExpressionResolver expressionResolver;
+
+    /**
+     * 通过该函数可以获取到 排序对象 sort
+     */
     private Supplier<Sort> indexSortSupplier;
     private ValuesSourceRegistry valuesSourceRegistry;
 
+    /**
+     *
+     * @param indexSettings
+     * @param indexCreationContext  代表当前在什么场景下创建的indexService
+     * @param nodeEnv
+     * @param xContentRegistry
+     * @param similarityService
+     * @param shardStoreDeleter
+     * @param indexAnalyzers
+     * @param engineFactory
+     * @param circuitBreakerService
+     * @param bigArrays
+     * @param threadPool
+     * @param scriptService
+     * @param clusterService
+     * @param client
+     * @param queryCache
+     * @param directoryFactory
+     * @param eventListener
+     * @param wrapperFactory   通过某个indexService  返回一个wrapper函数 负责将某个reader包装
+     * @param mapperRegistry
+     * @param indicesFieldDataCache
+     * @param searchOperationListeners
+     * @param indexingOperationListeners
+     * @param namedWriteableRegistry
+     * @param idFieldDataEnabled
+     * @param allowExpensiveQueries
+     * @param expressionResolver
+     * @param valuesSourceRegistry
+     */
     public IndexService(
             IndexSettings indexSettings,
             IndexCreationContext indexCreationContext,
@@ -186,10 +296,13 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         this.valuesSourceRegistry =  valuesSourceRegistry;
         if (needsMapperService(indexSettings, indexCreationContext)) {
             assert indexAnalyzers != null;
+            // 生成映射服务
             this.mapperService = new MapperService(indexSettings, indexAnalyzers, xContentRegistry, similarityService, mapperRegistry,
                 // we parse all percolator queries as they would be parsed on shard 0
                 () -> newQueryShardContext(0, null, System::currentTimeMillis, null), idFieldDataEnabled);
+            // 生成数据服务
             this.indexFieldData = new IndexFieldDataService(indexSettings, indicesFieldDataCache, circuitBreakerService, mapperService);
+            // 如果定义了排序规则 需要进行排序
             if (indexSettings.getIndexSortConfig().hasIndexSort()) {
                 // we delay the actual creation of the sort order for this index because the mapping has not been merged yet.
                 // The sort order is validated right after the merge of the mapping later in the process.
@@ -202,9 +315,13 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             }
             indexFieldData.setListener(new FieldDataCacheListener(this));
             this.bitsetFilterCache = new BitsetFilterCache(indexSettings, new BitsetCacheListener(this));
+            // 将bitsetFilterCache 的监听器设置到 indexWarmer中监听预热事件  之后会以query为单位预加载数据
             this.warmer = new IndexWarmer(threadPool, indexFieldData, bitsetFilterCache.createListener(threadPool));
+
+            // indexCache作为一个整合了内部所有cache的对象
             this.indexCache = new IndexCache(indexSettings, queryCache, bitsetFilterCache);
         } else {
+            // 只有当前metadata == CLOSE 且 indexCreationContext == CREATE_INDEX 才会进入下面
             assert indexAnalyzers == null;
             this.mapperService = null;
             this.indexFieldData = null;
@@ -233,6 +350,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         this.trimTranslogTask = new AsyncTrimTranslogTask(this);
         this.globalCheckpointTask = new AsyncGlobalCheckpointTask(this);
         this.retentionLeaseSyncTask = new AsyncRetentionLeaseSyncTask(this);
+        // 刷盘任务需要检测是否要启动
         updateFsyncTaskIfNecessary();
     }
 
@@ -389,6 +507,14 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
     }
 
+    /**
+     * 创建一个新的分片
+     * @param routing  描述分片路由信息
+     * @param globalCheckpointSyncer 全局检查点同步器是什么鬼
+     * @param retentionLeaseSyncer   续约同步器  TODO 先忽略续约吧
+     * @return
+     * @throws IOException
+     */
     public synchronized IndexShard createShard(
             final ShardRouting routing,
             final Consumer<ShardId> globalCheckpointSyncer,
@@ -403,16 +529,19 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             throw new IllegalStateException("Can't create shard " + routing.shardId() + ", closed");
         }
         final Settings indexSettings = this.indexSettings.getSettings();
+        // 路由信息中包含了分片id
         final ShardId shardId = routing.shardId();
         boolean success = false;
         Store store = null;
         IndexShard indexShard = null;
         ShardLock lock = null;
         try {
+            // 首先获取一个shard级别的锁
             lock = nodeEnv.shardLock(shardId, "shard creation", TimeUnit.SECONDS.toMillis(5));
             eventListener.beforeIndexShardCreated(shardId, indexSettings);
             ShardPath path;
             try {
+                // 生成该分片对应的目录
                 path = ShardPath.loadShardPath(logger, nodeEnv, shardId, this.indexSettings.customDataPath());
             } catch (IllegalStateException ex) {
                 logger.warn("{} failed to load shard path, trying to remove leftover", shardId);
@@ -425,12 +554,15 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 }
             }
 
+            // 没有找到目录
             if (path == null) {
                 // TODO: we should, instead, hold a "bytes reserved" of how large we anticipate this shard will be, e.g. for a shard
                 // that's being relocated/replicated we know how large it will become once it's done copying:
                 // Count up how many shards are currently on each data path:
+                // 寻找该index下其他分片的根路径
                 Map<Path, Integer> dataPathToShardCount = new HashMap<>();
                 for (IndexShard shard : this) {
+                    // TODO 这个是不一样的是吗  该index下所有分片分在了不同的 dataPath下
                     Path dataPath = shard.shardPath().getRootStatePath();
                     Integer curCount = dataPathToShardCount.get(dataPath);
                     if (curCount == null) {
@@ -439,6 +571,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                     dataPathToShardCount.put(dataPath, curCount + 1);
                 }
                 path = ShardPath.selectNewPathForShard(nodeEnv, shardId, this.indexSettings,
+                    // 当没有指定期望大小时 使用平均大小
                     routing.getExpectedShardSize() == ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE
                         ? getAvgShardSizeInBytes() : routing.getExpectedShardSize(),
                     dataPathToShardCount);
@@ -653,6 +786,10 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
     }
 
+    /**
+     * 以某个query为条件查询出来的 docIdSet结果被缓存时 触发OnCache
+     * 钩子中对应的操作也是进行一些统计工作
+     */
     private static final class BitsetCacheListener implements BitsetFilterCache.Listener {
         final IndexService indexService;
 
@@ -683,6 +820,9 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
     }
 
+    /**
+     * 监听 IndexFieldCache 内部的数据变化  比如加载到对应field的数据时 触发 onCache 当index被移除(导致下面所有的fieldCache都需要被移除时) 触发onRemoval
+     */
     private final class FieldDataCacheListener implements IndexFieldDataCache.Listener {
         final IndexService indexService;
 
@@ -690,11 +830,19 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             this.indexService = indexService;
         }
 
+        /**
+         * 获取到某个
+         * @param shardId  每个reader对象对应一个shardId
+         * @param fieldName
+         * @param ramUsage
+         */
         @Override
         public void onCache(ShardId shardId, String fieldName, Accountable ramUsage) {
             if (shardId != null) {
+                // 获取对应的分片
                 final IndexShard shard = indexService.getShardOrNull(shardId.id());
                 if (shard != null) {
+                    // 触发钩子 实际上只是做了统计操作
                     shard.fieldData().onCache(shardId, fieldName, ramUsage);
                 }
             }
@@ -784,7 +932,11 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         metadataListeners.forEach(c -> c.accept(newIndexMetadata));
     }
 
+    /**
+     * 检测是否要开启 fsyncTask
+     */
     private void updateFsyncTaskIfNecessary() {
+        // 代表基于API 调用才会执行刷盘操作
         if (indexSettings.getTranslogDurability() == Translog.Durability.REQUEST) {
             try {
                 if (fsyncTask != null) {
@@ -808,6 +960,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
     }
 
+
     public interface ShardStoreDeleter {
         void deleteShardStore(String reason, ShardLock lock, IndexSettings indexSettings) throws IOException;
 
@@ -827,6 +980,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     } // pkg private for testing
 
     private void maybeFSyncTranslogs() {
+        // 确保事务日志本身是异步的
         if (indexSettings.getTranslogDurability() == Translog.Durability.ASYNC) {
             for (IndexShard shard : this.shards.values()) {
                 try {
@@ -842,6 +996,10 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
     }
 
+    /**
+     * 执行一次刷新任务
+     * @param force
+     */
     private void maybeRefreshEngine(boolean force) {
         if (indexSettings.getRefreshInterval().millis() > 0 || force) {
             for (IndexShard shard : this.shards.values()) {
@@ -854,6 +1012,9 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
     }
 
+    /**
+     * 裁剪掉无用的事务日志
+     */
     private void maybeTrimTranslog() {
         for (IndexShard shard : this.shards.values()) {
             switch (shard.state()) {
@@ -883,8 +1044,14 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         sync(IndexShard::syncRetentionLeases, "retention lease");
     }
 
+    /**
+     * 使用当前线程 针对所有indexShard 执行函数
+     * @param sync
+     * @param source
+     */
     private void sync(final Consumer<IndexShard> sync, final String source) {
         for (final IndexShard shard : this.shards.values()) {
+            // 只处理活跃的主分片
             if (shard.routingEntry().active() && shard.routingEntry().primary()) {
                 switch (shard.state()) {
                     case CLOSED:
@@ -894,10 +1061,12 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                     case POST_RECOVERY:
                         assert false : "shard " + shard.shardId() + " is in post-recovery but marked as active";
                         continue;
+                        // 只处理此时正在使用的分片
                     case STARTED:
                         try {
                             shard.runUnderPrimaryPermit(
                                     () -> sync.accept(shard),
+                                    // 处理异常 只是打印日志
                                     e -> {
                                         if (e instanceof AlreadyClosedException == false
                                             && e instanceof IndexShardClosedException == false
@@ -920,6 +1089,9 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
     }
 
+    /**
+     * AbstractAsyncTask 定义了一个定时任务的模板
+     */
     abstract static class BaseAsyncTask extends AbstractAsyncTask {
 
         protected final IndexService indexService;
@@ -927,12 +1099,18 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         BaseAsyncTask(final IndexService indexService, final TimeValue interval) {
             super(indexService.logger, indexService.threadPool, interval, true);
             this.indexService = indexService;
+            // 在初始化时启动任务
             rescheduleIfNecessary();
         }
 
+        /**
+         * 每次在加入开启下次定时前 会先通过该方法判断是否支持继续执行
+         * @return
+         */
         @Override
         protected boolean mustReschedule() {
             // don't re-schedule if the IndexService instance is closed or if the index is closed
+            // 当index变为关闭时 自动停止定时任务
             return indexService.closed.get() == false
                 && indexService.indexSettings.getIndexMetadata().getState() == IndexMetadata.State.OPEN;
         }
@@ -940,6 +1118,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
 
     /**
      * FSyncs the translog for all shards of this index in a defined interval.
+     * 定期对事务日志做持久化
      */
     static final class AsyncTranslogFSync extends BaseAsyncTask {
 
@@ -957,6 +1136,9 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             indexService.maybeFSyncTranslogs();
         }
 
+        /**
+         * 看来是监听了动态配置  当配置发生变化时 更新定时任务
+         */
         void updateIfNeeded() {
             final TimeValue newInterval = indexService.getIndexSettings().getTranslogSyncInterval();
             if (newInterval.equals(getInterval()) == false) {
@@ -970,12 +1152,18 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
     }
 
+    /**
+     * 定义了任务的逻辑
+     */
     final class AsyncRefreshTask extends BaseAsyncTask {
 
         AsyncRefreshTask(IndexService indexService) {
             super(indexService, indexService.getIndexSettings().getRefreshInterval());
         }
 
+        /**
+         * 每隔一定时间尝试进行一次 refresh
+         */
         @Override
         protected void runInternal() {
             indexService.maybeRefreshEngine(false);
@@ -992,6 +1180,9 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
     }
 
+    /**
+     * 定期裁剪掉无用的事务日志
+     */
     final class AsyncTrimTranslogTask extends BaseAsyncTask {
 
         AsyncTrimTranslogTask(IndexService indexService) {
@@ -1040,6 +1231,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
 
     /**
      * Background task that syncs the global checkpoint to replicas.
+     * 同步全局检查点
      */
     final class AsyncGlobalCheckpointTask extends BaseAsyncTask {
 
@@ -1064,6 +1256,9 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
     }
 
+    /**
+     * 定期执行续约任务
+     */
     final class AsyncRetentionLeaseSyncTask extends BaseAsyncTask {
 
         AsyncRetentionLeaseSyncTask(final IndexService indexService) {
@@ -1101,6 +1296,9 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
 
     /**
      * Clears the caches for the given shard id if the shard is still allocated on this node
+     * @param queryCache 是否要清除 queryCache
+     * @param fieldDataCache 是否要清除 fieldDataCache
+     * @param fields 代表仅清除符合的field 数据
      */
     public boolean clearCaches(boolean queryCache, boolean fieldDataCache, String...fields) {
         boolean clearedAtLeastOne = false;
@@ -1110,6 +1308,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
         if (fieldDataCache) {
             clearedAtLeastOne = true;
+            // 在没有指定field数量的时候 清除所有数据
             if (fields.length == 0) {
                 indexFieldData.clear();
             } else {
@@ -1118,11 +1317,14 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 }
             }
         }
+        // 如果没有声明要删除哪些缓存
         if (clearedAtLeastOne == false) {
+            // 如果fields 为空 就认为是要清除所有缓存
             if (fields.length ==  0) {
                 indexCache.clear("api");
                 indexFieldData.clear();
             } else {
+                // 如果fields 不为空 就认为只需要清理 indexFieldData
                 // only clear caches relating to the specified fields
                 for (String field : fields) {
                     indexFieldData.clearField(field);

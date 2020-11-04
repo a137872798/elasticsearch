@@ -81,6 +81,9 @@ public abstract class MappedFieldType extends FieldType {
     private SimilarityProvider similarity;
     private Object nullValue;
     private String nullValueAsString; // for sending null value to _all field
+    /**
+     * 只有当该标识为true时 才支持预热功能
+     */
     private boolean eagerGlobalOrdinals;
     private Map<String, String> meta;
 

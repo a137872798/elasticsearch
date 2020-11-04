@@ -21,6 +21,9 @@ package org.elasticsearch.index.shard;
 
 import org.elasticsearch.index.IndexSettings;
 
+/**
+ * 代表这个功能是针对 shard级别的
+ */
 public interface IndexShardComponent {
 
     ShardId shardId();

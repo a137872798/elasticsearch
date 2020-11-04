@@ -33,7 +33,14 @@ import java.io.IOException;
  */
 public class IndexCache extends AbstractIndexComponent implements Closeable {
 
+    // 索引缓存内部包含2个下级缓存
+    /**
+     * 以 query为单位存储数据
+     */
     private final QueryCache queryCache;
+    /**
+     * 这个位图应该是 docIdSet
+     */
     private final BitsetFilterCache bitsetFilterCache;
 
     public IndexCache(IndexSettings indexSettings, QueryCache queryCache, BitsetFilterCache bitsetFilterCache) {

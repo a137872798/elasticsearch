@@ -668,6 +668,8 @@ public abstract class Engine implements Closeable {
 
     /**
      * Checks if the underlying storage sync is required.
+     * 当前是否需要做一次刷盘了
+     * 每次操作都会产生事务日志
      */
     public abstract boolean isTranslogSyncNeeded();
 

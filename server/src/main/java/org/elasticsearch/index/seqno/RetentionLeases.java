@@ -42,9 +42,14 @@ import java.util.stream.Collectors;
 /**
  * Represents a versioned collection of retention leases. We version the collection of retention leases to ensure that sync requests that
  * arrive out of order on the replica, using the version to ensure that older sync requests are rejected.
+ * 内部就是一组 RetentionLease
+ * 也是一个简单的bean对象
  */
 public class RetentionLeases implements ToXContentFragment, Writeable {
 
+    /**
+     * 对应某个主分片的任期
+     */
     private final long primaryTerm;
 
     /**
@@ -74,6 +79,7 @@ public class RetentionLeases implements ToXContentFragment, Writeable {
      *
      * @param that the retention leases collection to test against
      * @return true if this retention leases collection supercedes the specified retention lease collection, otherwise false
+     * 新的续约对象能否取代另一个
      */
     boolean supersedes(final RetentionLeases that) {
         return supersedes(that.primaryTerm, that.version);
@@ -88,11 +94,16 @@ public class RetentionLeases implements ToXContentFragment, Writeable {
      * @param version     the version
      * @return true if this retention leases collection would supercedes a retention lease collection with the specified primary term and
      * version
+     * 取代判断条件
      */
     boolean supersedes(final long primaryTerm, final long version) {
         return this.primaryTerm > primaryTerm || this.primaryTerm == primaryTerm && this.version > version;
     }
 
+    /**
+     * key 对应 id
+     * value 对应 续约实例
+     */
     private final Map<String, RetentionLease> leases;
 
     /**
@@ -136,6 +147,7 @@ public class RetentionLeases implements ToXContentFragment, Writeable {
      * @param primaryTerm the primary term under which this retention lease collection was created
      * @param version the version of this retention lease collection
      * @param leases  the retention leases
+     *                在初始化过程中 除了传入续约实例列表外  还指定了 primaryTerm 和 version
      */
     public RetentionLeases(final long primaryTerm, final long version, final Collection<RetentionLease> leases) {
         if (primaryTerm <= 0) {

@@ -34,10 +34,15 @@ import java.util.stream.Collectors;
 
 /**
  * Describes a system index. Provides the information required to create and maintain the system index.
+ * 描述系统级索引
  */
 public class SystemIndexDescriptor {
     private final String indexPattern;
     private final String description;
+
+    /**
+     * 状态机
+     */
     private final CharacterRunAutomaton indexPatternAutomaton;
 
     /**

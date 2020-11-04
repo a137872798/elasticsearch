@@ -820,12 +820,19 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                               IndexShardRoutingTable routingTable) throws IOException;
     }
 
+    /**
+     * 代表一组已经完成分配的分片
+     * @param <T>
+     */
     public interface AllocatedIndex<T extends Shard> extends Iterable<T>, IndexComponent {
 
         /**
          * Returns the index settings of this index.
+         * 获取该索引相关的索引配置
          */
         IndexSettings getIndexSettings();
+
+        // 当元数据发生变化时 会影响到这个已经分配好的索引
 
         /**
          * Updates the metadata of this index. Changes become visible through {@link #getIndexSettings()}.
@@ -842,11 +849,13 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
 
         /**
          * Returns shard with given id.
+         * 获取该索引下某个分片
          */
         @Nullable T getShardOrNull(int shardId);
 
         /**
          * Removes shard with given id.
+         * 移除
          */
         void removeShard(int shardId, String message);
     }
