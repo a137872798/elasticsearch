@@ -631,9 +631,6 @@ public class IndexNameExpressionResolver {
      */
     public static class Context {
 
-        /**
-         * 此时的集群状态  包含了所有注册的index
-         */
         private final ClusterState state;
         private final IndicesOptions options;
         private final long startTime;
@@ -758,6 +755,7 @@ public class IndexNameExpressionResolver {
          */
         private Set<String> innerResolve(Context context, List<String> expressions, IndicesOptions options, Metadata metadata) {
             Set<String> result = null;
+            // 是否检测到了通配符
             boolean wildcardSeen = false;
             for (int i = 0; i < expressions.size(); i++) {
                 String expression = expressions.get(i);
@@ -813,8 +811,11 @@ public class IndexNameExpressionResolver {
                 }
 
                 // 代表哪类index 需要被排除
+                // 找到需要被排除的类型
                 final IndexMetadata.State excludeState = excludeState(options);
+                // 获取到此时匹配的所有indexName
                 final Map<String, IndexAbstraction> matches = matches(context, metadata, expression);
+                // 只返回命中的
                 Set<String> expand = expand(context, excludeState, matches, expression, options.expandWildcardsHidden());
                 if (add) {
                     result.addAll(expand);
@@ -896,22 +897,42 @@ public class IndexNameExpressionResolver {
          * @param expression
          * @return
          */
+        /**
+         * 找到匹配 expression的所有IndexName
+         * @param context
+         * @param metadata
+         * @param expression
+         * @return
+         */
         public static Map<String, IndexAbstraction> matches(Context context, Metadata metadata, String expression) {
             if (Regex.isMatchAllPattern(expression)) {
+                // 当filter为null时 实际上不做任何过滤
                 return filterIndicesLookup(metadata.getIndicesLookup(), null, expression, context.getOptions());
+                // 后缀通配符匹配
             } else if (expression.indexOf("*") == expression.length() - 1) {
                 return suffixWildcard(context, metadata, expression);
             } else {
+                // 代表* 可能存在于任何位置
                 return otherWildcard(context, metadata, expression);
             }
         }
 
+        /**
+         * 后缀通配符匹配
+         * @param context
+         * @param metadata
+         * @param expression
+         * @return
+         */
         private static Map<String, IndexAbstraction> suffixWildcard(Context context, Metadata metadata, String expression) {
             assert expression.length() >= 2 : "expression [" + expression + "] should have at least a length of 2";
+            // 找到除开通配符的部分
             String fromPrefix = expression.substring(0, expression.length() - 1);
             char[] toPrefixCharArr = fromPrefix.toCharArray();
+            // 这里将最后一个char + 1  而所有匹配的字符串中 最后一个char必然是小于它的
             toPrefixCharArr[toPrefixCharArr.length - 1]++;
             String toPrefix = new String(toPrefixCharArr);
+            // 通过一个区间进行查找
             SortedMap<String, IndexAbstraction> subMap = metadata.getIndicesLookup().subMap(fromPrefix, toPrefix);
             return filterIndicesLookup(subMap, null, expression, context.getOptions());
         }
@@ -922,6 +943,14 @@ public class IndexNameExpressionResolver {
                 expression, context.getOptions());
         }
 
+        /**
+         *
+         * @param indicesLookup  待过滤的map
+         * @param filter   基于该函数进行过滤
+         * @param expression
+         * @param options
+         * @return
+         */
         private static Map<String, IndexAbstraction> filterIndicesLookup(SortedMap<String, IndexAbstraction> indicesLookup,
                                                                          Predicate<? super Map.Entry<String, IndexAbstraction>> filter,
                                                                          String expression,
@@ -932,6 +961,7 @@ public class IndexNameExpressionResolver {
                 shouldConsumeStream = true;
                 stream = stream.filter(e -> e.getValue().getType() != IndexAbstraction.Type.ALIAS);
             }
+            // 只有设置了 filter 其他过滤才会生效
             if (filter != null) {
                 shouldConsumeStream = true;
                 stream = stream.filter(filter);
@@ -951,6 +981,15 @@ public class IndexNameExpressionResolver {
             }
         }
 
+        /**
+         *
+         * @param context
+         * @param excludeState  这些类型会被排除
+         * @param matches   之前已经匹配上的所有indexName
+         * @param expression
+         * @param includeHidden  是否包含 hidden
+         * @return
+         */
         private static Set<String> expand(Context context, IndexMetadata.State excludeState, Map<String, IndexAbstraction> matches,
                                           String expression, boolean includeHidden) {
             Set<String> expand = new HashSet<>();
@@ -958,7 +997,9 @@ public class IndexNameExpressionResolver {
                 String aliasOrIndexName = entry.getKey();
                 IndexAbstraction indexAbstraction = entry.getValue();
 
+                // 上面是针对 hidden 做匹配
                 if (indexAbstraction.isHidden() == false || includeHidden || implicitHiddenMatch(aliasOrIndexName, expression)) {
+                    // 如果需要保留基于别名匹配的 就进行保留
                     if (context.isPreserveAliases() && indexAbstraction.getType() == IndexAbstraction.Type.ALIAS) {
                         expand.add(aliasOrIndexName);
                     } else {
@@ -974,6 +1015,12 @@ public class IndexNameExpressionResolver {
             return expand;
         }
 
+        /**
+         * 2者都以 "." 开头 且匹配
+         * @param itemName
+         * @param expression
+         * @return
+         */
         private static boolean implicitHiddenMatch(String itemName, String expression) {
             return itemName.startsWith(".") && expression.startsWith(".") && Regex.isSimpleMatchPattern(expression);
         }

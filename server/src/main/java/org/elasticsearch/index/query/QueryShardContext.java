@@ -74,6 +74,7 @@ import java.util.function.Predicate;
 
 /**
  * Context object used to create lucene queries on the shard level.
+ * 上下文对象基本只是存储一些相关的变量 没有涉及太多的处理逻辑
  */
 public class QueryShardContext extends QueryRewriteContext {
     private static final DeprecationLogger deprecationLogger = new DeprecationLogger(

@@ -230,6 +230,9 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
     /**
      * key 是index的 name or alias
      */
+    /**
+     * 支持通过 alias name 查询对应的index
+     */
     private final SortedMap<String, IndexAbstraction> indicesLookup;
 
     /**

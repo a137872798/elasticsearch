@@ -1953,6 +1953,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return false;
     }
 
+    /**
+     * 当配置项发生变化时 触发该函数
+     */
     public void onSettingsChanged() {
         Engine engineOrNull = getEngineOrNull();
         if (engineOrNull != null) {

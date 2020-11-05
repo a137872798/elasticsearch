@@ -544,7 +544,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         IndexShard indexShard = null;
         ShardLock lock = null;
         try {
-            // 首先获取一个shard级别的锁
+            // 首先获取一个shard级别的锁   现在没有看到哪里调用了 shardLock.close  那么锁是什么时候释放的???
             lock = nodeEnv.shardLock(shardId, "shard creation", TimeUnit.SECONDS.toMillis(5));
             eventListener.beforeIndexShardCreated(shardId, indexSettings);
             ShardPath path;
@@ -752,8 +752,10 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
      * 生成一个新的查询用的上下文
      */
     public QueryShardContext newQueryShardContext(int shardId, IndexSearcher searcher, LongSupplier nowInMillis, String clusterAlias) {
+        // 该对象是接收一个字符串 并从集群中获取所有indexName 并且判断与 index().getName() 是否匹配
         final SearchIndexNameMatcher indexNameMatcher =
             new SearchIndexNameMatcher(index().getName(), clusterAlias, clusterService, expressionResolver);
+        // 将查询会用到的所有参数 设置到context 中
         return new QueryShardContext(
             shardId, indexSettings, bigArrays, indexCache.bitsetFilterCache(), indexFieldData::getForField, mapperService(),
             similarityService(), scriptService, xContentRegistry, namedWriteableRegistry, client, searcher, nowInMillis, clusterAlias,
@@ -789,6 +791,13 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         return searchOperationListeners;
     }
 
+    /**
+     * 当元数据发生变化时 检测是否需要更新
+     * @param currentIndexMetadata
+     * @param newIndexMetadata
+     * @return
+     * @throws IOException
+     */
     @Override
     public boolean updateMapping(final IndexMetadata currentIndexMetadata, final IndexMetadata newIndexMetadata) throws IOException {
         if (mapperService == null) {
@@ -917,6 +926,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
      */
     @Override
     public synchronized void updateMetadata(final IndexMetadata currentIndexMetadata, final IndexMetadata newIndexMetadata) {
+        // 检测是否是配置项发生了变化
         final boolean updateIndexSettings = indexSettings.updateIndexMetadata(newIndexMetadata);
 
         if (Assertions.ENABLED && currentIndexMetadata != null) {
@@ -935,6 +945,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         if (updateIndexSettings) {
             for (final IndexShard shard : this.shards.values()) {
                 try {
+                    // 因为配置项发生了变化 触发相关钩子
                     shard.onSettingsChanged();
                 } catch (Exception e) {
                     logger.warn(
@@ -942,6 +953,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                             "[{}] failed to notify shard about setting change", shard.shardId().id()), e);
                 }
             }
+            // 因为刷新任务间隔发生了变化
             if (refreshTask.getInterval().equals(indexSettings.getRefreshInterval()) == false) {
                 // once we change the refresh interval we schedule yet another refresh
                 // to ensure we are in a clean and predictable state.
@@ -964,8 +976,10 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                         return true;
                     }
                 });
+                // 关闭之前的任务 并以新的时间间隔开启新任务   并且在线程池中立即执行一次任务
                 rescheduleRefreshTasks();
             }
+            // 检测文件刷盘任务是否要执行
             updateFsyncTaskIfNecessary();
         }
 
