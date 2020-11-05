@@ -209,6 +209,9 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
     private final String[] allClosedIndices;
     private final String[] visibleClosedIndices;
 
+    /**
+     * 支持通过 alias name 查询对应的index
+     */
     private final SortedMap<String, IndexAbstraction> indicesLookup;
 
     /**

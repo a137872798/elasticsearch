@@ -29,11 +29,15 @@ import java.util.function.Predicate;
 
 /**
  * A predicate that checks whether an index pattern matches the current search shard target.
+ * 用于检测字符串是否与某些索引名匹配
  */
 public class SearchIndexNameMatcher implements Predicate<String> {
     private final String indexName;
     private final String clusterAlias;
     private final ClusterService clusterService;
+    /**
+     * 主要就是这个解析器在起作用
+     */
     private final IndexNameExpressionResolver expressionResolver;
 
     /**
@@ -59,6 +63,7 @@ public class SearchIndexNameMatcher implements Predicate<String> {
      *
      *  If this shard represents a remote shard target, then in order to match the pattern contain
      *  the separator ':', and must match on both the cluster alias and index name.
+     *  检测给定的字符串能否匹配上 indexName
      */
     public boolean test(String pattern) {
         int separatorIndex = pattern.indexOf(RemoteClusterAware.REMOTE_CLUSTER_INDEX_SEPARATOR);
@@ -73,8 +78,10 @@ public class SearchIndexNameMatcher implements Predicate<String> {
     }
 
     private boolean matchesIndex(String pattern) {
+        // 从集群中所有的indexName中 找到匹配到一组indexName
         String[] concreteIndices = expressionResolver.concreteIndexNames(
             clusterService.state(), IndicesOptions.lenientExpandOpen(), pattern);
+        // 这里还要与当前indexName 进行匹配
         for (String index : concreteIndices) {
             if (Regex.simpleMatch(index, indexName)) {
                 return true;

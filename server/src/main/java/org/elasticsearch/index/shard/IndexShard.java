@@ -1320,6 +1320,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     }
 
+    /**
+     * 当shard被移除时触发
+     * @param reason
+     * @param flushEngine
+     * @throws IOException
+     */
     public void close(String reason, boolean flushEngine) throws IOException {
         synchronized (engineMutex) {
             try {
@@ -1924,6 +1930,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return false;
     }
 
+    /**
+     * 当配置项发生变化时 触发该函数
+     */
     public void onSettingsChanged() {
         Engine engineOrNull = getEngineOrNull();
         if (engineOrNull != null) {
