@@ -32,7 +32,7 @@ import java.text.ParseException;
 import java.util.Objects;
 
 /**
- * 描述所有存储文件对应的元数据信息
+ * store下所有文件信息
  */
 public class StoreFileMetadata implements Writeable {
 
@@ -45,6 +45,9 @@ public class StoreFileMetadata implements Writeable {
 
     private final Version writtenBy;
 
+    /**
+     * 对应 .si 文件的数据流 最多只读取1M
+     */
     private final BytesRef hash;
 
     public StoreFileMetadata(String name, long length, String checksum, Version writtenBy) {

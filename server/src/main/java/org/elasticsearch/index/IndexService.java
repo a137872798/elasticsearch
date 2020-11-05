@@ -979,7 +979,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 // 关闭之前的任务 并以新的时间间隔开启新任务   并且在线程池中立即执行一次任务
                 rescheduleRefreshTasks();
             }
-            // 检测文件刷盘任务是否要执行
+            // 检测文件刷盘任务是否要执行   如果模式修改成 REQUEST 就不需要更新了
             updateFsyncTaskIfNecessary();
         }
 

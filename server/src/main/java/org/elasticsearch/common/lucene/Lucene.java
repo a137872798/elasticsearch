@@ -102,6 +102,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 内部操纵lucene
+ */
 public class Lucene {
     public static final String LATEST_CODEC = "Lucene84";
 
@@ -131,6 +134,7 @@ public class Lucene {
 
     /**
      * Reads the segments infos, failing if it fails to load
+     * 加载目录下最新的 segment_N 文件并解析数据流
      */
     public static SegmentInfos readSegmentInfos(Directory directory) throws IOException {
         return SegmentInfos.readLatestCommit(directory);
@@ -150,10 +154,12 @@ public class Lucene {
 
     /**
      * Returns the number of documents in the index referenced by this {@link SegmentInfos}
+     * 计算某次commit涉及到的所有 segment内总doc数量
      */
     public static int getNumDocs(SegmentInfos info) {
         int numDocs = 0;
         for (SegmentCommitInfo si : info) {
+            // delCount 代表在距离上次刷盘时 通过各种updateQueue总计删除了多少doc
             numDocs += si.info.maxDoc() - si.getDelCount() - si.getSoftDelCount();
         }
         return numDocs;
@@ -161,10 +167,12 @@ public class Lucene {
 
     /**
      * Reads the segments infos from the given commit, failing if it fails to load
+     * @param commit 内部存储了一组文件名 从中寻找最大的segment_N 文件 并进行还原
      */
     public static SegmentInfos readSegmentInfos(IndexCommit commit) throws IOException {
         // Using commit.getSegmentsFileName() does NOT work here, have to
         // manually create the segment filename
+        // commit 内部是有包含gen的
         String filename = IndexFileNames.fileNameFromGeneration(IndexFileNames.SEGMENTS, "", commit.getGeneration());
         return SegmentInfos.readCommit(commit.getDirectory(), filename);
     }

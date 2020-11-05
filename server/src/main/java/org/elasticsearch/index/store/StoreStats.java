@@ -28,6 +28,9 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
 
+/**
+ * 描述store对应的dir内部所有文件的大小总和
+ */
 public class StoreStats implements Writeable, ToXContentFragment {
 
     private long sizeInBytes;
