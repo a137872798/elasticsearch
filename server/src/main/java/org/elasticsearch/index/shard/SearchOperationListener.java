@@ -28,6 +28,7 @@ import java.util.List;
 
 /**
  * An listener for search, fetch and context events.
+ * 在执行search时 触发各种钩子
  */
 public interface SearchOperationListener {
 

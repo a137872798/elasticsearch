@@ -94,6 +94,15 @@ import java.util.stream.Stream;
  * which is an fsynced copy of its last {@code translog.ckp} such that in disaster recovery last fsynced offsets, number of
  * operation etc. are still preserved.
  * </p>
+ * 事务日志  es的每次操作应该都会记录日志 便于还原数据
+ * 这种模型在mysql redis中也有使用
+ * 在强一致性场景下 原本每执行一个操作都需要确保数据的持久化 但是这是一种重操作 耗费极大资源 且耗时长
+ * 而记录操作日志就是一种最轻量级的操作   每当机器重启时 可以根据操作日志重跑相关操作 实现数据的恢复
+ * 存储操作日志也有优化点  如果要重跑所有操作日志也会费时 所以比较好的方式 就是定期生成快照 在该时间点前的数据就可以被删除 而后面的操作日志还需要保留
+ * 就对应redis2种日志存储方式
+ * kafka 有操作日志么???
+ *
+ * Translog 是以shard为单位的
  */
 public class Translog extends AbstractIndexShardComponent implements IndexShardComponent, Closeable {
 
@@ -113,23 +122,53 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
     public static final String CHECKPOINT_SUFFIX = ".ckp";
     public static final String CHECKPOINT_FILE_NAME = "translog" + CHECKPOINT_SUFFIX;
 
+    /**
+     * 检测文件名是否以 translog- 开头  .tlog 结尾
+     */
     static final Pattern PARSE_STRICT_ID_PATTERN = Pattern.compile("^" + TRANSLOG_FILE_PREFIX + "(\\d+)(\\.tlog)$");
+
+    /**
+     * 之后写入的事务头长度
+     */
     public static final int DEFAULT_HEADER_SIZE_IN_BYTES = TranslogHeader.headerSizeInBytes(UUIDs.randomBase64UUID());
 
     // the list of translog readers is guaranteed to be in order of translog generation
     private final List<TranslogReader> readers = new ArrayList<>();
     private BigArrays bigArrays;
+
+    // 在忽略断言的情况下  ReleasableLock 等同于 jdk.Lock
     protected final ReleasableLock readLock;
     protected final ReleasableLock writeLock;
     private final Path location;
+
+    /**
+     * 该对象负责往事务日志中写入数据
+     */
     private TranslogWriter current;
 
     protected final TragicExceptionHolder tragedy = new TragicExceptionHolder();
     private final AtomicBoolean closed = new AtomicBoolean();
+    /**
+     * 包含 shardId 信息 以及分配内存的 BigArrays对象
+     */
     private final TranslogConfig config;
+
+    /**
+     * 全局检查点是什么
+     */
     private final LongSupplier globalCheckpointSupplier;
+
+    /**
+     * 这个应该是类似版本号的东西
+     */
     private final LongSupplier primaryTermSupplier;
+
+
     private final String translogUUID;
+
+    /**
+     * 里面就包含了一个 Map<gen,counter> 还不清楚怎么用
+     */
     private final TranslogDeletionPolicy deletionPolicy;
     private final LongConsumer persistedSequenceNumberConsumer;
 
@@ -140,8 +179,8 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
      * generation referenced from already committed data. This means all operations that have not yet been committed should be in the
      * translog file referenced by this generation. The translog creation will fail if this generation can't be opened.
      *
-     * @param config                   the configuration of this translog
-     * @param translogUUID             the translog uuid to open, null for a new translog
+     * @param config                   the configuration of this translog     包含了相关的参数信息
+     * @param translogUUID             the translog uuid to open, null for a new translog   为该事务文件分配的uuid
      * @param deletionPolicy           an instance of {@link TranslogDeletionPolicy} that controls when a translog file can be safely
      *                                 deleted
      * @param globalCheckpointSupplier a supplier for the global checkpoint
@@ -168,11 +207,18 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         readLock = new ReleasableLock(rwl.readLock());
         writeLock = new ReleasableLock(rwl.writeLock());
         this.location = config.getTranslogPath();
+
+        // 初始化的同时创建目录对象
         Files.createDirectories(this.location);
 
         try {
+
+            // 先检测目录下是否存在 checkPoint文件 存在则读取检查点信息  不存在会抛出异常 奇怪了 一开始不一定存在checkPoint文件的啊
+            // 这个就是全局检查点吗
             final Checkpoint checkpoint = readCheckpoint(location);
+            // 生成新gen对应的事务文件
             final Path nextTranslogFile = location.resolve(getFilename(checkpoint.generation + 1));
+            // 获取之前gen对应的检查点文件 文件名上会携带 gen信息
             final Path currentCheckpointFile = location.resolve(getCommitCheckpointFileName(checkpoint.generation));
             // this is special handling for error condition when we create a new writer but we fail to bake
             // the newly written file (generation+1) into the checkpoint. This is still a valid state
@@ -190,6 +236,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
                 logger.warn("deleted previously created, but not yet committed, next generation [{}]. This can happen due to a" +
                     " tragic exception when creating a new generation", nextTranslogFile.getFileName());
             }
+            // 根据全局检查点此时的信息 为有效的 translog-gen 生成reader对象
             this.readers.addAll(recoverFromFiles(checkpoint));
             if (readers.isEmpty()) {
                 throw new IllegalStateException("at least one reader must be recovered");
@@ -197,6 +244,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
             boolean success = false;
             current = null;
             try {
+                // 每次生成事务对象后
                 current = createWriter(checkpoint.generation + 1, getMinFileGeneration(), checkpoint.globalCheckpoint,
                     persistedSequenceNumberConsumer);
                 success = true;
@@ -216,28 +264,39 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         }
     }
 
-    /** recover all translog files found on disk */
+    /**
+     * recover all translog files found on disk
+     * 从一个全局检查点找到此时包含的处于不同gen的所有translog  并且生成对应的reader对象
+     */
     private ArrayList<TranslogReader> recoverFromFiles(Checkpoint checkpoint) throws IOException {
         boolean success = false;
         ArrayList<TranslogReader> foundTranslogs = new ArrayList<>();
         try (ReleasableLock ignored = writeLock.acquire()) {
             logger.debug("open uncommitted translog checkpoint {}", checkpoint);
 
+            // 获取这些事务文件中最小的gen
             final long minGenerationToRecoverFrom = checkpoint.minTranslogGeneration;
             assert minGenerationToRecoverFrom >= 0 : "minTranslogGeneration should be non-negative";
 
             // we open files in reverse order in order to validate the translog uuid before we start traversing the translog based on
             // the generation id we found in the lucene commit. This gives for better error messages if the wrong
             // translog was found.
+            // 根据gen从大到小 读取文件并生成reader对象
             for (long i = checkpoint.generation; i >= minGenerationToRecoverFrom; i--) {
+
+                // 定位到某个gen的 事务文件路径
                 Path committedTranslogFile = location.resolve(getFilename(i));
                 if (Files.exists(committedTranslogFile) == false) {
                     throw new TranslogCorruptedException(committedTranslogFile.toString(),
                         "translog file doesn't exist with generation: " + i + " recovering from: " + minGenerationToRecoverFrom
                             + " checkpoint: " + checkpoint.generation + " - translog ids must be consecutive");
                 }
+                // 代表此时最新的检查点文件  它的信息应该跟全局检查点是一样的
                 final Checkpoint readerCheckpoint = i == checkpoint.generation ? checkpoint
+                    // 否则解析对应gen的检查点对象
                     : Checkpoint.read(location.resolve(getCommitCheckpointFileName(i)));
+
+                // 根据相关信息创建 translogReader
                 final TranslogReader reader = openReader(committedTranslogFile, readerCheckpoint);
                 assert reader.getPrimaryTerm() <= primaryTermSupplier.getAsLong() :
                     "Primary terms go backwards; current term [" + primaryTermSupplier.getAsLong() + "] translog path [ "
@@ -245,13 +304,16 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
                 foundTranslogs.add(reader);
                 logger.debug("recovered local translog from checkpoint {}", checkpoint);
             }
+            // 将reader按照gen从小到大的顺序排序
             Collections.reverse(foundTranslogs);
 
             // when we clean up files, we first update the checkpoint with a new minReferencedTranslog and then delete them;
             // if we crash just at the wrong moment, it may be that we leave one unreferenced file behind so we delete it if there
+            // 删除全局检查点标记的之前的 各种文件
             IOUtils.deleteFilesIgnoringExceptions(location.resolve(getFilename(minGenerationToRecoverFrom - 1)),
                 location.resolve(getCommitCheckpointFileName(minGenerationToRecoverFrom - 1)));
 
+            // 最大gen对应的检查点对象必须与全局检查点一致
             Path commitCheckpoint = location.resolve(getCommitCheckpointFileName(checkpoint.generation));
             if (Files.exists(commitCheckpoint)) {
                 Checkpoint checkpointFromDisk = Checkpoint.read(commitCheckpoint);
@@ -272,8 +334,14 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         return foundTranslogs;
     }
 
+    /**
+     * 当 最新的gen对应检查点文件不存在时  以全局检查点文件作为原始文件 并拷贝一份副本
+     * @param targetPath
+     * @throws IOException
+     */
     private void copyCheckpointTo(Path targetPath) throws IOException {
         // a temp file to copy checkpoint to - note it must be in on the same FS otherwise atomic move won't work
+        // 创建临时文件
         final Path tempFile = Files.createTempFile(location, TRANSLOG_FILE_PREFIX, CHECKPOINT_SUFFIX);
         boolean tempFileRenamed = false;
 
@@ -297,6 +365,13 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         }
     }
 
+    /**
+     * 根据某个检查点文件 以及 事务文件 创建reader对象
+     * @param path
+     * @param checkpoint
+     * @return
+     * @throws IOException
+     */
     TranslogReader openReader(Path path, Checkpoint checkpoint) throws IOException {
         FileChannel channel = FileChannel.open(path, StandardOpenOption.READ);
         try {
@@ -306,6 +381,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
             channel = null;
             return reader;
         } finally {
+            // 这里应该只是检查文件是否可以正常打开吧
             IOUtils.close(channel);
         }
     }
@@ -490,11 +566,14 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
     /**
      * creates a new writer
      *
-     * @param fileGeneration          the generation of the write to be written
+     * @param fileGeneration          the generation of the write to be written   该writer写入事务文件时的gen
      * @param initialMinTranslogGen   the minimum translog generation to be written in the first checkpoint. This is
      *                                needed to solve and initialization problem while constructing an empty translog.
      *                                With no readers and no current, a call to  {@link #getMinFileGeneration()} would not work.
+     *                                获取此时目录下可以观测到的最小的gen  对应最小的reader对象
+     *
      * @param initialGlobalCheckpoint the global checkpoint to be written in the first checkpoint.
+     *                                全局检查点是什么玩意啊 不是那个不携带gen的checkpoint文件么
      */
     TranslogWriter createWriter(long fileGeneration, long initialMinTranslogGen, long initialGlobalCheckpoint,
                                 LongConsumer persistedSequenceNumberConsumer) throws IOException {
@@ -861,10 +940,19 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
     }
 
 
+    /**
+     * 用于定位 operation 的
+     */
     public static class Location implements Comparable<Location> {
 
         public final long generation;
+        /**
+         * 记录某个operation在事务文件中的偏移量
+         */
         public final long translogLocation;
+        /**
+         * 该operation的长度  根据不同的操作类型 存储时需要的长度也不一样
+         */
         public final int size;
 
         public Location(long generation, long translogLocation, int size) {
@@ -918,11 +1006,13 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
     /**
      * A snapshot of the transaction log, allows to iterate over all the transaction log operations.
+     * 定义了事务文件的某次快照
      */
     public interface Snapshot extends Closeable {
 
         /**
          * The total estimated number of operations in the snapshot.
+         * 当前记录了多少个操作
          */
         int totalOperations();
 
@@ -936,6 +1026,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
         /**
          * Returns the next operation in the snapshot or <code>null</code> if we reached the end.
+         * 从快照中挨个迭代操作信息
          */
         Translog.Operation next() throws IOException;
     }
@@ -991,9 +1082,17 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
     /**
      * A generic interface representing an operation performed on the transaction log.
      * Each is associated with a type.
+     * 在事务文件中使用 记录发生的某次操作
      */
     public interface Operation {
+
+        /**
+         * 描述了操作类型
+         */
         enum Type {
+            /**
+             * CREATE 已经被 INDEX 替代了
+             */
             @Deprecated
             CREATE((byte) 1),
             INDEX((byte) 2),
@@ -1028,19 +1127,37 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
         Type opType();
 
+        /**
+         * 记录该操作信息预估的大小
+         * @return
+         */
         long estimateSize();
 
+        /**
+         * 从事务文件中解析数据后 会存储到一个BB 对象中 作为 Operation的source
+         * @return
+         */
         Source getSource();
 
+        /**
+         * 代表这是第几个操作
+         * @return
+         */
         long seqNo();
 
+        /**
+         * 应该是每次裁剪事务文件都会增加该值吧
+         * @return
+         */
         long primaryTerm();
 
         /**
          * Reads the type and the operation from the given stream. The operation must be written with
          * {@link Operation#writeOperation(StreamOutput, Operation)}
+         * 从数据流中反序列化operation 对象
          */
         static Operation readOperation(final StreamInput input) throws IOException {
+            // 第一个byte值 代表了类型
             final Translog.Operation.Type type = Translog.Operation.Type.fromId(input.readByte());
             switch (type) {
                 case CREATE:
@@ -1058,6 +1175,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
         /**
          * Writes the type and translog operation to the given stream
+         * 不同的operation 定义了序列化的逻辑
          */
         static void writeOperation(final StreamOutput output, final Operation operation) throws IOException {
             output.writeByte(operation.opType().id());
@@ -1080,9 +1198,18 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
     }
 
+    /**
+     * 描述某种数据来源
+     */
     public static class Source {
 
+        /**
+         * 存储数据的容器
+         */
         public final BytesReference source;
+        /**
+         * 这里又出现了路由的概念 路由到底是做什么的
+         */
         public final String routing;
 
         public Source(BytesReference source, String routing) {
@@ -1092,8 +1219,13 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
     }
 
+    /**
+     * 代表创建索引的操作类型
+     * 可以理解为一个简单的bean对象 只是存储了各种关键信息
+     */
     public static class Index implements Operation {
 
+        // format 可以理解为存储了哪些数据  越往下存储的数据越少
         public static final int FORMAT_NO_PARENT = 9; // since 7.0
         public static final int FORMAT_NO_VERSION_TYPE = FORMAT_NO_PARENT + 1;
         public static final int FORMAT_NO_DOC_TYPE = FORMAT_NO_VERSION_TYPE + 1;
@@ -1105,19 +1237,30 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         private final long primaryTerm;
         private final long version;
         private final BytesReference source;
+        /**
+         * index 为什么包含路由信息
+         */
         private final String routing;
 
+        /**
+         * 从数据流中还原一个 Index 操作
+         * @param in
+         * @throws IOException
+         */
         private Index(final StreamInput in) throws IOException {
             final int format = in.readVInt(); // SERIALIZATION_FORMAT
             assert format >= FORMAT_NO_PARENT : "format was: " + format;
             id = in.readString();
             if (format < FORMAT_NO_DOC_TYPE) {
+                // 这个就是docType
                 in.readString();
                 // can't assert that this is _doc because pre-8.0 indexes can have any name for a type
             }
+            // 读取一个 byte[] 并包装成BB 对象
             source = in.readBytesReference();
             routing = in.readOptionalString();
             if (format < FORMAT_NO_PARENT) {
+                // parent信息
                 in.readOptionalString(); // _parent
             }
             this.version = in.readLong();
@@ -1271,6 +1414,9 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
     }
 
+    /**
+     * 对应一个删除操作
+     */
     public static class Delete implements Operation {
 
         private static final int FORMAT_6_0 = 4; // 6.0 - *
@@ -1410,6 +1556,10 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         }
     }
 
+
+    /**
+     * 为什么无操作也会被记录下来
+     */
     public static class NoOp implements Operation {
 
         private final long seqNo;
@@ -1529,13 +1679,21 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         return operations;
     }
 
+    /**
+     * 从数据流中还原 operation对象
+     * @param in
+     * @return
+     * @throws IOException
+     */
     static Translog.Operation readOperation(BufferedChecksumStreamInput in) throws IOException {
         final Translog.Operation operation;
         try {
+            // 获取数据大小
             final int opSize = in.readInt();
             if (opSize < 4) { // 4byte for the checksum
                 throw new TranslogCorruptedException(in.getSource(), "operation size must be at least 4 but was: " + opSize);
             }
+            // 重置摘要  校验和相关的 先忽略
             in.resetDigest(); // size is not part of the checksum!
             if (in.markSupported()) { // if we can we validate the checksum first
                 // we are sometimes called when mark is not supported this is the case when
@@ -1547,6 +1705,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
                 verifyChecksum(in);
                 in.reset();
             }
+            // 从剩余部分中反序列化operation
             operation = Translog.Operation.readOperation(in);
             verifyChecksum(in);
         } catch (EOFException e) {
@@ -1775,7 +1934,10 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         return tragedy.get();
     }
 
-    /** Reads and returns the current checkpoint */
+    /**
+     * Reads and returns the current checkpoint
+     * 从 checkPoints 文件中解析 checkPoint对象
+     */
     static Checkpoint readCheckpoint(final Path location) throws IOException {
         return Checkpoint.read(location.resolve(CHECKPOINT_FILE_NAME));
     }

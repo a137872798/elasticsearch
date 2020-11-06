@@ -203,6 +203,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * 存储模块
      */
     private final Store store;
+
+    /**
+     * 就是一个统计对象 实现了indexListener 会在操作index的各个时期统计相关信息
+     */
     private final InternalIndexingStats internalIndexingStats;
     private final ShardSearchStats searchStats = new ShardSearchStats();
     private final ShardGetService getService;

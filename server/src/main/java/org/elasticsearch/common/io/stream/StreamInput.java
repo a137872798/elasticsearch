@@ -90,7 +90,7 @@ import static org.elasticsearch.ElasticsearchException.readStackTrace;
  * everywhere. That being said, this class deals primarily with {@code List}s rather than Arrays. For the most part calls should adapt to
  * lists, either by storing {@code List}s internally or just converting to and from a {@code List} when calling. This comment is repeated
  * on {@link StreamInput}.
- * 代表一个输入流
+ * 定义了如何读取各个类型的数据 最终都转换成 readBytes
  */
 public abstract class StreamInput extends InputStream {
 
