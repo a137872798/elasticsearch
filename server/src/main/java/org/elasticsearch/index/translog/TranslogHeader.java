@@ -37,6 +37,7 @@ import java.nio.file.Path;
 
 /**
  * Each translog file is started with a translog header then followed by translog operations.
+ * 事务日志有固定的文件头
  */
 final class TranslogHeader {
     public static final String TRANSLOG_CODEC = "translog";
@@ -47,7 +48,14 @@ final class TranslogHeader {
     public static final int CURRENT_VERSION = VERSION_PRIMARY_TERM;
 
     private final String translogUUID;
+
+    /**
+     * 事务日志为什么需要 term
+     */
     private final long primaryTerm;
+    /**
+     * 这个事务文件头的总长度
+     */
     private final int headerSizeInBytes;
 
     /**
@@ -93,8 +101,16 @@ final class TranslogHeader {
         return headerSizeInBytes(CURRENT_VERSION, new BytesRef(translogUUID).length);
     }
 
+    /**
+     * 计算事务日志头的长度
+     * @param version
+     * @param uuidLength
+     * @return
+     */
     private static int headerSizeInBytes(int version, int uuidLength) {
+        // 9 应该是标记字符串长度 TRANSLOG_CODEC 是数据体
         int size = CodecUtil.headerLength(TRANSLOG_CODEC);
+        // 记录uuid长度的int + uuid的数据
         size += Integer.BYTES + uuidLength; // uuid
         if (version >= VERSION_PRIMARY_TERM) {
             size += Long.BYTES;    // primary term
@@ -105,6 +121,8 @@ final class TranslogHeader {
 
     /**
      * Read a translog header from the given path and file channel
+     * @param translogUUID 每个事务文件都有一个唯一id
+     * 根据当前已存在的事务文件 读取头部信息
      */
     static TranslogHeader read(final String translogUUID, final Path path, final FileChannel channel) throws IOException {
         try {
@@ -115,6 +133,7 @@ final class TranslogHeader {
                     path.toString());
             final int version;
             try {
+                // 校验文件的头部信息 这个是lucene做的头部校验 还没有涉及到事务头
                 version = CodecUtil.checkHeader(new InputStreamDataInput(in), TRANSLOG_CODEC, VERSION_CHECKSUMS, VERSION_PRIMARY_TERM);
             } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException e) {
                 tryReportOldVersionError(path, channel);
@@ -135,6 +154,7 @@ final class TranslogHeader {
                 throw new TranslogCorruptedException(path.toString(), "UUID length must be positive");
             }
             final BytesRef uuid = new BytesRef(uuidLen);
+            // 在初始化 BytesRef对象时 不会自动设置长度信息
             uuid.length = uuidLen;
             in.read(uuid.bytes, uuid.offset, uuid.length);
             // Read the primary term
@@ -144,6 +164,7 @@ final class TranslogHeader {
             Translog.verifyChecksum(in);
             assert primaryTerm >= 0 : "Primary term must be non-negative [" + primaryTerm + "]; translog path [" + path + "]";
 
+            // 上面读取的所有数据总和 就是事务头的长度
             final int headerSizeInBytes = headerSizeInBytes(version, uuid.length);
             assert channel.position() == headerSizeInBytes :
                 "Header is not fully read; header size [" + headerSizeInBytes + "], position [" + channel.position() + "]";

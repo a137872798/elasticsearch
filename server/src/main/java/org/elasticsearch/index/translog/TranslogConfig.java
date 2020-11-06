@@ -31,13 +31,25 @@ import java.nio.file.Path;
  * Holds all the configuration that is used to create a {@link Translog}.
  * Once {@link Translog} has been created with this object, changes to this
  * object will affect the {@link Translog} instance.
+ * 描述某个事务日志的配置对象
  */
 public final class TranslogConfig {
 
     public static final ByteSizeValue DEFAULT_BUFFER_SIZE = new ByteSizeValue(8, ByteSizeUnit.KB);
+
+    /**
+     * 该对象可以申请不同大小的数组对象 并且利用了池化技术 减少了GC开销
+     */
     private final BigArrays bigArrays;
     private final IndexSettings indexSettings;
+    /**
+     * 该事务日志是针对哪个 shard而言的
+     */
     private final ShardId shardId;
+
+    /**
+     * 事务日志的路径  实际上是一个dir
+     */
     private final Path translogPath;
     private final ByteSizeValue bufferSize;
 

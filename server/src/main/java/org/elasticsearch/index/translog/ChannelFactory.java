@@ -26,6 +26,7 @@ import java.nio.file.StandardOpenOption;
 
 /**
  * only for testing until we have a disk-full FileSystem
+ * 将基于 path生成 fileChannel 抽取成了一个工厂
  */
 @FunctionalInterface
 public interface ChannelFactory {

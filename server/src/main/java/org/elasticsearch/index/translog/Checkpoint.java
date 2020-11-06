@@ -40,15 +40,31 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
 
+/**
+ * 检查点   推测该位置前的事务日志都可以被删除
+ */
 final class Checkpoint {
 
     final long offset;
     final int numOps;
+
+    /**
+     * 如果是针对某个 gen的检查点 应该就是该gen
+     * 如果是全局检查点 应该就是最大的gen
+     */
     final long generation;
     final long minSeqNo;
     final long maxSeqNo;
     final long globalCheckpoint;
+
+    /**
+     * 如果是全局检查点的话  它对应不同gen的事务文件  那么该值就是现存的所有事务文件中最小的gen
+     */
     final long minTranslogGeneration;
+
+    /**
+     *
+     */
     final long trimmedAboveSeqNo;
 
     private static final int CURRENT_VERSION = 3;
@@ -166,6 +182,15 @@ final class Checkpoint {
         }
     }
 
+
+    /**
+     * 将检查点写入到给定的fileChannel中
+     * @param factory  该对象负责提供 fileChannel
+     * @param checkpointFile
+     * @param checkpoint
+     * @param options
+     * @throws IOException
+     */
     public static void write(ChannelFactory factory, Path checkpointFile, Checkpoint checkpoint, OpenOption... options) throws IOException {
         final ByteArrayOutputStream byteOutputStream = new ByteArrayOutputStream(V3_FILE_SIZE) {
             @Override
@@ -175,6 +200,8 @@ final class Checkpoint {
             }
         };
         final String resourceDesc = "checkpoint(path=\"" + checkpointFile + "\", gen=" + checkpoint + ")";
+
+        // 数据先写入到buffer中
         try (OutputStreamIndexOutput indexOutput =
                  new OutputStreamIndexOutput(resourceDesc, checkpointFile.toString(), byteOutputStream, V3_FILE_SIZE)) {
             CodecUtil.writeHeader(indexOutput, CHECKPOINT_CODEC, CURRENT_VERSION);
@@ -192,6 +219,7 @@ final class Checkpoint {
             Channels.writeToChannel(byteOutputStream.toByteArray(), channel);
             // no need to force metadata, file size stays the same and we did the full fsync
             // when we first created the file, so the directory entry doesn't change as well
+            // 因为checkPoint 对象本身的大小是不变的所以文件的元数据一般也是不变的
             channel.force(false);
         }
     }

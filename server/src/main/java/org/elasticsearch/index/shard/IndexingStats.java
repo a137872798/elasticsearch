@@ -32,6 +32,9 @@ import org.elasticsearch.index.mapper.MapperService;
 import java.io.IOException;
 import java.util.Map;
 
+/**
+ * 有关index的各种统计数据
+ */
 public class IndexingStats implements Writeable, ToXContentFragment {
 
     public static class Stats implements Writeable, ToXContentFragment {

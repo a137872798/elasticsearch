@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Internal class that maintains relevant indexing statistics / metrics.
  * @see IndexShard
+ * 内部索引统计对象
  */
 final class InternalIndexingStats implements IndexingOperationListener {
 
@@ -115,6 +116,9 @@ final class InternalIndexingStats implements IndexingOperationListener {
         totalStats.noopUpdates.inc();
     }
 
+    /**
+     * 内部维护了多种维度的统计数据
+     */
     static class StatsHolder {
         private final MeanMetric indexMetric = new MeanMetric();
         private final MeanMetric deleteMetric = new MeanMetric();
@@ -123,6 +127,12 @@ final class InternalIndexingStats implements IndexingOperationListener {
         private final CounterMetric deleteCurrent = new CounterMetric();
         private final CounterMetric noopUpdates = new CounterMetric();
 
+        /**
+         * 将内部数据映射成 IndexingStats.Stats 对象
+         * @param isThrottled
+         * @param currentThrottleMillis
+         * @return
+         */
         IndexingStats.Stats stats(boolean isThrottled, long currentThrottleMillis) {
             return new IndexingStats.Stats(
                 indexMetric.count(), TimeUnit.NANOSECONDS.toMillis(indexMetric.sum()), indexCurrent.count(), indexFailed.count(),

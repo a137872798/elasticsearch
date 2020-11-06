@@ -54,6 +54,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
+/**
+ * 推测是接收 req 请求时 转发到这个action上 操纵translog对象
+ */
 public class TruncateTranslogAction {
 
     protected static final Logger logger = LogManager.getLogger(TruncateTranslogAction.class);

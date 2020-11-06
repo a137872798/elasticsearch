@@ -47,6 +47,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
 
+/**
+ * 负责往事务日志中写入数据
+ */
 public class TranslogWriter extends BaseTranslogReader implements Closeable {
     private final ShardId shardId;
     private final ChannelFactory channelFactory;
@@ -112,6 +115,24 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
         this.tragedy = tragedy;
     }
 
+    /**
+     * 通过静态方法创建writer对象
+     * @param shardId  每个writer对应一个translog 对应一个shard
+     * @param translogUUID  每次初始化translog时会分配一个uuid
+     * @param fileGeneration  该对象要写入的文件对应的gen
+     * @param file   文件路径
+     * @param channelFactory
+     * @param bufferSize
+     * @param initialMinTranslogGen
+     * @param initialGlobalCheckpoint
+     * @param globalCheckpointSupplier
+     * @param minTranslogGenerationSupplier
+     * @param primaryTerm
+     * @param tragedy
+     * @param persistedSequenceNumberConsumer
+     * @return
+     * @throws IOException
+     */
     public static TranslogWriter create(ShardId shardId, String translogUUID, long fileGeneration, Path file, ChannelFactory channelFactory,
                                         ByteSizeValue bufferSize, final long initialMinTranslogGen, long initialGlobalCheckpoint,
                                         final LongSupplier globalCheckpointSupplier, final LongSupplier minTranslogGenerationSupplier,

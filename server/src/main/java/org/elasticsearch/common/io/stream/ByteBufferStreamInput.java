@@ -23,6 +23,9 @@ import java.io.IOException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 
+/**
+ * 从buffer中读取数据
+ */
 public class ByteBufferStreamInput extends StreamInput {
 
     private final ByteBuffer buffer;
