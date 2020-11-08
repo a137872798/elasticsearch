@@ -208,38 +208,117 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * 就是一个统计对象 实现了indexListener 会在操作index的各个时期统计相关信息
      */
     private final InternalIndexingStats internalIndexingStats;
+    /**
+     * 实现search钩子 用于统计数据
+     */
     private final ShardSearchStats searchStats = new ShardSearchStats();
+
+    /**
+     * 可以获取到分片的服务
+     */
     private final ShardGetService getService;
+    /**
+     * 统计有关预热的数据 本身与预热没有关系
+     */
     private final ShardIndexWarmerService shardWarmerService;
+
+    /**
+     * 也是一个计数器 与缓存没有直接关系
+     */
     private final ShardRequestCache requestCacheStats;
+    /**
+     * 这也是统计对象
+     */
     private final ShardFieldData shardFieldData;
+
+    /**
+     * 也是统计对象
+     */
     private final ShardBitsetFilterCache shardBitsetFilterCache;
     private final Object mutex = new Object();
     private final String checkIndexOnStartup;
+    /**
+     * 内部存储了ES加载的 所有codec 以及ES内置的codec 它基于lucene的默认编解码器做了加工
+     * 当检测到fieldType 为某种completionFieldType时 就会返回一种特殊的format
+     */
     private final CodecService codecService;
+    /**
+     * 这个暖机器的具体实现是??? 暖机的意思就是提前将数据从文件读取到缓存中
+     */
     private final Engine.Warmer warmer;
+    /**
+     * TODO
+     */
     private final SimilarityService similarityService;
+    /**
+     * 存储了需要生成translog相关文件时的参数 比如shardId 以及dir
+     */
     private final TranslogConfig translogConfig;
+    /**
+     * 监听索引的变化
+     */
     private final IndexEventListener indexEventListener;
+    /**
+     * 该对象主要是鉴别某个Query是否支持使用缓存  以及当使用缓存时触发的钩子
+     */
     private final QueryCachingPolicy cachingPolicy;
+    /**
+     * 查询出来的结果可以根据该对象进行排序
+     * 查询出来的一组doc 内部都会存在各种field  sort就是定义如何利用这些field.value 对doc进行排序
+     */
     private final Supplier<Sort> indexSortSupplier;
     // Package visible for testing
+    /**
+     * 该对象可以根据不同的name 获取不同的熔断器对象  在name级别 也就是使用级别解耦
+     */
     final CircuitBreakerService circuitBreakerService;
 
+    /**
+     * 查询前后会触发相关钩子
+     */
     private final SearchOperationListener searchOperationListener;
 
+    /**
+     * 监听bulk操作 并统计相关数据
+     */
     private final ShardBulkStats bulkOperationListener;
+
+    /**
+     * 可以往内部追加globalCheckpoint 监听器 同时设置一个超时时间
+     * 如果在规定的时间内得到了比listener知晓的更大的checkpoint 就可以触发监听器
+     */
     private final GlobalCheckpointListeners globalCheckpointListeners;
+    /**
+     * 管理 副本组中 每个allocationId 对应路由任务
+     */
     private final PendingReplicationActions pendingReplicationActions;
+    /**
+     * TODO
+     */
     private final ReplicationTracker replicationTracker;
 
+    /**
+     * 表明当前shard处于哪个node上
+     */
     protected volatile ShardRouting shardRouting;
+
+    /**
+     * 描述该分片此时的状态
+     * 根据状态判断此时是否允许 read/write 操作
+     */
     protected volatile IndexShardState state;
     // ensure happens-before relation between addRefreshListener() and postRecovery()
     private final Object postRecoveryMutex = new Object();
     private volatile long pendingPrimaryTerm; // see JavaDocs for getPendingPrimaryTerm
     private final Object engineMutex = new Object(); // lock ordering: engineMutex -> mutex
+
+    /**
+     * 当前引用的引擎对象
+     */
     private final AtomicReference<Engine> currentEngineReference = new AtomicReference<>();
+    /**
+     * 该对象根据相关配置生成引擎对象
+     */
     final EngineFactory engineFactory;
 
     private final IndexingOperationListener indexingOperationListeners;
@@ -249,8 +328,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return globalCheckpointSyncer;
     }
 
+    /**
+     * 续约同步器是什么
+     */
     private final RetentionLeaseSyncer retentionLeaseSyncer;
 
+    /**
+     * 恢复数据时有一连串状态  代表此时所处的状态
+     */
     @Nullable
     private RecoveryState recoveryState;
 
@@ -260,12 +345,24 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private final MeanMetric flushMetric = new MeanMetric();
     private final CounterMetric periodicFlushMetric = new CounterMetric();
 
+    /**
+     * 当 engine执行出现异常时 触发该监听器
+     */
     private final ShardEventListener shardEventListener = new ShardEventListener();
 
+    /**
+     * 表示当前分片的路径
+     */
     private final ShardPath path;
 
+    /**
+     * 通过这个对象 提供了一个阻塞任务的功能
+     */
     private final IndexShardOperationPermits indexShardOperationPermits;
 
+    /**
+     * 只有当分片启动完成时 以及恢复数据后 才处于可读状态
+     */
     private static final EnumSet<IndexShardState> readAllowedStates = EnumSet.of(IndexShardState.STARTED, IndexShardState.POST_RECOVERY);
     // for primaries, we only allow to write when actually started (so the cluster has decided we started)
     // in case we have a relocation of a primary, we also allow to write after phase 2 completed, where the shard may be
@@ -273,6 +370,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     // for replicas, replication is also allowed while recovering, since we index also during recovery to replicas and rely on
     // version checks to make sure its consistent a relocated shard can also be target of a replication if the relocation target has not
     // been marked as active yet and is syncing it's changes back to the relocation source
+    /**
+     * 在恢复状态下也是处于可写状态
+     */
     private static final EnumSet<IndexShardState> writeAllowedStates = EnumSet.of(IndexShardState.RECOVERING,
         IndexShardState.POST_RECOVERY, IndexShardState.STARTED);
 
@@ -285,34 +385,43 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private final AtomicBoolean active = new AtomicBoolean();
     /**
      * Allows for the registration of listeners that are called when a change becomes visible for search.
+     * TODO 还不清楚 在lucene中这个对象是干嘛的
      */
     private final RefreshListeners refreshListeners;
 
     private final AtomicLong lastSearcherAccess = new AtomicLong();
+
+    /**
+     * location 是定义translog 中某个operation的位置的
+     */
     private final AtomicReference<Translog.Location> pendingRefreshLocation = new AtomicReference<>();
+    /**
+     * 继承自 refreshListener 还不清楚怎么用
+     */
     private final RefreshPendingLocationListener refreshPendingLocationListener;
     private volatile boolean useRetentionLeasesInPeerRecovery;
 
     /**
      *
-     * @param shardRouting
+     * @param shardRouting  描述这个分片会被路由到哪里吧
      * @param indexSettings
-     * @param path
-     * @param store
-     * @param indexSortSupplier
-     * @param indexCache
-     * @param mapperService
-     * @param similarityService
-     * @param engineFactory
-     * @param indexEventListener
+     * @param path 存储shard信息的路径
+     * @param store  好像就是读取有关 segment_N 文件的 还不清楚咋用
+     * @param indexSortSupplier  每个分片下面自然是存储了各种索引数据 这个sort是写入时的排序 还是查询时的排序???  在lucene中写入doc时 确实可以根据sort进行排序的
+     *                           TODO 在使用时再顺便复习一下lucene的写入流程吧
+     * @param indexCache  内部维护有关索引的所有缓存 根据维度 又分为 queryCache BitsetFilterCache
+     * @param mapperService   映射服务 还没搞明白怎么用的
+     * @param similarityService   打分服务先不看
+     * @param engineFactory  通过engine实现与lucene组件的对接
+     * @param indexEventListener  监听索引各个事件的监听器
      * @param indexReaderWrapper
      * @param threadPool
-     * @param bigArrays
-     * @param warmer
-     * @param searchOperationListener
+     * @param bigArrays  该对象利用内存池 减少GC开销 内部可以分配各种数组
+     * @param warmer  暖机对象的意义就是提前将数据从磁盘加入到缓存中
+     * @param searchOperationListener  监听查询并执行相关逻辑
      * @param listeners
-     * @param globalCheckpointSyncer
-     * @param retentionLeaseSyncer
+     * @param globalCheckpointSyncer  TODO 全局检查点同步器 是啥???
+     * @param retentionLeaseSyncer   TODO 续约同步器
      * @param circuitBreakerService
      * @throws IOException
      */
@@ -336,10 +445,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             final Runnable globalCheckpointSyncer,
             final RetentionLeaseSyncer retentionLeaseSyncer,
             final CircuitBreakerService circuitBreakerService) throws IOException {
+        // 因为IndexShard 继承自 IndexShardComponent 所以将相关信息注册上去
         super(shardRouting.shardId(), indexSettings);
         assert shardRouting.initializing();
         this.shardRouting = shardRouting;
         final Settings settings = indexSettings.getSettings();
+        // 通过不同的 name 可以获取到不同的Codec对象
         this.codecService = new CodecService(mapperService, logger);
         this.warmer = warmer;
         this.similarityService = similarityService;
@@ -349,6 +460,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         this.indexSortSupplier = indexSortSupplier;
         this.indexEventListener = indexEventListener;
         this.threadPool = threadPool;
+        // 生成一个IO写入对象
         this.translogSyncProcessor = createTranslogSyncProcessor(logger, threadPool.getThreadContext(), this::getEngine);
         this.mapperService = mapperService;
         this.indexCache = indexCache;
@@ -362,11 +474,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final List<SearchOperationListener> searchListenersList = new ArrayList<>(searchOperationListener);
         searchListenersList.add(searchStats);
         this.searchOperationListener = new SearchOperationListener.CompositeListener(searchListenersList, logger);
+        // 通过该对象可以发起 获取某个分片数据的请求  实际上是通过engine实现的
         this.getService = new ShardGetService(indexSettings, this, mapperService);
         this.shardWarmerService = new ShardIndexWarmerService(shardId, indexSettings);
         this.requestCacheStats = new ShardRequestCache();
         this.shardFieldData = new ShardFieldData();
         this.shardBitsetFilterCache = new ShardBitsetFilterCache(shardId, indexSettings);
+        // 此时分片处于被创建的状态
         state = IndexShardState.CREATED;
         this.path = path;
         this.circuitBreakerService = circuitBreakerService;
@@ -954,8 +1068,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return result;
     }
 
+    /**
+     * 发起一个get请求 根据 Get内部的term
+     * @param get
+     * @return
+     */
     public Engine.GetResult get(Engine.Get get) {
         readAllowed();
+        // 确保此时允许读取后 使用engine对象 读取数据
         DocumentMapper mapper = mapperService.documentMapper();
         if (mapper == null) {
             return GetResult.NOT_EXISTS;
@@ -1744,8 +1864,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             state == IndexShardState.CLOSED;
     }
 
+    /**
+     * 是否允许读取
+     * 也就是在读取数据前还要先判断条件是否允许
+     * @throws IllegalIndexShardStateException
+     */
     public void readAllowed() throws IllegalIndexShardStateException {
         IndexShardState state = this.state; // one time volatile read
+        // 只有started/post_recovery 才允许读取
         if (readAllowedStates.contains(state) == false) {
             throw new IllegalIndexShardStateException(shardId, state, "operations only allowed when shard state is one of " +
                 readAllowedStates.toString());
@@ -2703,7 +2829,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return engine == null ? SafeCommitInfo.EMPTY : engine.getSafeCommitInfo();
     }
 
+    /**
+     * Engine.EventListener 当执行engine出现异常时触发该方法
+     */
     class ShardEventListener implements Engine.EventListener {
+
+        /**
+         * 转发到内部的listener处理
+         */
         private final CopyOnWriteArrayList<Consumer<ShardFailure>> delegates = new CopyOnWriteArrayList<>();
 
         // called by the current engine
@@ -3074,11 +3207,27 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return indexShardOperationPermits.getActiveOperations();
     }
 
+    /**
+     * 多个线程尝试执行IO 任务  会被汇总到一个线程中执行
+     */
     private final AsyncIOProcessor<Translog.Location> translogSyncProcessor;
 
+    /**
+     * 执行IO 写入逻辑
+     * @param logger
+     * @param threadContext
+     * @param engineSupplier
+     * @return
+     */
     private static AsyncIOProcessor<Translog.Location> createTranslogSyncProcessor(Logger logger, ThreadContext threadContext,
                                                                                    Supplier<Engine> engineSupplier) {
         return new AsyncIOProcessor<>(logger, 1024, threadContext) {
+
+            /**
+             * TODO 先看其他的部分
+             * @param candidates
+             * @throws IOException
+             */
             @Override
             protected void write(List<Tuple<Translog.Location, Consumer<Exception>>> candidates) throws IOException {
                 try {
@@ -3216,8 +3365,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Simple struct encapsulating a shard failure
      *
      * @see IndexShard#addShardFailureCallback(Consumer)
+     * 表示分片的某种失败信息
      */
     public static final class ShardFailure {
+
+        /**
+         * 内部包含了此时分片所在的节点信息等
+         */
         public final ShardRouting routing;
         public final String reason;
         @Nullable

@@ -41,15 +41,21 @@ import java.util.function.Function;
 
 /**
  * Context used to fetch the {@code _source}.
+ * 拉取数据时使用的上下文对象
  */
 public class FetchSourceContext implements Writeable, ToXContentObject {
 
+    /**
+     * parseField 里面就是有很多name 也不知道是干嘛的
+     */
     public static final ParseField INCLUDES_FIELD = new ParseField("includes", "include");
     public static final ParseField EXCLUDES_FIELD = new ParseField("excludes", "exclude");
 
     public static final FetchSourceContext FETCH_SOURCE = new FetchSourceContext(true);
     public static final FetchSourceContext DO_NOT_FETCH_SOURCE = new FetchSourceContext(false);
     private final boolean fetchSource;
+
+    // 应该是执行在fetch中 包含的 以及不需要的field吧
     private final String[] includes;
     private final String[] excludes;
     private Function<Map<String, ?>, Map<String, Object>> filter;

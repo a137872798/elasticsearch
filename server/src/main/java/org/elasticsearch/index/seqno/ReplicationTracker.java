@@ -76,11 +76,13 @@ import java.util.stream.StreamSupport;
  * shards that are taken into account for the global checkpoint calculation are called the "in-sync shards".
  * <p>
  * The global checkpoint is maintained by the primary shard and is replicated to all the replicas (via {@link GlobalCheckpointSyncAction}).
+ * 在执行复制任务时的链路追踪对象
  */
 public class ReplicationTracker extends AbstractIndexShardComponent implements LongSupplier {
 
     /**
      * The allocation ID for the shard to which this tracker is a component of.
+     * 与 allocation 一一对应 并且一个allocation只能处理一个shard
      */
     final String shardAllocationId;
 
@@ -101,6 +103,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *   handoff. If the target shard is successfully initialized in primary mode, the source shard of a primary relocation is then moved
      *   to replica mode (using {@link #completeRelocationHandoff}), as the relocation target will be in charge of the global checkpoint
      *   computation from that point on.
+     *   是否采用私有模式
      */
     volatile boolean primaryMode;
 
@@ -862,6 +865,18 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         return value.isPresent() ? value.getAsLong() : SequenceNumbers.UNASSIGNED_SEQ_NO;
     }
 
+    /**
+     * 初始化副本追踪对象
+     * @param shardId  本次针对的分片
+     * @param allocationId  分配该分片的allocation的id
+     * @param indexSettings
+     * @param operationPrimaryTerm
+     * @param globalCheckpoint
+     * @param onGlobalCheckpointUpdated
+     * @param currentTimeMillisSupplier
+     * @param onSyncRetentionLeases
+     * @param safeCommitInfoSupplier
+     */
     public ReplicationTracker(
         final ShardId shardId,
         final String allocationId,

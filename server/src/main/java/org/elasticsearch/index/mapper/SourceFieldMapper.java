@@ -244,14 +244,19 @@ public class SourceFieldMapper extends MetadataFieldMapper {
         }
     }
 
+    /**
+     * 这是对数据源做拦截工作么 ???
+     */
     @Nullable
     public BytesReference applyFilters(@Nullable BytesReference originalSource, @Nullable XContentType contentType) throws IOException {
         if (enabled && fieldType().stored() && originalSource != null) {
             // Percolate and tv APIs may not set the source and that is ok, because these APIs will not index any data
+            // 当filter存在时才可以进行处理
             if (filter != null) {
                 // we don't update the context source if we filter, we want to keep it as is...
                 Tuple<XContentType, Map<String, Object>> mapTuple =
                     XContentHelper.convertToMap(originalSource, true, contentType);
+                // 在数据映射后 在转换回格式化对象并返回
                 Map<String, Object> filteredSource = filter.apply(mapTuple.v2());
                 BytesStreamOutput bStream = new BytesStreamOutput();
                 XContentType actualContentType = mapTuple.v1();

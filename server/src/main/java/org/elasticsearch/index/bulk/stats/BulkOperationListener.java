@@ -21,6 +21,8 @@ package org.elasticsearch.index.bulk.stats;
 
 /**
  * An bulk operation listener for bulk events.
+ * bulk操作指的是什么
+ * 在lucene中 只知道bulk应该是指代某种大的数据块
  */
 public interface BulkOperationListener {
     /**

@@ -28,6 +28,7 @@ import java.util.List;
 
 /**
  * The result of parsing a document.
+ * 代表 source解析后的结果
  */
 public class ParsedDocument {
 
@@ -40,7 +41,13 @@ public class ParsedDocument {
 
     private final List<Document> documents;
 
+    /**
+     * 被解析前的源数据流
+     */
     private BytesReference source;
+    /**
+     * source的格式类型 比如json
+     */
     private XContentType xContentType;
 
     private Mapping dynamicMappingsUpdate;
@@ -71,6 +78,11 @@ public class ParsedDocument {
         return version;
     }
 
+    /**
+     * 更新 seqNo 和 term
+     * @param sequenceNumber
+     * @param primaryTerm
+     */
     public void updateSeqID(long sequenceNumber, long primaryTerm) {
         this.seqID.seqNo.setLongValue(sequenceNumber);
         this.seqID.seqNoDocValue.setLongValue(sequenceNumber);

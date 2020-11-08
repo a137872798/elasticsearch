@@ -45,6 +45,7 @@ import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
 /**
  * Represents a collection of global checkpoint listeners. This collection can be added to, and all listeners present at the time of an
  * update will be notified together. All listeners will be notified when the shard is closed.
+ * 该对象整合了一组 全局检查点监听器
  */
 public class GlobalCheckpointListeners implements Closeable {
 
@@ -57,6 +58,7 @@ public class GlobalCheckpointListeners implements Closeable {
          * The executor on which the listener is notified.
          *
          * @return the executor
+         * 在监听到相关操作时 可以委托给不同的执行者执行任务
          */
         Executor executor();
 
@@ -66,18 +68,28 @@ public class GlobalCheckpointListeners implements Closeable {
          * instance of {@link IndexShardClosedException }. If the listener timed out waiting for notification then the exception will be
          * non-null and an instance of {@link TimeoutException}. If the global checkpoint is updated, the exception will be null.
          *
-         * @param globalCheckpoint the updated global checkpoint
+         * @param globalCheckpoint the updated global checkpoint   本次更新的全局检查点的位置
          * @param e                if non-null, the shard is closed or the listener timed out
          */
         void accept(long globalCheckpoint, Exception e);
 
     }
 
-    // guarded by this
+    // guarded by this  这组监听器是否被关闭
     private boolean closed;
+    /**
+     * 每个监听器都会对应一个 tuple对象 long应该就是全局检查点 而通过executor执行的临时结果对象应该就是 future对象
+     */
     private final Map<GlobalCheckpointListener, Tuple<Long, ScheduledFuture<?>>> listeners = new LinkedHashMap<>();
+
+    /**
+     * 在初始阶段 还不清楚全局检查点
+     */
     private long lastKnownGlobalCheckpoint = UNASSIGNED_SEQ_NO;
 
+    /**
+     * 表明监听的是哪个分片
+     */
     private final ShardId shardId;
     private final ScheduledExecutorService scheduler;
     private final Logger logger;
@@ -108,51 +120,64 @@ public class GlobalCheckpointListeners implements Closeable {
      * notified with a {@link TimeoutException}. Passing null fo the timeout means no timeout will be associated to the listener.
      *
      * @param waitingForGlobalCheckpoint the current global checkpoint known to the listener
+     *                                   代表监听器此时知道的全局偏移量  只有到触发时的偏移量更大才能执行监听器
      * @param listener                   the listener
      * @param timeout                    the listener timeout, or null if no timeout
+     *                                   每个监听对象有一个等待时间  要求在时间内必须触发一次  也就是要在这段时间内感知到全局检查点
+     *                                   往该总控对象中追加一个新的全局检查点监听器
      */
     synchronized void add(final long waitingForGlobalCheckpoint, final GlobalCheckpointListener listener, final TimeValue timeout) {
         if (closed) {
+            // 当本对象已经被关闭时 直接触发监听器  注意没有加入到listeners 中
             notifyListener(listener, UNASSIGNED_SEQ_NO, new IndexShardClosedException(shardId));
             return;
         }
+        // 代表此时已经获取到了更大的检查点  所以可以直接触发监听器
         if (lastKnownGlobalCheckpoint >= waitingForGlobalCheckpoint) {
             // notify directly
             notifyListener(listener, lastKnownGlobalCheckpoint, null);
         } else {
+            // 代表没有时间限制
             if (timeout == null) {
                 listeners.put(listener, Tuple.tuple(waitingForGlobalCheckpoint, null));
             } else {
                 listeners.put(
-                        listener,
-                        Tuple.tuple(
-                                waitingForGlobalCheckpoint,
-                                scheduler.schedule(
-                                        () -> {
-                                            final boolean removed;
-                                            synchronized (this) {
-                                                /*
-                                                 * We know that this listener has a timeout associated with it (otherwise we would not be
-                                                 * here) so the future component of the return value from remove being null is an indication
-                                                 * that we are not in the map. This can happen if a notification collected us into listeners
-                                                 * to be notified and removed us from the map, and then our scheduled execution occurred
-                                                 * before we could be cancelled by the notification. In this case, our listener here would
-                                                 * not be in the map and we should not fire the timeout logic.
-                                                 */
-                                                removed = listeners.remove(listener) != null;
-                                            }
-                                            if (removed) {
-                                                final TimeoutException e = new TimeoutException(timeout.getStringRep());
-                                                logger.trace("global checkpoint listener timed out", e);
-                                                notifyListener(listener, UNASSIGNED_SEQ_NO, e);
-                                            }
-                                        },
-                                        timeout.nanos(),
-                                        TimeUnit.NANOSECONDS)));
+                    listener,
+                    Tuple.tuple(
+                        waitingForGlobalCheckpoint,
+                        // 在一定延时后 通过一个UNASSIGNED_SEQ_NO 触发监听器
+                        // 代表在这段时间内没有检测到更大的checkpoint
+                        scheduler.schedule(
+                            () -> {
+                                final boolean removed;
+                                synchronized (this) {
+                                    /*
+                                     * We know that this listener has a timeout associated with it (otherwise we would not be
+                                     * here) so the future component of the return value from remove being null is an indication
+                                     * that we are not in the map. This can happen if a notification collected us into listeners
+                                     * to be notified and removed us from the map, and then our scheduled execution occurred
+                                     * before we could be cancelled by the notification. In this case, our listener here would
+                                     * not be in the map and we should not fire the timeout logic.
+                                     */
+                                    removed = listeners.remove(listener) != null;
+                                }
+                                if (removed) {
+                                    final TimeoutException e = new TimeoutException(timeout.getStringRep());
+                                    logger.trace("global checkpoint listener timed out", e);
+                                    notifyListener(listener, UNASSIGNED_SEQ_NO, e);
+                                }
+                            },
+                            timeout.nanos(),
+                            TimeUnit.NANOSECONDS)));
             }
         }
     }
 
+    /**
+     * 当本对象被关闭时 触发所有监听器
+     *
+     * @throws IOException
+     */
     @Override
     public synchronized void close() throws IOException {
         if (closed) {
@@ -176,6 +201,7 @@ public class GlobalCheckpointListeners implements Closeable {
      *
      * @param listener the listener to get the scheduled future for
      * @return a scheduled future representing the timeout future for the listener, otherwise null
+     * 获取某个监听器相关的超时任务
      */
     synchronized ScheduledFuture<?> getTimeoutFuture(final GlobalCheckpointListener listener) {
         return listeners.get(listener).v2();
@@ -185,16 +211,24 @@ public class GlobalCheckpointListeners implements Closeable {
      * Invoke to notify all registered listeners of an updated global checkpoint.
      *
      * @param globalCheckpoint the updated global checkpoint
+     *                         代表此时获取到了一个更大的全局检查点  需要用它来触发监听器
      */
     synchronized void globalCheckpointUpdated(final long globalCheckpoint) {
         assert globalCheckpoint >= NO_OPS_PERFORMED;
         assert globalCheckpoint > lastKnownGlobalCheckpoint
-                : "updated global checkpoint [" + globalCheckpoint + "]"
-                + " is not more than the last known global checkpoint [" + lastKnownGlobalCheckpoint + "]";
+            : "updated global checkpoint [" + globalCheckpoint + "]"
+            + " is not more than the last known global checkpoint [" + lastKnownGlobalCheckpoint + "]";
+        // 记得更新最大的检查点
         lastKnownGlobalCheckpoint = globalCheckpoint;
         notifyListeners(globalCheckpoint, null);
     }
 
+    /**
+     * 以某个检查点触发监听器
+     *
+     * @param globalCheckpoint
+     * @param e                可能是由于异常情况关闭的  这时就会传入exception
+     */
     private void notifyListeners(final long globalCheckpoint, final IndexShardClosedException e) {
         assert Thread.holdsLock(this) : Thread.currentThread();
 
@@ -204,24 +238,31 @@ public class GlobalCheckpointListeners implements Closeable {
         }
 
         final Map<GlobalCheckpointListener, Tuple<Long, ScheduledFuture<?>>> listenersToNotify;
+        // 不是由于某种特殊情况
         if (globalCheckpoint != UNASSIGNED_SEQ_NO) {
             listenersToNotify =
-                    listeners
-                            .entrySet()
-                            .stream()
-                            .filter(entry -> entry.getValue().v1() <= globalCheckpoint)
-                            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+                listeners
+                    .entrySet()
+                    .stream()
+                    // 找到已感知的检查点小于本次传入的检查点的 监听器
+                    .filter(entry -> entry.getValue().v1() <= globalCheckpoint)
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+            // 因为这些本次会被通知 所以可以从list中移除
             listenersToNotify.keySet().forEach(listeners::remove);
         } else {
+            // 当发生特殊情况时  比如 close 那么就需要移除所有的监听器
             listenersToNotify = new HashMap<>(listeners);
             listeners.clear();
         }
+        // 这里触发监听器
         if (listenersToNotify.isEmpty() == false) {
             listenersToNotify
                 .forEach((listener, t) -> {
                     /*
                      * We do not want to interrupt any timeouts that fired, these will detect that the listener has been notified and not
                      * trigger the timeout.
+                     * 关闭定时任务  因为原本超时的情况 会使用UNASSIGNED_SEQ_NO 触发监听器
+                     * 在通知的外层增加了 synchronized 关键字 能够确保定时任务的不会被触发2次
                      */
                     FutureUtils.cancel(t.v2());
                     notifyListener(listener, globalCheckpoint, e);
@@ -229,9 +270,17 @@ public class GlobalCheckpointListeners implements Closeable {
         }
     }
 
+    /**
+     * 触发监听器的相关钩子
+     *
+     * @param listener         处理全局检查点的相关监听器
+     * @param globalCheckpoint 触发钩子所用的全局检查点
+     * @param e
+     */
     private void notifyListener(final GlobalCheckpointListener listener, final long globalCheckpoint, final Exception e) {
         assertNotification(globalCheckpoint, e);
 
+        // 使用executor执行任务
         listener.executor().execute(() -> {
             try {
                 listener.accept(globalCheckpoint, e);

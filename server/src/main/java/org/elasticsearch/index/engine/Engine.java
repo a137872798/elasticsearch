@@ -1161,6 +1161,9 @@ public abstract class Engine implements Closeable {
         }
     }
 
+    /**
+     * 封装了ES的IndexSearcher    IndexSearcher 借助IndexReader 根据query查询符合条件的数据
+     */
     public static final class Searcher extends IndexSearcher implements Releasable {
         private final String source;
         private final Closeable onClose;
@@ -1190,6 +1193,9 @@ public abstract class Engine implements Closeable {
             throw new IllegalStateException("Can't use " + getIndexReader().getClass() + " as a directory reader");
         }
 
+        /**
+         * 当get请求没有查询到结果时 会触发该函数
+         */
         @Override
         public void close() {
             try {
@@ -1491,6 +1497,9 @@ public abstract class Engine implements Closeable {
 
     }
 
+    /**
+     * 生成一个get请求
+     */
     public static class Get {
         private final boolean realtime;
         private final Term uid;
@@ -1501,6 +1510,13 @@ public abstract class Engine implements Closeable {
         private long ifSeqNo = UNASSIGNED_SEQ_NO;
         private long ifPrimaryTerm = UNASSIGNED_PRIMARY_TERM;
 
+        /**
+         *
+         * @param realtime
+         * @param readFromTranslog
+         * @param id
+         * @param uid
+         */
         public Get(boolean realtime, boolean readFromTranslog, String id, Term uid) {
             this.realtime = realtime;
             this.id = id;
@@ -1563,9 +1579,20 @@ public abstract class Engine implements Closeable {
 
     }
 
+    /**
+     * 某次get操作的查询结果
+     */
     public static class GetResult implements Releasable {
+
+        /**
+         * 是否查询到了结果
+         */
         private final boolean exists;
         private final long version;
+
+        /**
+         * 内部存储了 docId version IndexReader 等信息
+         */
         private final DocIdAndVersion docIdAndVersion;
         private final Engine.Searcher searcher;
         private final boolean fromTranslog;

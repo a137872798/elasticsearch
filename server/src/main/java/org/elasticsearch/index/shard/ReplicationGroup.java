@@ -29,17 +29,32 @@ import java.util.Set;
 
 /**
  * Replication group for a shard. Used by a primary shard to coordinate replication and recoveries.
+ * 复制组   应该是主从同步时使用的
  */
 public class ReplicationGroup {
+    /**
+     * 这里就涉及到路由表了
+     */
     private final IndexShardRoutingTable routingTable;
+    // 什么是同步的和被追踪的 allocationIds???
     private final Set<String> inSyncAllocationIds;
     private final Set<String> trackedAllocationIds;
     private final long version;
 
+    /**
+     * unavailableInSyncShards + inSyncAllocationIds = allAllocationIds
+     */
     private final Set<String> unavailableInSyncShards; // derived from the other fields
     private final List<ShardRouting> replicationTargets; // derived from the other fields
     private final List<ShardRouting> skippedShards; // derived from the other fields
 
+    /**
+     *
+     * @param routingTable  记录某个索引下所有的分片 以及它们会被分配到哪里
+     * @param inSyncAllocationIds
+     * @param trackedAllocationIds
+     * @param version
+     */
     public ReplicationGroup(IndexShardRoutingTable routingTable, Set<String> inSyncAllocationIds, Set<String> trackedAllocationIds,
                             long version) {
         this.routingTable = routingTable;
@@ -50,6 +65,7 @@ public class ReplicationGroup {
         this.unavailableInSyncShards = Sets.difference(inSyncAllocationIds, routingTable.getAllAllocationIds());
         this.replicationTargets = new ArrayList<>();
         this.skippedShards = new ArrayList<>();
+        // 遍历某个index下所有的分片
         for (final ShardRouting shard : routingTable) {
             if (shard.unassigned()) {
                 assert shard.primary() == false : "primary shard should not be unassigned in a replication group: " + shard;

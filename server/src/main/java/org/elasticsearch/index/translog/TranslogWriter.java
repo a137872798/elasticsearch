@@ -54,16 +54,27 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
     private final ShardId shardId;
     private final ChannelFactory channelFactory;
     // the last checkpoint that was written when the translog was last synced
+    // 最近一次提交的检查点 因为提交不代表会关闭该对象
     private volatile Checkpoint lastSyncedCheckpoint;
-    /* the number of translog operations written to this file */
+    /*
+    *the number of translog operations written to this file
+    * 记录该writer写入的operation总数
+    */
     private volatile int operationCounter;
     /* if we hit an exception that we can't recover from we assign it to this var and ship it with every AlreadyClosedException we throw */
     private final TragicExceptionHolder tragedy;
-    /* A buffered outputstream what writes to the writers channel */
+    /*
+     * A buffered outputstream what writes to the writers channel
+     * 刷盘时就是将该输出流内的数据写入到文件中
+     */
     private final OutputStream outputStream;
-    /* the total offset of this file including the bytes written to the file as well as into the buffer */
+    /*
+    *the total offset of this file including the bytes written to the file as well as into the buffer
+    * 记录该writer写入的文件总长度
+    */
     private volatile long totalOffset;
 
+    // seq 对应的是每个操作 这里分别记录一个事务文件下的最大值/最小值
     private volatile long minSeqNo;
     private volatile long maxSeqNo;
 
@@ -71,16 +82,36 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
     private final LongSupplier minTranslogGenerationSupplier;
 
     // callback that's called whenever an operation with a given sequence number is successfully persisted.
+    // 该函数是定义如何处理那些未提交的数据的
     private final LongConsumer persistedSequenceNumberConsumer;
 
     protected final AtomicBoolean closed = new AtomicBoolean(false);
     // lock order synchronized(syncLock) -> synchronized(this)
     private final Object syncLock = new Object();
 
+    /**
+     * 每次写入新的operation都会存储它的seqNo 在每次sync时才交给函数去处理
+     */
     private LongArrayList nonFsyncedSequenceNumbers;
 
     private final Map<Long, Tuple<BytesReference, Exception>> seenSequenceNumbers;
 
+    /**
+     * 初始化 writer对象
+     *
+     * @param channelFactory
+     * @param shardId
+     * @param initialCheckpoint
+     * @param channel    事务文件的channel
+     * @param path                            对应 translog-gen.tlg 文件 也就是事务文件
+     * @param bufferSize
+     * @param globalCheckpointSupplier
+     * @param minTranslogGenerationSupplier
+     * @param header
+     * @param tragedy
+     * @param persistedSequenceNumberConsumer
+     * @throws IOException
+     */
     private TranslogWriter(
         final ChannelFactory channelFactory,
         final ShardId shardId,
@@ -91,8 +122,8 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
         final LongSupplier globalCheckpointSupplier, LongSupplier minTranslogGenerationSupplier, TranslogHeader header,
         TragicExceptionHolder tragedy,
         final LongConsumer persistedSequenceNumberConsumer)
-            throws
-            IOException {
+        throws
+        IOException {
         super(initialCheckpoint.generation, channel, path, header);
         assert initialCheckpoint.offset == channel.position() :
             "initial checkpoint offset [" + initialCheckpoint.offset + "] is different than current channel position ["
@@ -101,6 +132,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
         this.channelFactory = channelFactory;
         this.minTranslogGenerationSupplier = minTranslogGenerationSupplier;
         this.outputStream = new BufferedChannelOutputStream(java.nio.channels.Channels.newOutputStream(channel), bufferSize.bytesAsInt());
+        // 使用的是全局检查点
         this.lastSyncedCheckpoint = initialCheckpoint;
         this.totalOffset = initialCheckpoint.offset;
         assert initialCheckpoint.minSeqNo == SequenceNumbers.NO_OPS_PERFORMED : initialCheckpoint.minSeqNo;
@@ -117,18 +149,19 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
 
     /**
      * 通过静态方法创建writer对象
-     * @param shardId  每个writer对应一个translog 对应一个shard
-     * @param translogUUID  每次初始化translog时会分配一个uuid
-     * @param fileGeneration  该对象要写入的文件对应的gen
-     * @param file   文件路径
-     * @param channelFactory
+     *
+     * @param shardId                         每个writer对应一个translog 对应一个shard
+     * @param translogUUID                    每次初始化translog时会分配一个uuid
+     * @param fileGeneration                  该对象要写入的文件对应的gen
+     * @param file                            对应事务文件路径 (.tlg文件)
+     * @param channelFactory                  用于生成fileChannel
      * @param bufferSize
-     * @param initialMinTranslogGen
-     * @param initialGlobalCheckpoint
-     * @param globalCheckpointSupplier
-     * @param minTranslogGenerationSupplier
-     * @param primaryTerm
-     * @param tragedy
+     * @param initialMinTranslogGen           在全局checkpoint中 记录的最小gen
+     * @param initialGlobalCheckpoint         通过Translog 的 globalCheckpointSupplier.getAsLong() 获得的也不知道做啥
+     * @param globalCheckpointSupplier        globalCheckpointSupplier
+     * @param minTranslogGenerationSupplier   对应函数 getMinFileGeneration()
+     * @param primaryTerm                     primaryTermSupplier
+     * @param tragedy                         存储异常的对象
      * @param persistedSequenceNumberConsumer
      * @return
      * @throws IOException
@@ -138,12 +171,17 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
                                         final LongSupplier globalCheckpointSupplier, final LongSupplier minTranslogGenerationSupplier,
                                         final long primaryTerm, TragicExceptionHolder tragedy, LongConsumer persistedSequenceNumberConsumer)
         throws IOException {
+        // 这里生成最新的事务文件
         final FileChannel channel = channelFactory.open(file);
         try {
+            // 因为事务头的格式是固定的 所以可以预估header大小
             final TranslogHeader header = new TranslogHeader(translogUUID, primaryTerm);
             header.write(channel);
+            // 生成一个 3种seq都是空的检查点对象  注意initialMinTranslogGen被传进去了
+            // 也就是即使重启了也能确保之前的数据被 读取到  应该要等待某个特殊操作后 才允许删除旧的gen对应的文件
             final Checkpoint checkpoint = Checkpoint.emptyTranslogCheckpoint(header.sizeInBytes(), fileGeneration,
                 initialGlobalCheckpoint, initialMinTranslogGen);
+            // 将最新的检查点写入到全局检查点文件中
             writeCheckpoint(channelFactory, file.getParent(), checkpoint);
             final LongSupplier writerGlobalCheckpointSupplier;
             if (Assertions.ENABLED) {
@@ -183,10 +221,11 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
     /**
      * Add the given bytes to the translog with the specified sequence number; returns the location the bytes were written to.
      *
-     * @param data  the bytes to write
-     * @param seqNo the sequence number associated with the operation
+     * @param data  the bytes to write    operation序列化后的数据流
+     * @param seqNo the sequence number associated with the operation  每个operation都有一个全局序列号
      * @return the location the bytes were written to
      * @throws IOException if writing to the translog resulted in an I/O exception
+     * 往事务日志中记录一个新的operation
      */
     public synchronized Translog.Location add(final BytesReference data, final long seqNo) throws IOException {
         ensureOpen();
@@ -197,6 +236,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
             closeWithTragicEvent(ex);
             throw ex;
         }
+
         totalOffset += data.length();
 
         if (minSeqNo == SequenceNumbers.NO_OPS_PERFORMED) {
@@ -225,9 +265,9 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
             final Tuple<BytesReference, Exception> previous = seenSequenceNumbers.get(seqNo);
             if (previous.v1().equals(data) == false) {
                 Translog.Operation newOp = Translog.readOperation(
-                        new BufferedChecksumStreamInput(data.streamInput(), "assertion"));
+                    new BufferedChecksumStreamInput(data.streamInput(), "assertion"));
                 Translog.Operation prvOp = Translog.readOperation(
-                        new BufferedChecksumStreamInput(previous.v1().streamInput(), "assertion"));
+                    new BufferedChecksumStreamInput(previous.v1().streamInput(), "assertion"));
                 // TODO: We haven't had timestamp for Index operations in Lucene yet, we need to loosen this check without timestamp.
                 final boolean sameOp;
                 if (newOp instanceof Translog.Index && prvOp instanceof Translog.Index) {
@@ -264,7 +304,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
                 final Translog.Operation op;
                 try {
                     op = Translog.readOperation(
-                            new BufferedChecksumStreamInput(e.getValue().v1().streamInput(), "assertion"));
+                        new BufferedChecksumStreamInput(e.getValue().v1().streamInput(), "assertion"));
                 } catch (IOException ex) {
                     throw new RuntimeException(ex);
                 }
@@ -280,7 +320,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
 
     /**
      * write all buffered ops to disk and fsync file.
-     *
+     * <p>
      * Note: any exception during the sync process will be interpreted as a tragic exception and the writer will be closed before
      * raising the exception.
      */
@@ -291,6 +331,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
     /**
      * Returns <code>true</code> if there are buffered operations that have not been flushed and fsynced to disk or if the latest global
      * checkpoint has not yet been fsynced
+     * 只有数据发生了变化才有刷盘的必要
      */
     public boolean syncNeeded() {
         return totalOffset != lastSyncedCheckpoint.offset ||
@@ -317,8 +358,10 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
 
     /**
      * Closes this writer and transfers its underlying file channel to a new immutable {@link TranslogReader}
+     *
      * @return a new {@link TranslogReader}
      * @throws IOException if any of the file operations resulted in an I/O exception
+     * 关闭当前写入对象并转换成一个reader对象 当然针对的都是同一事务文件
      */
     public TranslogReader closeIntoReader() throws IOException {
         // make sure to acquire the sync lock first, to prevent dead locks with threads calling
@@ -338,13 +381,19 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
                     return new TranslogReader(getLastSyncedCheckpoint(), channel, path, header);
                 } else {
                     throw new AlreadyClosedException("translog [" + getGeneration() + "] is already closed (path [" + path + "]",
-                            tragedy.get());
+                        tragedy.get());
                 }
             }
         }
     }
 
 
+    /**
+     * writer生成快照分为2步
+     * 第一步将最新数据刷盘
+     * 第二步基于之前读取到的数据生成快照对象
+     * @return
+     */
     @Override
     public TranslogSnapshot newSnapshot() {
         // make sure to acquire the sync lock first, to prevent dead locks with threads calling
@@ -370,8 +419,10 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
      * Syncs the translog up to at least the given offset unless already synced
      *
      * @return <code>true</code> if this call caused an actual sync operation
+     * 将此时的检查点状态持久化
      */
     final boolean syncUpTo(long offset) throws IOException {
+        // 每次提交的位置超过上次提交的offset
         if (lastSyncedCheckpoint.offset < offset && syncNeeded()) {
             synchronized (syncLock) { // only one sync/checkpoint should happen concurrently but we wait
                 if (lastSyncedCheckpoint.offset < offset && syncNeeded()) {
@@ -382,7 +433,9 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
                     synchronized (this) {
                         ensureOpen();
                         try {
+                            // 将输出流中的数据都写入到channel中
                             outputStream.flush();
+                            // 在使用当前偏移量等新数据生成一个新的 checkPoint后
                             checkpointToSync = getCheckpoint();
                             flushedSequenceNumbers = nonFsyncedSequenceNumbers;
                             nonFsyncedSequenceNumbers = new LongArrayList(64);
@@ -394,7 +447,9 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
                     // now do the actual fsync outside of the synchronized block such that
                     // we can continue writing to the buffer etc.
                     try {
+                        // 将channel内部的数据写入到磁盘
                         channel.force(false);
+                        // 将最新的检查点数据写入到文件中
                         writeCheckpoint(channelFactory, path.getParent(), checkpointToSync);
                     } catch (final Exception ex) {
                         closeWithTragicEvent(ex);
@@ -411,9 +466,16 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
         return false;
     }
 
+    /**
+     * 读取数据的核心方法  其他reader对象都是基于初始化时传入的channel
+     * @param targetBuffer
+     * @param position
+     * @throws IOException
+     */
     @Override
     protected void readBytes(ByteBuffer targetBuffer, long position) throws IOException {
         try {
+            // 代表有足够的空间
             if (position + targetBuffer.remaining() > getWrittenOffset()) {
                 synchronized (this) {
                     // we only flush here if it's really really needed - try to minimize the impact of the read operation
@@ -421,6 +483,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
                     // which is not really important in production but some test can make most strict assumptions
                     // if we don't fail in this call unless absolutely necessary.
                     if (position + targetBuffer.remaining() > getWrittenOffset()) {
+                        // 将数据都写入到channel中
                         outputStream.flush();
                     }
                 }
@@ -431,13 +494,20 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
         }
         // we don't have to have a lock here because we only write ahead to the file, so all writes has been complete
         // for the requested location.
+        // 从channel中读取数据到buffer中
         Channels.readFromFileChannelWithEofException(channel, position, targetBuffer);
     }
 
+    /**
+     * @param channelFactory
+     * @param translogFile   事务文件的上层目录
+     * @param checkpoint     本次需要写入到文件中的检查点
+     * @throws IOException
+     */
     private static void writeCheckpoint(
-            final ChannelFactory channelFactory,
-            final Path translogFile,
-            final Checkpoint checkpoint) throws IOException {
+        final ChannelFactory channelFactory,
+        final Path translogFile,
+        final Checkpoint checkpoint) throws IOException {
         Checkpoint.write(channelFactory, translogFile.resolve(Translog.CHECKPOINT_FILE_NAME), checkpoint, StandardOpenOption.WRITE);
     }
 

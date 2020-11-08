@@ -29,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Internal class that maintains relevant shard bulk statistics / metrics.
  * @see IndexShard
+ * bulk事件指的是什么  该对象也是基于监听器钩子 进行数据统计
  */
 public class ShardBulkStats implements BulkOperationListener {
 

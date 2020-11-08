@@ -27,6 +27,7 @@ import java.util.Set;
  * Supported pattern styles: "xxx*", "*xxx", "*xxx*" and "xxx*yyy".
  * The Uid field is always loaded.
  * The class is optimized for source loading as it is a common use case.
+ * 这里可以根据自己需要 指定保存的field数据
  */
 public class CustomFieldsVisitor extends FieldsVisitor {
 
@@ -42,6 +43,7 @@ public class CustomFieldsVisitor extends FieldsVisitor {
         if (super.needsField(fieldInfo) == Status.YES) {
             return Status.YES;
         }
+        // 可以看到在这里没有做remove操作  可以推测 id routing这种只会在一个segment的一个doc中出现 而其他field则可以拦截一个segment下出现的所有doc
         if (fields.contains(fieldInfo.name)) {
             return Status.YES;
         }

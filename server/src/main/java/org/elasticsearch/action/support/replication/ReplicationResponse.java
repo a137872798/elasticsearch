@@ -43,11 +43,16 @@ import static org.elasticsearch.common.xcontent.XContentParserUtils.ensureExpect
 
 /**
  * Base class for write action responses.
+ * 针对复制action 返回的结果
  */
 public class ReplicationResponse extends ActionResponse {
 
     public static final ReplicationResponse.ShardInfo.Failure[] EMPTY = new ReplicationResponse.ShardInfo.Failure[0];
 
+    /**
+     * 描述shard的基本信息 以及对该shard所有的操作失败信息
+     * 推测请求是将某个分片复制到多个副本节点上 每个复制失败信息对应一个failure对象
+     */
     private ShardInfo shardInfo;
 
     public ReplicationResponse() {}
@@ -70,6 +75,9 @@ public class ReplicationResponse extends ActionResponse {
         this.shardInfo = shardInfo;
     }
 
+    /**
+     * 描述某个分片的信息
+     */
     public static class ShardInfo implements Writeable, ToXContentObject {
 
         private static final String TOTAL = "total";
@@ -79,6 +87,9 @@ public class ReplicationResponse extends ActionResponse {
 
         private int total;
         private int successful;
+        /**
+         * 该分片所有操作失败的信息
+         */
         private Failure[] failures = EMPTY;
 
         public ShardInfo() {}
@@ -214,6 +225,9 @@ public class ReplicationResponse extends ActionResponse {
                 '}';
         }
 
+        /**
+         * 代表针对某个shard的操作 失败了
+         */
         public static class Failure extends ShardOperationFailedException implements ToXContentObject {
 
             private static final String _INDEX = "_index";

@@ -36,10 +36,13 @@ import org.elasticsearch.index.mapper.MapperService;
  * allows users to change the low level postings format for individual fields
  * per index in real time via the mapping API. If no specific postings format is
  * configured for a specific field the default postings format is used.
- * 这里开放了一个口子 使得在获取PostingsFormat 实现类时 可以手动指定格式
  */
 public class PerFieldMappingPostingFormatCodec extends Lucene84Codec {
     private final Logger logger;
+
+    /**
+     * 内部维护了一个MapperService
+     */
     private final MapperService mapperService;
 
     static {
@@ -48,19 +51,28 @@ public class PerFieldMappingPostingFormatCodec extends Lucene84Codec {
     }
 
     public PerFieldMappingPostingFormatCodec(Lucene50StoredFieldsFormat.Mode compressionMode, MapperService mapperService, Logger logger) {
+        // 根据不同的压缩模式 使用的lz4内部容器也会不一样
         super(compressionMode);
         this.mapperService = mapperService;
         this.logger = logger;
     }
 
+    /**
+     * 在lucene中 docValue通过分词器解析后 会利用FST存储数据  而这里返回的编解码器做了加工
+     * @param field
+     * @return
+     */
     @Override
     public PostingsFormat getPostingsFormatForField(String field) {
+        // 从映射服务中得到增强的fieldType
         final MappedFieldType fieldType = mapperService.fieldType(field);
         if (fieldType == null) {
             logger.warn("no index mapper found for field: [{}] returning default postings format", field);
+            // TODO
         } else if (fieldType instanceof CompletionFieldMapper.CompletionFieldType) {
             return CompletionFieldMapper.CompletionFieldType.postingsFormat();
         }
+        // 默认情况下还是按照lucene原本的流程  只是当field对应的 fieldType是 CompletionFieldType时 返回一个特殊的format
         return super.getPostingsFormatForField(field);
     }
 

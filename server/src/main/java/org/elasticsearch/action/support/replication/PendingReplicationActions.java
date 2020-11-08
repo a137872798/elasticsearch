@@ -33,11 +33,22 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
+/**
+ * 该对象是专门处理 复制组的
+ * ReplicationGroup 本身只是一个bean对象 记录了某个index下所有的分片信息
+ */
 public class PendingReplicationActions implements Consumer<ReplicationGroup>, Releasable {
 
+    /**
+     * RetryableAction 代表一个在失败时允许重试的任务
+     * key 代表allocationId
+     */
     private final Map<String, Set<RetryableAction<?>>> onGoingReplicationActions = ConcurrentCollections.newConcurrentMap();
     private final ShardId shardId;
     private final ThreadPool threadPool;
+    /**
+     * 这里会记录副本组的版本信息  应该是这样每当集群内节点发生变化时 副本信息也会变化 这时就应该更新version
+     */
     private volatile long replicationGroupVersion = -1;
 
     public PendingReplicationActions(ShardId shardId, ThreadPool threadPool) {
@@ -45,15 +56,22 @@ public class PendingReplicationActions implements Consumer<ReplicationGroup>, Re
         this.threadPool = threadPool;
     }
 
+    /**
+     * 追加一个分配任务
+     * @param allocationId
+     * @param replicationAction
+     */
     public void addPendingAction(String allocationId, RetryableAction<?> replicationAction) {
         Set<RetryableAction<?>> ongoingActionsOnNode = onGoingReplicationActions.get(allocationId);
         if (ongoingActionsOnNode != null) {
+            // 为该分配者 追加一个任务
             ongoingActionsOnNode.add(replicationAction);
             if (onGoingReplicationActions.containsKey(allocationId) == false) {
                 replicationAction.cancel(new IndexShardClosedException(shardId,
                     "Replica unavailable - replica could have left ReplicationGroup or IndexShard might have closed"));
             }
         } else {
+            // 当往某个allocation 追加新的任务前 必须先确保allocation已经加入到map中 否则无法直接分配 replication任务
             replicationAction.cancel(new IndexShardClosedException(shardId,
                 "Replica unavailable - replica could have left ReplicationGroup or IndexShard might have closed"));
         }
@@ -66,11 +84,17 @@ public class PendingReplicationActions implements Consumer<ReplicationGroup>, Re
         }
     }
 
+    /**
+     *
+     * @param replicationGroup  该对象内部只是存储了一些路由信息
+     */
     @Override
     public void accept(ReplicationGroup replicationGroup) {
+        // 每次检测副本组是否发生了变化 如果是 则更新内部的容器
         if (isNewerVersion(replicationGroup)) {
             synchronized (this) {
                 if (isNewerVersion(replicationGroup)) {
+                    // TODO 这个追踪链路到底是啥意思
                     acceptNewTrackedAllocationIds(replicationGroup.getTrackedAllocationIds());
                     replicationGroupVersion = replicationGroup.getVersion();
                 }
@@ -83,12 +107,16 @@ public class PendingReplicationActions implements Consumer<ReplicationGroup>, Re
         return replicationGroup.getVersion() - replicationGroupVersion > 0;
     }
 
-    // Visible for testing
+    /**
+     *
+     * @param trackedAllocationIds 副本组内部存储了所有被追踪的链路信息
+     */
     synchronized void acceptNewTrackedAllocationIds(Set<String> trackedAllocationIds) {
         for (String targetAllocationId : trackedAllocationIds) {
             onGoingReplicationActions.putIfAbsent(targetAllocationId, ConcurrentCollections.newConcurrentSet());
         }
         ArrayList<Set<RetryableAction<?>>> toCancel = new ArrayList<>();
+        // 新版本中被移除掉的 allocationId 将会被移除
         for (String allocationId : onGoingReplicationActions.keySet()) {
             if (trackedAllocationIds.contains(allocationId) == false) {
                 toCancel.add(onGoingReplicationActions.remove(allocationId));
@@ -106,6 +134,11 @@ public class PendingReplicationActions implements Consumer<ReplicationGroup>, Re
         cancelActions(toCancel, "Primary closed.");
     }
 
+    /**
+     * 因为这组allocation 已经被移除了所以相关的任务都要被关闭
+     * @param toCancel
+     * @param message
+     */
     private void cancelActions(ArrayList<Set<RetryableAction<?>>> toCancel, String message) {
         threadPool.executor(ThreadPool.Names.GENERIC).execute(() -> toCancel.stream()
             .flatMap(Collection::stream)

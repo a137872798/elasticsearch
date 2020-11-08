@@ -45,17 +45,32 @@ import static org.elasticsearch.common.util.set.Sets.newHashSet;
 
 /**
  * Base {@link StoredFieldVisitor} that retrieves all non-redundant metadata.
+ * 并且当读取到某个doc时 根据记录需要处理的field 存储他们的value 或者做其他处理
  */
 public class FieldsVisitor extends StoredFieldVisitor {
+
+    /**
+     * id 和 routing是特殊的field
+     */
     private static final Set<String> BASE_REQUIRED_FIELDS = unmodifiableSet(newHashSet(
             IdFieldMapper.NAME,
             RoutingFieldMapper.NAME));
 
+    /**
+     * 是否需要解析doc.source 属性
+     */
     private final boolean loadSource;
     private final String sourceFieldName;
+    /**
+     * 应该是记录需要特殊处理的field  BASE_REQUIRED_FIELDS 是默认的
+     */
     private final Set<String> requiredFields;
     protected BytesReference source;
     protected String id;
+
+    /**
+     * 应该是存储目标field对应的值的容器
+     */
     protected Map<String, List<Object>> fieldsValues;
 
     public FieldsVisitor(boolean loadSource) {
@@ -69,24 +84,36 @@ public class FieldsVisitor extends StoredFieldVisitor {
         reset();
     }
 
+    /**
+     * 应该是检测是否支持处理这个field
+     * @param fieldInfo
+     * @return
+     */
     @Override
     public Status needsField(FieldInfo fieldInfo) {
+        // 看来一个field只需要处理一次啊
         if (requiredFields.remove(fieldInfo.name)) {
             return Status.YES;
         }
         // Always load _ignored to be explicit about ignored fields
         // This works because _ignored is added as the first metadata mapper,
         // so its stored fields always appear first in the list.
+        // 如果 _ignored 的field总是要被处理
         if (IgnoredFieldMapper.NAME.equals(fieldInfo.name)) {
             return Status.YES;
         }
         // All these fields are single-valued so we can stop when the set is
         // empty
+        // 既然field 都已经处理完毕了 剩余的field也不需要检测了
         return requiredFields.isEmpty()
                 ? Status.STOP
                 : Status.NO;
     }
 
+    /**
+     * 处理完后的钩子
+     * @param mapperService
+     */
     public void postProcess(MapperService mapperService) {
         for (Map.Entry<String, List<Object>> entry : fields().entrySet()) {
             MappedFieldType fieldType = mapperService.fieldType(entry.getKey());
@@ -96,6 +123,8 @@ public class FieldsVisitor extends StoredFieldVisitor {
             }
             List<Object> fieldValues = entry.getValue();
             for (int i = 0; i < fieldValues.size(); i++) {
+                // 默认情况下valueForDisplay 就是返回原值
+                // 这里可以建议理解为对数据做加工 之后重新设置回容器
                 fieldValues.set(i, fieldType.valueForDisplay(fieldValues.get(i)));
             }
         }
@@ -106,7 +135,13 @@ public class FieldsVisitor extends StoredFieldVisitor {
         binaryField(fieldInfo, new BytesRef(value));
     }
 
+    /**
+     * 开始处理二进制数据
+     * @param fieldInfo
+     * @param value
+     */
     public void binaryField(FieldInfo fieldInfo, BytesRef value) {
+        // id or source 则记录下来
         if (sourceFieldName.equals(fieldInfo.name)) {
             source = new BytesArray(value);
         } else if (IdFieldMapper.NAME.equals(fieldInfo.name)) {
@@ -116,6 +151,11 @@ public class FieldsVisitor extends StoredFieldVisitor {
         }
     }
 
+    /**
+     * 将byte[] 转换成string
+     * @param fieldInfo
+     * @param bytes
+     */
     @Override
     public void stringField(FieldInfo fieldInfo, byte[] bytes) {
         assert IdFieldMapper.NAME.equals(fieldInfo.name) == false : "_id field must go through binaryField";
@@ -124,6 +164,7 @@ public class FieldsVisitor extends StoredFieldVisitor {
         addValue(fieldInfo.name, value);
     }
 
+    // 在解析到对应的value时 插入到容器中
     @Override
     public void intField(FieldInfo fieldInfo, int value) {
         addValue(fieldInfo.name, value);
@@ -167,6 +208,7 @@ public class FieldsVisitor extends StoredFieldVisitor {
             return null;
         }
         assert values.size() == 1;
+        // TODO 为什么只取第一个值
         return values.get(0).toString();
     }
 
@@ -174,17 +216,26 @@ public class FieldsVisitor extends StoredFieldVisitor {
         return fieldsValues != null ? fieldsValues : emptyMap();
     }
 
+    /**
+     * 在初始化时会进行一次重置
+     */
     public void reset() {
         if (fieldsValues != null) fieldsValues.clear();
         source = null;
         id = null;
 
         requiredFields.addAll(BASE_REQUIRED_FIELDS);
+        // 如果还需要读取 doc.source 字段 也加入到容器中
         if (loadSource) {
             requiredFields.add(sourceFieldName);
         }
     }
 
+    /**
+     * 代表此时已经解析到某个field了
+     * @param name
+     * @param value
+     */
     void addValue(String name, Object value) {
         if (fieldsValues == null) {
             fieldsValues = new HashMap<>();

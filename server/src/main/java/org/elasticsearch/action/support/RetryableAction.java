@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * The executor the action will be executed on can be defined in the constructor. Otherwise, SAME is the
  * default. The action will be retried with exponentially increasing delay periods until the timeout period
  * has been reached.
+ * 代表一个可重试的指令  <T> 定义了指令结果
  */
 public abstract class RetryableAction<Response> {
 
@@ -44,11 +45,20 @@ public abstract class RetryableAction<Response> {
     private final AtomicBoolean isDone = new AtomicBoolean(false);
     private final ThreadPool threadPool;
     private final long initialDelayMillis;
+    /**
+     * 该任务算上重试 一共允许执行多长时间
+     */
     private final long timeoutMillis;
     private final long startMillis;
+    /**
+     * 当真正产生结果时才触发监听器 如果只是失败 会尝试进行重试
+     */
     private final ActionListener<Response> finalListener;
     private final String executor;
 
+    /**
+     * 执行失败时在一定延时后重试
+     */
     private volatile Scheduler.ScheduledCancellable retryTask;
 
     public RetryableAction(Logger logger, ThreadPool threadPool, TimeValue initialDelay, TimeValue timeoutValue,
@@ -70,15 +80,24 @@ public abstract class RetryableAction<Response> {
         this.executor = executor;
     }
 
+    /**
+     * 开始执行重试任务
+     */
     public void run() {
         final RetryingListener retryingListener = new RetryingListener(initialDelayMillis, null);
+        // 将监听器和 本action执行的逻辑打包在一起
         final Runnable runnable = createRunnable(retryingListener);
         threadPool.executor(executor).execute(runnable);
     }
 
+    /**
+     * 强制关闭任务时 也就不需要再重试了
+     * @param e
+     */
     public void cancel(Exception e) {
         if (isDone.compareAndSet(false, true)) {
             Scheduler.ScheduledCancellable localRetryTask = this.retryTask;
+            // 如果重试任务已经被设置 则关闭
             if (localRetryTask != null) {
                 localRetryTask.cancel();
             }
@@ -87,9 +106,17 @@ public abstract class RetryableAction<Response> {
         }
     }
 
+    /**
+     * 当任务执行逻辑 与监听器绑定在一起
+     * @param retryingListener
+     * @return
+     */
     private Runnable createRunnable(RetryingListener retryingListener) {
         return new ActionRunnable<>(retryingListener) {
 
+            /**
+             * 覆盖runnable的 run 方法
+             */
             @Override
             protected void doRun() {
                 retryTask = null;
@@ -99,6 +126,10 @@ public abstract class RetryableAction<Response> {
                 }
             }
 
+            /**
+             * 当任务被executor拒绝时 触发onFailure  之后会触发内部的监听器 也就是 retryingListener
+             * @param e
+             */
             @Override
             public void onRejection(Exception e) {
                 retryTask = null;
@@ -109,13 +140,23 @@ public abstract class RetryableAction<Response> {
         };
     }
 
+    /**
+     * action中真正要执行的逻辑 要放到这个方法里面
+     * @param listener
+     */
     public abstract void tryAction(ActionListener<Response> listener);
 
     public abstract boolean shouldRetry(Exception e);
 
+    /**
+     * 代表这个重试任务执行成功 或者被关闭
+     */
     public void onFinished() {
     }
 
+    /**
+     * 该监听器会监听失败 并根据异常情况判定是否要开启定时 在一定延时后重启任务
+     */
     private class RetryingListener implements ActionListener<Response> {
 
         private static final int MAX_EXCEPTIONS = 4;
@@ -138,8 +179,11 @@ public abstract class RetryableAction<Response> {
 
         @Override
         public void onFailure(Exception e) {
+            // 根据异常类型检测是否支持重试
             if (shouldRetry(e)) {
+                // 距离执行过了多久
                 final long elapsedMillis = threadPool.relativeTimeInMillis() - startMillis;
+                // 该任务包含重试在内有一个总的超时时间 当超过该时间后 任务就不应该再执行了
                 if (elapsedMillis >= timeoutMillis) {
                     logger.debug(() -> new ParameterizedMessage("retryable action timed out after {}",
                         TimeValue.timeValueMillis(elapsedMillis)), e);
@@ -151,6 +195,7 @@ public abstract class RetryableAction<Response> {
                 } else {
                     addException(e);
 
+                    // 增加延迟时长 并启动定时任务
                     final long nextDelayMillisBound = Math.min(delayMillisBound * 2, Integer.MAX_VALUE);
                     final RetryingListener retryingListener = new RetryingListener(nextDelayMillisBound, caughtExceptions);
                     final Runnable runnable = createRunnable(retryingListener);

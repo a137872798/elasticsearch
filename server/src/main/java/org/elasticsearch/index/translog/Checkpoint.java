@@ -186,8 +186,8 @@ final class Checkpoint {
     /**
      * 将检查点写入到给定的fileChannel中
      * @param factory  该对象负责提供 fileChannel
-     * @param checkpointFile
-     * @param checkpoint
+     * @param checkpointFile  包含原数据的检查点
+     * @param checkpoint  本次待写入的新检查点
      * @param options
      * @throws IOException
      */
@@ -215,6 +215,7 @@ final class Checkpoint {
 
         }
         // now go and write to the channel, in one go.
+        // TODO 如果文件中已经有数据了怎么办
         try (FileChannel channel = factory.open(checkpointFile, options)) {
             Channels.writeToChannel(byteOutputStream.toByteArray(), channel);
             // no need to force metadata, file size stays the same and we did the full fsync

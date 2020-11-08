@@ -83,13 +83,14 @@ public class TranslogReader extends BaseTranslogReader implements Closeable {
      */
     public static TranslogReader open(
             final FileChannel channel, final Path path, final Checkpoint checkpoint, final String translogUUID) throws IOException {
-        // 当读取一个之前存在的事务时  先读取事务头
+        // 当读取一个之前存在的事务文件时  先读取事务头
         final TranslogHeader header = TranslogHeader.read(translogUUID, path, channel);
         return new TranslogReader(checkpoint, channel, path, header);
     }
 
     /**
      * Closes current reader and creates new one with new checkoint and same file channel
+     * @param aboveSeqNo 代表保留该seq之上的operation  每个seq对应一个operation
      * 使用同一个fileChannel 创建一个新reader对象
      */
     TranslogReader closeIntoTrimmedReader(long aboveSeqNo, ChannelFactory channelFactory) throws IOException {
@@ -98,11 +99,12 @@ public class TranslogReader extends BaseTranslogReader implements Closeable {
             Closeable toCloseOnFailure = channel;
             final TranslogReader newReader;
             try {
-                // 也就是说每次调用该方法 且使用同一个检查点时 要求裁剪点必须比 trimmedAboveSeqNo 大
+                // 每个reader都会关联一个检查点记录各种信息 当发生裁剪时 也就是之前的数据无效了 需要更新检查点的trimmedAboveSeqNo
+                // 只能越裁剪越小
                 if (aboveSeqNo < checkpoint.trimmedAboveSeqNo
                     // 代表首次裁剪
                     || aboveSeqNo < checkpoint.maxSeqNo && checkpoint.trimmedAboveSeqNo == SequenceNumbers.UNASSIGNED_SEQ_NO) {
-                    // 每当发生一次裁剪时 更新检查点文件的数据 如果是第一次应该就是新建文件  translog-gen.ckp
+                    // 每当发生一次裁剪时 更新检查点文件的数据
                     final Path checkpointFile = path.getParent().resolve(getCommitCheckpointFileName(checkpoint.generation));
                     final Checkpoint newCheckpoint = new Checkpoint(checkpoint.offset, checkpoint.numOps,
                         checkpoint.generation, checkpoint.minSeqNo, checkpoint.maxSeqNo,
@@ -123,7 +125,7 @@ public class TranslogReader extends BaseTranslogReader implements Closeable {
                 toCloseOnFailure = null;
                 return newReader;
             } finally {
-                // 关了channel 之后的reader怎么用啊???
+                // channel是工厂生成的可能被特殊包装过
                 IOUtils.close(toCloseOnFailure);
             }
         } else {

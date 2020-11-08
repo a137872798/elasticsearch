@@ -25,7 +25,13 @@ import org.elasticsearch.index.seqno.SequenceNumbers;
  */
 public class SafeCommitInfo {
 
+    /**
+     * 本地检查点 是对应的gen吗???
+     */
     public final long localCheckpoint;
+    /**
+     * 文档数量
+     */
     public final int docCount;
 
     public SafeCommitInfo(long localCheckpoint, int docCount) {
