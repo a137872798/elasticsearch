@@ -309,12 +309,25 @@ public class PrimaryReplicaSyncer {
         }
     }
 
+    /**
+     * 什么是  Resync 任务???
+     */
     public static class ResyncTask extends Task {
         private volatile String phase = "starting";
+        // 分别记录了3种类型的操作
         private volatile int totalOperations;
         private volatile int resyncedOperations;
         private volatile int skippedOperations;
 
+        /**
+         *
+         * @param id
+         * @param type
+         * @param action         本次任务对应的action类型
+         * @param description
+         * @param parentTaskId
+         * @param headers   每个任务还包含了任务头信息
+         */
         public ResyncTask(long id, String type, String action, String description, TaskId parentTaskId, Map<String, String> headers) {
             super(id, type, action, description, parentTaskId, headers);
         }
@@ -371,9 +384,13 @@ public class PrimaryReplicaSyncer {
             return new ResyncTask.Status(phase, totalOperations, resyncedOperations, skippedOperations);
         }
 
+        /**
+         * 描述任务的状态信息
+         */
         public static class Status implements Task.Status {
             public static final String NAME = "resync";
 
+            // 实际上就是把task的关键字段抽取出来了
             private final String phase;
             private final int totalOperations;
             private final int resyncedOperations;

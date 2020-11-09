@@ -103,7 +103,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *   handoff. If the target shard is successfully initialized in primary mode, the source shard of a primary relocation is then moved
      *   to replica mode (using {@link #completeRelocationHandoff}), as the relocation target will be in charge of the global checkpoint
      *   computation from that point on.
-     *   是否采用私有模式
+     *   是否是主分片模式 ???
      */
     volatile boolean primaryMode;
 
@@ -143,6 +143,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * to influence the list of in-sync shard copies here, this could possibly remove such an in-sync copy from the internal structures
      * until the newer cluster state were to be applied, which would unsafely advance the global checkpoint. This field thus captures
      * the version of the last applied cluster state to ensure in-order updates.
+     * 记录当前集群中的版本信息  当相关信息发生变化时 会更新版本号
      */
     long appliedClusterStateVersion;
 
@@ -152,6 +153,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * Local checkpoint information for all shard copies that are tracked. Has an entry for all shard copies that are either initializing
      * and / or in-sync, possibly also containing information about unassigned in-sync shard copies. The information that is tracked for
      * each shard copy is explained in the docs for the {@link CheckpointState} class.
+     * key: allocationId
+     * value:
      */
     final Map<String, CheckpointState> checkpoints;
 
@@ -1091,12 +1094,16 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * Notifies the tracker of the current allocation IDs in the cluster state.
      *
      * @param applyingClusterStateVersion the cluster state version being applied when updating the allocation IDs from the master
+     *                                    此时集群的版本号
      * @param inSyncAllocationIds         the allocation IDs of the currently in-sync shard copies
+     *                                    当前已经完成同步的分片对应的 allocationId集合    跟kafka一个套路么  有一个同步完成的集合
      * @param routingTable                the shard routing table
+     *                                    代表当前节点的某个分片晋升成了master分片
      */
     public synchronized void updateFromMaster(final long applyingClusterStateVersion, final Set<String> inSyncAllocationIds,
                                               final IndexShardRoutingTable routingTable) {
         assert invariant();
+        // 本次更新对应的集群版本号更新才有处理的必要
         if (applyingClusterStateVersion > appliedClusterStateVersion) {
             // check that the master does not fabricate new in-sync entries out of thin air once we are in primary mode
             assert !primaryMode || inSyncAllocationIds.stream().allMatch(
@@ -1104,8 +1111,10 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 "update from master in primary mode contains in-sync ids " + inSyncAllocationIds +
                     " that have no matching entries in " + checkpoints;
             // remove entries which don't exist on master
+            // 找到所有处于 init阶段的shard对应的allocationId 并生成集合
             Set<String> initializingAllocationIds = routingTable.getAllInitializingShards().stream()
                 .map(ShardRouting::allocationId).map(AllocationId::getId).collect(Collectors.toSet());
+            // 将此时既不存在于已经同步的 all 也不存在于 init的allocation 从checkpoints中移除 也就是不再需要维护它们了
             boolean removedEntries = checkpoints.keySet().removeIf(
                 aid -> !inSyncAllocationIds.contains(aid) && !initializingAllocationIds.contains(aid));
 

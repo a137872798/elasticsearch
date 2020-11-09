@@ -236,6 +236,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      */
     private final ShardBitsetFilterCache shardBitsetFilterCache;
     private final Object mutex = new Object();
+
+    /**
+     * 是否在启动时要对分片做检查
+     */
     private final String checkIndexOnStartup;
     /**
      * 内部存储了ES加载的 所有codec 以及ES内置的codec 它基于lucene的默认编解码器做了加工
@@ -385,10 +389,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private final AtomicBoolean active = new AtomicBoolean();
     /**
      * Allows for the registration of listeners that are called when a change becomes visible for search.
-     * TODO 还不清楚 在lucene中这个对象是干嘛的
      */
     private final RefreshListeners refreshListeners;
 
+    /**
+     * 最近一次查找的时间戳 当该对象被初始化时 使用当前时间作为该时间戳
+     */
     private final AtomicLong lastSearcherAccess = new AtomicLong();
 
     /**
@@ -403,7 +409,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      *
-     * @param shardRouting  描述这个分片会被路由到哪里吧
+     * @param shardRouting  描述这个分片会被分配到哪个节点上
+     *                      这个属性是谁创建的 基于什么原则进行分配
      * @param indexSettings
      * @param path 存储shard信息的路径
      * @param store  好像就是读取有关 segment_N 文件的 还不清楚咋用
@@ -509,6 +516,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
         // the query cache is a node-level thing, however we want the most popular filters
         // to be computed on a per-shard basis
+        // 缓存策略对象 默认情况下总是使用缓存
         if (IndexModule.INDEX_QUERY_CACHE_EVERYTHING_SETTING.get(settings)) {
             cachingPolicy = new QueryCachingPolicy() {
                 @Override
@@ -521,14 +529,18 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 }
             };
         } else {
+            // 使用根据频率来决定是否使用缓存的策略  实际上也是lru算法
             cachingPolicy = new UsageTrackingQueryCachingPolicy();
         }
+        // 通过该对象执行操作 需要先获取到门票
         indexShardOperationPermits = new IndexShardOperationPermits(shardId, threadPool);
         readerWrapper = indexReaderWrapper;
         refreshListeners = buildRefreshListeners();
         lastSearcherAccess.set(threadPool.relativeTimeInMillis());
+        // 在初始化完成后 将此时分片的元数据信息写入到相关目录中
         persistMetadata(path, indexSettings, shardRouting, null, logger);
         this.useRetentionLeasesInPeerRecovery = replicationTracker.hasAllPeerRecoveryRetentionLeases();
+        // 监听最新写入的operation的location 当超过了pending时 将pending置空
         this.refreshPendingLocationListener = new RefreshPendingLocationListener();
     }
 
@@ -608,6 +620,17 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
 
+    /**
+     * TODO 当理解了主从节点的分配规则后再看这个
+     * 更新分片的状态    应该是在集群服务层 感知到分片的变化 更新本地分片   那么谁来发起更新
+     * @param newRouting
+     * @param newPrimaryTerm              当前主分片的 term 每个在集群中更替 主分片在集群中的位置 就会增加term
+     * @param primaryReplicaSyncer        the primary-replica resync action to trigger when a term is increased on a primary
+     * @param applyingClusterStateVersion the cluster state version being applied when updating the allocation IDs from the master
+     * @param inSyncAllocationIds         the allocation ids of the currently in-sync shard copies
+     * @param routingTable                the shard routing table     某个shard在整个集群中最新的分布情况
+     * @throws IOException
+     */
     @Override
     public void updateShardState(final ShardRouting newRouting,
                                  final long newPrimaryTerm,
@@ -620,19 +643,23 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             currentRouting = this.shardRouting;
             assert currentRouting != null;
 
+            // 处理的shard不匹配时 抛出异常
             if (!newRouting.shardId().equals(shardId())) {
                 throw new IllegalArgumentException("Trying to set a routing entry with shardId " +
                     newRouting.shardId() + " on a shard with shardId " + shardId());
             }
+            // TODO 当分配的位置已经发生了变化时 抛出异常  浅层含义是???
             if (newRouting.isSameAllocation(currentRouting) == false) {
                 throw new IllegalArgumentException("Trying to set a routing entry with a different allocation. Current " +
                     currentRouting + ", new " + newRouting);
             }
+            // TODO 这几种情况为什么要抛出异常呢 ???
             if (currentRouting.primary() && newRouting.primary() == false) {
                 throw new IllegalArgumentException("illegal state: trying to move shard from primary mode to replica mode. Current "
                     + currentRouting + ", new " + newRouting);
             }
 
+            // 当前分片是主分片 TODO
             if (newRouting.primary()) {
                 replicationTracker.updateFromMaster(applyingClusterStateVersion, inSyncAllocationIds, routingTable);
             }
@@ -784,10 +811,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Marks the shard as recovering based on a recovery state, fails with exception is recovering is not allowed to be set.
+     * @param recoveryState 描述分片数据的恢复状态
      */
     public IndexShardState markAsRecovering(String reason, RecoveryState recoveryState) throws IndexShardStartedException,
         IndexShardRelocatedException, IndexShardRecoveringException, IndexShardClosedException {
         synchronized (mutex) {
+            // 只有在 CREATED 模式下才可以进行state的变换
             if (state == IndexShardState.CLOSED) {
                 throw new IndexShardClosedException(shardId);
             }
@@ -2854,6 +2883,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 将元数据进行持久化
+     * @param shardPath  当前创建的分片的文件路径
+     * @param indexSettings
+     * @param newRouting  路由信息 表明这个shard此时被分配到哪个node  或者说此时的分配状态 比如是否在reallocate
+     * @param currentRouting  之前的路由信息  该对象在初始化时传入的routing 就是newRouting 而旧的routing就是null
+     * @param logger
+     * @throws IOException
+     */
     private static void persistMetadata(
             final ShardPath shardPath,
             final IndexSettings indexSettings,
@@ -2864,6 +2902,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
         // only persist metadata if routing information that is persisted in shard state metadata actually changed
         final ShardId shardId = newRouting.shardId();
+        // 只有在前后路由信息发生变化时 才有必要进行处理
         if (currentRouting == null
             || currentRouting.primary() != newRouting.primary()
             || currentRouting.allocationId().equals(newRouting.allocationId()) == false) {
@@ -2877,6 +2916,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             logger.trace("{} writing shard state, reason [{}]", shardId, writeReason);
             final ShardStateMetadata newShardStateMetadata =
                     new ShardStateMetadata(newRouting.primary(), indexSettings.getUUID(), newRouting.allocationId());
+            // 将最新的元数据信息写入到 shard对应的目录下
+            // 这是文件存储的标准套路  类似于使用mysql存储数据  每个数据以一条记录的形式存在 而在基于文件系统做存储时 可以将每个记录/元数据/普通数据作为文件存储
+            // 文件本身成为了一种标识   TODO 写入文件操作就不细看了 在ShardStateMetadata中已经定义了如何将字段转换成数据流
             ShardStateMetadata.FORMAT.writeAndCleanup(newShardStateMetadata, shardPath.getShardStatePath());
         } else {
             logger.trace("{} skip writing shard state, has been written before", shardId);
@@ -3352,10 +3394,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Build {@linkplain RefreshListeners} for this shard.
+     * 构建刷新监听器组  会感知资源对象的刷新动作 并触发相关钩子
      */
     private RefreshListeners buildRefreshListeners() {
         return new RefreshListeners(
             indexSettings::getMaxRefreshListeners,
+            // 定义了数据刷新的逻辑
             () -> refresh("too_many_listeners"),
             logger, threadPool.getThreadContext(),
             externalRefreshMetric);
@@ -3458,7 +3502,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         });
     }
 
+    /**
+     * 这里也单独定义了一个刷新监听器
+     * 监听在engine中的写入事件
+     */
     private class RefreshPendingLocationListener implements ReferenceManager.RefreshListener {
+
+        /**
+         * 当更新写入位置时 进行记录
+         */
         Translog.Location lastWriteLocation;
 
         @Override
@@ -3474,6 +3526,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         @Override
         public void afterRefresh(boolean didRefresh) {
             if (didRefresh && lastWriteLocation != null) {
+                // 下面函数的意思是 当最新写入的location超过了 pending的值 则将pending更新成null
                 pendingRefreshLocation.updateAndGet(pendingLocation -> {
                     if (pendingLocation == null || pendingLocation.compareTo(lastWriteLocation) <= 0) {
                         return null;

@@ -32,6 +32,9 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Objects;
 
+/**
+ * 当前某个分片此时的元数据信息  包含了所属的index 是否是主分片 以及 allocationId信息
+ */
 public final class ShardStateMetadata {
 
     private static final String SHARD_STATE_FILE_PREFIX = "state-";
