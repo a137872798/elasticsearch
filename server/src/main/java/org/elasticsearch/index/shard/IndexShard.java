@@ -811,7 +811,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Marks the shard as recovering based on a recovery state, fails with exception is recovering is not allowed to be set.
-     * @param recoveryState 描述分片数据的恢复状态
+     * @param recoveryState
+     * 将当前集群状态修改成恢复中
      */
     public IndexShardState markAsRecovering(String reason, RecoveryState recoveryState) throws IndexShardStartedException,
         IndexShardRelocatedException, IndexShardRecoveringException, IndexShardClosedException {
@@ -840,16 +841,21 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Completes the relocation. Operations are blocked and current operations are drained before changing state to relocated. The provided
      * {@link Runnable} is executed after all operations are successfully blocked.
      *
-     * @param consumer a {@link Runnable} that is executed after operations are blocked
+     * @param consumer a {@link Runnable} that is executed after operations are blocked   整个relocate的流程都被
      * @throws IllegalIndexShardStateException if the shard is not relocating due to concurrent cancellation
      * @throws IllegalStateException           if the relocation target is no longer part of the replication group
      * @throws InterruptedException            if blocking operations is interrupted
+     * @param targetAllocationId  重定向选中的分配者id
+     * 进行重定位
      */
     public void relocated(final String targetAllocationId, final Consumer<ReplicationTracker.PrimaryContext> consumer)
         throws IllegalIndexShardStateException, IllegalStateException, InterruptedException {
         assert shardRouting.primary() : "only primaries can be marked as relocated: " + shardRouting;
+        // 执行强制刷新动作  会调用 refresh()
         try (Releasable forceRefreshes = refreshListeners.forceRefreshes()) {
+            // 在重定位的过程中 需要进入一个阻塞状态 之后通过indexShardOperationPermits发起的所有操作都会被阻塞
             indexShardOperationPermits.blockOperations(30, TimeUnit.MINUTES, () -> {
+                // 因为刷新已经完成了 修改refreshListeners内部的刷新计数器
                 forceRefreshes.close();
                 // no shard operation permits are being held here, move state from started to relocated
                 assert indexShardOperationPermits.getActiveOperationsCount() == OPERATIONS_BLOCKED :
@@ -857,13 +863,18 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 /*
                  * We should not invoke the runnable under the mutex as the expected implementation is to handoff the primary context via a
                  * network operation. Doing this under the mutex can implicitly block the cluster state update thread on network operations.
+                 * 确保此时能进行重定向
                  */
                 verifyRelocatingState();
+                // 切换成重定向专用的上下文
                 final ReplicationTracker.PrimaryContext primaryContext = replicationTracker.startRelocationHandoff(targetAllocationId);
                 try {
+                    // 在这里已经完成了整个重定向了
                     consumer.accept(primaryContext);
                     synchronized (mutex) {
+                        // 确保结束时还处于重定向状态中 避免函数做恶意修改
                         verifyRelocatingState();
+                        // 代表处理结束
                         replicationTracker.completeRelocationHandoff(); // make changes to primaryMode and relocated flag only under mutex
                     }
                 } catch (final Exception e) {
@@ -884,6 +895,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 校验重定向状态
+     */
     private void verifyRelocatingState() {
         if (state != IndexShardState.STARTED) {
             throw new IndexShardNotStartedException(shardId, state);
@@ -892,13 +906,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
          * If the master cancelled recovery, the target will be removed and the recovery will be cancelled. However, it is still possible
          * that we concurrently end up here and therefore have to protect that we do not mark the shard as relocated when its shard routing
          * says otherwise.
+         * 必须要确保分片处于重定向状态  什么时候变化的 又是因为什么原因变化的
          */
-
         if (shardRouting.relocating() == false) {
             throw new IllegalIndexShardStateException(shardId, IndexShardState.STARTED,
                 ": shard is no longer relocating " + shardRouting);
         }
 
+        // resync 与 relocation 不能同时进行
         if (primaryReplicaResyncInProgress.get()) {
             throw new IllegalIndexShardStateException(shardId, IndexShardState.STARTED,
                 ": primary relocation is forbidden while primary-replica resync is in progress " + shardRouting);
@@ -916,16 +931,30 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param newState the new shard state
      * @param reason   the reason for the state change
      * @return the previous shard state
+     * 更改当前shard的状态
      */
     private IndexShardState changeState(IndexShardState newState, String reason) {
         assert Thread.holdsLock(mutex);
         logger.debug("state: [{}]->[{}], reason [{}]", state, newState, reason);
         IndexShardState previousState = state;
         state = newState;
+        // 因为分片的状态发生了变化 所以触发监听器  目前都是空钩子
         this.indexEventListener.indexShardStateChanged(this, previousState, newState, reason);
         return previousState;
     }
 
+    /**
+     * 在主分片上执行某种操作
+     * @param version
+     * @param versionType  这个内外版本是什么意思???
+     * @param sourceToParse  一个可以解析的数据流
+     * @param ifSeqNo
+     * @param ifPrimaryTerm
+     * @param autoGeneratedTimestamp
+     * @param isRetry
+     * @return
+     * @throws IOException
+     */
     public Engine.IndexResult applyIndexOperationOnPrimary(long version, VersionType versionType, SourceToParse sourceToParse,
                                                            long ifSeqNo, long ifPrimaryTerm, long autoGeneratedTimestamp,
                                                            boolean isRetry)
@@ -942,12 +971,31 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             autoGeneratedTimeStamp, isRetry, Engine.Operation.Origin.REPLICA, sourceToParse);
     }
 
+
+    /**
+     * 执行某种 operation
+     * @param engine
+     * @param seqNo
+     * @param opPrimaryTerm
+     * @param version
+     * @param versionType
+     * @param ifSeqNo
+     * @param ifPrimaryTerm
+     * @param autoGeneratedTimeStamp
+     * @param isRetry
+     * @param origin    代表本次操作的数据源 来自于主分片还是副本
+     * @param sourceToParse  该对象内部包含了待解析的原始数据流
+     * @return
+     * @throws IOException
+     */
     private Engine.IndexResult applyIndexOperation(Engine engine, long seqNo, long opPrimaryTerm, long version,
                                                    @Nullable VersionType versionType, long ifSeqNo, long ifPrimaryTerm,
                                                    long autoGeneratedTimeStamp, boolean isRetry, Engine.Operation.Origin origin,
                                                    SourceToParse sourceToParse) throws IOException {
         assert opPrimaryTerm <= getOperationPrimaryTerm()
                 : "op term [ " + opPrimaryTerm + " ] > shard term [" + getOperationPrimaryTerm() + "]";
+
+        // 在执行写入操作前 需要先检测操作本身 与当前的状态是否是匹配的 不匹配的情况要抛出异常
         ensureWriteAllowed(origin);
         Engine.Index operation;
         try {
@@ -969,15 +1017,33 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return index(engine, operation);
     }
 
+    /**
+     * 在写入操作执行前 先准备index
+     * @param docMapper
+     * @param source
+     * @param seqNo
+     * @param primaryTerm
+     * @param version
+     * @param versionType
+     * @param origin
+     * @param autoGeneratedIdTimestamp
+     * @param isRetry
+     * @param ifSeqNo
+     * @param ifPrimaryTerm
+     * @return
+     */
     public static Engine.Index prepareIndex(DocumentMapperForType docMapper, SourceToParse source, long seqNo,
                                             long primaryTerm, long version, VersionType versionType, Engine.Operation.Origin origin,
                                             long autoGeneratedIdTimestamp, boolean isRetry,
                                             long ifSeqNo, long ifPrimaryTerm) {
         long startTime = System.nanoTime();
+        // 这里又获取到了source数据流解析后的对象
         ParsedDocument doc = docMapper.getDocumentMapper().parse(source);
+        // 将2个mapping 进行合并
         if (docMapper.getMapping() != null) {
             doc.addDynamicMappingsUpdate(docMapper.getMapping());
         }
+        // 将doc.id 字段包装成了 term
         Term uid = new Term(IdFieldMapper.NAME, Uid.encodeId(doc.id()));
         return new Engine.Index(uid, doc, seqNo, primaryTerm, version, versionType, origin, startTime, autoGeneratedIdTimestamp, isRetry,
             ifSeqNo, ifPrimaryTerm);
@@ -1114,6 +1180,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Writes all indexing changes to disk and opens a new searcher reflecting all changes.  This can throw {@link AlreadyClosedException}.
+     * 在执行 relocate时 会先调用该方法
      */
     public void refresh(String source) {
         verifyNotClosed();
@@ -1912,15 +1979,22 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return readAllowedStates.contains(state);
     }
 
+    /**
+     * 确保此时是否能进行写入
+     * @param origin   主分片/副本
+     * @throws IllegalIndexShardStateException
+     */
     private void ensureWriteAllowed(Engine.Operation.Origin origin) throws IllegalIndexShardStateException {
         IndexShardState state = this.state; // one time volatile read
 
+        // 在非恢复阶段是不能接收恢复操作的
         if (origin.isRecovery()) {
             if (state != IndexShardState.RECOVERING) {
                 throw new IllegalIndexShardStateException(shardId, state,
                     "operation only allowed when recovering, origin [" + origin + "]");
             }
         } else {
+            // 当接收到相关执行时检测当前mode是否匹配
             if (origin == Engine.Operation.Origin.PRIMARY) {
                 assert assertPrimaryMode();
             } else if (origin == Engine.Operation.Origin.REPLICA) {
@@ -1930,6 +2004,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 assert getActiveOperationsCount() == OPERATIONS_BLOCKED
                     : "locally resetting without blocking operations, active operations are [" + getActiveOperations() + "]";
             }
+            // 检测当前状态是否属于可写入状态  上面的判断更多的是根据此时的角色 而下面的逻辑是根据当前分片的状态
             if (writeAllowedStates.contains(state) == false) {
                 throw new IllegalIndexShardStateException(shardId, state, "operation only allowed when shard state is one of " +
                     writeAllowedStates + ", origin [" + origin + "]");
@@ -1952,6 +2027,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         verifyNotClosed(null);
     }
 
+    /**
+     * 确保此时 state 不属于closed状态
+     * @param suppressed
+     * @throws IllegalIndexShardStateException
+     */
     private void verifyNotClosed(Exception suppressed) throws IllegalIndexShardStateException {
         IndexShardState state = this.state; // one time volatile read
         if (state == IndexShardState.CLOSED) {

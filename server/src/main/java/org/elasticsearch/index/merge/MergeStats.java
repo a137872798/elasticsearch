@@ -29,6 +29,11 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
 
+/**
+ * lucene中会将多个segment进行合并 这里是统计合并的数据
+ * 记得在indexWriter中 每次生成一个segment 会存到一个列表里 然后merge就是会基于条件进行参考并合并
+ * 难怪每次merge都是非必须的 也就是在主流程中不是必须执行 且大多数情况merge都是异步执行 而且因为旧的数据还在被使用 所以都是基于旧数据生成新数据 而不会直接修改旧数据
+ */
 public class MergeStats implements Writeable, ToXContentFragment {
 
     private long total;

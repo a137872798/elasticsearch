@@ -100,26 +100,56 @@ import java.util.stream.Stream;
 import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_PRIMARY_TERM;
 import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
 
+/**
+ * 与lucene的所有交互逻辑都被隐藏在这个对象中
+ * 在 IndexShard中 engine是通过 engineFactory创建的
+ */
 public abstract class Engine implements Closeable {
 
+    /**
+     * 同步id是什么东西
+     */
     public static final String SYNC_COMMIT_ID = "sync_id"; // TODO: Remove sync_id in 9.0
+
     public static final String HISTORY_UUID_KEY = "history_uuid";
     public static final String FORCE_MERGE_UUID_KEY = "force_merge_uuid";
     public static final String MIN_RETAINED_SEQNO = "min_retained_seq_no";
     public static final String MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID = "max_unsafe_auto_id_timestamp";
 
+    /**
+     * 每个引擎对应一个 分片
+     */
     protected final ShardId shardId;
+    /**
+     * 该分片被分配到这个 allocate下
+     */
     protected final String allocationId;
     protected final Logger logger;
+    /**
+     * 生成engine使用的 配置
+     */
     protected final EngineConfig engineConfig;
+
+    /**
+     * store好像只是整合了 几个目录和 读取segment_N 的逻辑啥的
+     */
     protected final Store store;
     protected final AtomicBoolean isClosed = new AtomicBoolean(false);
+    /**
+     * 用于阻塞等待关闭的
+     */
     private final CountDownLatch closedLatch = new CountDownLatch(1);
+    /**
+     * 当使用engine处理数据失败时抛出的异常
+     */
     protected final EventListener eventListener;
     protected final ReentrantLock failEngineLock = new ReentrantLock();
     protected final ReentrantReadWriteLock rwl = new ReentrantReadWriteLock();
     protected final ReleasableLock readLock = new ReleasableLock(rwl.readLock());
     protected final ReleasableLock writeLock = new ReleasableLock(rwl.writeLock());
+    /**
+     * 存储失败时的异常信息
+     */
     protected final SetOnce<Exception> failedEngine = new SetOnce<>();
     /*
      * on {@code lastWriteNanos} we use System.nanoTime() to initialize this since:
@@ -134,6 +164,10 @@ public abstract class Engine implements Closeable {
      */
     protected volatile long lastWriteNanos = System.nanoTime();
 
+    /**
+     * 在初始化阶段只是做了简单的赋值操作
+     * @param engineConfig
+     */
     protected Engine(EngineConfig engineConfig) {
         Objects.requireNonNull(engineConfig.getStore(), "Store must be provided to the engine");
 
@@ -159,8 +193,16 @@ public abstract class Engine implements Closeable {
         return engineConfig;
     }
 
+    /**
+     * 获取最后一次提交的 segment 信息
+     * @return
+     */
     protected abstract SegmentInfos getLastCommittedSegmentInfos();
 
+    /**
+     * 生成一个统计merge相关信息的对象
+     * @return
+     */
     public MergeStats getMergeStats() {
         return new MergeStats();
     }
@@ -173,11 +215,13 @@ public abstract class Engine implements Closeable {
 
     /**
      * Returns the {@link CompletionStats} for this engine
+     * 应该是在写入完成时触发
      */
     public abstract CompletionStats completionStats(String... fieldNamePatterns);
 
     /**
      * Returns the {@link DocsStats} for this engine
+     * 从reader中获取相关信息 生成统计对象
      */
     public DocsStats docStats() {
         // we calculate the doc stats based on the internal searcher that is more up-to-date and not subject
@@ -190,15 +234,24 @@ public abstract class Engine implements Closeable {
         }
     }
 
+    /**
+     * 从reader中获取doc的相关信息 生成统计对象
+     * @param indexReader
+     * @return
+     */
     protected final DocsStats docsStats(IndexReader indexReader) {
         long numDocs = 0;
         long numDeletedDocs = 0;
         long sizeInBytes = 0;
         // we don't wait for a pending refreshes here since it's a stats call instead we mark it as accessed only which will cause
         // the next scheduled refresh to go through and refresh the stats as well
+        // 每个leave 对应一个segment
+        // 最初用于生成 Searcher的 reader对象是由子类创建的 所以现在不用纠结它的特性 毕竟连实现类都还没摸清楚
         for (LeafReaderContext readerContext : indexReader.leaves()) {
             // we go on the segment level here to get accurate numbers
+            // 每个segmentReader 会抽取所有lucene写入的索引文件 并且可以根据需要读取数据
             final SegmentReader segmentReader = Lucene.segmentReader(readerContext.reader());
+            // 段的描述信息  比如多少doc被删除了 segment总计发生了多少次删除
             SegmentCommitInfo info = segmentReader.getSegmentInfo();
             numDocs += readerContext.reader().numDocs();
             numDeletedDocs += readerContext.reader().numDeletedDocs();
@@ -208,6 +261,7 @@ public abstract class Engine implements Closeable {
                 logger.trace(() -> new ParameterizedMessage("failed to get size for [{}]", info.info.name), e);
             }
         }
+        // 将每个segment 下相关的数据汇总成stat对象
         return new DocsStats(numDocs, numDeletedDocs, sizeInBytes);
     }
 
@@ -217,8 +271,11 @@ public abstract class Engine implements Closeable {
      * @throws IllegalStateException if the sanity checks failed
      */
     public void verifyEngineBeforeIndexClosing() throws IllegalStateException {
+        // 获取此时的全局检查点
         final long globalCheckpoint = engineConfig.getGlobalCheckpointSupplier().getAsLong();
+        // TODO 为什么是通过全局检查点获取统计对象  而且maxSeq是怎么来的
         final long maxSeqNo = getSeqNoStats(globalCheckpoint).getMaxSeqNo();
+        // 这里认为全局检查点必须与 max一致
         if (globalCheckpoint != maxSeqNo) {
             throw new IllegalStateException("Global checkpoint [" + globalCheckpoint
                 + "] mismatches maximum sequence number [" + maxSeqNo + "] on index shard " + shardId);
@@ -229,12 +286,22 @@ public abstract class Engine implements Closeable {
      * A throttling class that can be activated, causing the
      * {@code acquireThrottle} method to block on a lock when throttling
      * is enabled
+     * 索引阀门
      */
     protected static final class IndexThrottle {
+
+        /**
+         * 阀门总计打开了多长时间
+         */
         private final CounterMetric throttleTimeMillisMetric = new CounterMetric();
         private volatile long startOfThrottleNS;
+        // ReleasableLock 除开断言外就是普通的锁
         private static final ReleasableLock NOOP_LOCK = new ReleasableLock(new NoOpLock());
         private final ReleasableLock lockReference = new ReleasableLock(new ReentrantLock());
+
+        /**
+         * 初始状态下是一个空锁
+         */
         private volatile ReleasableLock lock = NOOP_LOCK;
 
         public Releasable acquireThrottle() {
@@ -242,6 +309,7 @@ public abstract class Engine implements Closeable {
         }
 
         /** Activate throttling, which switches the lock to be a real lock */
+        // 激活时才使用真正的锁 否则是个空锁
         public void activate() {
             assert lock == NOOP_LOCK : "throttling activated while already active";
             startOfThrottleNS = System.nanoTime();
@@ -249,6 +317,7 @@ public abstract class Engine implements Closeable {
         }
 
         /** Deactivate throttling, which switches the lock to be an always-acquirable NoOpLock */
+        // 取消激活就是将锁重新变成 NOOP_LOCK
         public void deactivate() {
             assert lock != NOOP_LOCK : "throttling deactivated but not active";
             lock = NOOP_LOCK;
@@ -258,10 +327,16 @@ public abstract class Engine implements Closeable {
             if (throttleTimeNS >= 0) {
                 // Paranoia (System.nanoTime() is supposed to be monotonic): time slip may have occurred but never want
                 // to add a negative number
+                // 记录阀门总计开启了多长时间
                 throttleTimeMillisMetric.inc(TimeValue.nsecToMSec(throttleTimeNS));
             }
         }
 
+        /**
+         * 获取当前阀门开启的总时长
+         * 在deactivate时 会自动重新计算总时长
+         * @return
+         */
         long getThrottleTimeInMillis() {
             long currentThrottleNS = 0;
             if (isThrottled() && startOfThrottleNS != 0) {
@@ -281,18 +356,21 @@ public abstract class Engine implements Closeable {
 
     /**
      * Returns the number of milliseconds this engine was under index throttling.
+     * 获取阀门启动的总时长
      */
     public abstract long getIndexThrottleTimeInMillis();
 
     /**
      * Returns the <code>true</code> iff this engine is currently under index throttling.
      * @see #getIndexThrottleTimeInMillis()
+     * 当前是否处于阀门的拦截状态
      */
     public abstract boolean isThrottled();
 
     /**
      * Trims translog for terms below <code>belowTerm</code> and seq# above <code>aboveSeqNo</code>
      * @see Translog#trimOperations(long, long)
+     * 将指定term seqNo 后面的数据截取掉???
      */
     public abstract void trimOperationsFromTranslog(long belowTerm, long aboveSeqNo) throws EngineException;
 
@@ -334,8 +412,11 @@ public abstract class Engine implements Closeable {
      * document specific failures
      *
      * Note: engine level failures (i.e. persistent engine failures) are thrown
+     * 应该是以index作为查询条件   index本身只是一个简单的bean对象
      */
     public abstract IndexResult index(Index index) throws IOException;
+
+    // 下面的套路与 index() 一致
 
     /**
      * Perform document delete operation on the engine
@@ -354,16 +435,28 @@ public abstract class Engine implements Closeable {
      * Holds result meta data (e.g. translog location, updated version)
      * for an executed write {@link Operation}
      * 代表某次索引操作的结果
-     **/
+     */
     public abstract static class Result {
+        /**
+         * 代表操作类型
+         */
         private final Operation.TYPE operationType;
+        /**
+         * 有关结果是否成功的type
+         */
         private final Result.Type resultType;
         private final long version;
         private final long term;
         private final long seqNo;
         private final Exception failure;
         private final SetOnce<Boolean> freeze = new SetOnce<>();
+        /**
+         * 这个到底指的是什么???
+         */
         private final Mapping requiredMappingUpdate;
+        /**
+         * 标记translog的位置信息
+         */
         private Translog.Location translogLocation;
         private long took;
 
@@ -467,6 +560,9 @@ public abstract class Engine implements Closeable {
             freeze.set(true);
         }
 
+        /**
+         * 代表本次结果是成功/失败 或者需要更新数据 (数据太旧无法正常处理???)
+         */
         public enum Type {
             SUCCESS,
             FAILURE,
@@ -474,8 +570,14 @@ public abstract class Engine implements Closeable {
         }
     }
 
+    /**
+     * 执行 Index操作后返回的结果
+     */
     public static class IndexResult extends Result {
 
+        /**
+         * 是否创建成功???
+         */
         private final boolean created;
 
         public IndexResult(long version, long term, long seqNo, boolean created) {
@@ -506,8 +608,14 @@ public abstract class Engine implements Closeable {
 
     }
 
+    /**
+     * 代表一次delete的结果
+     */
     public static class DeleteResult extends Result {
 
+        /**
+         * 是否查询到对应的数据了
+         */
         private final boolean found;
 
         public DeleteResult(long version, long term, long seqNo, boolean found) {
@@ -550,11 +658,22 @@ public abstract class Engine implements Closeable {
 
     }
 
+
+    /**
+     * 发起一次get请求
+     * @param get
+     * @param searcherFactory  根据name 和scope 可以生成一个searcher对象 这个对象是可以查数据的 什么样的字符串能直接定位这个呢???
+     * @param scope
+     * @return
+     * @throws EngineException
+     */
     protected final GetResult getFromSearcher(Get get, BiFunction<String, SearcherScope, Engine.Searcher> searcherFactory,
                                                 SearcherScope scope) throws EngineException {
+        // 传入一个 "get" 就能获取对应的searcher???
         final Engine.Searcher searcher = searcherFactory.apply("get", scope);
         final DocIdAndVersion docIdAndVersion;
         try {
+            // 从reader中读取数据 并将结果包装成 DocIdAndVersion   看来get是直接对应某个id   简单讲就是一次lucene的标准查询
             docIdAndVersion = VersionsAndSeqNoResolver.loadDocIdAndVersion(searcher.getIndexReader(), get.uid(), true);
         } catch (Exception e) {
             Releasables.closeWhileHandlingException(searcher);
@@ -562,7 +681,9 @@ public abstract class Engine implements Closeable {
             throw new EngineException(shardId, "Couldn't resolve version", e);
         }
 
+        // 代表查询到了结果
         if (docIdAndVersion != null) {
+            // 检测相关属性是否匹配 不匹配则抛出异常
             if (get.versionType().isVersionConflictForReads(docIdAndVersion.version, get.version())) {
                 Releasables.close(searcher);
                 throw new VersionConflictEngineException(shardId, get.id(),
@@ -580,6 +701,7 @@ public abstract class Engine implements Closeable {
         if (docIdAndVersion != null) {
             // don't release the searcher on this path, it is the
             // responsibility of the caller to call GetResult.release
+            // 因为走的是 SegmentReader 而不是translog 所以相关标识传入 false
             return new GetResult(searcher, docIdAndVersion, false);
         } else {
             Releasables.close(searcher);
@@ -587,6 +709,13 @@ public abstract class Engine implements Closeable {
         }
     }
 
+    /**
+     * getFromSearch 指定从reader中查询 那么该方法就是从translog中查询
+     * @param get
+     * @param searcherFactory
+     * @return
+     * @throws EngineException
+     */
     public abstract GetResult get(Get get, BiFunction<String, SearcherScope, Searcher> searcherFactory) throws EngineException;
 
 
@@ -598,6 +727,7 @@ public abstract class Engine implements Closeable {
      * @param source the source API or routing that triggers this searcher acquire
      *
      * @see Searcher#close()
+     * External 指的是外部调用获取seacher
      */
     public final Searcher acquireSearcher(String source) throws EngineException {
         return acquireSearcher(source, SearcherScope.EXTERNAL);
@@ -610,27 +740,36 @@ public abstract class Engine implements Closeable {
      *
      * @param source the source API or routing that triggers this searcher acquire
      * @param scope the scope of this searcher ie. if the searcher will be used for get or search purposes
-     *
+     *                默认情况使用的是internal
      * @see Searcher#close()
+     * 获取查询对象
+     * Searcher 继承自 IndexSearcher
      */
     public Searcher acquireSearcher(String source, SearcherScope scope) throws EngineException {
         /* Acquire order here is store -> manager since we need
          * to make sure that the store is not closed before
          * the searcher is acquired. */
+        // 当对象已经被关闭时 返回false  也就无法获取到searcher对象了
         if (store.tryIncRef() == false) {
             throw new AlreadyClosedException(shardId + " store is closed", failedEngine.get());
         }
         Releasable releasable = store::decRef;
         try {
             assert assertSearcherIsWarmedUp(source, scope);
+            // 获取维护 Reader的 referenceManager对象   reader对象由子类来定义
             ReferenceManager<ElasticsearchDirectoryReader> referenceManager = getReferenceManager(scope);
+            // 获取内部的reader对象
             final ElasticsearchDirectoryReader acquire = referenceManager.acquire();
             AtomicBoolean released = new AtomicBoolean(false);
+            // 将reader对象包装成 searcher
             Searcher engineSearcher = new Searcher(source, acquire,
                 engineConfig.getSimilarity(), engineConfig.getQueryCache(), engineConfig.getQueryCachingPolicy(),
+
+                // close 钩子
                 () -> {
                 if (released.compareAndSet(false, true)) {
                     try {
+                        // 减少引用计数
                         referenceManager.release(acquire);
                     } finally {
                         store.decRef();
@@ -656,12 +795,20 @@ public abstract class Engine implements Closeable {
         }
     }
 
+    /**
+     * 返回的是一个具备刷新能力的 ReferenceManager对象  执行函数后悔更新 IndexReader对象
+     * @param scope
+     * @return
+     */
     protected abstract ReferenceManager<ElasticsearchDirectoryReader> getReferenceManager(SearcherScope scope);
 
     boolean assertSearcherIsWarmedUp(String source, SearcherScope scope) {
         return true;
     }
 
+    /**
+     * 什么是外部查询 和 内部查询
+     */
     public enum SearcherScope {
         EXTERNAL, INTERNAL
     }
@@ -747,14 +894,17 @@ public abstract class Engine implements Closeable {
 
     /**
      * Global stats on segments.
+     * 获取所有segment的统计信息
      */
     public SegmentsStats segmentsStats(boolean includeSegmentFileSizes, boolean includeUnloadedSegments) {
         ensureOpen();
         Set<String> segmentName = new HashSet<>();
         SegmentsStats stats = new SegmentsStats();
+        // 使用2个scope 会返回不同的searcher对象
         try (Searcher searcher = acquireSearcher("segments_stats", SearcherScope.INTERNAL)) {
             for (LeafReaderContext ctx : searcher.getIndexReader().getContext().leaves()) {
                 SegmentReader segmentReader = Lucene.segmentReader(ctx.reader());
+                // 将reader对象中的各种属性填充到 stats中
                 fillSegmentStats(segmentReader, includeSegmentFileSizes, stats);
                 segmentName.add(segmentReader.getSegmentName());
             }
@@ -763,6 +913,7 @@ public abstract class Engine implements Closeable {
         try (Searcher searcher = acquireSearcher("segments_stats", SearcherScope.EXTERNAL)) {
             for (LeafReaderContext ctx : searcher.getIndexReader().getContext().leaves()) {
                 SegmentReader segmentReader = Lucene.segmentReader(ctx.reader());
+                // 因为无法确定 external/internal返回的searcher是否是一样的 所以在segment这一层做了去重
                 if (segmentName.contains(segmentReader.getSegmentName()) == false) {
                     fillSegmentStats(segmentReader, includeSegmentFileSizes, stats);
                 }
@@ -772,6 +923,12 @@ public abstract class Engine implements Closeable {
         return stats;
     }
 
+    /**
+     * 填充 段的统计信息
+     * @param segmentReader
+     * @param includeSegmentFileSizes
+     * @param stats
+     */
     protected void fillSegmentStats(SegmentReader segmentReader, boolean includeSegmentFileSizes, SegmentsStats stats) {
         stats.add(1, segmentReader.ramBytesUsed());
         stats.addTermsMemoryInBytes(guardedRamBytesUsed(segmentReader.getPostingsReader()));
@@ -1168,10 +1325,21 @@ public abstract class Engine implements Closeable {
         private final String source;
         private final Closeable onClose;
 
+
+        /**
+         *
+         * @param source  这个source指代什么???
+         * @param reader  真正负责读取数据的reader对象
+         * @param similarity
+         * @param queryCache
+         * @param queryCachingPolicy
+         * @param onClose
+         */
         public Searcher(String source, IndexReader reader,
                         Similarity similarity, QueryCache queryCache, QueryCachingPolicy queryCachingPolicy,
                         Closeable onClose) {
             super(reader);
+            // 设置缓存 缓存策略 打分器  这些会在查询时使用上
             setSimilarity(similarity);
             setQueryCache(queryCache);
             setQueryCachingPolicy(queryCachingPolicy);
@@ -1251,10 +1419,25 @@ public abstract class Engine implements Closeable {
         }
 
         public enum Origin {
+            /**
+             * 本次操作由主分片发起
+             */
             PRIMARY,
+            /**
+             * 本次操作由副本发起
+             */
             REPLICA,
+            /**
+             * 通过接收其他节点的数据流完成数据的恢复
+             */
             PEER_RECOVERY,
+            /**
+             * 通过加载本地translog日志完成数据恢复
+             */
             LOCAL_TRANSLOG_RECOVERY,
+            /**
+             * 本次发起的重置操作
+             */
             LOCAL_RESET;
 
             public boolean isRecovery() {
@@ -1308,8 +1491,15 @@ public abstract class Engine implements Closeable {
         public abstract TYPE operationType();
     }
 
+    /**
+     * Index 就是一种操作
+     * 就是一个最简单的bean对象
+     */
     public static class Index extends Operation {
 
+        /**
+         * 解析完后的文档
+         */
         private final ParsedDocument doc;
         private final long autoGeneratedIdTimestamp;
         private final boolean isRetry;
@@ -1507,6 +1697,7 @@ public abstract class Engine implements Closeable {
         private final boolean readFromTranslog;
         private long version = Versions.MATCH_ANY;
         private VersionType versionType = VersionType.INTERNAL;
+        // 查询出来的结果设置的值是否匹配
         private long ifSeqNo = UNASSIGNED_SEQ_NO;
         private long ifPrimaryTerm = UNASSIGNED_PRIMARY_TERM;
 

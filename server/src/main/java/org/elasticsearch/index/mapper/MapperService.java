@@ -633,6 +633,7 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
     /**
      * Returns the document mapper for this MapperService.  If no mapper exists,
      * creates one and returns that.
+     * 自动创建docMapper对象
      */
     public DocumentMapperForType documentMapperWithAutoCreate() {
         DocumentMapper mapper = documentMapper();

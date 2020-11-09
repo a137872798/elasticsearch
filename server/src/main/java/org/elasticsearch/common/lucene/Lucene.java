@@ -706,6 +706,7 @@ public class Lucene {
     /**
      * Tries to extract a segment reader from the given index reader.
      * If no SegmentReader can be extracted an {@link IllegalStateException} is thrown.
+     * 解包装 返回最原始的 SegmentReader
      */
     public static SegmentReader segmentReader(LeafReader reader) {
         if (reader instanceof SegmentReader) {

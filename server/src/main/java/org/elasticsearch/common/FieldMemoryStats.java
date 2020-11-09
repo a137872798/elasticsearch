@@ -33,6 +33,7 @@ import java.util.Objects;
 
 /**
  * A reusable class to encode {@code field -&gt; memory size} mappings
+ * 统计每个field的内存使用情况
  */
 public final class FieldMemoryStats implements Writeable, Iterable<ObjectLongCursor<String>>{
 

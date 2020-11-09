@@ -133,6 +133,10 @@ public class ParsedDocument {
         return dynamicMappingsUpdate;
     }
 
+    /**
+     * 如果此时已经存在mapping对象了进行合并 否则进行设置
+     * @param update
+     */
     public void addDynamicMappingsUpdate(Mapping update) {
         if (dynamicMappingsUpdate == null) {
             dynamicMappingsUpdate = update;

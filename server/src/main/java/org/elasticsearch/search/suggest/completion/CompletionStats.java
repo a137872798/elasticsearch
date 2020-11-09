@@ -29,6 +29,9 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
 
+/**
+ * 应该是当写入完成时统计的吧
+ */
 public class CompletionStats implements Writeable, ToXContentFragment {
 
     private static final String COMPLETION = "completion";
@@ -37,6 +40,10 @@ public class CompletionStats implements Writeable, ToXContentFragment {
     private static final String FIELDS = "fields";
 
     private long sizeInBytes;
+
+    /**
+     * 以field为单位存储了内存的使用量
+     */
     @Nullable
     private FieldMemoryStats fields;
 

@@ -30,9 +30,13 @@ import java.io.IOException;
 /**
  * A {@link org.apache.lucene.index.FilterDirectoryReader} that exposes
  * Elasticsearch internal per shard / index information like the shard ID.
+ * ES 封装了原生的 IndexReader
  */
 public final class ElasticsearchDirectoryReader extends FilterDirectoryReader {
 
+    /**
+     * 代表这份数据是属于哪个分片的
+     */
     private final ShardId shardId;
     private final FilterDirectoryReader.SubReaderWrapper wrapper;
 

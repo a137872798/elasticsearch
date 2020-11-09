@@ -49,6 +49,7 @@ import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
  *  This class uses live docs, so it should be cached based on the
  *  {@link org.apache.lucene.index.IndexReader#getReaderCacheHelper() reader cache helper}
  *  rather than the {@link LeafReader#getCoreCacheHelper() core cache helper}.
+ *  本对象是通过 ThreadLocal实现线程隔离的  所以不需要做并发处理 同时像是一种查询结果的缓存
  */
 final class PerThreadIDVersionAndSeqNoLookup {
     // TODO: do we really need to store all this stuff? some if it might not speed up anything.
@@ -66,12 +67,15 @@ final class PerThreadIDVersionAndSeqNoLookup {
 
     /**
      * Initialize lookup for the provided segment
+     * 该对象在初始化时 通过一个 segmentReader 和一个指定的field 进行初始化
      */
     PerThreadIDVersionAndSeqNoLookup(LeafReader reader, String uidField) throws IOException {
         this.uidField = uidField;
+        // terms 是用于迭代所有doc中 该field分词后的term的
         final Terms terms = reader.terms(uidField);
         if (terms == null) {
             // If a segment contains only no-ops, it does not have _uid but has both _soft_deletes and _tombstone fields.
+            // 会专门存 _soft_delete/_tombstone 吗 是ES自己加的吧
             final NumericDocValues softDeletesDV = reader.getNumericDocValues(Lucene.SOFT_DELETES_FIELD);
             final NumericDocValues tombstoneDV = reader.getNumericDocValues(SeqNoFieldMapper.TOMBSTONE_NAME);
             // this is a special case when we pruned away all IDs in a segment since all docs are deleted.
@@ -102,11 +106,13 @@ final class PerThreadIDVersionAndSeqNoLookup {
         throws IOException {
         assert context.reader().getCoreCacheHelper().getKey().equals(readerKey) :
             "context's reader is not the same as the reader class was initialized on.";
+        // 当这个term能够匹配到多个doc时 只返回最后一个
         int docID = getDocID(id, context);
 
         if (docID != DocIdSetIterator.NO_MORE_DOCS) {
             final long seqNo;
             final long term;
+            // 是否连同 seqNo term 一起加载出来
             if (loadSeqNo) {
                 seqNo = readNumericDocValues(context.reader(), SeqNoFieldMapper.NAME, docID);
                 term = readNumericDocValues(context.reader(), SeqNoFieldMapper.PRIMARY_TERM_NAME, docID);
@@ -124,6 +130,7 @@ final class PerThreadIDVersionAndSeqNoLookup {
     /**
      * returns the internal lucene doc id for the given id bytes.
      * {@link DocIdSetIterator#NO_MORE_DOCS} is returned if not found
+     * 找到与id匹配的doc 在semgent下的id
      * */
     private int getDocID(BytesRef id, LeafReaderContext context) throws IOException {
         // termsEnum can possibly be null here if this leaf contains only no-ops.
@@ -132,6 +139,7 @@ final class PerThreadIDVersionAndSeqNoLookup {
             int docID = DocIdSetIterator.NO_MORE_DOCS;
             // there may be more than one matching docID, in the case of nested docs, so we want the last one:
             docsEnum = termsEnum.postings(docsEnum, 0);
+            // 当匹配到多个doc时  只返回最后一个
             for (int d = docsEnum.nextDoc(); d != DocIdSetIterator.NO_MORE_DOCS; d = docsEnum.nextDoc()) {
                 if (liveDocs != null && liveDocs.get(d) == false) {
                     continue;
@@ -150,6 +158,7 @@ final class PerThreadIDVersionAndSeqNoLookup {
             assert false : "document [" + docId + "] does not have docValues for [" + field + "]";
             throw new IllegalStateException("document [" + docId + "] does not have docValues for [" + field + "]");
         }
+        // 这里已经定位到doc了
         return dv.longValue();
     }
 

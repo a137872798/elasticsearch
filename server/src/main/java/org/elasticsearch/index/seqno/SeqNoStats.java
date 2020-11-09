@@ -28,6 +28,9 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import java.io.IOException;
 import java.util.Objects;
 
+/**
+ * 记录 seqNo/checkpoint的对象  就是简单的bean对象
+ */
 public class SeqNoStats implements ToXContentFragment, Writeable {
 
     private static final String SEQ_NO = "seq_no";

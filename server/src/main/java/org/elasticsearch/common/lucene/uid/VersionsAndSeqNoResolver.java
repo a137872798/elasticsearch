@@ -38,6 +38,7 @@ public final class VersionsAndSeqNoResolver {
         ConcurrentCollections.newConcurrentMapWithAggressiveConcurrency();
 
     // Evict this reader from lookupStates once it's closed:
+    // 当不在使用某个缓存了 将对应的 ThreadLocal内部存储的数据也移除
     private static final IndexReader.ClosedListener removeLookupState = key -> {
         CloseableThreadLocal<PerThreadIDVersionAndSeqNoLookup[]> ctl = lookupStates.remove(key);
         if (ctl != null) {
@@ -45,6 +46,13 @@ public final class VersionsAndSeqNoResolver {
         }
     };
 
+    /**
+     *
+     * @param reader  通过该对象查询数据
+     * @param uidField 目标数据会携带的field
+     * @return
+     * @throws IOException
+     */
     private static PerThreadIDVersionAndSeqNoLookup[] getLookupState(IndexReader reader, String uidField) throws IOException {
         // We cache on the top level
         // This means cache entries have a shorter lifetime, maybe as low as 1s with the
@@ -52,6 +60,7 @@ public final class VersionsAndSeqNoResolver {
         // proved to be cheaper than having to perform a CHM and a TL get for every segment.
         // See https://github.com/elastic/elasticsearch/pull/19856.
         IndexReader.CacheHelper cacheHelper = reader.getReaderCacheHelper();
+        // 每个线程会绑定一组PerThreadIDVersionAndSeqNoLookup
         CloseableThreadLocal<PerThreadIDVersionAndSeqNoLookup[]> ctl = lookupStates.get(cacheHelper.getKey());
         if (ctl == null) {
             // First time we are seeing this reader's core; make a new CTL:
@@ -66,8 +75,11 @@ public final class VersionsAndSeqNoResolver {
             }
         }
 
+        // 获取当前线程关联的 lookup对象 一般 ThreadLocal应该是配合长生命周期的线程使用的  比如线程池
         PerThreadIDVersionAndSeqNoLookup[] lookupState = ctl.get();
+        // 如果不为空 发现 field是不需要设置了
         if (lookupState == null) {
+            // 原来是每个 segmentReader 对应一个 lookup对象
             lookupState = new PerThreadIDVersionAndSeqNoLookup[reader.leaves().size()];
             for (LeafReaderContext leaf : reader.leaves()) {
                 lookupState[leaf.ord] = new PerThreadIDVersionAndSeqNoLookup(leaf.reader(), uidField);
@@ -79,6 +91,7 @@ public final class VersionsAndSeqNoResolver {
             throw new AssertionError("Mismatched numbers of leaves: " + lookupState.length + " != " + reader.leaves().size());
         }
 
+        // 当field不匹配时抛出异常
         if (lookupState.length > 0 && Objects.equals(lookupState[0].uidField, uidField) == false) {
             throw new AssertionError("Index does not consistently use the same uid field: ["
                     + uidField + "] != [" + lookupState[0].uidField + "]");
@@ -128,15 +141,20 @@ public final class VersionsAndSeqNoResolver {
      * <li>null if the uid wasn't found,
      * <li>a doc ID and a version otherwise
      * </ul>
+     * @param loadSeqNo 是否要将seq term 等信息一起查出来
+     * 从某个reader下查询该term能够命中的数据
      */
     public static DocIdAndVersion loadDocIdAndVersion(IndexReader reader, Term term, boolean loadSeqNo) throws IOException {
+        // reader对应的缓存键可以找到一个 ThreadLocal<PerThreadIDVersionAndSeqNoLookup[]> 对象
         PerThreadIDVersionAndSeqNoLookup[] lookups = getLookupState(reader, term.field());
         List<LeafReaderContext> leaves = reader.leaves();
         // iterate backwards to optimize for the frequently updated documents
         // which are likely to be in the last segments
         for (int i = leaves.size() - 1; i >= 0; i--) {
             final LeafReaderContext leaf = leaves.get(i);
+            // 找到对应的lookup对象
             PerThreadIDVersionAndSeqNoLookup lookup = lookups[leaf.ord];
+            // 结果被缓存了是吗 现在用term直接查询
             DocIdAndVersion result = lookup.lookupVersion(term.bytes(), loadSeqNo, leaf);
             if (result != null) {
                 return result;

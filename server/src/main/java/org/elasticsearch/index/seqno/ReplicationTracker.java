@@ -128,11 +128,13 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * This means, however, that the global checkpoint can still advance after the primary relocation handoff has been initiated, but only
      * because the master could have failed some of the in-sync shard copies and marked them as stale. That is ok though, as this
      * information is conveyed through cluster state updates, and the new primary relocation target will also eventually learn about those.
+     * 代表开始进行重定向的处理了
      */
     boolean handoffInProgress;
 
     /**
      * Boolean flag that indicates whether a relocation handoff completed (see {@link #completeRelocationHandoff}).
+     * 当重定向完成后 会修改成true
      */
     volatile boolean relocated;
 
@@ -147,6 +149,9 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      */
     long appliedClusterStateVersion;
 
+    /**
+     * 有关某个索引下所有分片的路由信息     同一分片应该是共用一个shardId
+     */
     IndexShardRoutingTable routingTable;
 
     /**
@@ -155,6 +160,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * each shard copy is explained in the docs for the {@link CheckpointState} class.
      * key: allocationId
      * value:
+     * 目前只知道在重定向后会将该容器内部的数值都重置
      */
     final Map<String, CheckpointState> checkpoints;
 
@@ -619,6 +625,9 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert invariant();
     }
 
+    /**
+     * 当前某个 allocation 的检查点状态
+     */
     public static class CheckpointState implements Writeable {
 
         /**
@@ -1314,12 +1323,14 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
     /**
      * Initiates a relocation handoff and returns the corresponding primary context.
+     * @param targetAllocationId  当进行重分配时 目的地的allocationId
      */
     public synchronized PrimaryContext startRelocationHandoff(String targetAllocationId) {
         assert invariant();
         assert primaryMode;
         assert handoffInProgress == false;
         assert pendingInSync.isEmpty() : "relocation handoff started while there are still shard copies pending in-sync: " + pendingInSync;
+        // 首先要求这个allocation 必须被checkpoints 维护
         if (checkpoints.containsKey(targetAllocationId) == false) {
             // can happen if the relocation target was removed from cluster but the recovery process isn't aware of that.
             throw new IllegalStateException("relocation target [" + targetAllocationId + "] is no longer part of the replication group");
@@ -1331,15 +1342,19 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         // update on the relocation target once relocation completes). We could alternatively also copy the map as-is (it’s safe), and it
         // would be cleaned up on the target by cluster state updates.
         Map<String, CheckpointState> localCheckpointsCopy = new HashMap<>();
+        // 将此时维护的所有allocation的检查点信息转存到容器中
         for (Map.Entry<String, CheckpointState> entry : checkpoints.entrySet()) {
             localCheckpointsCopy.put(entry.getKey(), entry.getValue().copy());
         }
         assert invariant();
+        // 将当前信息包装成一个上下文对象
         return new PrimaryContext(appliedClusterStateVersion, localCheckpointsCopy, routingTable);
     }
 
     /**
      * Fails a relocation handoff attempt.
+     * 由于在处理过程中产生了异常 导致重分配中断
+     * 可以看到这里只是修改了handoff标识 而没有修改其他标识
      */
     public synchronized void abortRelocationHandoff() {
         assert invariant();
@@ -1351,16 +1366,22 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
     /**
      * Marks a relocation handoff attempt as successful. Moves the tracker into replica mode.
+     * 当状态从重定向中结束时触发
      */
     public synchronized void completeRelocationHandoff() {
         assert invariant();
         assert primaryMode;
         assert handoffInProgress;
         assert relocated == false;
+        // 当重定向结束后该标识被修改成false
         primaryMode = false;
+        // 同上
         handoffInProgress = false;
+        // 重定向完成后 修改为true
         relocated = true;
         // forget all checkpoint information
+        // 应该是因为重分配后 当前节点已经不在是主分片所在的节点了
+        // TODO 也就是重分配指的是某个primaryShard所在的节点 重新指定node的操作吗 ???
         checkpoints.forEach((key, cps) -> {
             cps.localCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
             cps.globalCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
@@ -1491,6 +1512,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     /**
      * Represents the sequence number component of the primary context. This is the knowledge on the primary of the in-sync and initializing
      * shards and their local checkpoints.
+     * 在副本数据拷贝过程中  代表当前是主分片吗
      */
     public static class PrimaryContext implements Writeable {
 
