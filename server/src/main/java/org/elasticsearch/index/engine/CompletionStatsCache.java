@@ -35,8 +35,14 @@ import org.elasticsearch.search.suggest.completion.CompletionStats;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
+/**
+ *
+ */
 class CompletionStatsCache implements ReferenceManager.RefreshListener {
 
+    /**
+     * 可以获取到 查询对象 底层套了 IndexReader
+     */
     private final Supplier<Engine.Searcher> searcherSupplier;
 
     /**

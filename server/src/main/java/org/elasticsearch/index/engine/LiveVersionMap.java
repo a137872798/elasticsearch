@@ -33,11 +33,21 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Maps _uid value to its version information. */
+/**
+ * Maps _uid value to its version information.
+ * 该对象是监控某个资源的刷新
+ */
 final class LiveVersionMap implements ReferenceManager.RefreshListener, Accountable {
 
+    /**
+     * byte数据流是作为key的 可以在KeyedLock中获取一个对应的锁对象
+     */
     private final KeyedLock<BytesRef> keyedLock = new KeyedLock<>();
 
+
+    /**
+     * 用于查询版本号的对象
+     */
     private static final class VersionLookup {
 
         /** Tracks bytes used by current map, i.e. what is freed on refresh. For deletes, which are also added to tombstones,
@@ -64,6 +74,10 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         // the tombstone
         private final AtomicLong minDeleteTimestamp = new AtomicLong(Long.MAX_VALUE);
 
+        /**
+         * 存储byte流 与 版本号的关联关系
+         * @param map
+         */
         private VersionLookup(Map<BytesRef, VersionValue> map) {
             this.map = map;
         }
@@ -96,6 +110,10 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
             return map.remove(uid);
         }
 
+        /**
+         * 如果接收到一个 delete相关的版本值  尝试性更新minDeleteTimestamp
+         * @param delete
+         */
         public void updateMinDeletedTimestamp(DeleteVersionValue delete) {
             long time = delete.time;
             minDeleteTimestamp.updateAndGet(prev -> Math.min(time, prev));
@@ -117,11 +135,18 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         final boolean previousMapsNeededSafeAccess;
 
 
+        /**
+         *
+         * @param current
+         * @param old
+         * @param previousMapsNeededSafeAccess  默认为false
+         */
         Maps(VersionLookup current, VersionLookup old, boolean previousMapsNeededSafeAccess) {
             this.current = current;
             this.old = old;
             this.previousMapsNeededSafeAccess = previousMapsNeededSafeAccess;
         }
+
 
         Maps() {
             this(new VersionLookup(ConcurrentCollections.newConcurrentMapWithAggressiveConcurrency()),

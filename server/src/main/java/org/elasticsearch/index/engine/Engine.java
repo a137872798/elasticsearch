@@ -807,7 +807,7 @@ public abstract class Engine implements Closeable {
     }
 
     /**
-     * 什么是外部查询 和 内部查询
+     * 外部发起的获取search 还是engine内部调用的
      */
     public enum SearcherScope {
         EXTERNAL, INTERNAL
@@ -944,10 +944,16 @@ public abstract class Engine implements Closeable {
         }
     }
 
+    /**
+     * 获取某个segment下所有索引文件对应的大小
+     * @param segmentReader
+     * @return
+     */
     private ImmutableOpenMap<String, Long> getSegmentFileSizes(SegmentReader segmentReader) {
         Directory directory = null;
         SegmentCommitInfo segmentCommitInfo = segmentReader.getSegmentInfo();
         boolean useCompoundFile = segmentCommitInfo.info.getUseCompoundFile();
+        // TODO 忽略复合文件
         if (useCompoundFile) {
             try {
                 directory = engineConfig.getCodec().compoundFormat().getCompoundReader(segmentReader.directory(),
@@ -986,6 +992,7 @@ public abstract class Engine implements Closeable {
         }
 
         ImmutableOpenMap.Builder<String, Long> map = ImmutableOpenMap.builder();
+        // 挨个处理所有索引文件
         for (String file : files) {
             String extension = IndexFileNames.getExtension(file);
             long length = 0L;
@@ -1028,12 +1035,20 @@ public abstract class Engine implements Closeable {
     /** How much heap is used that would be freed by a refresh.  Note that this may throw {@link AlreadyClosedException}. */
     public abstract long getIndexBufferRAMBytesUsed();
 
+
+    /**
+     * 将segmentInfos 多个段信息拆出来
+     * @param lastCommittedSegmentInfos
+     * @param verbose
+     * @return
+     */
     final Segment[] getSegmentInfo(SegmentInfos lastCommittedSegmentInfos, boolean verbose) {
         ensureOpen();
         Map<String, Segment> segments = new HashMap<>();
         // first, go over and compute the search ones...
         try (Searcher searcher = acquireSearcher("segments", SearcherScope.EXTERNAL)){
             for (LeafReaderContext ctx : searcher.getIndexReader().getContext().leaves()) {
+                // 如果是external 就发现 search == true
                 fillSegmentInfo(Lucene.segmentReader(ctx.reader()), verbose, true, segments);
             }
         }
@@ -1042,6 +1057,7 @@ public abstract class Engine implements Closeable {
             for (LeafReaderContext ctx : searcher.getIndexReader().getContext().leaves()) {
                 SegmentReader segmentReader = Lucene.segmentReader(ctx.reader());
                 if (segments.containsKey(segmentReader.getSegmentName()) == false) {
+                    // 如果是internal search 就是false
                     fillSegmentInfo(segmentReader, verbose, false, segments);
                 }
             }
@@ -1078,7 +1094,15 @@ public abstract class Engine implements Closeable {
         return segmentsArr;
     }
 
+    /**
+     * 通过相关属性构建segment 并填充到segments 中
+     * @param segmentReader
+     * @param verbose
+     * @param search
+     * @param segments
+     */
     private void fillSegmentInfo(SegmentReader segmentReader, boolean verbose, boolean search, Map<String, Segment> segments) {
+        // 基本就是将 SegmentCommitInfo内的信息转移出来了
         SegmentCommitInfo info = segmentReader.getSegmentInfo();
         assert segments.containsKey(info.info.name) == false;
         Segment segment = new Segment(info.info.name);
@@ -1107,7 +1131,12 @@ public abstract class Engine implements Closeable {
      */
     public abstract List<Segment> segments(boolean verbose);
 
+    /**
+     * 检测此时是否需要
+     * @return
+     */
     public boolean refreshNeeded() {
+        // 引擎对象本身应该是依赖于store管理文件的
         if (store.tryIncRef()) {
             /*
               we need to inc the store here since we acquire a searcher and that might keep a file open on the
@@ -1116,6 +1145,7 @@ public abstract class Engine implements Closeable {
              */
             try {
                 try (Searcher searcher = acquireSearcher("refresh_needed", SearcherScope.EXTERNAL)) {
+                    // 当这个段发生变化时标识就为false  比如又写入了新的数据 或者因为deleteQuery DocUpdate等 更新了数据或者删除了数据
                     return searcher.getDirectoryReader().isCurrent() == false;
                 }
             } catch (IOException e) {
@@ -1248,8 +1278,10 @@ public abstract class Engine implements Closeable {
      */
     public void failEngine(String reason, @Nullable Exception failure) {
         if (failure != null) {
+            // 打印日志 并抛出异常
             maybeDie(reason, failure);
         }
+        // 避免并发问题  在锁中处理失败场景
         if (failEngineLock.tryLock()) {
             try {
                 if (failedEngine.get() != null) {
@@ -1263,6 +1295,7 @@ public abstract class Engine implements Closeable {
                 failedEngine.set((failure != null) ? failure : new IllegalStateException(reason));
                 try {
                     // we just go and close this engine - no way to recover
+                    // TODO 此时无法进行恢复了 将engine关闭
                     closeNoLock("engine failed on: [" + reason + "]", closedLatch);
                 } finally {
                     logger.warn(() -> new ParameterizedMessage("failed engine [{}]", reason), failure);
@@ -1271,9 +1304,11 @@ public abstract class Engine implements Closeable {
                     // this must happen first otherwise we might try to reallocate so quickly
                     // on the same node that we don't see the corrupted marker file when
                     // the shard is initializing
+                    // 如果是 Corrupt异常
                     if (Lucene.isCorruptionException(failure)) {
                         if (store.tryIncRef()) {
                             try {
+                                // 就是生成一个 .corrupt文件 并写入到dir中
                                 store.markStoreCorrupted(new IOException("failed engine (reason: [" + reason + "])",
                                     ExceptionsHelper.unwrapCorruption(failure)));
                             } catch (IOException e) {
@@ -1849,6 +1884,7 @@ public abstract class Engine implements Closeable {
                     try {
                         // TODO we might force a flush in the future since we have the write lock already even though recoveries
                         // are running.
+                        // 将当前写入的数据持久化
                         flush();
                     } catch (AlreadyClosedException ex) {
                         logger.debug("engine already closed - skipping flushAndClose");
@@ -1881,6 +1917,9 @@ public abstract class Engine implements Closeable {
         }
     }
 
+    /**
+     * 有关某个 IndexCommit的包装对象
+     */
     public static class IndexCommitRef implements Closeable {
         private final AtomicBoolean closed = new AtomicBoolean();
         private final CheckedRunnable<IOException> onClose;

@@ -124,19 +124,40 @@ import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+/**
+ * 内部引擎对象
+ */
 public class InternalEngine extends Engine {
 
     /**
      * When we last pruned expired tombstones from versionMap.deletes:
+     * 代表最近一次裁剪时间
+     * 该对象在初始化时 会通过当前时间设置该值
      */
     private volatile long lastDeleteVersionPruneTimeMSec;
 
+    /**
+     * 这个对象是负责写入事务日志的
+     */
     private final Translog translog;
+
+    /**
+     * 与 lucene的ConcurrentMergeScheduler 最大的区别就是 开放了2个merge相关的钩子 以及 不使用lucene本身的 针对merge的限流机制
+     */
     private final ElasticsearchConcurrentMergeScheduler mergeScheduler;
 
+    /**
+     * 通过该对象实现写入功能
+     */
     private final IndexWriter indexWriter;
 
+    /**
+     * 这里在检测刷新时 强制调用了internalReaderManager的block方法 确保一定会获取到最新数据
+     */
     private final ExternalReaderManager externalReaderManager;
+    /**
+     * 从命名上可以看出 2个reader管理器 分别对应外部请求和内部请求
+     */
     private final ElasticsearchReaderManager internalReaderManager;
 
     private final Lock flushLock = new ReentrantLock();
@@ -144,14 +165,27 @@ public class InternalEngine extends Engine {
 
     // A uid (in the form of BytesRef) to the version map
     // we use the hashed variant since we iterate over it and check removal and additions on existing keys
+    // 该对象可以通过byte 查询版本号信息 TODO
     private final LiveVersionMap versionMap = new LiveVersionMap();
 
+    /**
+     * 存储了当前所有的段信息
+     */
     private volatile SegmentInfos lastCommittedSegmentInfos;
 
+    /**
+     * 可开关的阀门对象  在激活后会设置内部的锁 通过调用api可以抢占锁
+     */
     private final IndexThrottle throttle;
 
+    /**
+     * 记录已经处理过的 seqNo 以及 persisted
+     */
     private final LocalCheckpointTracker localCheckpointTracker;
 
+    /**
+     * 结合的一个删除策略
+     */
     private final CombinedDeletionPolicy combinedDeletionPolicy;
 
     // How many callers are currently requesting index throttling.  Currently there are only two situations where we do this: when merges
@@ -171,8 +205,15 @@ public class InternalEngine extends Engine {
     private final CounterMetric numDocDeletes = new CounterMetric();
     private final CounterMetric numDocAppends = new CounterMetric();
     private final CounterMetric numDocUpdates = new CounterMetric();
+    /**
+     * 获取 _soft_delete 对应的docValue  这个值被保存到lucene中了
+     */
     private final NumericDocValuesField softDeletesField = Lucene.newSoftDeletesField();
     private final SoftDeletesPolicy softDeletesPolicy;
+
+    /**
+     * 监听器刷新事件  配合 LocalCheckpointTracker使用
+     */
     private final LastRefreshedCheckpointListener lastRefreshedCheckpointListener;
 
     private final CompletionStatsCache completionStatsCache;
@@ -190,15 +231,25 @@ public class InternalEngine extends Engine {
     @Nullable
     private volatile String forceMergeUUID;
 
+    /**
+     * 通过引擎的相关配置进行初始化
+     * @param engineConfig
+     */
     public InternalEngine(EngineConfig engineConfig) {
         this(engineConfig, LocalCheckpointTracker::new);
     }
 
+    /**
+     *
+     * @param engineConfig  配置对象
+     * @param localCheckpointTrackerSupplier  会记录检查点的对象
+     */
     InternalEngine(
             final EngineConfig engineConfig,
             final BiFunction<Long, Long, LocalCheckpointTracker> localCheckpointTrackerSupplier) {
         super(engineConfig);
         final TranslogDeletionPolicy translogDeletionPolicy = new TranslogDeletionPolicy();
+        // 该引擎此时引用了这个目录 避免被意外关闭
         store.incRef();
         IndexWriter writer = null;
         Translog translog = null;
@@ -326,13 +377,30 @@ public class InternalEngine extends Engine {
      * since no indexing is happening and refreshes are only happening to the external reader manager, while with
      * this specialized implementation an external refresh will immediately be reflected on the internal reader
      * and old segments can be released in the same way previous version did this (as a side-effect of _refresh)
+     * 资源管理器就是对某个资源进行管理 可以在合适的时机进行刷新
      */
     @SuppressForbidden(reason = "reference counting is required here")
     private static final class ExternalReaderManager extends ReferenceManager<ElasticsearchDirectoryReader> {
         private final BiConsumer<ElasticsearchDirectoryReader, ElasticsearchDirectoryReader> refreshListener;
+
+        /**
+         * 该资源管理器 会自动检测最新的segment_N  并更新reader对象
+         */
         private final ElasticsearchReaderManager internalReaderManager;
+
+        /**
+         * 代表还没有执行过预热工作
+         * 预热指的就是将数据先加载到内存中
+         * 首次通过refresh 获取到reader对象后该标识就为true
+         */
         private boolean isWarmedUp; //guarded by refreshLock
 
+        /**
+         * 类似与代理模式
+         * @param internalReaderManager
+         * @param refreshListener
+         * @throws IOException
+         */
         ExternalReaderManager(ElasticsearchReaderManager internalReaderManager,
                               BiConsumer<ElasticsearchDirectoryReader, ElasticsearchDirectoryReader> refreshListener) throws IOException {
             this.refreshListener = refreshListener;
@@ -345,11 +413,14 @@ public class InternalEngine extends Engine {
             // we simply run a blocking refresh on the internal reference manager and then steal it's reader
             // it's a save operation since we acquire the reader which incs it's reference but then down the road
             // steal it by calling incRef on the "stolen" reader
+            // 每次必须抢占到锁 并触发refresh方法 这样就可以确保读取到的是最新的reader了
             internalReaderManager.maybeRefreshBlocking();
             final ElasticsearchDirectoryReader newReader = internalReaderManager.acquire();
+            // 代表数据还没有加载到内存 或者reader发生了变化 那么就需要重新加载数据
             if (isWarmedUp == false || newReader != referenceToRefresh) {
                 boolean success = false;
                 try {
+                    // isWarmedUp == false 代表之前没有reader 所以传入null
                     refreshListener.accept(newReader, isWarmedUp ? referenceToRefresh : null);
                     isWarmedUp = true;
                     success = true;
@@ -2181,6 +2252,9 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * 开启阀门
+     */
     @Override
     public void activateThrottling() {
         int count = throttleRequestCount.incrementAndGet();
@@ -2217,8 +2291,17 @@ public class InternalEngine extends Engine {
         return indexWriter.getConfig();
     }
 
+    /**
+     * 用于并发执行merge任务的对象
+     */
     private final class EngineMergeScheduler extends ElasticsearchConcurrentMergeScheduler {
+        /**
+         * 此时有多少正在merge的任务
+         */
         private final AtomicInteger numMergesInFlight = new AtomicInteger(0);
+        /**
+         * 此时是否处于限流状态  ES 关闭了lucene自带的merge限流器 自己定义了一套限流规则
+         */
         private final AtomicBoolean isThrottling = new AtomicBoolean();
 
         EngineMergeScheduler(ShardId shardId, IndexSettings indexSettings) {
@@ -2227,18 +2310,25 @@ public class InternalEngine extends Engine {
 
         @Override
         public synchronized void beforeMerge(OnGoingMerge merge) {
+            // 最多允许多少merge同时进行
             int maxNumMerges = mergeScheduler.getMaxMergeCount();
             if (numMergesInFlight.incrementAndGet() > maxNumMerges) {
                 if (isThrottling.getAndSet(true) == false) {
                     logger.info("now throttling indexing: numMergesInFlight={}, maxNumMerges={}", numMergesInFlight, maxNumMerges);
+                    // 超出限制 开启阀门
                     activateThrottling();
                 }
             }
         }
 
+        /**
+         * merge 后执行
+         * @param merge
+         */
         @Override
         public synchronized void afterMerge(OnGoingMerge merge) {
             int maxNumMerges = mergeScheduler.getMaxMergeCount();
+            // 一旦少于最大merge线程 马上停止限流
             if (numMergesInFlight.decrementAndGet() < maxNumMerges) {
                 if (isThrottling.getAndSet(false)) {
                     logger.info("stop throttling indexing: numMergesInFlight={}, maxNumMerges={}",
@@ -2579,8 +2669,19 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * 监听资源的刷新
+     */
     private final class LastRefreshedCheckpointListener implements ReferenceManager.RefreshListener {
+
+        /**
+         * 当刷新完成后会与 pendingCheckpoint 同步
+         */
         final AtomicLong refreshedCheckpoint;
+
+        /**
+         * 对应此时待处理的检查点
+         */
         private long pendingCheckpoint;
 
         LastRefreshedCheckpointListener(long initialLocalCheckpoint) {
@@ -2600,6 +2701,10 @@ public class InternalEngine extends Engine {
             }
         }
 
+        /**
+         * 当成功刷新时触发该方法
+         * @param checkpoint
+         */
         void updateRefreshedCheckpoint(long checkpoint) {
             refreshedCheckpoint.updateAndGet(curr -> Math.max(curr, checkpoint));
             assert refreshedCheckpoint.get() >= checkpoint : refreshedCheckpoint.get() + " < " + checkpoint;

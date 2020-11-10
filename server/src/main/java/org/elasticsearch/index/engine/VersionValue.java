@@ -27,6 +27,9 @@ import org.elasticsearch.index.translog.Translog;
 import java.util.Collection;
 import java.util.Collections;
 
+/**
+ * 描述某个版本号的信息
+ */
 abstract class VersionValue implements Accountable {
 
     private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(VersionValue.class);

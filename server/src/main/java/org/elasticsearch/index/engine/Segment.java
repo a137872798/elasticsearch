@@ -41,6 +41,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * 描述 lucene中每个segment的信息
+ */
 public class Segment implements Writeable {
 
     private String name;

@@ -66,6 +66,10 @@ public final class TranslogDeletionPolicy {
         }
     }
 
+    /**
+     * 代表该位置已经成功写入到事务日志中了
+     * @param newCheckpoint
+     */
     public synchronized void setLocalCheckpointOfSafeCommit(long newCheckpoint) {
         if (newCheckpoint < this.localCheckpointOfSafeCommit) {
             throw new IllegalArgumentException("local checkpoint of the safe commit can't go backwards: " +

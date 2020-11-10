@@ -2948,10 +2948,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
          */
         private final CopyOnWriteArrayList<Consumer<ShardFailure>> delegates = new CopyOnWriteArrayList<>();
 
-        // called by the current engine
+        // called by the current engine   在engine.failEngine时会触发该方法
         @Override
         public void onFailedEngine(String reason, @Nullable Exception failure) {
             final ShardFailure shardFailure = new ShardFailure(shardRouting, reason, failure);
+            // 转发到了这里的监听器 有点像适配器的套路
             for (Consumer<ShardFailure> listener : delegates) {
                 try {
                     listener.accept(shardFailure);

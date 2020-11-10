@@ -1721,10 +1721,11 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             // 在返回时已经排序过了 最后一个就是最新的commit
             final IndexCommit lastIndexCommit = existingCommits.get(existingCommits.size() - 1);
             final String translogUUID = lastIndexCommit.getUserData().get(Translog.TRANSLOG_UUID_KEY);
-            // TODO 这个检查点先不管
+            // 读取存储在目录下的事务checkpoint日志 从解析出来的 checkpoint对象中获取globalCheckpoint属性
             final long lastSyncedGlobalCheckpoint = Translog.readGlobalCheckpoint(translogPath, translogUUID);
-            // TODO
+            // 代表该indexCommit之后的数据要作废 可能没有做事务日志啥的
             final IndexCommit startingIndexCommit = CombinedDeletionPolicy.findSafeCommitPoint(existingCommits, lastSyncedGlobalCheckpoint);
+            // 因为正常情况下IndexWriter 就是以最新的segment_N 初始化  但是要从 startingIndexCommit开始 所以通过writer以保留的indexCommit重新提交
             if (startingIndexCommit.equals(lastIndexCommit) == false) {
                 try (IndexWriter writer = newAppendingIndexWriter(directory, startingIndexCommit)) {
                     // this achieves two things:
@@ -1736,6 +1737,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
 
                     // The new commit will use segment files from the starting commit but userData from the last commit by default.
                     // Thus, we need to manually set the userData from the starting commit to the new commit.
+                    // 初始化的时候 userData 默认还是使用最新的segment对应的  即使在初始化时指定了 startingIndexCommit 不会自动替换 所以这里要手动设置
                     writer.setLiveCommitData(startingIndexCommit.getUserData().entrySet());
                     writer.commit();
                 }
@@ -1788,6 +1790,13 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         return userData;
     }
 
+    /**
+     * 生成一个追加模式的 IndexWriter对象
+     * @param dir
+     * @param commit 自该commit 往后的commit都会保留
+     * @return
+     * @throws IOException
+     */
     private static IndexWriter newAppendingIndexWriter(final Directory dir, final IndexCommit commit) throws IOException {
         IndexWriterConfig iwc = newIndexWriterConfig()
             .setIndexCommit(commit)

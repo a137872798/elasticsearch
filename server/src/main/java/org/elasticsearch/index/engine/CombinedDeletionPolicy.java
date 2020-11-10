@@ -176,6 +176,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
      * @param commits          a list of existing commit points
      * @param globalCheckpoint the persisted global checkpoint from the translog, see {@link Translog#readGlobalCheckpoint(Path, String)}
      * @return a safe commit or the oldest commit if a safe commit is not found
+     * 找到安全提交点
      */
     public static IndexCommit findSafeCommitPoint(List<IndexCommit> commits, long globalCheckpoint) throws IOException {
         if (commits.isEmpty()) {
@@ -188,17 +189,25 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
     /**
      * Find the highest index position of a safe index commit whose max sequence number is not greater than the global checkpoint.
      * Index commits with different translog UUID will be filtered out as they don't belong to this engine.
+     * @param commits
+     * @param globalCheckpoint  大体上可以预见 globalCheckpoint应该是指某个 shard在所有相关node上的最小的checkpoint
      */
     private static int indexOfKeptCommits(List<? extends IndexCommit> commits, long globalCheckpoint) throws IOException {
+        // 从用户自定义的数据中还原translogUUId
         final String expectedTranslogUUID = commits.get(commits.size() - 1).getUserData().get(Translog.TRANSLOG_UUID_KEY);
 
         // Commits are sorted by age (the 0th one is the oldest commit).
+        // 从后往前找到首个要保留的commit下标
         for (int i = commits.size() - 1; i >= 0; i--) {
             final Map<String, String> commitUserData = commits.get(i).getUserData();
             // Ignore index commits with different translog uuid.
+            // 代表某些 IndexCommit的事务id已经不一致了  不是同一批数据
+            // TODO 话说什么时候会替换事务id呢
             if (expectedTranslogUUID.equals(commitUserData.get(Translog.TRANSLOG_UUID_KEY)) == false) {
                 return i + 1;
             }
+
+            // 首个小于全局检查点的数据这里要开始保留
             final long maxSeqNoFromCommit = Long.parseLong(commitUserData.get(SequenceNumbers.MAX_SEQ_NO));
             if (maxSeqNoFromCommit <= globalCheckpoint) {
                 return i;

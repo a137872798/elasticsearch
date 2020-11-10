@@ -26,6 +26,7 @@ import java.util.List;
 
 /**
  * Represents a single on going merge within an index.
+ * 为每个正在执行的merge操作联合了一个id属性
  */
 public class OnGoingMerge {
 

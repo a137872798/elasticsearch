@@ -47,6 +47,8 @@ import java.util.Set;
 /**
  * An extension to the {@link ConcurrentMergeScheduler} that provides tracking on merge times, total
  * and current merges.
+ * ES 对merge线程池也做处理了吗
+ * 在lucene中每当合适的时机会检测是否需要进行merge 因为merge相当于是数据的瘦身 所以不应该阻塞主线程 而是在异步线程中执行
  */
 class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
 
@@ -63,8 +65,12 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
     private final CounterMetric totalMergeStoppedTime = new CounterMetric();
     private final CounterMetric totalMergeThrottledTime = new CounterMetric();
 
+    // 2个容器存储了正在运行的merge操作
     private final Set<OnGoingMerge> onGoingMerges = ConcurrentCollections.newConcurrentSet();
     private final Set<OnGoingMerge> readOnlyOnGoingMerges = Collections.unmodifiableSet(onGoingMerges);
+    /**
+     * 存储了mergeScheduler相关的配置项
+     */
     private final MergeSchedulerConfig config;
 
     ElasticsearchConcurrentMergeScheduler(ShardId shardId, IndexSettings indexSettings) {
@@ -81,6 +87,7 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
 
     @Override
     protected void doMerge(IndexWriter writer, MergePolicy.OneMerge merge) throws IOException {
+        // 在执行merge前 统计相关数据 并且触发前置钩子
         int totalNumDocs = merge.totalNumDocs();
         long totalSizeInBytes = merge.totalBytesSize();
         long timeNS = System.nanoTime();
@@ -144,6 +151,8 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
         }
     }
 
+    // 这个对象拓展了2个钩子
+
     /**
      * A callback allowing for custom logic before an actual merge starts.
      */
@@ -164,6 +173,7 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
     @Override
     protected boolean maybeStall(IndexWriter writer) {
         // Don't stall here, because we do our own index throttling (in InternalEngine.IndexThrottle) when merges can't keep up
+        // 因为ES自带阀门系统 所以不通过luceneMergeScheduler的阀门
         return true;
     }
 
@@ -189,6 +199,7 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
         if (this.getMaxMergeCount() != config.getMaxMergeCount() || this.getMaxThreadCount() != config.getMaxThreadCount()) {
             this.setMaxMergesAndThreads(config.getMaxMergeCount(), config.getMaxThreadCount());
         }
+        // 每个merge线程关联一个 IO限流器 这里是在调整限流器的阈值
         boolean isEnabled = getIORateLimitMBPerSec() != Double.POSITIVE_INFINITY;
         if (config.isAutoThrottle() && isEnabled == false) {
             enableAutoIOThrottle();

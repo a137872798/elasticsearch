@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * This class generates sequences numbers and keeps track of the so-called "local checkpoint" which is the highest number for which all
  * previous sequence numbers have been processed (inclusive).
+ * 本地检查点的链路追踪对象
  */
 public class LocalCheckpointTracker {
 
@@ -39,22 +40,26 @@ public class LocalCheckpointTracker {
     /**
      * A collection of bit sets representing processed sequence numbers. Each sequence number is mapped to a bit set by dividing by the
      * bit set size.
+     * 会使用位图记录已经处理过的seqNo
      */
     final LongObjectHashMap<CountedBitSet> processedSeqNo = new LongObjectHashMap<>();
 
     /**
      * A collection of bit sets representing durably persisted sequence numbers. Each sequence number is mapped to a bit set by dividing by
      * the bit set size.
+     * 存储被持久化的 seqNo???
      */
     final LongObjectHashMap<CountedBitSet> persistedSeqNo = new LongObjectHashMap<>();
 
     /**
      * The current local checkpoint, i.e., all sequence numbers no more than this number have been processed.
+     * 记录此时已经处理过的seqNo  之后要处理的必须比这个大
      */
     final AtomicLong processedCheckpoint = new AtomicLong();
 
     /**
      * The current persisted local checkpoint, i.e., all sequence numbers no more than this number have been durably persisted.
+     * 一边处理一边持久化吗???
      */
     final AtomicLong persistedCheckpoint = new AtomicLong();
 
@@ -81,6 +86,7 @@ public class LocalCheckpointTracker {
             throw new IllegalArgumentException(
                 "max seq. no. must be non-negative or [" + SequenceNumbers.NO_OPS_PERFORMED + "] but was [" + maxSeqNo + "]");
         }
+        // 这里更像是一个特殊的初始化  在之后正常处理seq之后 会更新成seq+1
         nextSeqNo.set(maxSeqNo + 1);
         processedCheckpoint.set(localCheckpoint);
         persistedCheckpoint.set(localCheckpoint);
@@ -120,17 +126,27 @@ public class LocalCheckpointTracker {
         markSeqNo(seqNo, persistedCheckpoint, persistedSeqNo);
     }
 
+    /**
+     * 标记某个seq 已经处理过了  可能是processed/persisted
+     * @param seqNo
+     * @param checkPoint
+     * @param bitSetMap
+     */
     private void markSeqNo(final long seqNo, final AtomicLong checkPoint, final LongObjectHashMap<CountedBitSet> bitSetMap) {
         assert Thread.holdsLock(this);
         // make sure we track highest seen sequence number
+        // 更新nextSeq
         advanceMaxSeqNo(seqNo);
         if (seqNo <= checkPoint.get()) {
             // this is possible during recovery where we might replay an operation that was also replicated
             return;
         }
+        // 定位到某个slot的位图
         final CountedBitSet bitSet = getBitSetForSeqNo(bitSetMap, seqNo);
+        // 位运算 得到要设置的位置
         final int offset = seqNoToBitSetOffset(seqNo);
         bitSet.set(offset);
+        // 因为处理了新的seq 且正好按照单调递增的顺序 所以要更新检查点
         if (seqNo == checkPoint.get() + 1) {
             updateCheckpoint(checkPoint, bitSetMap);
         }
@@ -178,6 +194,8 @@ public class LocalCheckpointTracker {
      *
      * @param seqNo the sequence number that the checkpoint must advance to before this method returns
      * @throws InterruptedException if the thread was interrupted while blocking on the condition
+     * 阻塞直到指定的seq 已经完成处理
+     * 在正常处理流程下是单调递增的
      */
     @SuppressForbidden(reason = "Object#wait")
     public synchronized void waitForProcessedOpsToComplete(final long seqNo) throws InterruptedException {
@@ -189,6 +207,7 @@ public class LocalCheckpointTracker {
 
     /**
      * Checks if the given sequence number was marked as processed in this tracker.
+     * 检测某个序号是否已经操作完成了
      */
     public boolean hasProcessed(final long seqNo) {
         assert seqNo >= 0 : "invalid seq_no=" + seqNo;
@@ -205,6 +224,7 @@ public class LocalCheckpointTracker {
             if (seqNo <= processedCheckpoint.get()) {
                 return true;
             }
+            // 也就是seq 可能会在  processedCheckpoint < seq < nextSeqNo 之间
             final CountedBitSet bitSet = processedSeqNo.get(bitSetKey);
             return bitSet != null && bitSet.get(bitSetOffset);
         }
@@ -213,6 +233,7 @@ public class LocalCheckpointTracker {
     /**
      * Moves the checkpoint to the last consecutively processed sequence number. This method assumes that the sequence number
      * following the current checkpoint is processed.
+     * 更新检查点
      */
     @SuppressForbidden(reason = "Object#notifyAll")
     private void updateCheckpoint(AtomicLong checkPoint, LongObjectHashMap<CountedBitSet> bitSetMap) {
@@ -221,11 +242,13 @@ public class LocalCheckpointTracker {
             "updateCheckpoint is called but the bit following the checkpoint is not set";
         try {
             // keep it simple for now, get the checkpoint one by one; in the future we can optimize and read words
+            // 转换成位图的key
             long bitSetKey = getBitSetKey(checkPoint.get());
             CountedBitSet current = bitSetMap.get(bitSetKey);
             if (current == null) {
                 // the bit set corresponding to the checkpoint has already been removed, set ourselves up for the next bit set
                 assert checkPoint.get() % BIT_SET_SIZE == BIT_SET_SIZE - 1;
+                // 当checkpoint 刚好是某个位图的最后一个 seq时   会将数据存储到下一个位图 并清理上个位图
                 current = bitSetMap.get(++bitSetKey);
             }
             do {
@@ -233,6 +256,8 @@ public class LocalCheckpointTracker {
                 /*
                  * The checkpoint always falls in the current bit set or we have already cleaned it; if it falls on the last bit of the
                  * current bit set, we can clean it.
+                 * 代表是当前这个位图的最后一个seq
+                 * 选择抛弃这个位图 并roll到下一个
                  */
                 if (checkPoint.get() == lastSeqNoInBitSet(bitSetKey)) {
                     assert current != null;
@@ -240,13 +265,21 @@ public class LocalCheckpointTracker {
                     assert removed == current;
                     current = bitSetMap.get(++bitSetKey);
                 }
+                // 当false时 退出循环      默认情况下 在外层方法 checkpoint的下一个位置(seqNo) 已经被设置了  这里是前进2位 应该是未设置 就可以了
+                // 实际上就是为了让checkpoint 与seqNo同步
             } while (current != null && current.get(seqNoToBitSetOffset(checkPoint.get() + 1)));
         } finally {
             // notifies waiters in waitForProcessedOpsToComplete
+            // 一旦更新了 processedCheckpoint/persistedCheckpoint 就可以考虑唤醒阻塞的线程了
             this.notifyAll();
         }
     }
 
+    /**
+     * 获取key 匹配的位图的最后一个seq
+     * @param bitSetKey
+     * @return
+     */
     private static long lastSeqNoInBitSet(final long bitSetKey) {
         return (1 + bitSetKey) * BIT_SET_SIZE - 1;
     }
@@ -261,8 +294,15 @@ public class LocalCheckpointTracker {
         return seqNo / BIT_SET_SIZE;
     }
 
+    /**
+     * 将新的 seq记录到位图中 并返回位图
+     * @param bitSetMap
+     * @param seqNo
+     * @return
+     */
     private CountedBitSet getBitSetForSeqNo(final LongObjectHashMap<CountedBitSet> bitSetMap, final long seqNo) {
         assert Thread.holdsLock(this);
+        // 也是用了分段思想 最外层用hash定位下标 好处是不会一次创建太大的内存块
         final long bitSetKey = getBitSetKey(seqNo);
         final int index = bitSetMap.indexOf(bitSetKey);
         final CountedBitSet bitSet;

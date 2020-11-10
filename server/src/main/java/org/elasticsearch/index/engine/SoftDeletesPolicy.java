@@ -35,9 +35,18 @@ import java.util.function.Supplier;
 
 /**
  * A policy that controls how many soft-deleted documents should be retained for peer-recovery and querying history changes purpose.
+ * 软删除的doc 在merge时会根据策略决定是否删除
  */
 final class SoftDeletesPolicy {
+
+    /**
+     * 提供全局检查点
+     */
     private final LongSupplier globalCheckpointSupplier;
+
+    /**
+     * 安全提交的本地检查点???
+     */
     private long localCheckpointOfSafeCommit;
     // This lock count is used to prevent `minRetainedSeqNo` from advancing.
     private int retentionLockCount;

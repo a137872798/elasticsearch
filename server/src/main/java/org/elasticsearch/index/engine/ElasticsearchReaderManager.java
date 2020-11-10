@@ -35,10 +35,15 @@ import org.elasticsearch.common.lucene.index.ElasticsearchDirectoryReader;
  * reader is closed only once all threads have finished using it.
  *
  * @see SearcherManager
- *
+ * 内部的资源可以根据需要刷新
  */
 @SuppressForbidden(reason = "reference counting is required here")
 class ElasticsearchReaderManager extends ReferenceManager<ElasticsearchDirectoryReader> {
+
+    /**
+     * key1 应该是newData
+     * key2 是oldData
+     */
     private final BiConsumer<ElasticsearchDirectoryReader, ElasticsearchDirectoryReader> refreshListener;
 
     /**
@@ -53,6 +58,7 @@ class ElasticsearchReaderManager extends ReferenceManager<ElasticsearchDirectory
                                BiConsumer<ElasticsearchDirectoryReader, ElasticsearchDirectoryReader> refreshListener) {
         this.current = reader;
         this.refreshListener = refreshListener;
+        // 初始化时 就可以触发监听器了
         refreshListener.accept(current, null);
     }
 
@@ -61,8 +67,15 @@ class ElasticsearchReaderManager extends ReferenceManager<ElasticsearchDirectory
         reference.decRef();
     }
 
+    /**
+     * 更新内部的reader对象 并触发监听器
+     * @param referenceToRefresh
+     * @return
+     * @throws IOException
+     */
     @Override
     protected ElasticsearchDirectoryReader refreshIfNeeded(ElasticsearchDirectoryReader referenceToRefresh) throws IOException {
+        // 会加载dir下最新的segment_N 文件  并还原成reader对象
         final ElasticsearchDirectoryReader reader = (ElasticsearchDirectoryReader) DirectoryReader.openIfChanged(referenceToRefresh);
         if (reader != null) {
             refreshListener.accept(reader, referenceToRefresh);
@@ -70,6 +83,11 @@ class ElasticsearchReaderManager extends ReferenceManager<ElasticsearchDirectory
         return reader;
     }
 
+    /**
+     * 在使用资源前必须调用该方法
+     * @param reference
+     * @return
+     */
     @Override
     protected boolean tryIncRef(ElasticsearchDirectoryReader reference) {
         return reference.tryIncRef();

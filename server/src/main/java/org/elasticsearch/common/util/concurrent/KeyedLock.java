@@ -33,10 +33,13 @@ import java.util.concurrent.locks.ReentrantLock;
  * lock. The latter is important to assure that the list of locks does not grow
  * infinitely.
  * Note: this lock is reentrant
- *
+ * 感觉像是在用 CAS 实现一个串行锁
  * */
 public final class KeyedLock<T> {
 
+    /**
+     * KeyLock 内部包含锁对象和一个计数器
+     */
     private final ConcurrentMap<T, KeyLock> map = ConcurrentCollections.newConcurrentMapWithAggressiveConcurrency();
     private final boolean fair;
 
@@ -58,11 +61,13 @@ public final class KeyedLock<T> {
     /**
      * Acquires a lock for the given key. The key is compared by it's equals method not by object identity. The lock can be acquired
      * by the same thread multiple times. The lock is released by closing the returned {@link Releasable}.
+     * 通过key 找到对应的锁对象
      */
     public Releasable acquire(T key) {
         while (true) {
             KeyLock perNodeLock = map.get(key);
             if (perNodeLock == null) {
+                // 创建公平锁/非公平锁
                 ReleasableLock newLock = tryCreateNewLock(key);
                 if (newLock != null) {
                     return newLock;
@@ -70,7 +75,9 @@ public final class KeyedLock<T> {
             } else {
                 assert perNodeLock != null;
                 int i = perNodeLock.count.get();
+                // 计数器为0 代表当前没有上锁
                 if (i > 0 && perNodeLock.count.compareAndSet(i, i + 1)) {
+                    // 这里可能会发生阻塞的
                     perNodeLock.lock();
                     return new ReleasableLock(key, perNodeLock);
                 }
@@ -80,14 +87,17 @@ public final class KeyedLock<T> {
 
     /**
      * Tries to acquire the lock for the given key and returns it. If the lock can't be acquired null is returned.
+     * 尝试获取key对应的锁
      */
     public Releasable tryAcquire(T key) {
         final KeyLock perNodeLock = map.get(key);
         if (perNodeLock == null) {
+            // 锁还不存在  创建一个新锁
             return tryCreateNewLock(key);
         }
         if (perNodeLock.tryLock()) { // ok we got it - make sure we increment it accordingly otherwise release it again
             int i;
+            // 如果此时没有线程持有锁了 那么引用计数应该就是0
             while ((i = perNodeLock.count.get()) > 0) {
                 // we have to do this in a loop here since even if the count is > 0
                 // there could be a concurrent blocking acquire that changes the count and then this CAS fails. Since we already got
@@ -96,6 +106,7 @@ public final class KeyedLock<T> {
                     return new ReleasableLock(key, perNodeLock);
                 }
             }
+            // 对冲上面的tryLock动作
             perNodeLock.unlock(); // make sure we unlock and don't leave the lock in a locked state
         }
         return null;
@@ -103,6 +114,7 @@ public final class KeyedLock<T> {
 
     private ReleasableLock tryCreateNewLock(T key) {
         KeyLock newLock = new KeyLock(fair);
+        // 生成锁的时候直接上锁吗
         newLock.lock();
         KeyLock keyLock = map.putIfAbsent(key, newLock);
         if (keyLock == null) {
@@ -122,6 +134,11 @@ public final class KeyedLock<T> {
         return lock.isHeldByCurrentThread();
     }
 
+    /**
+     * 减少一次引用计数
+     * @param key
+     * @param lock
+     */
     private void release(T key, KeyLock lock) {
         assert lock == map.get(key);
         final int decrementAndGet = lock.count.decrementAndGet();
