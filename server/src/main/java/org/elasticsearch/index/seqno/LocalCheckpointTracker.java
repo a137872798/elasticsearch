@@ -121,6 +121,8 @@ public class LocalCheckpointTracker {
      * Marks the provided sequence number as persisted and updates the checkpoint if possible.
      *
      * @param seqNo the sequence number to mark as persisted
+     *              记录对应的operation 已经被写入到事务文件中了
+     *              在 translogWriter中 只有刷盘的时候才会执行该函数
      */
     public synchronized void markSeqNoAsPersisted(final long seqNo) {
         markSeqNo(seqNo, persistedCheckpoint, persistedSeqNo);

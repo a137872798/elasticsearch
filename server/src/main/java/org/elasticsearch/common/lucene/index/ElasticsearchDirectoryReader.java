@@ -40,6 +40,13 @@ public final class ElasticsearchDirectoryReader extends FilterDirectoryReader {
     private final ShardId shardId;
     private final FilterDirectoryReader.SubReaderWrapper wrapper;
 
+    /**
+     *
+     * @param in   原始的reader对象
+     * @param wrapper    定义了如何包装子级reader
+     * @param shardId
+     * @throws IOException
+     */
     private ElasticsearchDirectoryReader(DirectoryReader in, FilterDirectoryReader.SubReaderWrapper wrapper,
             ShardId shardId) throws IOException {
         super(in, wrapper);
@@ -72,11 +79,15 @@ public final class ElasticsearchDirectoryReader extends FilterDirectoryReader {
      *
      * @param reader the reader to wrap
      * @param shardId the shard ID to expose via the elasticsearch internal reader wrappers.
+     *                将一个普通的对象包装成 ESReader对象
      */
     public static ElasticsearchDirectoryReader wrap(DirectoryReader reader, ShardId shardId) throws IOException {
         return new ElasticsearchDirectoryReader(reader, new SubReaderWrapper(shardId), shardId);
     }
 
+    /**
+     * 定义了对子级reader进行包装   也就是针对每个 segmentReader
+     */
     private static final class SubReaderWrapper extends FilterDirectoryReader.SubReaderWrapper {
         private final ShardId shardId;
         SubReaderWrapper(ShardId shardId) {

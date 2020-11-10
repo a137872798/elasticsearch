@@ -48,12 +48,16 @@ public final class ElasticsearchMergePolicy extends FilterMergePolicy {
 
     private static final Logger logger = LogManager.getLogger(ElasticsearchMergePolicy.class);
 
-    // True if the next merge request should do segment upgrades:
+    // True if the next merge request should do segment upgrades:  是否正在升级
     private volatile boolean upgradeInProgress;
 
     // True if the next merge request should only upgrade ancient (an older Lucene major version than current) segments;
+    // 只有古老的segment 需要升级???
     private volatile boolean upgradeOnlyAncientSegments;
 
+    /**
+     * 最多同时进行5个 升级???
+     */
     private static final int MAX_CONCURRENT_UPGRADE_MERGES = 5;
 
     /** @param delegate the merge policy to wrap */

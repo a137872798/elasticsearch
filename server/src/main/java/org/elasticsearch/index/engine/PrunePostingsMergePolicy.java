@@ -46,11 +46,19 @@ import java.util.Iterator;
  * soft deleted documents independent of the retention policy. Note, in order for this merge policy to be effective it needs to be added
  * before the {@link org.apache.lucene.index.SoftDeletesRetentionMergePolicy} because otherwise only documents that are deleted / removed
  * anyways will be pruned.
+ * 修剪mergePolicy???
  */
 final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
 
+    /**
+     *
+     * @param in
+     * @param idField  "_id"
+     */
     PrunePostingsMergePolicy(MergePolicy in, String idField) {
-        super(in, toWrap -> new OneMerge(toWrap.segments) {
+        super(in,
+            // 这是一个包装函数
+            toWrap -> new OneMerge(toWrap.segments) {
             @Override
             public CodecReader wrapForMerge(CodecReader reader) throws IOException {
                 CodecReader wrapped = toWrap.wrapForMerge(reader);
@@ -59,8 +67,15 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
         });
     }
 
+    /**
+     *
+     * @param reader
+     * @param idField  doc中 fieldName 为 "_id" 的field
+     * @return
+     */
     private static CodecReader wrapReader(CodecReader reader, String idField) {
         Bits liveDocs = reader.getLiveDocs();
+        // 未设置位图代表所有doc都存活
         if (liveDocs == null) {
             return reader; // no deleted docs - we are good!
         }
@@ -89,9 +104,16 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
                         return postingsReader.iterator();
                     }
 
+                    /**
+                     * 在获取某个field下所有的term时 做了特殊处理
+                     * @param field
+                     * @return
+                     * @throws IOException
+                     */
                     @Override
                     public Terms terms(String field) throws IOException {
                         Terms in = postingsReader.terms(field);
+                        // 非id的情况直接范围
                         if (idField.equals(field) && in != null) {
                             return new FilterLeafReader.FilterTerms(in) {
                                 @Override
@@ -100,8 +122,15 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
                                     return new FilteredTermsEnum(iterator, false) {
                                         private PostingsEnum internal;
 
+                                        /**
+                                         * 代表传入的term是否存在吧
+                                         * @param term
+                                         * @return
+                                         * @throws IOException
+                                         */
                                         @Override
                                         protected AcceptStatus accept(BytesRef term) throws IOException {
+                                            //
                                             if (fullyDeletedSegment) {
                                                 return AcceptStatus.END; // short-cut this if we don't match anything
                                             }

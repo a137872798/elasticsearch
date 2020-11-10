@@ -35,9 +35,13 @@ import java.util.function.BiConsumer;
 
 /**
  * A refresh listener that tracks the amount of memory used by segments in the accounting circuit breaker.
+ * 当占用的内存过多时会触发熔断
  */
 final class RamAccountingRefreshListener implements BiConsumer<ElasticsearchDirectoryReader, ElasticsearchDirectoryReader> {
 
+    /**
+     * 通过传入不同的name 可以获取到不同的熔断器对象
+     */
     private final CircuitBreakerService breakerService;
 
     RamAccountingRefreshListener(CircuitBreakerService breakerService) {
@@ -46,6 +50,7 @@ final class RamAccountingRefreshListener implements BiConsumer<ElasticsearchDire
 
     @Override
     public void accept(ElasticsearchDirectoryReader reader, ElasticsearchDirectoryReader previousReader) {
+        // 获取指定的熔断器实例
         final CircuitBreaker breaker = breakerService.getBreaker(CircuitBreaker.ACCOUNTING);
 
         // Construct a list of the previous segment readers, we only want to track memory used
@@ -57,6 +62,7 @@ final class RamAccountingRefreshListener implements BiConsumer<ElasticsearchDire
         if (previousReader == null) {
             prevReaders = Collections.emptySet();
         } else {
+            // 把之前每个reader的缓存键都存起来了
             final List<LeafReaderContext> previousReaderLeaves = previousReader.leaves();
             prevReaders = new HashSet<>(previousReaderLeaves.size());
             for (LeafReaderContext lrc : previousReaderLeaves) {
@@ -68,12 +74,14 @@ final class RamAccountingRefreshListener implements BiConsumer<ElasticsearchDire
             final SegmentReader segmentReader = Lucene.segmentReader(lrc.reader());
             // don't add the segment's memory unless it is not referenced by the previous reader
             // (only new segments)
+            // 代表本次生成了新的缓存键
             if (prevReaders.contains(segmentReader.getCoreCacheHelper().getKey()) == false) {
                 final long ramBytesUsed = segmentReader.ramBytesUsed();
                 // add the segment memory to the breaker (non-breaking)
                 breaker.addWithoutBreaking(ramBytesUsed);
                 // and register a listener for when the segment is closed to decrement the
                 // breaker accounting
+                // 当reader对象被关闭时 释放熔断器的承载
                 segmentReader.getCoreCacheHelper().addClosedListener(k -> breaker.addWithoutBreaking(-ramBytesUsed));
             }
         }

@@ -43,6 +43,7 @@ import java.util.function.LongSupplier;
  * <p>
  * In particular, this policy will delete index commits whose max sequence number is at most
  * the current global checkpoint except the index commit which has the highest max sequence number among those.
+ * lucene本身是通过删除策略确定 哪些文件会被删除 默认是KeepOnlyLastCommitDeletionPolicy 也就是仅保留最新的segment
  */
 public class CombinedDeletionPolicy extends IndexDeletionPolicy {
     private final Logger logger;
@@ -55,6 +56,13 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
     private volatile IndexCommit lastCommit; // the most recent commit point
     private volatile SafeCommitInfo safeCommitInfo = SafeCommitInfo.EMPTY;
 
+    /**
+     *
+     * @param logger
+     * @param translogDeletionPolicy   事务日志的删除策略
+     * @param softDeletesPolicy   软删除策略
+     * @param globalCheckpointSupplier  通过translog最新的 checkpoint 获取globalCheckpoint
+     */
     CombinedDeletionPolicy(Logger logger, TranslogDeletionPolicy translogDeletionPolicy,
                            SoftDeletesPolicy softDeletesPolicy, LongSupplier globalCheckpointSupplier) {
         this.logger = logger;

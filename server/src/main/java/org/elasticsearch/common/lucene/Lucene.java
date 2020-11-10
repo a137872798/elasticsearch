@@ -900,9 +900,22 @@ public class Lucene {
         return new DirectoryReaderWithAllLiveDocs(in);
     }
 
+    /**
+     * 这也是reader的一个包装对象
+     */
     private static final class DirectoryReaderWithAllLiveDocs extends FilterDirectoryReader {
+        /**
+         * 每个segmentReader 都会被包装成该对象
+         */
         static final class LeafReaderWithLiveDocs extends FilterLeafReader {
+
+            /**
+             * 记录有效doc的位图
+             */
             final Bits liveDocs;
+            /**
+             * 总计有多少doc存活
+             */
             final int numDocs;
             LeafReaderWithLiveDocs(LeafReader in, Bits liveDocs, int  numDocs) {
                 super(in);
@@ -927,12 +940,19 @@ public class Lucene {
             }
         }
 
+        /**
+         * 初始化  allLiveDocs
+         * @param in
+         * @throws IOException
+         */
         DirectoryReaderWithAllLiveDocs(DirectoryReader in) throws IOException {
             super(in, new SubReaderWrapper() {
+                // 该函数定义了如何增强每个segmentReader
                 @Override
                 public LeafReader wrap(LeafReader leaf) {
                     final SegmentReader segmentReader = segmentReader(leaf);
                     final Bits hardLiveDocs = segmentReader.getHardLiveDocs();
+                    // 代表所有doc都存活
                     if (hardLiveDocs == null) {
                         return new LeafReaderWithLiveDocs(leaf, null, leaf.maxDoc());
                     }

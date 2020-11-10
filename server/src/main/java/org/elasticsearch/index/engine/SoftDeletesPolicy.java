@@ -45,7 +45,7 @@ final class SoftDeletesPolicy {
     private final LongSupplier globalCheckpointSupplier;
 
     /**
-     * 安全提交的本地检查点???
+     * 安全提交的本地检查点
      */
     private long localCheckpointOfSafeCommit;
     // This lock count is used to prevent `minRetainedSeqNo` from advancing.
@@ -57,6 +57,14 @@ final class SoftDeletesPolicy {
     // provides the retention leases used to calculate the minimum sequence number to retain
     private final Supplier<RetentionLeases> retentionLeasesSupplier;
 
+
+    /**
+     *
+     * @param globalCheckpointSupplier   通过translog 获取最新的checkpoint 记录的globalCheckpoint
+     * @param minRetainedSeqNo   将会被保留的最小的序列
+     * @param retentionOperations   保留的操作数
+     * @param retentionLeasesSupplier  保留的续约???
+     */
     SoftDeletesPolicy(
             final LongSupplier globalCheckpointSupplier,
             final long minRetainedSeqNo,
@@ -161,6 +169,7 @@ final class SoftDeletesPolicy {
     /**
      * Returns a soft-deletes retention query that will be used in {@link org.apache.lucene.index.SoftDeletesRetentionMergePolicy}
      * Documents including tombstones are soft-deleted and matched this query will be retained and won't cleaned up by merges.
+     * 这是一个范围查询对象 查询条件是 _seq_no 在指定范围内的
      */
     Query getRetentionQuery() {
         return LongPoint.newRangeQuery(SeqNoFieldMapper.NAME, getMinRetainedSeqNo(), Long.MAX_VALUE);

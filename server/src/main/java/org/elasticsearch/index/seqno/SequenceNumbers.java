@@ -45,7 +45,7 @@ public class SequenceNumbers {
     /**
      * Reads the sequence number stats from the commit data (maximum sequence number and local checkpoint).
      *
-     * @param commitData       the commit data
+     * @param commitData       the commit data   用户写入的数据
      * @return the sequence number stats
      */
     public static CommitInfo loadSeqNoInfoFromLuceneCommit(
@@ -53,6 +53,7 @@ public class SequenceNumbers {
         long maxSeqNo = NO_OPS_PERFORMED;
         long localCheckpoint = NO_OPS_PERFORMED;
 
+        // 从所有用户元数据中抽取 localCheckpoint maxSeqno
         for (final Map.Entry<String, String> entry : commitData) {
             final String key = entry.getKey();
             if (key.equals(SequenceNumbers.LOCAL_CHECKPOINT_KEY)) {
@@ -115,6 +116,9 @@ public class SequenceNumbers {
         }
     }
 
+    /**
+     * 实际上这些信息都是写入到 segment.userData 中的
+     */
     public static final class CommitInfo {
         public final long maxSeqNo;
         public final long localCheckpoint;

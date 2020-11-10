@@ -48,8 +48,19 @@ import java.util.Arrays;
 import java.util.function.Supplier;
 
 final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
+
+    /**
+     *
+     * @param recoverySourceField   “recovery_source” 是什么东西???
+     * @param retainSourceQuerySupplier 一个以 seq_no 的取值范围为查询条件的对象
+     * @param in
+     */
     RecoverySourcePruneMergePolicy(String recoverySourceField, Supplier<Query> retainSourceQuerySupplier, MergePolicy in) {
-        super(in, toWrap -> new OneMerge(toWrap.segments) {
+        super(in,
+            // 包装函数 每个oneMerge对象会被它处理
+            toWrap -> new OneMerge(toWrap.segments) {
+
+            // 覆盖了整个 包装reader的方法  原本是直接返回原对象
             @Override
             public CodecReader wrapForMerge(CodecReader reader) throws IOException {
                 CodecReader wrapped = toWrap.wrapForMerge(reader);
@@ -58,9 +69,20 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
         });
     }
 
+
+    /**
+     * 为每个 oneMerge对象 包装内部的reader   merge就是通过reader读取到的数据 作为基础进行合并的
+     * @param recoverySourceField     恢复源对应的field
+     * @param reader
+     * @param retainSourceQuerySupplier    能够查询一个范围seq的 query对象
+     * @return
+     * @throws IOException
+     */
     private static CodecReader wrapReader(String recoverySourceField, CodecReader reader, Supplier<Query> retainSourceQuerySupplier)
         throws IOException {
+        // 恢复源本身是 数字类型吗
         NumericDocValues recoverySource = reader.getNumericDocValues(recoverySourceField);
+        // 当不存在恢复源时 还是返回原 reader对象
         if (recoverySource == null || recoverySource.nextDoc() == DocIdSetIterator.NO_MORE_DOCS) {
             return reader; // early terminate - nothing to do here since non of the docs has a recovery source anymore.
         }
@@ -69,9 +91,11 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
         Weight weight = s.createWeight(s.rewrite(retainSourceQuerySupplier.get()), ScoreMode.COMPLETE_NO_SCORES, 1.0f);
         Scorer scorer = weight.scorer(reader.getContext());
         if (scorer != null) {
+            // 查找 _seq_no 在指定范围内的doc 构成的位图
             BitSet recoverySourceToKeep = BitSet.of(scorer.iterator(), reader.maxDoc());
             // calculating the cardinality is significantly cheaper than skipping all bulk-merging we might do
             // if retentions are high we keep most of it
+            // 所有都包含就返回原对象
             if (recoverySourceToKeep.cardinality() == reader.maxDoc()) {
                 return reader; // keep all source
             }
@@ -81,7 +105,14 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
         }
     }
 
+    /**
+     * 在reader上做拦截
+     */
     private static class SourcePruningFilterCodecReader extends FilterCodecReader {
+
+        /**
+         * 标注哪些doc上 包含了恢复源
+         */
         private final BitSet recoverySourceToKeep;
         private final String recoverySourceField;
 
@@ -98,16 +129,20 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
                 @Override
                 public NumericDocValues getNumeric(FieldInfo field) throws IOException {
                     NumericDocValues numeric = super.getNumeric(field);
+                    // 唯一的区别就在这里  当尝试对某个field进行合并时
                     if (recoverySourceField.equals(field.name)) {
                         assert numeric != null : recoverySourceField + " must have numeric DV but was null";
                         final DocIdSetIterator intersection;
+                        // 当不存在恢复源时 就返回空的迭代器
                         if (recoverySourceToKeep == null) {
                             // we can't return null here lucenes DocIdMerger expects an instance
                             intersection = DocIdSetIterator.empty();
                         } else {
+                            // 只获取交集的部分
                             intersection = ConjunctionDISI.intersectIterators(Arrays.asList(numeric,
                                 new BitSetIterator(recoverySourceToKeep, recoverySourceToKeep.length())));
                         }
+                        // 原本迭代每个doc下 value的对象被包装了
                         return new FilterNumericDocValues(numeric) {
                             @Override
                             public int nextDoc() throws IOException {

@@ -56,6 +56,10 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         final AtomicLong ramBytesUsed = new AtomicLong();
 
         private static final VersionLookup EMPTY = new VersionLookup(Collections.emptyMap());
+
+        /**
+         * 不同的数据流都可以对应到一个 唯一的版本号信息
+         */
         private final Map<BytesRef, VersionValue> map;
 
         // each version map has a notion of safe / unsafe which allows us to apply certain optimization in the auto-generated ID usecase
@@ -68,6 +72,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         // NOTE: these values can both be non-volatile since it's ok to read a stale value per doc ID. We serialize changes in the engine
         // that will prevent concurrent updates to the same document ID and therefore we can rely on the happens-before guanratee of the
         // map reference itself.
+        // 描述是否安全
         private boolean unsafe;
 
         // minimum timestamp of delete operations that were made while this map was active. this is used to make sure they are kept in
@@ -111,7 +116,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         }
 
         /**
-         * 如果接收到一个 delete相关的版本值  尝试性更新minDeleteTimestamp
+         * 每当发生一次remove的时候 会触发该方法 记录deleteVersionValue中最小的时间
          * @param delete
          */
         public void updateMinDeletedTimestamp(DeleteVersionValue delete) {
@@ -121,7 +126,10 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
     }
 
+
     private static final class Maps {
+
+        // 存在 current/old 2个查询不同版本的map对象
 
         // All writes (adds and deletes) go into here:
         final VersionLookup current;
@@ -153,14 +161,20 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
                 VersionLookup.EMPTY, false);
         }
 
+        /**
+         * 需要安全访问 或者上一个map需要安全访问
+         * @return
+         */
         boolean isSafeAccessMode() {
             return needsSafeAccess || previousMapsNeededSafeAccess;
         }
 
         boolean shouldInheritSafeAccess() {
+            // 空 且 安全  代表没有检测到任何操作
             final boolean mapHasNotSeenAnyOperations = current.isEmpty() && current.isUnsafe() == false;
             return needsSafeAccess
                 // we haven't seen any ops and map before needed it so we maintain it
+                // 应该是代表current  还没有写入任何operation 所以沿用上一个的状态
                 || (mapHasNotSeenAnyOperations && previousMapsNeededSafeAccess);
         }
 
@@ -174,6 +188,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
         /**
          * builds a new map that invalidates the old map but maintains the current. This should be called in afterRefresh()
+         * 只是将 old修改成无效值了 其余属性不变
          */
         Maps invalidateOldMap() {
             return new Maps(current, VersionLookup.EMPTY, previousMapsNeededSafeAccess);
@@ -183,6 +198,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
             long uidRAMBytesUsed = BASE_BYTES_PER_BYTESREF + uid.bytes.length;
             long ramAccounting = BASE_BYTES_PER_CHM_ENTRY + version.ramBytesUsed() + uidRAMBytesUsed;
             VersionValue previousValue = current.put(uid, version);
+            // 代表ram的变化 如果顶替了旧数据 那么差值就要反应到 VersionLookup上
             ramAccounting += previousValue == null ? 0 : -(BASE_BYTES_PER_CHM_ENTRY + previousValue.ramBytesUsed() + uidRAMBytesUsed);
             adjustRam(ramAccounting);
         }
@@ -194,13 +210,20 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
             }
         }
 
+        /**
+         * 将某个byte 对应的版本号移除
+         * @param uid
+         * @param deleted  在普通的VersionValue基础上增加了一个delete属性
+         */
         void remove(BytesRef uid, DeleteVersionValue deleted) {
             VersionValue previousValue = current.remove(uid);
+            // 更新删除的最小时间
             current.updateMinDeletedTimestamp(deleted);
             if (previousValue != null) {
                 long uidRAMBytesUsed = BASE_BYTES_PER_BYTESREF + uid.bytes.length;
                 adjustRam(-(BASE_BYTES_PER_CHM_ENTRY + previousValue.ramBytesUsed() + uidRAMBytesUsed));
             }
+            // old也要移除啊 为什么会需要管理2个 lookup
             if (old != VersionLookup.EMPTY) {
                 // we also need to remove it from the old map here to make sure we don't read this stale value while
                 // we are in the middle of a refresh. Most of the time the old map is an empty map so we can skip it there.
@@ -258,15 +281,21 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
     /**
      * Tracks bytes used by tombstones (deletes)
+     * 墓碑对象总计占用了多少byte
      */
     private final AtomicLong ramBytesUsedTombstones = new AtomicLong();
 
+    /**
+     * 感知refresh的前置钩子
+     * @throws IOException
+     */
     @Override
     public void beforeRefresh() throws IOException {
         // Start sending all updates after this point to the new
         // map.  While reopen is running, any lookup will first
         // try this new map, then fallback to old, then to the
         // current searcher:
+        // 在执行刷新前要构建 maps对象
         maps = maps.buildTransitionMap();
         assert (unsafeKeysMap = unsafeKeysMap.buildTransitionMap()) != null;
         // This is not 100% correct, since concurrent indexing ops can change these counters in between our execution of the previous
@@ -281,7 +310,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         // case.  This is because we assign new maps (in beforeRefresh) slightly before Lucene actually flushes any segments for the
         // reopen, and so any concurrent indexing requests can still sneak in a few additions to that current map that are in fact
         // reflected in the previous reader.   We don't touch tombstones here: they expire on their own index.gc_deletes timeframe:
-
+        // 当刷新结束时 将map中的oldLookup置空
         maps = maps.invalidateOldMap();
         assert (unsafeKeysMap = unsafeKeysMap.invalidateOldMap()) != null;
 
@@ -294,9 +323,16 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         return getUnderLock(uid, maps);
     }
 
+    /**
+     * 查找某个byte 对应的版本号
+     * @param uid
+     * @param currentMaps
+     * @return
+     */
     private VersionValue getUnderLock(final BytesRef uid, Maps currentMaps) {
         assert assertKeyedLockHeldByCurrentThread(uid);
         // First try to get the "live" value:
+        // 从3个容器中分别查找
         VersionValue value = currentMaps.current.get(uid);
         if (value != null) {
             return value;
@@ -336,6 +372,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
     void maybePutIndexUnderLock(BytesRef uid, IndexVersionValue version) {
         assert assertKeyedLockHeldByCurrentThread(uid);
         Maps maps = this.maps;
+        // 在安全模式下访问的话 需要加锁
         if (maps.isSafeAccessMode()) {
             putIndexUnderLock(uid, version);
         } else {
@@ -352,6 +389,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         assert assertKeyedLockHeldByCurrentThread(uid);
         assert uid.bytes.length == uid.length : "Oversized _uid! UID length: " + uid.length + ", bytes length: " + uid.bytes.length;
         maps.put(uid, version);
+        // 因为uid对应的值有效了 所以从 tombstone中移除
         removeTombstoneUnderLock(uid);
     }
 
