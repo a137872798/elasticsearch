@@ -222,6 +222,9 @@ public class InternalEngine extends Engine {
 
     private final CompletionStatsCache completionStatsCache;
 
+    /**
+     * 这个标记是???  只知道在get时 如果某个 get.uid 对应的version 没有携带location时 会设置成true
+     */
     private final AtomicBoolean trackTranslogLocation = new AtomicBoolean(false);
     private final KeyedLock<Long> noOpKeyedLock = new KeyedLock<>();
 
@@ -657,8 +660,11 @@ public class InternalEngine extends Engine {
 
             // 数据恢复的第一时间是想到写入到lucene中
             // 操作应该会先记录到事务文件中 那么在什么时候写入到lucene中呢   应该是写入了只是没有commit吧
+            // TODO 有关IndexWriter.commit 之后再看
             commitIndexWriter(indexWriter, translog);
+            // 更新最后一次的segment信息
             refreshLastCommittedSegmentInfos();
+            // 因为在commit过程中会触发所有doc的写入 产生新的 segment  所以reader数据已经发生了变化  这里要更新reader对象
             refresh("translog_recovery");
         }
         translog.trimUnreferencedReaders();
@@ -692,19 +698,32 @@ public class InternalEngine extends Engine {
     }
 
     // Package private for testing purposes only
+    // TODO 什么时候会将 commit数据填充到 snapshottedCommit中???
     boolean hasSnapshottedCommits() {
         return combinedDeletionPolicy.hasSnapshottedCommits();
     }
 
+    /**
+     * 只要 translogWriter内部偏移量发生了变化 就代表需要刷盘 而每次记录operation时 就会增加偏移量
+     * @return
+     */
     @Override
     public boolean isTranslogSyncNeeded() {
         return getTranslog().syncNeeded();
     }
 
+    /**
+     * 传入一组位置信息 并检测对应的operation是否已经刷盘成功了
+     * @param locations
+     * @return
+     * @throws IOException
+     */
     @Override
     public boolean ensureTranslogSynced(Stream<Translog.Location> locations) throws IOException {
+        // 返回true代表触发了刷盘  false代表location对应的operation已经刷盘成功了 不需要处理
         final boolean synced = translog.ensureSynced(locations);
         if (synced) {
+            // 每次刷盘成功都要检测是否有可以删除的文件
             revisitIndexDeletionPolicyOnTranslogSynced();
         }
         return synced;
@@ -726,6 +745,9 @@ public class InternalEngine extends Engine {
         return getTranslog().stats();
     }
 
+    /**
+     * 获取translog最后一个写入的位置
+     */
     @Override
     public Translog.Location getTranslogLastWriteLocation() {
         return getTranslog().getLastWriteLocation();
@@ -813,6 +835,13 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * 执行get请求 并返回查询结果
+     * @param get  在get请求中还可以严格要求版本
+     * @param searcherFactory
+     * @return
+     * @throws EngineException
+     */
     @Override
     public GetResult get(Get get, BiFunction<String, SearcherScope, Engine.Searcher> searcherFactory) throws EngineException {
         assert Objects.equals(get.uid().field(), IdFieldMapper.NAME) : get.uid().field();
@@ -821,34 +850,44 @@ public class InternalEngine extends Engine {
             SearcherScope scope;
             if (get.realtime()) {
                 VersionValue versionValue = null;
+                // 可以看到先是通过 get内部的数据流 也就是id信息  获取对应的verion 信息   上面只是版本的校验 还没有到读取数据的时候
                 try (Releasable ignore = versionMap.acquireLock(get.uid().bytes())) {
                     // we need to lock here to access the version map to do this truly in RT
+                    // 获取某个byte 对应的version信息 包含seqNo 和 term
                     versionValue = getVersionFromMap(get.uid().bytes());
                 }
                 if (versionValue != null) {
+                    // 如果version信息不存在 就是代表数据已经被删除
                     if (versionValue.isDelete()) {
                         return GetResult.NOT_EXISTS;
                     }
+                    // 根据内部/外部发起的get请求 versionType是不一样的 会通过它来检验是否发生了版本冲突  冲突时抛出异常
                     if (get.versionType().isVersionConflictForReads(versionValue.version, get.version())) {
                         throw new VersionConflictEngineException(shardId, get.id(),
                             get.versionType().explainConflictForReads(versionValue.version, get.version()));
                     }
+                    // getIfSeqNo 代表对 seqNo 做了限制 当不匹配时 抛出异常
                     if (get.getIfSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO && (
                         get.getIfSeqNo() != versionValue.seqNo || get.getIfPrimaryTerm() != versionValue.term
                         )) {
                         throw new VersionConflictEngineException(shardId, get.id(),
                             get.getIfSeqNo(), get.getIfPrimaryTerm(), versionValue.seqNo, versionValue.term);
                     }
+                    // 是否要求从事务日志中读取数据
                     if (get.isReadFromTranslog()) {
                         // this is only used for updates - API _GET calls will always read form a reader for consistency
                         // the update call doesn't need the consistency since it's source only + _parent but parent can go away in 7.0
                         if (versionValue.getLocation() != null) {
                             try {
+                                // 从事务日志文件中还原数据
                                 Translog.Operation operation = translog.readOperation(versionValue.getLocation());
                                 if (operation != null) {
                                     // in the case of a already pruned translog generation we might get null here - yet very unlikely
+                                    // 看来能被get查询到的一定是一个index
                                     final Translog.Index index = (Translog.Index) operation;
+                                    // 这是把一个 Operation 包装成了reader
                                     TranslogLeafReader reader = new TranslogLeafReader(index);
+                                    // 直接把reader设置到 IndexSearcher中
                                     return new GetResult(new Engine.Searcher("realtime_get", reader,
                                         IndexSearcher.getDefaultSimilarity(), null, IndexSearcher.getDefaultQueryCachingPolicy(), reader),
                                         new VersionsAndSeqNoResolver.DocIdAndVersion(0, index.version(), index.seqNo(), index.primaryTerm(),
@@ -863,10 +902,14 @@ public class InternalEngine extends Engine {
                         }
                     }
                     assert versionValue.seqNo >= 0 : versionValue;
+                    // 在实时查询 且通过searcher的情况 需要为reader做刷新工作
+                    // realtime 就是确保每次读取到的都是最新的数据 也就是刚刚刷新完的 因为在lucene中写入数据 并不会立即生成segment 一般要通过commit方法才能固化最新的segment
+                    // 而为了能感知到上一时刻写入的数据 就需要触发refresh
                     refreshIfNeeded("realtime_get", versionValue.seqNo);
                 }
                 scope = SearcherScope.INTERNAL;
             } else {
+                // 对应非实时查询
                 // we expose what has been externally expose in a point in time snapshot via an explicit refresh
                 scope = SearcherScope.EXTERNAL;
             }
@@ -916,20 +959,30 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * @param op  本次发起的operation
+     * @return
+     * @throws IOException
+     */
     private OpVsLuceneDocStatus compareOpToLuceneDocBasedOnSeqNo(final Operation op) throws IOException {
         assert op.seqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO : "resolving ops based on seq# but no seqNo is found";
         final OpVsLuceneDocStatus status;
+        // 获取本次操作对应的版本信息    versionMap 可以理解为lucene的一层缓存???
         VersionValue versionValue = getVersionFromMap(op.uid().bytes());
         assert incrementVersionLookup();
         if (versionValue != null) {
+            // 将本次的operation 信息 与查询出来的versionMap中的信息做比较
             status = compareOpToVersionMapOnSeqNo(op.id(), op.seqNo(), op.primaryTerm(), versionValue);
         } else {
             // load from index
             assert incrementIndexVersionLookup();
+            // 从lucene中查询相关信息 并比较 seq term
             try (Searcher searcher = acquireSearcher("load_seq_no", SearcherScope.INTERNAL)) {
                 final DocIdAndSeqNo docAndSeqNo = VersionsAndSeqNoResolver.loadDocIdAndSeqNo(searcher.getIndexReader(), op.uid());
                 if (docAndSeqNo == null) {
+                    // 代表没有找到 operation 对应的doc
                     status = OpVsLuceneDocStatus.LUCENE_DOC_NOT_FOUND;
+                    // 当查询到数据时 就开始比较 seq 和 term
                 } else if (op.seqNo() > docAndSeqNo.seqNo) {
                     status = OpVsLuceneDocStatus.OP_NEWER;
                 } else if (op.seqNo() == docAndSeqNo.seqNo) {
@@ -944,10 +997,14 @@ public class InternalEngine extends Engine {
         return status;
     }
 
-    /** resolves the current version of the document, returning null if not found */
+    /**
+     * resolves the current version of the document, returning null if not found
+     * 解析当前doc的版本
+     */
     private VersionValue resolveDocVersion(final Operation op, boolean loadSeqNo) throws IOException {
         assert incrementVersionLookup(); // used for asserting in tests
         VersionValue versionValue = getVersionFromMap(op.uid().bytes());
+        // 当没有从 versionMap中直接找到 只能选择通过searcher查找
         if (versionValue == null) {
             assert incrementIndexVersionLookup(); // used for asserting in tests
             final VersionsAndSeqNoResolver.DocIdAndVersion docIdAndVersion;
@@ -957,6 +1014,7 @@ public class InternalEngine extends Engine {
             if (docIdAndVersion != null) {
                 versionValue = new IndexVersionValue(null, docIdAndVersion.version, docIdAndVersion.seqNo, docIdAndVersion.primaryTerm);
             }
+        // 当version存在的情况下 发现被标记成 delete了 返回null
         } else if (engineConfig.isEnableGcDeletes() && versionValue.isDelete() &&
             (engineConfig.getThreadPool().relativeTimeInMillis() - ((DeleteVersionValue)versionValue).time) > getGcDeletesInMillis()) {
             versionValue = null;
@@ -964,13 +1022,21 @@ public class InternalEngine extends Engine {
         return versionValue;
     }
 
+    /**
+     * 使用 operation.id 去versionMap中查询版本号信息
+     * @param id
+     * @return
+     */
     private VersionValue getVersionFromMap(BytesRef id) {
+        // TODO 还是没有参透为什么要用 current old 2个maps
+        // 只要 current  old 中有一个是unsafe的  就认为versionMap是unsafe的
         if (versionMap.isUnsafe()) {
             synchronized (versionMap) {
                 // we are switching from an unsafe map to a safe map. This might happen concurrently
                 // but we only need to do this once since the last operation per ID is to add to the version
                 // map so once we pass this point we can safely lookup from the version map.
                 if (versionMap.isUnsafe()) {
+                    // TODO 什么 刷新能从unsafe状态脱离吗   什么情况下会变成unsafe呢
                     refresh("unsafe_version_map", SearcherScope.INTERNAL, true);
                 }
                 versionMap.enforceSafeAccess();
@@ -979,11 +1045,18 @@ public class InternalEngine extends Engine {
         return versionMap.getUnderLock(id);
     }
 
+    /**
+     * 是否可以优化 doc
+     * @param index
+     * @return
+     */
     private boolean canOptimizeAddDocument(Index index) {
+        // 代表会从外部提供时间戳  那么就可以进行优化
         if (index.getAutoGeneratedIdTimestamp() != IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP) {
             assert index.getAutoGeneratedIdTimestamp() >= 0 : "autoGeneratedIdTimestamp must be positive but was: "
                 + index.getAutoGeneratedIdTimestamp();
             switch (index.origin()) {
+                // 由主分片发起的 index操作
                 case PRIMARY:
                     assert assertPrimaryCanOptimizeAddDocument(index);
                     return true;
@@ -1027,10 +1100,16 @@ public class InternalEngine extends Engine {
         return true;
     }
 
+    /**
+     * 为某个操作生成一个 seq
+     * @param operation
+     * @return
+     */
     protected long generateSeqNoForOperationOnPrimary(final Operation operation) {
         assert operation.origin() == Operation.Origin.PRIMARY;
         assert operation.seqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO :
             "ops should not have an assigned seq no. but was: " + operation.seqNo();
+        // 默认情况下就是获取 localCheckpoint.nextSeq
         return doGenerateSeqNoForOperation(operation);
     }
 
@@ -1048,9 +1127,16 @@ public class InternalEngine extends Engine {
         return localCheckpointTracker.generateSeqNo();
     }
 
+    /**
+     * 写入一个index
+     * @param index operation to perform
+     * @return
+     * @throws IOException
+     */
     @Override
     public IndexResult index(Index index) throws IOException {
         assert Objects.equals(index.uid().field(), IdFieldMapper.NAME) : index.uid().field();
+        // 从事务日志中恢复数据 并写入到lucene的操作是不会被限流的
         final boolean doThrottle = index.origin().isRecovery() == false;
         try (ReleasableLock releasableLock = readLock.acquire()) {
             ensureOpen();
@@ -1954,6 +2040,9 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * 重新读取最大的 segment_N 对应的段文件
+     */
     private void refreshLastCommittedSegmentInfos() {
     /*
      * we have to inc-ref the store here since if the engine is closed by a tragic event
@@ -2886,8 +2975,10 @@ public class InternalEngine extends Engine {
 
     /**
      * Refresh this engine **internally** iff the requesting seq_no is greater than the last refreshed checkpoint.
+     * 尝试刷新内部的数据
      */
     protected final void refreshIfNeeded(String source, long requestingSeqNo) {
+        // lastRefreshedCheckpoint 对应上一次刷新时得到的检查点 如果本次传入的seq比上次检查点大 才有刷新的必要
         if (lastRefreshedCheckpoint() < requestingSeqNo) {
             synchronized (refreshIfNeededMutex) {
                 if (lastRefreshedCheckpoint() < requestingSeqNo) {
@@ -2968,6 +3059,10 @@ public class InternalEngine extends Engine {
         return maxSeqNoOfUpdatesOrDeletes.get();
     }
 
+    /**
+     * 更新maxSeqNoOfUpdatesOnPrimary
+     * @param maxSeqNoOfUpdatesOnPrimary
+     */
     @Override
     public void advanceMaxSeqNoOfUpdatesOrDeletes(long maxSeqNoOfUpdatesOnPrimary) {
         if (maxSeqNoOfUpdatesOnPrimary == SequenceNumbers.UNASSIGNED_SEQ_NO) {

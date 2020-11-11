@@ -37,6 +37,10 @@ final class DeleteVersionValue extends VersionValue {
         this.time = time;
     }
 
+    /**
+     * 代表实际上数据已经被删除
+     * @return
+     */
     @Override
     public boolean isDelete() {
         return true;

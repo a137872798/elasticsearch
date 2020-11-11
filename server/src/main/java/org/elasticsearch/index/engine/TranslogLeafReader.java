@@ -49,9 +49,13 @@ import java.util.Set;
 
 /**
  * Internal class that mocks a single doc read from the transaction log as a leaf reader.
+ * 实际上是单个doc的数据
  */
 public final class TranslogLeafReader extends LeafReader {
 
+    /**
+     * 就是从事务日志文件中还原出来的数据
+     */
     private final Translog.Index operation;
     private static final FieldInfo FAKE_SOURCE_FIELD
         = new FieldInfo(SourceFieldMapper.NAME, 1, false, false, false, IndexOptions.NONE, DocValuesType.NONE, -1, Collections.emptyMap(),

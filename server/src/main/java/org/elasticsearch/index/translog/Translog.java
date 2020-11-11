@@ -677,7 +677,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
     /**
      * The a {@linkplain Location} that will sort after the {@linkplain Location} returned by the last write but before any locations which
      * can be returned by the next write.
-     * 下一个要写入的opertion的location
+     * 返回最后一个operation对应的位置
      */
     public Location getLastWriteLocation() {
         try (ReleasableLock lock = readLock.acquire()) {

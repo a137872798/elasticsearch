@@ -166,8 +166,10 @@ public final class VersionsAndSeqNoResolver {
     /**
      * Loads the internal docId and sequence number of the latest copy for a given uid from the provided reader.
      * The result is either null or the live and latest version of the given uid.
+     * 以term为查询条件 在reader中找到符合条件的所有doc
      */
     public static DocIdAndSeqNo loadDocIdAndSeqNo(IndexReader reader, Term term) throws IOException {
+        // 获取绑定在线程上的缓存
         final PerThreadIDVersionAndSeqNoLookup[] lookups = getLookupState(reader, term.field());
         final List<LeafReaderContext> leaves = reader.leaves();
         // iterate backwards to optimize for the frequently updated documents
@@ -175,6 +177,7 @@ public final class VersionsAndSeqNoResolver {
         for (int i = leaves.size() - 1; i >= 0; i--) {
             final LeafReaderContext leaf = leaves.get(i);
             final PerThreadIDVersionAndSeqNoLookup lookup = lookups[leaf.ord];
+            // 从后往前查找 也就是当term出现多次时 会以最新的doc为准
             final DocIdAndSeqNo result = lookup.lookupSeqNo(term.bytes(), leaf);
             if (result != null) {
                 return result;

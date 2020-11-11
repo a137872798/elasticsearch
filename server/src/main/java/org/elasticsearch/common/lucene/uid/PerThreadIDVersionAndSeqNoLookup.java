@@ -162,12 +162,16 @@ final class PerThreadIDVersionAndSeqNoLookup {
         return dv.longValue();
     }
 
-    /** Return null if id is not found. */
+    /**
+     * Return null if id is not found.
+     * 通过term 查询数据 并将命中的结果包装成 DocIdAndSeqNo
+     */
     DocIdAndSeqNo lookupSeqNo(BytesRef id, LeafReaderContext context) throws IOException {
         assert context.reader().getCoreCacheHelper().getKey().equals(readerKey) :
             "context's reader is not the same as the reader class was initialized on.";
         final int docID = getDocID(id, context);
         if (docID != DocIdSetIterator.NO_MORE_DOCS) {
+            // 找到同一doc下 seq的值
             final long seqNo = readNumericDocValues(context.reader(), SeqNoFieldMapper.NAME, docID);
             return new DocIdAndSeqNo(docID, seqNo, context);
         } else {

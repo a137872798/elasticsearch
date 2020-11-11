@@ -44,6 +44,12 @@ public enum VersionType implements Writeable {
             return "current version [" + currentVersion + "] is different than the one provided [" + expectedVersion + "]";
         }
 
+        /**
+         * 假设是内部发起的get请求
+         * @param currentVersion  the current version for the document   此时存储在versionMap中的版本号  通过get.id 取出来的
+         * @param expectedVersion the version specified for the read operation   get请求中携带的版本信息
+         * @return
+         */
         @Override
         public boolean isVersionConflictForReads(long currentVersion, long expectedVersion) {
             return isVersionConflict(currentVersion, expectedVersion, false);
@@ -57,10 +63,19 @@ public enum VersionType implements Writeable {
             return "current version [" + currentVersion + "] is different than the one provided [" + expectedVersion + "]";
         }
 
+        /**
+         * 检测版本号是否冲突
+         * @param currentVersion
+         * @param expectedVersion
+         * @param deleted
+         * @return
+         */
         private boolean isVersionConflict(long currentVersion, long expectedVersion, boolean deleted) {
+            // 当传入这种特殊的版本号时 不与其他版本冲突
             if (expectedVersion == Versions.MATCH_ANY) {
                 return false;
             }
+            // 要求已经被删除
             if (expectedVersion == Versions.MATCH_DELETED) {
                 return deleted == false;
             }
