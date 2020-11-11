@@ -75,7 +75,7 @@ class ElasticsearchReaderManager extends ReferenceManager<ElasticsearchDirectory
      */
     @Override
     protected ElasticsearchDirectoryReader refreshIfNeeded(ElasticsearchDirectoryReader referenceToRefresh) throws IOException {
-        // 会加载dir下最新的segment_N 文件  并还原成reader对象
+        // 一旦检测到有未刷盘的变化 比如 deleteQueue中记录了 update delete信息  马上将这些信息作用到segment上 并生成一批新的segmentReader
         final ElasticsearchDirectoryReader reader = (ElasticsearchDirectoryReader) DirectoryReader.openIfChanged(referenceToRefresh);
         if (reader != null) {
             refreshListener.accept(reader, referenceToRefresh);

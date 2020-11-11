@@ -424,6 +424,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
     /**
      * Removes this uid from the pending deletes map.
+     * 将墓碑中某个 uid对应的数据清理掉
      */
     void removeTombstoneUnderLock(BytesRef uid) {
         assert assertKeyedLockHeldByCurrentThread(uid);
@@ -436,20 +437,32 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         }
     }
 
+    /**
+     * 检测该数据是否应该被删除
+     * @param maxTimestampToPrune   超过该时间戳就不允许被删除
+     * @param maxSeqNoToPrune   超过该seq 不允许被删除
+     * @param versionValue   本次tombstone的参考数据
+     * @return
+     */
     private boolean canRemoveTombstone(long maxTimestampToPrune, long maxSeqNoToPrune, DeleteVersionValue versionValue) {
         // check if the value is old enough and safe to be removed
         final boolean isTooOld = versionValue.time < maxTimestampToPrune;
         final boolean isSafeToPrune = versionValue.seqNo <= maxSeqNoToPrune;
         // version value can't be removed it's
         // not yet flushed to lucene ie. it's part of this current maps object
+        // 在这里还有个限制条件  当前时间必须小于 minDeleteTimestamp
         final boolean isNotTrackedByCurrentMaps = versionValue.time < maps.getMinDeleteTimestamp();
         return isTooOld && isSafeToPrune && isNotTrackedByCurrentMaps;
     }
 
     /**
      * Try to prune tombstones whose timestamp is less than maxTimestampToPrune and seqno at most the maxSeqNoToPrune.
+     * @param maxSeqNoToPrune 不能删除超过该时间的数据
+     * @param maxTimestampToPrune  删除的seq不能超过这个值   一般就是localCheckpoint 代表未提交的数据不能被删除
+     *                             实际上还有个条件 就是墓碑的 deleteVersionValue的时间必须小于 current.minDeleteTimestamp
      */
     void pruneTombstones(long maxTimestampToPrune, long maxSeqNoToPrune) {
+        // DeleteVersionValue 这个是携带一个时间属性的
         for (Map.Entry<BytesRef, DeleteVersionValue> entry : tombstones.entrySet()) {
             // we do check before we actually lock the key - this way we don't need to acquire the lock for tombstones that are not
             // prune-able. If the tombstone changes concurrently we will re-read and step out below since if we can't collect it now w

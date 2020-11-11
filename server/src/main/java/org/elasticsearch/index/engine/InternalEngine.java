@@ -131,7 +131,7 @@ public class InternalEngine extends Engine {
 
     /**
      * When we last pruned expired tombstones from versionMap.deletes:
-     * 代表最近一次裁剪时间
+     * 代表最近一次从墓碑数据中移除某些version信息的时间戳
      * 该对象在初始化时 会通过当前时间设置该值
      */
     private volatile long lastDeleteVersionPruneTimeMSec;
@@ -165,7 +165,7 @@ public class InternalEngine extends Engine {
 
     // A uid (in the form of BytesRef) to the version map
     // we use the hashed variant since we iterate over it and check removal and additions on existing keys
-    // 该对象可以通过byte 查询版本号信息 TODO
+    // 该对象可以通过byte 查询版本号信息    byte[] 实际上就是某个id
     private final LiveVersionMap versionMap = new LiveVersionMap();
 
     /**
@@ -192,6 +192,10 @@ public class InternalEngine extends Engine {
     // are falling behind and when writing indexing buffer to disk is too slow.  When this is 0, there is no throttling, else we throttling
     // incoming indexing ops to a single thread:
     private final AtomicInteger throttleRequestCount = new AtomicInteger();
+
+    /**
+     * 在初始化时 会将该标识修改成true  代表此时还未从事务文件中恢复数据
+     */
     private final AtomicBoolean pendingTranslogRecovery = new AtomicBoolean(false);
     private final AtomicLong maxUnsafeAutoIdTimestamp = new AtomicLong(-1);
     private final AtomicLong maxSeenAutoIdTimestamp = new AtomicLong(-1);
@@ -220,6 +224,10 @@ public class InternalEngine extends Engine {
 
     private final AtomicBoolean trackTranslogLocation = new AtomicBoolean(false);
     private final KeyedLock<Long> noOpKeyedLock = new KeyedLock<>();
+
+    /**
+     * TODO
+     */
     private final AtomicBoolean shouldPeriodicallyFlushAfterBigMerge = new AtomicBoolean(false);
 
     @Nullable
@@ -325,18 +333,21 @@ public class InternalEngine extends Engine {
                 this.internalReaderManager.addListener(listener);
             }
             this.lastRefreshedCheckpointListener = new LastRefreshedCheckpointListener(localCheckpointTracker.getProcessedCheckpoint());
+            // 在这里将监听器 追加到 internalReaderManager中了
             this.internalReaderManager.addListener(lastRefreshedCheckpointListener);
             maxSeqNoOfUpdatesOrDeletes = new AtomicLong(SequenceNumbers.max(localCheckpointTracker.getMaxSeqNo(), translog.getMaxSeqNo()));
             // TODO 这意味着丢失了什么数据么 ???
             if (localCheckpointTracker.getPersistedCheckpoint() < localCheckpointTracker.getMaxSeqNo()) {
                 try (Searcher searcher =
                          acquireSearcher("restore_version_map_and_checkpoint_tracker", SearcherScope.INTERNAL)) {
+                    // 从之前通过lucene存储的doc中还原出 version checkpoint信息
                     restoreVersionMapAndCheckpointTracker(Lucene.wrapAllDocsLive(searcher.getDirectoryReader()));
                 } catch (IOException e) {
                     throw new EngineCreationFailureException(config().getShardId(),
                         "failed to restore version map and local checkpoint tracker", e);
                 }
             }
+            // 记录各种统计数据
             completionStatsCache = new CompletionStatsCache(() -> acquireSearcher("completion_stats"));
             this.externalReaderManager.addListener(completionStatsCache);
             success = true;
@@ -501,34 +512,52 @@ public class InternalEngine extends Engine {
         return true;
     }
 
+    /**
+     * 从事务日志中恢复历史数据
+     * @param translogRecoveryRunner  是一个函数对象  通过engint 和 Translog.Snapshot 进行数据还原
+     * @return
+     * @throws IOException
+     */
     @Override
     public int restoreLocalHistoryFromTranslog(TranslogRecoveryRunner translogRecoveryRunner) throws IOException {
         try (ReleasableLock ignored = readLock.acquire()) {
             ensureOpen();
+            // 获取到此时已经处理完毕的数据对应的检查点    推测是某个处理完毕的operation对应的seq
             final long localCheckpoint = localCheckpointTracker.getProcessedCheckpoint();
+            // 获取检查点之后的所有数据快照
             try (Translog.Snapshot snapshot = getTranslog().newSnapshot(localCheckpoint + 1, Long.MAX_VALUE)) {
                 return translogRecoveryRunner.run(this, snapshot);
             }
         }
     }
 
+    /**
+     * 填满 seq 之间的缺口
+     * @param primaryTerm the shards primary term this engine was created for
+     * @return
+     * @throws IOException
+     */
     @Override
     public int fillSeqNoGaps(long primaryTerm) throws IOException {
         try (ReleasableLock ignored = writeLock.acquire()) {
             ensureOpen();
+            // 获取当前最新的检查点以及序列
             final long localCheckpoint = localCheckpointTracker.getProcessedCheckpoint();
             final long maxSeqNo = localCheckpointTracker.getMaxSeqNo();
             int numNoOpsAdded = 0;
+            // 这里是将 检查点与最大序列号之间的空缺补上
             for (
                     long seqNo = localCheckpoint + 1;
                     seqNo <= maxSeqNo;
                     seqNo = localCheckpointTracker.getProcessedCheckpoint() + 1 /* leap-frog the local checkpoint */) {
+                // 下面的操作会使得 localCheckpointTracker 内部的 processedCheckpoint +1  如果operation 是通过事务日志的数据产生的 那么还要增加 persistedCheckpoint
                 innerNoOp(new NoOp(seqNo, primaryTerm, Operation.Origin.PRIMARY, System.nanoTime(), "filling gaps"));
                 numNoOpsAdded++;
                 assert seqNo <= localCheckpointTracker.getProcessedCheckpoint() :
                     "local checkpoint did not advance; was [" + seqNo + "], now [" + localCheckpointTracker.getProcessedCheckpoint() + "]";
 
             }
+            // 之前写入的数据还没有持久化 这里进行持久化
             syncTranslog(); // to persist noops associated with the advancement of the local checkpoint
             assert localCheckpointTracker.getPersistedCheckpoint() == maxSeqNo
                 : "persisted local checkpoint did not advance to max seq no; is [" + localCheckpointTracker.getPersistedCheckpoint() +
@@ -552,11 +581,19 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * 从事务日志中恢复数据
+     * @param translogRecoveryRunner the translog recovery runner     通过引擎和快照数据进行恢复
+     * @param recoverUpToSeqNo       the upper bound, inclusive, of sequence number to be recovered   最多加载到seq为多少的数据后 就不再恢复了
+     * @return
+     * @throws IOException
+     */
     @Override
     public InternalEngine recoverFromTranslog(TranslogRecoveryRunner translogRecoveryRunner, long recoverUpToSeqNo) throws IOException {
         flushLock.lock();
         try (ReleasableLock lock = readLock.acquire()) {
             ensureOpen();
+            // 在初始化时 该标识会被修改成true 当该标识被修改成false时 代表已经恢复了数据
             if (pendingTranslogRecovery.get() == false) {
                 throw new IllegalStateException("Engine has already been recovered");
             }
@@ -583,25 +620,43 @@ public class InternalEngine extends Engine {
         pendingTranslogRecovery.set(false); // we are good - now we can commit
     }
 
+    /**
+     * 从事务日志中恢复数据
+     * @param translogRecoveryRunner  该对象定义了如何通过engine 和从translog中获取的快照对象进行数据恢复
+     *                                返回的结果就是 总计恢复了多少operation
+     * @param recoverUpToSeqNo
+     * @throws IOException
+     */
     private void recoverFromTranslogInternal(TranslogRecoveryRunner translogRecoveryRunner, long recoverUpToSeqNo) throws IOException {
+
+        // 记录总计恢复了多少operation
         final int opsRecovered;
+        // 从lucene的doc中 可以恢复 processedCheckpoint
         final long localCheckpoint = getProcessedLocalCheckpoint();
+
+        // 当前检查点小于 seq上限才有恢复的必要
         if (localCheckpoint < recoverUpToSeqNo) {
+            // 将中间这部分数据生成快照  事务日志应该是每次操作都会写入的
             try (Translog.Snapshot snapshot = translog.newSnapshot(localCheckpoint + 1, recoverUpToSeqNo)) {
                 opsRecovered = translogRecoveryRunner.run(this, snapshot);
             } catch (Exception e) {
                 throw new EngineException(shardId, "failed to recover from translog", e);
             }
         } else {
+            // 代表没有operaton需要恢复
             opsRecovered = 0;
         }
         // flush if we recovered something or if we have references to older translogs
         // note: if opsRecovered == 0 and we have older translogs it means they are corrupted or 0 length.
         assert pendingTranslogRecovery.get() : "translogRecovery is not pending but should be";
+        // 代表数据的恢复已完成
         pendingTranslogRecovery.set(false); // we are good - now we can commit
         if (opsRecovered > 0) {
             logger.trace("flushing post recovery from translog: ops recovered [{}], current translog generation [{}]",
                 opsRecovered, translog.currentFileGeneration());
+
+            // 数据恢复的第一时间是想到写入到lucene中
+            // 操作应该会先记录到事务文件中 那么在什么时候写入到lucene中呢   应该是写入了只是没有commit吧
             commitIndexWriter(indexWriter, translog);
             refreshLastCommittedSegmentInfos();
             refresh("translog_recovery");
@@ -655,9 +710,14 @@ public class InternalEngine extends Engine {
         return synced;
     }
 
+    /**
+     * 将事务文件刷盘
+     * @throws IOException
+     */
     @Override
     public void syncTranslog() throws IOException {
         translog.sync();
+        // 每当刷盘完成时 都检测一下是否有不再被使用的 segment了 有的话进行移除
         revisitIndexDeletionPolicyOnTranslogSynced();
     }
 
@@ -671,10 +731,18 @@ public class InternalEngine extends Engine {
         return getTranslog().getLastWriteLocation();
     }
 
+    /**
+     * 在事务文件刷盘后检测是否有需要删除的文件
+     * @throws IOException
+     */
     private void revisitIndexDeletionPolicyOnTranslogSynced() throws IOException {
         if (combinedDeletionPolicy.hasUnreferencedCommits()) {
+            // 触发删除策略的 onCommit 方法后  会有一部分文件被设置到删除队列中 之后通过 IndexFileDeleter删除文件
+            // ES 使用的删除策略是  CombinedDeletionPolicy
+            // 根据globalCheckpoint 选择不再维护的commit 并删除相关文件
             indexWriter.deleteUnusedFiles();
         }
+        // 事务文件也包含了 checkpoint的信息 将小于 safeCommit的数据文件删除掉
         translog.trimUnreferencedReaders();
     }
 
@@ -813,14 +881,28 @@ public class InternalEngine extends Engine {
      * operation
      */
     enum OpVsLuceneDocStatus {
-        /** the op is more recent than the one that last modified the doc found in lucene*/
+        /**
+         * the op is more recent than the one that last modified the doc found in lucene
+         * 代表本次更新
+         */
         OP_NEWER,
-        /** the op is older or the same as the one that last modified the doc found in lucene*/
+        /**
+         * the op is older or the same as the one that last modified the doc found in lucene
+         * 2个op相同
+         */
         OP_STALE_OR_EQUAL,
         /** no doc was found in lucene */
         LUCENE_DOC_NOT_FOUND
     }
 
+    /**
+     * 检测  前3个参数与第4个参数的新旧关系
+     * @param id
+     * @param seqNo
+     * @param primaryTerm
+     * @param versionValue
+     * @return
+     */
     private static OpVsLuceneDocStatus compareOpToVersionMapOnSeqNo(String id, long seqNo, long primaryTerm, VersionValue versionValue) {
         Objects.requireNonNull(versionValue);
         if (seqNo > versionValue.seqNo) {
@@ -1568,10 +1650,14 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * 裁剪掉一些过期的数据
+     */
     @Override
     public void maybePruneDeletes() {
         // It's expensive to prune because we walk the deletes map acquiring dirtyLock for each uid so we only do it
         // every 1/4 of gcDeletesInMillis:
+        // 首先要确保开启了这个配置 其次2次删除应当有一个时间间隔
         if (engineConfig.isEnableGcDeletes() &&
                 engineConfig.getThreadPool().relativeTimeInMillis() - lastDeleteVersionPruneTimeMSec > getGcDeletesInMillis() * 0.25) {
             pruneDeletedTombstones();
@@ -1595,31 +1681,49 @@ public class InternalEngine extends Engine {
         return noOpResult;
     }
 
+    /**
+     * 插入一个 noop操作
+     * @param noOp
+     * @return
+     * @throws IOException
+     */
     private NoOpResult innerNoOp(final NoOp noOp) throws IOException {
         assert readLock.isHeldByCurrentThread() || writeLock.isHeldByCurrentThread();
         assert noOp.seqNo() > SequenceNumbers.NO_OPS_PERFORMED;
         final long seqNo = noOp.seqNo();
         try (Releasable ignored = noOpKeyedLock.acquire(seqNo)) {
             final NoOpResult noOpResult;
+            // 默认就是返回 EMPTY  在FollowingEngine中会重写该方法
             final Optional<Exception> preFlightError = preFlightCheckForNoOp(noOp);
+            // TODO
             if (preFlightError.isPresent()) {
                 noOpResult = new NoOpResult(SequenceNumbers.UNASSIGNED_PRIMARY_TERM,
                     SequenceNumbers.UNASSIGNED_SEQ_NO, preFlightError.get());
             } else {
+                // 更新 localCheckpointTracker中 nextSeqNo   这是还没有修改成 processedCheckpoint persistedCheckpoint
                 markSeqNoAsSeen(noOp.seqNo());
+
+                // 如果该operate对应的seq 已经被处理了就可以跳过
+                // 这里指的处理就是生成一个doc 并写入到lucene中
                 if (hasBeenProcessedBefore(noOp) == false) {
                     try {
+                        // 生成一个要存储到tombstone的 PD 对象
                         final ParsedDocument tombstone = engineConfig.getTombstoneDocSupplier().newNoopTombstoneDoc(noOp.reason());
                         tombstone.updateSeqID(noOp.seqNo(), noOp.primaryTerm());
                         // A noop tombstone does not require a _version but it's added to have a fully dense docvalues for the version
                         // field. 1L is selected to optimize the compression because it might probably be the most common value in
                         // version field.
+                        // TODO 这里版本号总是传入1
                         tombstone.version().setLongValue(1L);
                         assert tombstone.docs().size() == 1 : "Tombstone should have a single doc [" + tombstone + "]";
+
+                        // 这里获取doc对象
                         final ParseContext.Document doc = tombstone.docs().get(0);
                         assert doc.getField(SeqNoFieldMapper.TOMBSTONE_NAME) != null
                             : "Noop tombstone document but _tombstone field is not set [" + doc + " ]";
+                        // 加入软删除field 可能只是为了针对软删除处理的逻辑能够应用到这个doc上
                         doc.add(softDeletesField);
+                        // 将新的doc 写入到lucene中     lucene是支持直接写入 field的迭代器对象的
                         indexWriter.addDocument(doc);
                     } catch (final Exception ex) {
                         /*
@@ -1634,12 +1738,17 @@ public class InternalEngine extends Engine {
                     }
                 }
                 noOpResult = new NoOpResult(noOp.primaryTerm(), noOp.seqNo());
+                // 不是通过事务日志还原的操作 比如fillGap操作就是发起 Origin.Primary 的操作
+                // 如果是从事务日志还原的操作 自然就不用写回到事务日志中了
                 if (noOp.origin().isFromTranslog() == false && noOpResult.getResultType() == Result.Type.SUCCESS) {
                     final Translog.Location location = translog.add(new Translog.NoOp(noOp.seqNo(), noOp.primaryTerm(), noOp.reason()));
+                    // location 是该operation对应的描述数据在事务日志中的偏移量信息
                     noOpResult.setTranslogLocation(location);
                 }
             }
+            // 当某个操作被写入到事务文件后  processedCheckpoint 就会同步到对应的seq
             localCheckpointTracker.markSeqNoAsProcessed(noOpResult.getSeqNo());
+            // 代表本次操作就是通过事务文件中已经存在的数据执行的   这时更新 persistedCheckpoint
             if (noOpResult.getTranslogLocation() == null) {
                 // the op is coming from the translog (and is hence persisted already) or it does not have a sequence number
                 assert noOp.origin().isFromTranslog() || noOpResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
@@ -1669,9 +1778,18 @@ public class InternalEngine extends Engine {
         return refresh(source, SearcherScope.EXTERNAL, false);
     }
 
+    /**
+     * 发起刷新请求
+     * @param source
+     * @param scope  由内部发起还是外部发起
+     * @param block  是否需要阻塞
+     * @return
+     * @throws EngineException
+     */
     final boolean refresh(String source, SearcherScope scope, boolean block) throws EngineException {
         // both refresh types will result in an internal refresh but only the external will also
         // pass the new reader reference to the external reader manager.
+        // 获取当前已经处理好的检查点
         final long localCheckpointBeforeRefresh = localCheckpointTracker.getProcessedCheckpoint();
         boolean refreshed;
         try {
@@ -1681,17 +1799,22 @@ public class InternalEngine extends Engine {
                 try {
                     // even though we maintain 2 managers we really do the heavy-lifting only once.
                     // the second refresh will only do the extra work we have to do for warming caches etc.
+                    // 获取对应的 reader管理对象
                     ReferenceManager<ElasticsearchDirectoryReader> referenceManager = getReferenceManager(scope);
                     // it is intentional that we never refresh both internal / external together
+                    // block 尽可能获取最新的数据  即使阻塞一段时间
                     if (block) {
                         referenceManager.maybeRefreshBlocking();
                         refreshed = true;
                     } else {
+                        // 代表获取最新数据 如果此时竞争激烈 则放弃
                         refreshed = referenceManager.maybeRefresh();
                     }
                 } finally {
                     store.decRef();
                 }
+                // lastRefreshedCheckpointListener 本身也被注册在 referenceManager中 但是如果没有刷新成功是不会触发updateRefreshedCheckpoint的
+                // 在这里手动触发
                 if (refreshed) {
                     lastRefreshedCheckpointListener.updateRefreshedCheckpoint(localCheckpointBeforeRefresh);
                 }
@@ -1714,7 +1837,9 @@ public class InternalEngine extends Engine {
         // TODO: maybe we should just put a scheduled job in threadPool?
         // We check for pruning in each delete request, but we also prune here e.g. in case a delete burst comes in and then no more deletes
         // for a long time:
+        // 清除过期的version 信息
         maybePruneDeletes();
+        // 刷新merge处理器的配置信息
         mergeScheduler.refreshConfig();
         return refreshed;
     }
@@ -1916,6 +2041,9 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * 删除墓碑数据   墓碑数据是怎么生成的
+     */
     private void pruneDeletedTombstones() {
         /*
          * We need to deploy two different trimming strategies for GC deletes on primary and replicas. Delete operations on primary
@@ -1939,7 +2067,9 @@ public class InternalEngine extends Engine {
          * However, the version map may consume less memory if we deploy two different trimming strategies for primary and replicas.
          */
         final long timeMSec = engineConfig.getThreadPool().relativeTimeInMillis();
+        // 只能删除该时间戳之前的数据
         final long maxTimestampToPrune = timeMSec - engineConfig.getIndexSettings().getGcDeletesInMillis();
+        // 从墓碑中移除 过期的版本数据
         versionMap.pruneTombstones(maxTimestampToPrune, localCheckpointTracker.getProcessedCheckpoint());
         lastDeleteVersionPruneTimeMSec = timeMSec;
     }
@@ -2480,11 +2610,14 @@ public class InternalEngine extends Engine {
      *
      * @param writer   the index writer to commit
      * @param translog the translog
+     * 在从事务文件中还原的过程中 数据应该重新回到 lucene中了 此时需要对写入的数据进行提交
      */
     protected void commitIndexWriter(final IndexWriter writer, final Translog translog) throws IOException {
         ensureCanFlush();
         try {
+            // 获取此时的提交点
             final long localCheckpoint = localCheckpointTracker.getProcessedCheckpoint();
+            // 通过函数返回 userData 并设置到 writer中
             writer.setLiveCommitData(() -> {
                 /*
                  * The user data captured above (e.g. local checkpoint) contains data that must be evaluated *before* Lucene flushes
@@ -2498,9 +2631,11 @@ public class InternalEngine extends Engine {
                 final Map<String, String> commitData = new HashMap<>(7);
                 commitData.put(Translog.TRANSLOG_UUID_KEY, translog.getTranslogUUID());
                 commitData.put(SequenceNumbers.LOCAL_CHECKPOINT_KEY, Long.toString(localCheckpoint));
+                // seqNo 应该是此时最后写入的operation 对应的seq
                 commitData.put(SequenceNumbers.MAX_SEQ_NO, Long.toString(localCheckpointTracker.getMaxSeqNo()));
                 commitData.put(MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID, Long.toString(maxUnsafeAutoIdTimestamp.get()));
                 commitData.put(HISTORY_UUID_KEY, historyUUID);
+                // force_merge 啥玩意
                 final String currentForceMergeUUID = forceMergeUUID;
                 if (currentForceMergeUUID != null) {
                     commitData.put(FORCE_MERGE_UUID_KEY, currentForceMergeUUID);
@@ -2509,6 +2644,7 @@ public class InternalEngine extends Engine {
                 logger.trace("committing writer with commit data [{}]", commitData);
                 return commitData.entrySet().iterator();
             });
+            // ???
             shouldPeriodicallyFlushAfterBigMerge.set(false);
             writer.commit();
         } catch (final Exception ex) {
@@ -2587,6 +2723,7 @@ public class InternalEngine extends Engine {
     /**
      * Checks if the given operation has been processed in this engine or not.
      * @return true if the given operation was processed; otherwise false.
+     * 检测某个operation是否已经被处理
      */
     protected final boolean hasBeenProcessedBefore(Operation op) {
         if (Assertions.ENABLED) {
@@ -2864,47 +3001,67 @@ public class InternalEngine extends Engine {
      * after the local checkpoint in the safe commit. This step ensures the live version map and checkpoint tracker
      * are in sync with the Lucene commit.
      * 恢复记录version的map 以及 checkpointTracker内部的数据
+     * 实际上就是读取当前已经存在的数据  如果有checkpoint/version 相关的 则还原到容器中
      */
     private void restoreVersionMapAndCheckpointTracker(DirectoryReader directoryReader) throws IOException {
         final IndexSearcher searcher = new IndexSearcher(directoryReader);
         searcher.setQueryCache(null);
+        // BooleanQuery 是多个查询条件累加的结果
         final Query query = new BooleanQuery.Builder()
             .add(LongPoint.newRangeQuery(
                     SeqNoFieldMapper.NAME, getPersistedLocalCheckpoint() + 1, Long.MAX_VALUE), BooleanClause.Occur.MUST)
             .add(Queries.newNonNestedFilter(), BooleanClause.Occur.MUST) // exclude non-root nested documents
             .build();
+        // 此时weight中已经包含了查询结果了
         final Weight weight = searcher.createWeight(searcher.rewrite(query), ScoreMode.COMPLETE_NO_SCORES, 1.0f);
+        // 遍历所有segmentReader
         for (LeafReaderContext leaf : directoryReader.leaves()) {
+            // 对应每个segment 查询到的结果
             final Scorer scorer = weight.scorer(leaf);
             if (scorer == null) {
                 continue;
             }
+            // 将 segment下  某些特殊的field相关的所有docValue 汇聚到一个对象中
             final CombinedDocValues dv = new CombinedDocValues(leaf.reader());
+            // 该对象专门负责从doc中找到 _id 的field 并将结果存起来
             final IdOnlyFieldVisitor idFieldVisitor = new IdOnlyFieldVisitor();
             final DocIdSetIterator iterator = scorer.iterator();
             int docId;
+            // 只要能读取到doc 就不断遍历
             while ((docId = iterator.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+                // 获取这个doc 下 primary field 对应的值
                 final long primaryTerm = dv.docPrimaryTerm(docId);
                 final long seqNo = dv.docSeqNo(docId);
+
+                // 每当解析到一个 seq时 就更新tracker内部的数据
                 localCheckpointTracker.markSeqNoAsProcessed(seqNo);
                 localCheckpointTracker.markSeqNoAsPersisted(seqNo);
                 idFieldVisitor.reset();
+                // 定位到指定的doc 并用visitor处理 field数据
                 leaf.reader().document(docId, idFieldVisitor);
                 if (idFieldVisitor.getId() == null) {
                     assert dv.isTombstone(docId);
                     continue;
                 }
                 final BytesRef uid = new Term(IdFieldMapper.NAME, Uid.encodeId(idFieldVisitor.getId())).bytes();
+                // 每个id 在KeyedLock中对应一个 KeyLock对象  并且会直接上锁    在相关流程操作完成时 会释放锁 同时减少引用计数
                 try (Releasable ignored = versionMap.acquireLock(uid)) {
+                    // 从容器中找到对应的版本号
                     final VersionValue curr = versionMap.getUnderLock(uid);
+                    // 上面是在还原 checkpoint 这里就在还原版本号
                     if (curr == null ||
+                        // 当前版本为空 或者本次解析出来的版本号比之前存储在map中的新
                         compareOpToVersionMapOnSeqNo(idFieldVisitor.getId(), seqNo, primaryTerm, curr) == OpVsLuceneDocStatus.OP_NEWER) {
+                        // 如果当前doc 存储在 tombstone中
                         if (dv.isTombstone(docId)) {
                             // use 0L for the start time so we can prune this delete tombstone quickly
                             // when the local checkpoint advances (i.e., after a recovery completed).
+                            // 传入0的话 就是都可以裁剪
                             final long startTime = 0L;
+                            // putDeleteUnderLock 将数据存储到 tombstone 中 并从 maps移除
                             versionMap.putDeleteUnderLock(uid, new DeleteVersionValue(dv.docVersion(docId), seqNo, primaryTerm, startTime));
                         } else {
+                            // 如果不在 tombstone中  那么插入到maps中
                             versionMap.putIndexUnderLock(uid, new IndexVersionValue(null, dv.docVersion(docId), seqNo, primaryTerm));
                         }
                     }

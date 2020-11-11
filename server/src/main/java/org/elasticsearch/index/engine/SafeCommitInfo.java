@@ -26,7 +26,7 @@ import org.elasticsearch.index.seqno.SequenceNumbers;
 public class SafeCommitInfo {
 
     /**
-     * 本地检查点 是对应的gen吗???
+     * 本地检查点
      */
     public final long localCheckpoint;
     /**

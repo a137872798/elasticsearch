@@ -446,6 +446,7 @@ public abstract class Engine implements Closeable {
          */
         private final Result.Type resultType;
         private final long version;
+        // 本次result对应的operation 的term/seqNo
         private final long term;
         private final long seqNo;
         private final Exception failure;
@@ -1677,6 +1678,9 @@ public abstract class Engine implements Closeable {
         }
     }
 
+    /**
+     * NOOP 实际上是用于填补 checkpoint 与 maxSeq之间的空隙的
+     */
     public static class NoOp extends Operation {
 
         private final String reason;
@@ -2032,6 +2036,9 @@ public abstract class Engine implements Closeable {
      */
     public abstract void updateMaxUnsafeAutoIdTimestamp(long newTimestamp);
 
+    /**
+     * @return 总计恢复了多少operation
+     */
     @FunctionalInterface
     public interface TranslogRecoveryRunner {
         int run(Engine engine, Translog.Snapshot snapshot) throws IOException;

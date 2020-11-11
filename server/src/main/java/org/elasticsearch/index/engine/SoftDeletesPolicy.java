@@ -45,7 +45,7 @@ final class SoftDeletesPolicy {
     private final LongSupplier globalCheckpointSupplier;
 
     /**
-     * 安全提交的本地检查点
+     * 这个检查点代表之前的数据在集群范围内都完成同步了
      */
     private long localCheckpointOfSafeCommit;
     // This lock count is used to prevent `minRetainedSeqNo` from advancing.

@@ -51,6 +51,10 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
     private final SoftDeletesPolicy softDeletesPolicy;
     private final LongSupplier globalCheckpointSupplier;
     private final ObjectIntHashMap<IndexCommit> snapshottedCommits; // Number of snapshots held against each commit point.
+
+    /**
+     * 最近一次检测得到的 与globalCheckpoint 匹配的commit 该commit之后的commit都是还未在集群完成同步的 所以不能删除
+     */
     private volatile IndexCommit safeCommit; // the most recent safe commit point - its max_seqno at most the persisted global checkpoint.
     private volatile long maxSeqNoOfNextSafeCommit;
     private volatile IndexCommit lastCommit; // the most recent commit point
@@ -84,10 +88,16 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
         }
     }
 
+    /**
+     * 从候选列表中选择哪些文件将会被删除    通过调用commits.delete 将文件加入到删除队列中
+     * @param commits
+     * @throws IOException
+     */
     @Override
     public void onCommit(List<? extends IndexCommit> commits) throws IOException {
         final IndexCommit safeCommit;
         synchronized (this) {
+            // 找到需要保存的最小的commit 对象
             final int keptPosition = indexOfKeptCommits(commits, globalCheckpointSupplier.getAsLong());
             this.safeCommitInfo = SafeCommitInfo.EMPTY;
             this.lastCommit = commits.get(commits.size() - 1);
@@ -98,15 +108,18 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
                 }
             }
             updateRetentionPolicy();
+            // 代表只剩下一个commit了 那么下一个 maxSeqNo无法确定 就是用MAX_VALUE
             if (keptPosition == commits.size() - 1) {
                 this.maxSeqNoOfNextSafeCommit = Long.MAX_VALUE;
             } else {
+                // 选择下一个commit.MAX_SEQ_NO
                 this.maxSeqNoOfNextSafeCommit = Long.parseLong(commits.get(keptPosition + 1).getUserData().get(SequenceNumbers.MAX_SEQ_NO));
             }
             safeCommit = this.safeCommit;
         }
 
         assert Thread.holdsLock(this) == false : "should not block concurrent acquire or relesase";
+        // LOCAL_CHECKPOINT_KEY   MAX_SEQ_NO 这些是什么时候插入进去的 ???
         safeCommitInfo = new SafeCommitInfo(Long.parseLong(
             safeCommit.getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY)), getDocCountOfCommit(safeCommit));
 
@@ -118,6 +131,11 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
             : "onCommit called concurrently? " + safeCommit.getGeneration() + " vs " + newSafeCommit.getGeneration();
     }
 
+    /**
+     * 将 commit 加入到删除列表
+     * @param commit
+     * @throws IOException
+     */
     private void deleteCommit(IndexCommit commit) throws IOException {
         assert commit.isDeleted() == false : "Index commit [" + commitDescription(commit) + "] is deleted twice";
         logger.debug("Delete index commit [{}]", commitDescription(commit));
@@ -125,6 +143,11 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
         assert commit.isDeleted() : "Deletion commit [" + commitDescription(commit) + "] was suppressed";
     }
 
+    /**
+     * 本地检查点 和 本地检查点safeCommit是2个含义
+     * 本地检查点 safeCommit 应该是指已经同步到集群中其他节点了
+     * @throws IOException
+     */
     private void updateRetentionPolicy() throws IOException {
         assert Thread.holdsLock(this);
         logger.debug("Safe commit [{}], last commit [{}]", commitDescription(safeCommit), commitDescription(lastCommit));
@@ -135,6 +158,12 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
         translogDeletionPolicy.setLocalCheckpointOfSafeCommit(localCheckpointOfSafeCommit);
     }
 
+    /**
+     * 检测该segment 下总计有多少doc
+     * @param indexCommit
+     * @return
+     * @throws IOException
+     */
     protected int getDocCountOfCommit(IndexCommit indexCommit) throws IOException {
         return SegmentInfos.readCommit(indexCommit.getDirectory(), indexCommit.getSegmentsFileName()).totalMaxDoc();
     }
@@ -235,6 +264,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
 
     /**
      * Checks if the deletion policy can delete some index commits with the latest global checkpoint.
+     * 只能删除小于全局检查点的数据  全局检查点应该就是整个集群下最小的检查点
      */
     boolean hasUnreferencedCommits() {
         return maxSeqNoOfNextSafeCommit <= globalCheckpointSupplier.getAsLong();

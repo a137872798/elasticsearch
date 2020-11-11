@@ -28,6 +28,9 @@ import org.elasticsearch.index.mapper.VersionFieldMapper;
 import java.io.IOException;
 import java.util.Objects;
 
+/**
+ * 将某些field 关联的所有docValue 结果维护在一起
+ */
 final class CombinedDocValues {
     private final NumericDocValues versionDV;
     private final NumericDocValues seqNoDV;
@@ -35,6 +38,11 @@ final class CombinedDocValues {
     private final NumericDocValues tombstoneDV;
     private final NumericDocValues recoverySource;
 
+    /**
+     *
+     * @param leafReader 对应某个segmentReader
+     * @throws IOException
+     */
     CombinedDocValues(LeafReader leafReader) throws IOException {
         this.versionDV = Objects.requireNonNull(leafReader.getNumericDocValues(VersionFieldMapper.NAME), "VersionDV is missing");
         this.seqNoDV = Objects.requireNonNull(leafReader.getNumericDocValues(SeqNoFieldMapper.NAME), "SeqNoDV is missing");

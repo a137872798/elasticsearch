@@ -67,7 +67,7 @@ public final class TranslogDeletionPolicy {
     }
 
     /**
-     * 代表该位置已经成功写入到事务日志中了
+     * 该位置的数据已经在集群维度完成了同步
      * @param newCheckpoint
      */
     public synchronized void setLocalCheckpointOfSafeCommit(long newCheckpoint) {

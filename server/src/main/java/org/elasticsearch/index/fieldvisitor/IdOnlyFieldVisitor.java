@@ -24,12 +24,20 @@ import org.apache.lucene.index.StoredFieldVisitor;
 import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.index.mapper.Uid;
 
+/**
+ * 专门抽取 doc中的 id field
+ */
 public final class IdOnlyFieldVisitor extends StoredFieldVisitor {
+
+    /**
+     * 检测到id 后会设置到这个字段中
+     */
     private String id = null;
     private boolean visited = false;
 
     @Override
     public Status needsField(FieldInfo fieldInfo) {
+        // 已经检测到id的情况下 不需要继续检测了
         if (visited) {
             return Status.STOP;
         }
@@ -37,6 +45,7 @@ public final class IdOnlyFieldVisitor extends StoredFieldVisitor {
             visited = true;
             return Status.YES;
         } else {
+            // 代表没有检测到
             return Status.NO;
         }
     }

@@ -1121,6 +1121,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
                 if (fromSeqNo <= op.seqNo() && op.seqNo() <= toSeqNo) {
                     return op;
                 } else {
+                    // 快速过滤直到 满足 > fromSeqNo 的基本条件
                     filteredOpsCount++;
                 }
             }
@@ -1612,7 +1613,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
 
     /**
-     * 为什么无操作也会被记录下来
+     * 在填充 checkpoint 与 seq 之间的间隙时 会插入NOOP   这个数据也需要被记录到translog中
      */
     public static class NoOp implements Operation {
 
@@ -1909,6 +1910,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
                 // we're shutdown potentially on some tragic event, don't delete anything
                 return;
             }
+            // 最小的需要保留的gen  之前的reader 就可以移除
             final long minReferencedGen = getMinReferencedGen();
             for (Iterator<TranslogReader> iterator = readers.iterator(); iterator.hasNext(); ) {
                 TranslogReader reader = iterator.next();
@@ -1947,7 +1949,8 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         long minReferencedGen = Math.min(
             // 获取最小的gen对应的引用计数  (虽然数据已经提交过了 也就是旧数据可以丢弃了 但是旧的数据仍然在使用中 那么就不能删除)
             deletionPolicy.getMinTranslogGenRequiredByLocks(),
-            // 此时需要保留的最小的gen
+            // 此时需要保留的最小的gen   在lucene配合DeletionPolicy的处理流程中 会更新deletionPolicy.getLocalCheckpointOfSafeCommit()
+            // 在 safeCommit之前的数据都可以被删除
             minGenerationForSeqNo(deletionPolicy.getLocalCheckpointOfSafeCommit() + 1, current, readers));
         assert minReferencedGen >= getMinFileGeneration() :
             "deletion policy requires a minReferenceGen of [" + minReferencedGen + "] but the lowest gen available is ["
