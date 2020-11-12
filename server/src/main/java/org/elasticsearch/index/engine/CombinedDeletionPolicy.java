@@ -103,6 +103,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
             this.lastCommit = commits.get(commits.size() - 1);
             this.safeCommit = commits.get(keptPosition);
             for (int i = 0; i < keptPosition; i++) {
+                // 代表正在被使用
                 if (snapshottedCommits.containsKey(commits.get(i)) == false) {
                     deleteCommit(commits.get(i));
                 }
@@ -190,11 +191,13 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
      * Releases an index commit that acquired by {@link #acquireIndexCommit(boolean)}.
      *
      * @return true if the snapshotting commit can be clean up.
+     * 当某个快照IndexCommit不再被使用时 调用该方法
      */
     synchronized boolean releaseCommit(final IndexCommit snapshotCommit) {
         final IndexCommit releasingCommit = ((SnapshotIndexCommit) snapshotCommit).delegate;
         assert snapshottedCommits.containsKey(releasingCommit) : "Release non-snapshotted commit;" +
             "snapshotted commits [" + snapshottedCommits + "], releasing commit [" + releasingCommit + "]";
+        // 在获取某个IndexCommit时 会增加相关的引用计数
         final int refCount = snapshottedCommits.addTo(releasingCommit, -1); // release refCount
         assert refCount >= 0 : "Number of snapshots can not be negative [" + refCount + "]";
         if (refCount == 0) {

@@ -400,6 +400,11 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         return true;
     }
 
+    /**
+     * 这是记录删除的数据啊 每当处理Delete时 条件允许的情况会调用该方法
+     * @param uid
+     * @param version
+     */
     void putDeleteUnderLock(BytesRef uid, DeleteVersionValue version) {
         assert assertKeyedLockHeldByCurrentThread(uid);
         assert uid.bytes.length == uid.length : "Oversized _uid! UID length: " + uid.length + ", bytes length: " + uid.bytes.length;

@@ -1327,6 +1327,11 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
             primaryTerm = in.readLong();
         }
 
+        /**
+         * 根据某次index 成功的结果来初始化 Translog.Index 对象 代表要将数据存储到事务日志中
+         * @param index
+         * @param indexResult
+         */
         public Index(Engine.Index index, Engine.IndexResult indexResult) {
             this.id = index.id();
             this.source = index.source();
