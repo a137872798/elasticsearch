@@ -54,6 +54,7 @@ public class RecoveryState implements ToXContentFragment, Writeable {
 
         /**
          * recovery of lucene files, either reusing local ones are copying new ones
+         * 代表正在开始恢复lucene  当调用recovery时 最先进入这个状态
          */
         INDEX((byte) 1),
 

@@ -398,7 +398,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private final RefreshListeners refreshListeners;
 
     /**
-     * 最近一次查找的时间戳 当该对象被初始化时 使用当前时间作为该时间戳
+     * 最近一次获取searcher的时间 当该对象被初始化时 使用当前时间作为该时间戳
+     * 每次重新获取searcher 就会刷新这个值
      */
     private final AtomicLong lastSearcherAccess = new AtomicLong();
 
@@ -1106,7 +1107,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 标记某个seq 对应的操作为NOOP
+     * 基于传入的 seqNo term 生成一个 NOOP 对象
      * @param seqNo
      * @param opPrimaryTerm
      * @param reason
@@ -1117,6 +1118,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return markSeqNoAsNoop(getEngine(), seqNo, opPrimaryTerm, reason, Engine.Operation.Origin.REPLICA);
     }
 
+    /**
+     * 将Noop对象写入事务文件/lucene中
+     * @param engine
+     * @param seqNo
+     * @param opPrimaryTerm
+     * @param reason
+     * @param origin
+     * @return
+     * @throws IOException
+     */
     private Engine.NoOpResult markSeqNoAsNoop(Engine engine, long seqNo, long opPrimaryTerm, String reason,
                                               Engine.Operation.Origin origin) throws IOException {
         assert opPrimaryTerm <= getOperationPrimaryTerm()
@@ -1128,6 +1139,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     private Engine.NoOpResult noOp(Engine engine, Engine.NoOp noOp) throws IOException {
+        // 每当产生一次写入操作 就将active 标记成true
         active.set(true);
         if (logger.isTraceEnabled()) {
             logger.trace("noop (seq# [{}])", noOp.seqNo());
@@ -1135,6 +1147,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return engine.noOp(noOp);
     }
 
+    /**
+     * 将某个异常信息包装成一个 result对象
+     * @param e
+     * @param version
+     * @return
+     */
     public Engine.IndexResult getFailedIndexResult(Exception e, long version) {
         return new Engine.IndexResult(e, version);
     }
@@ -1143,6 +1161,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return new Engine.DeleteResult(e, version, getOperationPrimaryTerm());
     }
 
+    /**
+     * 生成一次删除操作 并通过engine 进行写入
+     * @param version
+     * @param id
+     * @param versionType
+     * @param ifSeqNo
+     * @param ifPrimaryTerm
+     * @return
+     * @throws IOException
+     */
     public Engine.DeleteResult applyDeleteOperationOnPrimary(long version, String id, VersionType versionType,
                                                              long ifSeqNo, long ifPrimaryTerm)
         throws IOException {
@@ -1151,12 +1179,36 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             ifSeqNo, ifPrimaryTerm, Engine.Operation.Origin.PRIMARY);
     }
 
+    /**
+     * 在primary中进行操作 都是不设置seqNo 而通过engine自动生成
+     * 而针对 replica操作 需要执行seqNo
+     * @param seqNo
+     * @param opPrimaryTerm
+     * @param version
+     * @param id
+     * @return
+     * @throws IOException
+     */
     public Engine.DeleteResult applyDeleteOperationOnReplica(long seqNo, long opPrimaryTerm, long version, String id)
         throws IOException {
         return applyDeleteOperation(
             getEngine(), seqNo, opPrimaryTerm, version, id, null, UNASSIGNED_SEQ_NO, 0, Engine.Operation.Origin.REPLICA);
     }
 
+    /**
+     * 处理删除操作
+     * @param engine
+     * @param seqNo
+     * @param opPrimaryTerm
+     * @param version
+     * @param id
+     * @param versionType
+     * @param ifSeqNo
+     * @param ifPrimaryTerm
+     * @param origin
+     * @return
+     * @throws IOException
+     */
     private Engine.DeleteResult applyDeleteOperation(Engine engine, long seqNo, long opPrimaryTerm, long version, String id,
                                                      @Nullable VersionType versionType, long ifSeqNo, long ifPrimaryTerm,
                                                      Engine.Operation.Origin origin) throws IOException {
@@ -1169,6 +1221,19 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return delete(engine, delete);
     }
 
+    /**
+     * 将相关信息包装成 Delete对象
+     * @param id
+     * @param uid
+     * @param seqNo
+     * @param primaryTerm
+     * @param version
+     * @param versionType
+     * @param origin
+     * @param ifSeqNo
+     * @param ifPrimaryTerm
+     * @return
+     */
     private Engine.Delete prepareDelete(String id, Term uid, long seqNo, long primaryTerm, long version,
                                                VersionType versionType, Engine.Operation.Origin origin,
                                                long ifSeqNo, long ifPrimaryTerm) {
@@ -1177,6 +1242,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             origin, startTime, ifSeqNo, ifPrimaryTerm);
     }
 
+    /**
+     * 执行删除操作并返回结果
+     * @param engine
+     * @param delete
+     * @return
+     * @throws IOException
+     */
     private Engine.DeleteResult delete(Engine engine, Engine.Delete delete) throws IOException {
         active.set(true);
         final Engine.DeleteResult result;
@@ -1195,7 +1267,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 发起一个get请求 根据 Get内部的term
+     * 发起一个get请求 实际上就是将数据包装成term 通过lucene查询结果
      * @param get
      * @return
      */
@@ -1206,12 +1278,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         if (mapper == null) {
             return GetResult.NOT_EXISTS;
         }
+        // acquireSearcher 是一个工厂对象  通过scope生成searcher对象
         return getEngine().get(get, this::acquireSearcher);
     }
 
     /**
      * Writes all indexing changes to disk and opens a new searcher reflecting all changes.  This can throw {@link AlreadyClosedException}.
-     * 在执行 relocate时 会先调用该方法
+     * 在执行 relocate时 会先调用该方法   就是将此时lucene内还未commit的数据 以及update delete数据持久化 同时获取最新生成的segment的reader
      */
     public void refresh(String source) {
         verifyNotClosed();
@@ -1337,6 +1410,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Executes the given flush request against the engine.
      *
      * @param request the flush request
+     *                将此时lucene内的数据强制commit/ 也会将事务日志内的数据刷盘
      */
     public void flush(FlushRequest request) {
         final boolean waitIfOngoing = request.waitIfOngoing();
@@ -1366,12 +1440,18 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Rolls the tranlog generation and cleans unneeded.
+     * 滚动到下一事务文件 将之前的数据刷盘 以及尝试丢弃些无用的reader
      */
     public void rollTranslogGeneration() {
         final Engine engine = getEngine();
         engine.rollTranslogGeneration();
     }
 
+    /**
+     * 强制触发merge 实际上也是委托给engine实现
+     * @param forceMerge
+     * @throws IOException
+     */
     public void forceMerge(ForceMergeRequest forceMerge) throws IOException {
         verifyActive();
         if (logger.isTraceEnabled()) {
@@ -1384,6 +1464,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Upgrades the shard to the current version of Lucene and returns the minimum segment version
+     * 有关版本升级的先忽略
      */
     public org.apache.lucene.util.Version upgrade(UpgradeRequest upgrade) throws IOException {
         verifyActive();
@@ -1419,6 +1500,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * commit won't be freed until the commit / snapshot is closed.
      *
      * @param flushFirst <code>true</code> if the index should first be flushed to disk / a low level lucene commit should be executed
+     *              flushFirst 在执行前是否需要先刷盘
      */
     public Engine.IndexCommitRef acquireLastIndexCommit(boolean flushFirst) throws EngineException {
         final IndexShardState state = this.state; // one time volatile read
@@ -1456,6 +1538,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @throws org.apache.lucene.index.IndexFormatTooNewException if the lucene index is too new to be opened.
      * @throws java.io.FileNotFoundException                      if one or more files referenced by a commit are not present.
      * @throws java.nio.file.NoSuchFileException                  if one or more files referenced by a commit are not present.
+     * store 用于获取lucene目录下 索引文件的检验和 长度 等等信息 会将它们包装成metadata数据
      */
     public Store.MetadataSnapshot snapshotStoreMetadata() throws IOException {
         assert Thread.holdsLock(mutex) == false : "snapshotting store metadata under mutex";
@@ -1506,6 +1589,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         lastSearcherAccess.lazySet(threadPool.relativeTimeInMillis());
     }
 
+    /**
+     * 通过 engine获取searcher对象 并进行包装
+     * @param source
+     * @param scope
+     * @return
+     */
     private Engine.Searcher acquireSearcher(String source, Engine.SearcherScope scope) {
         readAllowed();
         markSearcherAccessed();
@@ -1514,6 +1603,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return wrapSearcher(searcher);
     }
 
+    /**
+     * 包装searcher对象
+     * 包装函数是在初始化 IndexShard时传入的
+     * @param searcher
+     * @return
+     */
     private Engine.Searcher wrapSearcher(Engine.Searcher searcher) {
         assert ElasticsearchDirectoryReader.unwrap(searcher.getDirectoryReader())
             != null : "DirectoryReader must be an instance or ElasticsearchDirectoryReader";
@@ -1532,9 +1627,18 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 使用相关函数对searcher进行包装
+     * @param engineSearcher
+     * @param readerWrapper
+     * @return
+     * @throws IOException
+     */
     static Engine.Searcher wrapSearcher(Engine.Searcher engineSearcher,
                                         CheckedFunction<DirectoryReader, DirectoryReader, IOException> readerWrapper) throws IOException {
         assert readerWrapper != null;
+        // 尝试从层层嵌套中获取 EsReader对象
+        // 在ESReader对象上 绑定了某个shard  同时针对每个segmentReader 有一个 subWrapper对象
         final ElasticsearchDirectoryReader elasticsearchDirectoryReader =
             ElasticsearchDirectoryReader.getElasticsearchDirectoryReader(engineSearcher.getDirectoryReader());
         if (elasticsearchDirectoryReader == null) {
@@ -1542,6 +1646,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
         NonClosingReaderWrapper nonClosingReaderWrapper = new NonClosingReaderWrapper(engineSearcher.getDirectoryReader());
         DirectoryReader reader = readerWrapper.apply(nonClosingReaderWrapper);
+        // 这个wrapper函数 不能修改缓存键 以及ESReader
         if (reader != nonClosingReaderWrapper) {
             if (reader.getReaderCacheHelper() != elasticsearchDirectoryReader.getReaderCacheHelper()) {
                 throw new IllegalStateException("wrapped directory reader doesn't delegate IndexReader#getCoreCacheKey," +
@@ -1559,6 +1664,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         } else {
             // we close the reader to make sure wrappers can release resources if needed....
             // our NonClosingReaderWrapper makes sure that our reader is not closed
+            // 使用新的reader 生成searcher对象
             return new Engine.Searcher(engineSearcher.source(), reader,
                 engineSearcher.getSimilarity(), engineSearcher.getQueryCache(), engineSearcher.getQueryCachingPolicy(),
                 () -> IOUtils.close(reader, // this will close the wrappers excluding the NonClosingReaderWrapper
@@ -1570,6 +1676,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
         private NonClosingReaderWrapper(DirectoryReader in) throws IOException {
             super(in, new SubReaderWrapper() {
+
+                /**
+                 * 针对每个 segmentReader 不做任何处理
+                 * @param reader
+                 * @return
+                 */
                 @Override
                 public LeafReader wrap(LeafReader reader) {
                     return reader;
@@ -1582,6 +1694,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             return new NonClosingReaderWrapper(in);
         }
 
+        /**
+         * 并不会关闭底层的文件句柄
+         * @throws IOException
+         */
         @Override
         protected void doClose() throws IOException {
             // don't close here - mimic the MultiReader#doClose = false behavior that FilterDirectoryReader doesn't have
@@ -1622,6 +1738,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 在通过事务日志恢复数据前(实际上除了从本地事务日志恢复数据外 也可以通过远端传输的形式恢复数据)
+     * 需要调用该函数  也就是触发前置钩子
+     */
     public void preRecovery() {
         final IndexShardState currentState = this.state; // single volatile read
         if (currentState == IndexShardState.CLOSED) {
@@ -1637,6 +1757,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             // we may not expose operations that were indexed with a refresh listener that was immediately
             // responded to in addRefreshListener. The refresh must happen under the same mutex used in addRefreshListener
             // and before moving this shard to POST_RECOVERY state (i.e., allow to read from this shard).
+            // 每当恢复完数据后就要进行持久化
             getEngine().refresh("post_recovery");
             synchronized (mutex) {
                 if (state == IndexShardState.CLOSED) {
@@ -1658,6 +1779,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         if (state != IndexShardState.RECOVERING) {
             throw new IndexShardNotRecoveringException(shardId, state);
         }
+        // 将状态切换成正在恢复lucene的数据
         recoveryState.setStage(RecoveryState.Stage.INDEX);
         assert currentEngineReference.get() == null;
     }
@@ -1667,6 +1789,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @return a sequence number that an operation-based peer recovery can start with.
      * This is the first operation after the local checkpoint of the safe commit if exists.
+     * 基于本地的事务日志文件将数据恢复到全局检查点
      */
     public long recoverLocallyUpToGlobalCheckpoint() {
         assert Thread.holdsLock(mutex) == false : "recover locally under mutex";

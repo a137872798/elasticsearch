@@ -671,7 +671,6 @@ public abstract class Engine implements Closeable {
      */
     protected final GetResult getFromSearcher(Get get, BiFunction<String, SearcherScope, Engine.Searcher> searcherFactory,
                                                 SearcherScope scope) throws EngineException {
-        // 传入一个 "get" 就能获取对应的searcher???
         final Engine.Searcher searcher = searcherFactory.apply("get", scope);
         final DocIdAndVersion docIdAndVersion;
         try {

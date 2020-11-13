@@ -2215,7 +2215,7 @@ public class InternalEngine extends Engine {
                 if (hasUncommittedChanges || force || shouldPeriodicallyFlush) {
                     ensureCanFlush();
                     try {
-                        // 每当触发一次提交就要先滚动到下一个事务文件
+                        // 每当触发一次提交就要先滚动到下一个事务文件  在滚动前也会触发事务日志的刷盘
                         translog.rollGeneration();
                         logger.trace("starting commit for flush; commitTranslog=true");
                         // 将此时的一些版本号 seq信息作为userData 传入到IndexWriter中 并执行commit
@@ -2308,6 +2308,10 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * 该方法会在定时器内触发
+     * @throws EngineException
+     */
     @Override
     public void trimUnreferencedTranslogFiles() throws EngineException {
         try (ReleasableLock lock = readLock.acquire()) {
