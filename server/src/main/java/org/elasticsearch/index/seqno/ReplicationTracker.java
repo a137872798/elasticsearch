@@ -103,7 +103,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *   handoff. If the target shard is successfully initialized in primary mode, the source shard of a primary relocation is then moved
      *   to replica mode (using {@link #completeRelocationHandoff}), as the relocation target will be in charge of the global checkpoint
      *   computation from that point on.
-     *   是否是主分片模式 ???
+     *   是否是主分片模式  主分片模式才可以进行重分配
      */
     volatile boolean primaryMode;
 
@@ -749,6 +749,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * Returns the current operation primary term.
      *
      * @return the primary term
+     * 获取主分片当前的任期
      */
     public long getOperationPrimaryTerm() {
         return operationPrimaryTerm;
@@ -1323,10 +1324,11 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
     /**
      * Initiates a relocation handoff and returns the corresponding primary context.
-     * @param targetAllocationId  当进行重分配时 目的地的allocationId
+     * @param targetAllocationId  当进行重分配时 目的地所在的allocationId
      */
     public synchronized PrimaryContext startRelocationHandoff(String targetAllocationId) {
         assert invariant();
+        // 此时分片必须是主分片才可以调用该方法
         assert primaryMode;
         assert handoffInProgress == false;
         assert pendingInSync.isEmpty() : "relocation handoff started while there are still shard copies pending in-sync: " + pendingInSync;
@@ -1373,15 +1375,14 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert primaryMode;
         assert handoffInProgress;
         assert relocated == false;
-        // 当重定向结束后该标识被修改成false
+        // 当重定向结束后该标识被修改成false   应该是这样 能够发起重定向必然是primary分片 而当重定向结束后 当前就不是主分片了
         primaryMode = false;
-        // 同上
+        // 代表处理中的标记  因为此时处理完了 所以修改成false
         handoffInProgress = false;
         // 重定向完成后 修改为true
         relocated = true;
         // forget all checkpoint information
-        // 应该是因为重分配后 当前节点已经不在是主分片所在的节点了
-        // TODO 也就是重分配指的是某个primaryShard所在的节点 重新指定node的操作吗 ???
+        // 当该分片完成重定向后 要将之前的检查点信息都丢弃 因为此时分片检查点由新的node决定
         checkpoints.forEach((key, cps) -> {
             cps.localCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
             cps.globalCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
