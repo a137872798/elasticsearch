@@ -1664,6 +1664,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         metadataLock.writeLock().lock();
         try (IndexWriter writer = newAppendingIndexWriter(directory, null)) {
             final Map<String, String> map = new HashMap<>();
+            // 可以看到这里更新了 historyUUID
             map.put(Engine.HISTORY_UUID_KEY, UUIDs.randomBase64UUID());
             map.put(SequenceNumbers.LOCAL_CHECKPOINT_KEY, Long.toString(localCheckpoint));
             map.put(SequenceNumbers.MAX_SEQ_NO, Long.toString(maxSeqNo));
@@ -1681,7 +1682,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      */
     public void associateIndexWithNewTranslog(final String translogUUID) throws IOException {
         metadataLock.writeLock().lock();
-        // 生成一个追加模式的 indexWriter
+        // 打开之前存在的某个segment_N 并在更新事务日志id后刷盘
         try (IndexWriter writer = newAppendingIndexWriter(directory, null)) {
             if (translogUUID.equals(getUserData(writer).get(Translog.TRANSLOG_UUID_KEY))) {
                 throw new IllegalArgumentException("a new translog uuid can't be equal to existing one. got [" + translogUUID + "]");
@@ -1749,14 +1750,13 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
 
     /**
      * Returns a {@link org.elasticsearch.index.seqno.SequenceNumbers.CommitInfo} of the safe commit if exists.
-     * 还不明白是做什么的
      */
     public Optional<SequenceNumbers.CommitInfo> findSafeIndexCommit(long globalCheckpoint) throws IOException {
         final List<IndexCommit> commits = DirectoryReader.listCommits(directory);
         assert commits.isEmpty() == false : "no commit found";
-        // 通过全局检查点 得到一个安全的 commit对象  应该是代表之前的数据都可以被删除了吧
+        // 找到所有小于全局检查点的 IndexCommit最大的那个 也就是往上无限接近globalCheckpoint的
         final IndexCommit safeCommit = CombinedDeletionPolicy.findSafeCommitPoint(commits, globalCheckpoint);
-        // commitInfo 包装了本地检查点以及最大序列值
+        // 从lucene中获取此时最大的本地检查点 以及 seqNo   每次到engine将数据提交时 都会将这个用户信息写入
         final SequenceNumbers.CommitInfo commitInfo = SequenceNumbers.loadSeqNoInfoFromLuceneCommit(safeCommit.getUserData().entrySet());
         // all operations of the safe commit must be at most the global checkpoint.
         if (commitInfo.maxSeqNo <= globalCheckpoint) {
@@ -1793,7 +1793,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     /**
      * 生成一个追加模式的 IndexWriter对象
      * @param dir
-     * @param commit 自该commit 往后的commit都会保留
+     * @param commit
      * @return
      * @throws IOException
      */

@@ -104,6 +104,9 @@ public class RecoveryState implements ToXContentFragment, Writeable {
 
     private Stage stage;
 
+    /**
+     * 该对象内部有一个 index对象 而在recoveryState切换的时候 会触发 start stop 等方法
+     */
     private final Index index;
     private final Translog translog;
     private final VerifyIndex verifyIndex;
@@ -184,24 +187,30 @@ public class RecoveryState implements ToXContentFragment, Writeable {
             case INIT:
                 // reinitializing stop remove all state except for start time
                 this.stage = Stage.INIT;
+                // 每当要开始一次新的恢复时 重置相关参数
                 getIndex().reset();
                 getVerifyIndex().reset();
                 getTranslog().reset();
                 break;
+                // 代表此时进入一个准备恢复索引文件数据的阶段
             case INDEX:
                 validateAndSetStage(Stage.INIT, stage);
+                // 开始计时
                 getIndex().start();
                 break;
+                // 每当结束一个流程就是关闭相关的计时器 并开启下一个阶段的计时器
             case VERIFY_INDEX:
                 validateAndSetStage(Stage.INDEX, stage);
                 getIndex().stop();
                 getVerifyIndex().start();
                 break;
+                // 切换到从事务日志恢复数据的步骤
             case TRANSLOG:
                 validateAndSetStage(Stage.VERIFY_INDEX, stage);
                 getVerifyIndex().stop();
                 getTranslog().start();
                 break;
+                // 代表恢复操作已经完成
             case FINALIZE:
                 validateAndSetStage(Stage.TRANSLOG, stage);
                 getTranslog().stop();
@@ -347,6 +356,9 @@ public class RecoveryState implements ToXContentFragment, Writeable {
         static final String TARGET_THROTTLE_TIME_IN_MILLIS = "target_throttle_time_in_millis";
     }
 
+    /**
+     * 具备一个计时效果
+     */
     public static class Timer implements Writeable {
         protected long startTime = 0;
         protected long startNanoTime = 0;
@@ -457,6 +469,9 @@ public class RecoveryState implements ToXContentFragment, Writeable {
         }
     }
 
+    /**
+     * 代表在某次恢复流程记录使用事务日志进行恢复的信息 比如总计恢复了多少operation数据
+     */
     public static class Translog extends Timer implements ToXContentFragment, Writeable {
         public static final int UNKNOWN = -1;
 
@@ -497,6 +512,9 @@ public class RecoveryState implements ToXContentFragment, Writeable {
             totalLocal = UNKNOWN;
         }
 
+        /**
+         * 每当成功恢复一个operation后 将该值+1
+         */
         public synchronized void incrementRecoveredOperations() {
             recovered++;
             assert total == UNKNOWN || total >= recovered : "total, if known, should be > recovered. total [" + total +
@@ -695,6 +713,9 @@ public class RecoveryState implements ToXContentFragment, Writeable {
      */
     public static class Index extends Timer implements ToXContentFragment, Writeable {
 
+        /**
+         * 存储恢复相关的文件信息
+         */
         private final Map<String, File> fileDetails = new HashMap<>();
 
         public static final long UNKNOWN = -1L;

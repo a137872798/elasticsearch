@@ -244,6 +244,7 @@ public class Lucene {
     public static void cleanLuceneIndex(Directory directory) throws IOException {
         try (Lock writeLock = directory.obtainLock(IndexWriter.WRITE_LOCK_NAME)) {
             for (final String file : directory.listAll()) {
+                // 删除所有segment_N 文件
                 if (file.startsWith(IndexFileNames.SEGMENTS) || file.equals(IndexFileNames.OLD_SEGMENTS_GEN)) {
                     directory.deleteFile(file); // remove all segment_N files
                 }
@@ -257,6 +258,7 @@ public class Lucene {
         ))
         {
             // do nothing and close this will kick of IndexFileDeleter which will remove all pending files
+            // 通过IndexFileDeleter 删除文件
         }
     }
 

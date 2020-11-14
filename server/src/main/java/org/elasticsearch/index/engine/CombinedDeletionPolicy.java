@@ -247,7 +247,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
                 return i + 1;
             }
 
-            // 首个小于全局检查点的数据这里要开始保留
+            // 找到首个seqNo <= 全局检查点的commit
             final long maxSeqNoFromCommit = Long.parseLong(commitUserData.get(SequenceNumbers.MAX_SEQ_NO));
             if (maxSeqNoFromCommit <= globalCheckpoint) {
                 return i;

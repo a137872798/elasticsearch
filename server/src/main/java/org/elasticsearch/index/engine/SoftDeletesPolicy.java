@@ -49,6 +49,7 @@ final class SoftDeletesPolicy {
      */
     private long localCheckpointOfSafeCommit;
     // This lock count is used to prevent `minRetainedSeqNo` from advancing.
+    // 该值不为0 就代表上锁了
     private int retentionLockCount;
     // The extra number of operations before the global checkpoint are retained
     private long retentionOperations;

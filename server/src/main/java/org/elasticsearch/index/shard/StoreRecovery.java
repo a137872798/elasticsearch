@@ -66,6 +66,7 @@ import static org.elasticsearch.common.unit.TimeValue.timeValueMillis;
 /**
  * This package private utility class encapsulates the logic to recover an index shard from either an existing index on
  * disk or from a snapshot in a repository.
+ * 通过一个已经存在的indexShard 进行数据恢复
  */
 final class StoreRecovery {
 
@@ -85,12 +86,15 @@ final class StoreRecovery {
      * @param listener resolves to <code>true</code> if the shard has been recovered successfully, <code>false</code> if the recovery
      *                 has been ignored due to a concurrent modification of if the clusters state has changed due to async updates.
      * @see Store
+     * 从 store中恢复数据
      */
     void recoverFromStore(final IndexShard indexShard, ActionListener<Boolean> listener) {
         if (canRecover(indexShard)) {
             RecoverySource.Type recoveryType = indexShard.recoveryState().getRecoverySource().getType();
+            // type必须要匹配
             assert recoveryType == RecoverySource.Type.EMPTY_STORE || recoveryType == RecoverySource.Type.EXISTING_STORE :
                 "expected store recovery type but was: " + recoveryType;
+            // 执行完函数后触发 recoveryListener
             ActionListener.completeWith(recoveryListener(indexShard, listener), () -> {
                 logger.debug("starting recovery from store ...");
                 internalRecoverFromStore(indexShard);
@@ -101,14 +105,23 @@ final class StoreRecovery {
         }
     }
 
+    /**
+     *
+     * @param mappingUpdateConsumer  处理mapping元数据的对象
+     * @param indexShard  恢复的数据会填充到这个分片上
+     * @param shards    数据从这些分片中获取
+     * @param listener
+     */
     void recoverFromLocalShards(Consumer<MappingMetadata> mappingUpdateConsumer, final IndexShard indexShard,
                                    final List<LocalShardSnapshot> shards, ActionListener<Boolean> listener) {
         if (canRecover(indexShard)) {
+            // 标明数据恢复源是什么  主要是为了检测
             RecoverySource.Type recoveryType = indexShard.recoveryState().getRecoverySource().getType();
             assert recoveryType == RecoverySource.Type.LOCAL_SHARDS: "expected local shards recovery type: " + recoveryType;
             if (shards.isEmpty()) {
                 throw new IllegalArgumentException("shards must not be empty");
             }
+            // 这里有限制 shards列表内应该只有一个元素
             Set<Index> indices = shards.stream().map((s) -> s.getIndex()).collect(Collectors.toSet());
             if (indices.size() > 1) {
                 throw new IllegalArgumentException("can't add shards from more than one index");
@@ -117,6 +130,7 @@ final class StoreRecovery {
             if (sourceMetadata.mapping() != null) {
                 mappingUpdateConsumer.accept(sourceMetadata.mapping());
             }
+            // TODO 也就是根据shard进行恢复时 才会用到mapping吗  先不细究
             indexShard.mapperService().merge(sourceMetadata, MapperService.MergeReason.MAPPING_RECOVERY);
             // now that the mapping is merged we can validate the index sort configuration.
             Sort indexSort = indexShard.getIndexSort();
@@ -270,11 +284,13 @@ final class StoreRecovery {
      * @param repository the repository holding the physical files the shard should be recovered from
      * @param listener resolves to <code>true</code> if the shard has been recovered successfully, <code>false</code> if the recovery
      *                 has been ignored due to a concurrent modification of if the clusters state has changed due to async updates.
+     *                 从仓库中恢复数据
      */
     void recoverFromRepository(final IndexShard indexShard, Repository repository, ActionListener<Boolean> listener) {
         try {
             if (canRecover(indexShard)) {
                 RecoverySource.Type recoveryType = indexShard.recoveryState().getRecoverySource().getType();
+                // 要求恢复类型为快照
                 assert recoveryType == RecoverySource.Type.SNAPSHOT : "expected snapshot recovery type: " + recoveryType;
                 SnapshotRecoverySource recoverySource = (SnapshotRecoverySource) indexShard.recoveryState().getRecoverySource();
                 restore(indexShard, repository, recoverySource, recoveryListener(indexShard, listener));
@@ -286,11 +302,18 @@ final class StoreRecovery {
         }
     }
 
+    /**
+     * 先检测是否有必要恢复该indexShard的数据
+     * @param indexShard
+     * @return
+     */
     private boolean canRecover(IndexShard indexShard) {
+        // 已经被关闭了就不需要恢复了
         if (indexShard.state() == IndexShardState.CLOSED) {
             // got closed on us, just ignore this recovery
             return false;
         }
+        // 什么 必须是主分片才进行恢复
         if (indexShard.routingEntry().primary() == false) {
             throw new IndexShardRecoveryException(shardId, "Trying to recover when the shard is in backup state", null);
         }
@@ -357,6 +380,7 @@ final class StoreRecovery {
 
     /**
      * Recovers the state of the shard from the store.
+     * 从store中恢复数据
      */
     private void internalRecoverFromStore(IndexShard indexShard) throws IndexShardRecoveryException {
         indexShard.preRecovery();
@@ -364,12 +388,14 @@ final class StoreRecovery {
         final boolean indexShouldExists = recoveryState.getRecoverySource().getType() != RecoverySource.Type.EMPTY_STORE;
         indexShard.prepareForIndexRecovery();
         SegmentInfos si = null;
+        // 获取分片对应的仓库
         final Store store = indexShard.store();
         store.incRef();
         try {
             try {
                 store.failIfCorrupted();
                 try {
+                    // 获取该目录下最后一个segment信息
                     si = store.readLastCommittedSegmentsInfo();
                 } catch (Exception e) {
                     String files = "_unknown_";
@@ -383,6 +409,7 @@ final class StoreRecovery {
                             "shard allocated for local recovery (post api), should exist, but doesn't, current files: " + files, e);
                     }
                 }
+                // 如果存在数据 但是指明了 RecoverySource 应该为Empty 那么清理之前的数据
                 if (si != null && indexShouldExists == false) {
                     // it exists on the directory, but shouldn't exist on the FS, its a leftover (possibly dangling)
                     // its a "new index create" API, we have to do something, so better to clean it than use same data
@@ -393,11 +420,16 @@ final class StoreRecovery {
             } catch (Exception e) {
                 throw new IndexShardRecoveryException(shardId, "failed to fetch index version after copying it over", e);
             }
+            // 代表尝试通过 本地分片进行恢复
             if (recoveryState.getRecoverySource().getType() == RecoverySource.Type.LOCAL_SHARDS) {
                 assert indexShouldExists;
+                // 更新 historyUUID 和 translogUUID 同时生成一个新的事务文件
                 bootstrap(indexShard, store);
+                // 将续约信息写入到文件中
                 writeEmptyRetentionLeasesFile(indexShard);
+                // 不为EMPTY_STORE的情况
             } else if (indexShouldExists) {
+                // 只有 EXISTING_STORE 明确设置了 shouldBootstrapNewHistoryUUID 为true的情况 会更新 historyUUID translogUUID  持久化续约信息
                 if (recoveryState.getRecoverySource().shouldBootstrapNewHistoryUUID()) {
                     store.bootstrapNewHistory();
                     writeEmptyRetentionLeasesFile(indexShard);
@@ -405,6 +437,7 @@ final class StoreRecovery {
                 // since we recover from local, just fill the files and size
                 try {
                     final RecoveryState.Index index = recoveryState.getIndex();
+                    // 当存在 segment信息时 将相关文件都设置到 RecoveryState.Index 内
                     if (si != null) {
                         addRecoveredFileDetails(si, store, index);
                     }
@@ -412,6 +445,7 @@ final class StoreRecovery {
                     logger.debug("failed to list file details", e);
                 }
             } else {
+                // 生成新的segmentWriter对象
                 store.createEmpty(indexShard.indexSettings().getIndexVersionCreated().luceneVersion);
                 final String translogUUID = Translog.createEmptyTranslog(
                     indexShard.shardPath().resolveTranslog(), SequenceNumbers.NO_OPS_PERFORMED, shardId,
@@ -420,6 +454,7 @@ final class StoreRecovery {
                 writeEmptyRetentionLeasesFile(indexShard);
             }
             indexShard.openEngineAndRecoverFromTranslog();
+            // 使用NOOP填补空缺
             indexShard.getEngine().fillSeqNoGaps(indexShard.getPendingPrimaryTerm());
             indexShard.finalizeRecovery();
             indexShard.postRecovery("post recovery from shard_store");
@@ -432,6 +467,7 @@ final class StoreRecovery {
 
     private static void writeEmptyRetentionLeasesFile(IndexShard indexShard) throws IOException {
         assert indexShard.getRetentionLeases().leases().isEmpty() : indexShard.getRetentionLeases(); // not loaded yet
+        // 将续约信息写入到文件中
         indexShard.persistRetentionLeases();
         assert indexShard.loadRetentionLeases().leases().isEmpty();
     }
@@ -446,6 +482,7 @@ final class StoreRecovery {
 
     /**
      * Restores shard from {@link SnapshotRecoverySource} associated with this shard in routing table
+     * 从 repository中恢复数据
      */
     private void restore(IndexShard indexShard, Repository repository, SnapshotRecoverySource restoreSource,
                          ActionListener<Boolean> listener) {
@@ -461,6 +498,7 @@ final class StoreRecovery {
         }
         final ActionListener<Void> restoreListener = ActionListener.wrap(
             v -> {
+                // 这里恢复的一套流程和 fromStore是一样的
                 final Store store = indexShard.store();
                 bootstrap(indexShard, store);
                 assert indexShard.shardRouting.primary() : "only primary shards can recover from store";
@@ -485,6 +523,7 @@ final class StoreRecovery {
             }
             final StepListener<IndexId> indexIdListener = new StepListener<>();
             // If the index UUID was not found in the recovery source we will have to load RepositoryData and resolve it by index name
+            // TODO
             if (indexId.getId().equals(IndexMetadata.INDEX_UUID_NA_VALUE)) {
                 // BwC path, running against an old version master that did not add the IndexId to the recovery source
                 repository.getRepositoryData(ActionListener.map(
@@ -493,6 +532,7 @@ final class StoreRecovery {
                 indexIdListener.onResponse(indexId);
             }
             assert indexShard.getEngineOrNull() == null;
+            // 使用 index触发监听器
             indexIdListener.whenComplete(idx -> repository.restoreShard(indexShard.store(), restoreSource.snapshot().getSnapshotId(),
                 idx, snapshotShardId, indexShard.recoveryState(), restoreListener), restoreListener::onFailure);
         } catch (Exception e) {
@@ -500,12 +540,21 @@ final class StoreRecovery {
         }
     }
 
+    /**
+     * 前置工作
+     * @param indexShard
+     * @param store
+     * @throws IOException
+     */
     private void bootstrap(final IndexShard indexShard, final Store store) throws IOException {
+        // 更新最后一个segment_N 文件中的 userData.historyUUID
         store.bootstrapNewHistory();
         final SegmentInfos segmentInfos = store.readLastCommittedSegmentsInfo();
         final long localCheckpoint = Long.parseLong(segmentInfos.userData.get(SequenceNumbers.LOCAL_CHECKPOINT_KEY));
+        // 生成一个空的事务文件 同时将uuid返回
         final String translogUUID = Translog.createEmptyTranslog(
             indexShard.shardPath().resolveTranslog(), localCheckpoint, shardId, indexShard.getPendingPrimaryTerm());
+        // 更新userData.translogUUID 后刷盘
         store.associateIndexWithNewTranslog(translogUUID);
     }
 }

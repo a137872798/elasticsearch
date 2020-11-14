@@ -2042,13 +2042,14 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
      * This ensures that the translogUUID from this translog matches with the provided translogUUID.
      *
      * @param location the location of the translog
+     * @param expectedTranslogUUID  主要是用于检测 确保事务日志匹配
      * @return the global checkpoint
      * @throws IOException                if an I/O exception occurred reading the checkpoint
      * @throws TranslogCorruptedException if the translog is corrupted or mismatched with the given uuid
+     * 获取全局检查点信息
      */
     public static long readGlobalCheckpoint(final Path location, final String expectedTranslogUUID) throws IOException {
         final Checkpoint checkpoint = readCheckpoint(location, expectedTranslogUUID);
-        // TODO 全局检查点是什么
         return checkpoint.globalCheckpoint;
     }
 

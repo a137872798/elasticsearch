@@ -1801,8 +1801,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final Optional<SequenceNumbers.CommitInfo> safeCommit;
         final long globalCheckpoint;
         try {
+            // 获取事务日志文件id
             final String translogUUID = store.readLastCommittedSegmentsInfo().getUserData().get(Translog.TRANSLOG_UUID_KEY);
+            // 根据最新的事务日志文件 找到此时记录的全局检查点  TODO 这个全局检查点是在什么时候进行同步的
             globalCheckpoint = Translog.readGlobalCheckpoint(translogConfig.getTranslogPath(), translogUUID);
+
+            // 获取到safeCommit 这个是<= 全局检查点的  到这里为止的数据都是确保在集群中一致的
             safeCommit = store.findSafeIndexCommit(globalCheckpoint);
         } catch (org.apache.lucene.index.IndexNotFoundException e) {
             logger.trace("skip local recovery as no index commit found");
@@ -1811,20 +1815,25 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             logger.debug("skip local recovery as failed to find the safe commit", e);
             return UNASSIGNED_SEQ_NO;
         }
+        // 没有绝对可靠的数据时 就不进行写入
         if (safeCommit.isPresent() == false) {
             logger.trace("skip local recovery as no safe commit found");
             return UNASSIGNED_SEQ_NO;
         }
         assert safeCommit.get().localCheckpoint <= globalCheckpoint : safeCommit.get().localCheckpoint + " > " + globalCheckpoint;
         try {
+            // 校验逻辑可以先忽略
             maybeCheckIndex(); // check index here and won't do it again if ops-based recovery occurs
             recoveryState.setStage(RecoveryState.Stage.TRANSLOG);
+
             if (safeCommit.get().localCheckpoint == globalCheckpoint) {
                 logger.trace("skip local recovery as the safe commit is up to date; safe commit {} global checkpoint {}",
                     safeCommit.get(), globalCheckpoint);
                 recoveryState.getTranslog().totalLocal(0);
+                // TODO 这个返回值的含义是？？？ 为什么要+1
                 return globalCheckpoint + 1;
             }
+            // 如果此时状态被关闭了 或者处于阻塞状态 返回值是啥意思啊
             if (indexSettings.getIndexMetadata().getState() == IndexMetadata.State.CLOSE ||
                 IndexMetadata.INDEX_BLOCKS_WRITE_SETTING.get(indexSettings.getSettings())) {
                 logger.trace("skip local recovery as the index was closed or not allowed to write; safe commit {} global checkpoint {}",
@@ -1833,14 +1842,24 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 return safeCommit.get().localCheckpoint + 1;
             }
             try {
+                /**
+                 * 这里就是定义了如何通过事务日志文件恢复数据的函数
+                 * @param snapshot 事务日志的快照对象可以遍历给定范围内的所有operation
+                 */
                 final Engine.TranslogRecoveryRunner translogRecoveryRunner = (engine, snapshot) -> {
+
+                    // 设置本次处理的事务日志文件总长度  每个operation 作为一个单位长度
                     recoveryState.getTranslog().totalLocal(snapshot.totalOperations());
+                    // 执行恢复任务
                     final int recoveredOps = runTranslogRecovery(engine, snapshot, Engine.Operation.Origin.LOCAL_TRANSLOG_RECOVERY,
                         recoveryState.getTranslog()::incrementRecoveredOperations);
+                    // 通过更新数量来设置total
                     recoveryState.getTranslog().totalLocal(recoveredOps); // adjust the total local to reflect the actual count
                     return recoveredOps;
                 };
+                // 新创建了一个engine对象
                 innerOpenEngineAndTranslog(() -> globalCheckpoint);
+                // globalCheckpoint 开始的数据就不再恢复了
                 getEngine().recoverFromTranslog(translogRecoveryRunner, globalCheckpoint);
                 logger.trace("shard locally recovered up to {}", getEngine().getSeqNoStats(globalCheckpoint));
             } finally {
@@ -1864,6 +1883,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 将该seq之前的数据清除
+     * @param aboveSeqNo
+     */
     public void trimOperationOfPreviousPrimaryTerms(long aboveSeqNo) {
         getEngine().trimOperationsFromTranslog(getOperationPrimaryTerm(), aboveSeqNo);
     }
@@ -1895,9 +1918,19 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return applyTranslogOperation(getEngine(), operation, origin);
     }
 
+    /**
+     * 挨个处理operation 并进行恢复
+     * 恢复实际上就是重新发起一次写入啊
+     * @param engine 使用的引擎对象
+     * @param operation
+     * @param origin  发起本次操作的原因
+     * @return
+     * @throws IOException
+     */
     private Engine.Result applyTranslogOperation(Engine engine, Translog.Operation operation,
                                                  Engine.Operation.Origin origin) throws IOException {
         // If a translog op is replayed on the primary (eg. ccr), we need to use external instead of null for its version type.
+        // 如果当前作为主分片首次发起的操作 作为外部操作 其余情况就是null
         final VersionType versionType = (origin == Engine.Operation.Origin.PRIMARY) ? VersionType.EXTERNAL : null;
         final Engine.Result result;
         switch (operation.opType()) {
@@ -1905,11 +1938,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 final Translog.Index index = (Translog.Index) operation;
                 // we set canHaveDuplicates to true all the time such that we de-optimze the translog case and ensure that all
                 // autoGeneratedID docs that are coming from the primary are updated correctly.
+                // 开始处理 index操作
+                // 在engine的写入过程中会判断是否是recovery操作 如果是的话 就不需要再次写入到事务文件中了
                 result = applyIndexOperation(engine, index.seqNo(), index.primaryTerm(), index.version(),
                     versionType, UNASSIGNED_SEQ_NO, 0, index.getAutoGeneratedIdTimestamp(), true, origin,
+                    // 将index内部的数据抽取出来生成 sourceToParse对象
                     new SourceToParse(shardId.getIndexName(), index.id(), index.source(),
                         XContentHelper.xContentType(index.source()), index.routing()));
                 break;
+                // 下面的流程和上面的类似
             case DELETE:
                 final Translog.Delete delete = (Translog.Delete) operation;
                 result = applyDeleteOperation(engine, delete.seqNo(), delete.primaryTerm(), delete.version(), delete.id(),
@@ -1928,11 +1965,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Replays translog operations from the provided translog {@code snapshot} to the current engine using the given {@code origin}.
      * The callback {@code onOperationRecovered} is notified after each translog operation is replayed successfully.
+     * 通过事务日志文件进行恢复
      */
     int runTranslogRecovery(Engine engine, Translog.Snapshot snapshot, Engine.Operation.Origin origin,
                             Runnable onOperationRecovered) throws IOException {
         int opsRecovered = 0;
         Translog.Operation operation;
+        // 遍历每个operation对象
         while ((operation = snapshot.next()) != null) {
             try {
                 logger.trace("[translog] recover op {}", operation);
@@ -1963,6 +2002,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return opsRecovered;
     }
 
+    /**
+     * 获取最新的事务日志文件对应的全局检查点 并进行更新
+     * @throws IOException
+     */
     private void loadGlobalCheckpointToReplicationTracker() throws IOException {
         // we have to set it before we open an engine and recover from the translog because
         // acquiring a snapshot from the translog causes a sync which causes the global checkpoint to be pulled in,
@@ -1975,6 +2018,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * opens the engine on top of the existing lucene engine and translog.
      * Operations from the translog will be replayed to bring lucene up to date.
+     * 打开引擎对象 并从事务日志文件中恢复数据  就是将几个基本操作合并到一个方法里
      **/
     public void openEngineAndRecoverFromTranslog() throws IOException {
         assert recoveryState.getStage() == RecoveryState.Stage.INDEX : "unexpected recovery stage [" + recoveryState.getStage() + "]";
@@ -1995,6 +2039,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Opens the engine on top of the existing lucene engine and translog.
      * The translog is kept but its operations won't be replayed.
+     * 打开引擎对象 但是不进行数据恢复
      */
     public void openEngineAndSkipTranslogRecovery() throws IOException {
         assert routingEntry().recoverySource().getType() == RecoverySource.Type.PEER : "not a peer recovery [" + routingEntry() + "]";
@@ -2004,16 +2049,26 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         getEngine().skipTranslogRecovery();
     }
 
+    /**
+     * 开启引擎对象
+     * @param globalCheckpointSupplier 获取全局检查点的函数
+     * @throws IOException
+     */
     private void innerOpenEngineAndTranslog(LongSupplier globalCheckpointSupplier) throws IOException {
         assert Thread.holdsLock(mutex) == false : "opening engine under mutex";
+        // 必须处于recovery 才能调用该方法
         if (state != IndexShardState.RECOVERING) {
             throw new IndexShardNotRecoveringException(shardId, state);
         }
+
+        // 获取引擎配置对象
         final EngineConfig config = newEngineConfig(globalCheckpointSupplier);
 
         // we disable deletes since we allow for operations to be executed against the shard while recovering
         // but we need to make sure we don't loose deletes until we are done recovering
+        // 标记成不可删除 这样一些长时间不使用的 translogReader对应的文件也不会被删除了
         config.setEnableGcDeletes(false);
+        // 加载最新的续约信息 并设置到记录续约信息的对象中
         updateRetentionLeasesOnReplica(loadRetentionLeases());
         assert recoveryState.getRecoverySource().expectEmptyRetentionLeases() == false || getRetentionLeases().leases().isEmpty()
             : "expected empty set of retention leases with recovery source [" + recoveryState.getRecoverySource()
@@ -2022,6 +2077,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             assert currentEngineReference.get() == null : "engine is running";
             verifyNotClosed();
             // we must create a new engine under mutex (see IndexShard#snapshotStoreMetadata).
+            // 生成一个新的engine 对象 并覆盖当前的engine属性
             final Engine newEngine = engineFactory.newReadWriteEngine(config);
             onNewEngine(newEngine);
             currentEngineReference.set(newEngine);
@@ -2031,6 +2087,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
         // time elapses after the engine is created above (pulling the config settings) until we set the engine reference, during
         // which settings changes could possibly have happened, so here we forcefully push any config changes to the new engine.
+        // 主要是触发newEngine加载配置的逻辑
         onSettingsChanged();
         assert assertSequenceNumbersInCommit();
         assert recoveryState.getStage() == RecoveryState.Stage.TRANSLOG : "TRANSLOG stage expected but was: " + recoveryState.getStage();
@@ -2049,6 +2106,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return true;
     }
 
+    /**
+     * 当创建一个新的engine时 会创建一个新的事务文件 以及该文件对应的writer对象
+     * @param newEngine
+     */
     private void onNewEngine(Engine newEngine) {
         assert Thread.holdsLock(engineMutex);
         refreshListeners.setCurrentRefreshLocationSupplier(newEngine::getTranslogLastWriteLocation);
@@ -2068,6 +2129,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * If a file-based recovery occurs, a recovery target calls this method to reset the recovery stage.
+     * 将recoveryState 修改回init
      */
     public void resetRecoveryStage() {
         assert routingEntry().recoverySource().getType() == RecoverySource.Type.PEER : "not a peer recovery [" + routingEntry() + "]";
@@ -2097,11 +2159,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * perform the last stages of recovery once all translog operations are done.
      * note that you should still call {@link #postRecovery(String)}.
+     * 代表恢复操作已经完成
      */
     public void finalizeRecovery() {
         recoveryState().setStage(RecoveryState.Stage.FINALIZE);
         Engine engine = getEngine();
         engine.refresh("recovery_finalization");
+        // 因为恢复操作已经完成了 所以开启了删除开关 这样太旧的数据就会被删除
         engine.config().setEnableGcDeletes(true);
     }
 
@@ -2219,6 +2283,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 增加一个处理分片失败的钩子
+     * @param onShardFailure
+     */
     public void addShardFailureCallback(Consumer<ShardFailure> onShardFailure) {
         this.shardEventListener.delegates.add(onShardFailure);
     }
@@ -2232,7 +2300,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         // 首先确保engine没有被关闭
         Engine engineOrNull = getEngineOrNull();
         if (engineOrNull != null && System.nanoTime() - engineOrNull.getLastWriteNanos() >= inactiveTimeNS) {
+            // 哦哦 这是active标记的作用 当定时触发刷盘时 如果这段时间内没有写入操作实际上就不需要进行刷盘了
             boolean wasActive = active.getAndSet(false);
+            // 代表最近发起过一次写入操作
             if (wasActive) {
                 logger.debug("flushing shard on inactive");
                 threadPool.executor(ThreadPool.Names.FLUSH).execute(new AbstractRunnable() {
@@ -2264,12 +2334,20 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return path;
     }
 
+    /**
+     * 从本地分片恢复数据   与从事务日志中恢复有什么不同???
+     * @param mappingUpdateConsumer
+     * @param localShards  当前对象不就是indexShard吗  难道有一组跟当前对象存储一样数据的分片???
+     * @param listener
+     * @throws IOException
+     */
     void recoverFromLocalShards(Consumer<MappingMetadata> mappingUpdateConsumer, List<IndexShard> localShards,
                                           ActionListener<Boolean> listener) throws IOException {
         assert shardRouting.primary() : "recover from local shards only makes sense if the shard is a primary shard";
         assert recoveryState.getRecoverySource().getType() == RecoverySource.Type.LOCAL_SHARDS : "invalid recovery type: " +
             recoveryState.getRecoverySource();
         final List<LocalShardSnapshot> snapshots = new ArrayList<>();
+        // 插入一个前置钩子
         final ActionListener<Boolean> recoveryListener = ActionListener.runBefore(listener, () -> IOUtils.close(snapshots));
         boolean success = false;
         try {
@@ -2280,6 +2358,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             // if its post api allocation, the index should exists
             assert shardRouting.primary() : "recover from local shards only makes sense if the shard is a primary shard";
             StoreRecovery storeRecovery = new StoreRecovery(shardId, logger);
+            // 这里会涉及到 mapping的使用
             storeRecovery.recoverFromLocalShards(mappingUpdateConsumer, this, snapshots, recoveryListener);
             success = true;
         } finally {
@@ -2289,6 +2368,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 这里实际上也会转发到 openEngineAndRecoverFromTranslog 也是从事务文件中恢复数据  TODO 为什么叫 fromStore???
+     * @param listener
+     */
     public void recoverFromStore(ActionListener<Boolean> listener) {
         // we are the first primary, recover from the gateway
         // if its post api allocation, the index should exists
@@ -2298,12 +2381,18 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         storeRecovery.recoverFromStore(this, listener);
     }
 
+    /**
+     * 从仓库中恢复数据
+     * @param repository
+     * @param listener
+     */
     public void restoreFromRepository(Repository repository, ActionListener<Boolean> listener) {
         try {
             assert shardRouting.primary() : "recover from store only makes sense if the shard is a primary shard";
             assert recoveryState.getRecoverySource().getType() == RecoverySource.Type.SNAPSHOT : "invalid recovery type: " +
                 recoveryState.getRecoverySource();
             StoreRecovery storeRecovery = new StoreRecovery(shardId, logger);
+            // TODO 这里使用到了 repository 但是还不知道是什么时候写入仓库的所以先不细看
             storeRecovery.recoverFromRepository(this, repository, listener);
         } catch (Exception e) {
             listener.onFailure(e);
@@ -2366,6 +2455,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Checks if we have a completed history of operations since the given starting seqno (inclusive).
      * This method should be called after acquiring the retention lock; See {@link #acquireHistoryRetentionLock()}
+     * TODO
      */
     public boolean hasCompleteHistoryOperations(String reason, long startingSeqNo)  {
         return getEngine().hasCompleteOperationHistory(reason, startingSeqNo);
@@ -2413,6 +2503,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      */
     public void activateThrottling() {
         try {
+            // 开启阀门 这样 throttling内部的lock 会替换成一个有效的锁对象 否则是一个NOOP锁
             getEngine().activateThrottling();
         } catch (AlreadyClosedException ex) {
             // ignore
@@ -2420,7 +2511,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 当此时buffer中有足够的空间 就允许之前被暂停的刷盘任务继续执行
+     * 当此时buffer中有足够的空间 将阀门内部的lock重置修改成NOOP
      */
     public void deactivateThrottling() {
         try {
@@ -2455,7 +2546,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Called when our shard is using too much heap and should move buffered indexed/deleted documents to disk.
-     * 将分片内部的数据写入到 buffer中
+     * 实际上是将数据写入到磁盘
      */
     public void writeIndexingBuffer() {
         try {
@@ -2471,8 +2562,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * {@link ReplicationTracker#updateLocalCheckpoint(String, long)} for
      * details.
      *
-     * @param allocationId the allocation ID of the shard to update the local checkpoint for
+     * @param allocationId the allocation ID of the shard to update the local checkpoint for   每个allocation 都会维护一个checkpoint
      * @param checkpoint   the local checkpoint for the shard
+     *                     更新本地检查点 如果超过了全局检查点 那么可能会更新全局检查点
      */
     public void updateLocalCheckpointForShard(final String allocationId, final long checkpoint) {
         assert assertPrimaryMode();
@@ -2485,6 +2577,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @param allocationId     the allocation ID to update the global checkpoint for
      * @param globalCheckpoint the global checkpoint
+     *                         更新全局检查点   这个全局检查点是以allocation为单位的吗  好像每个allocation都可以设置一个global属性
+     *                         但是 replicationTracker外层也有一个globalCheckpoint 2者什么关系
      */
     public void updateGlobalCheckpointForShard(final String allocationId, final long globalCheckpoint) {
         assert assertPrimaryMode();
@@ -2501,6 +2595,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param waitingForGlobalCheckpoint the global checkpoint the listener is waiting for
      * @param listener                   the listener
      * @param timeout                    the timeout
+     *                                   只有当全局检查点达到指定的值时才会触发
      */
     public void addGlobalCheckpointListener(
             final long waitingForGlobalCheckpoint,
@@ -2532,7 +2627,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * primary shard calculates which leases are expired, and if any have expired, syncs the retention leases to any replicas. If the
      * expire leases parameter is true, this replication tracker must be in primary mode.
      *
+     * @param expireLeases 是否包含过期信息
      * @return a tuple indicating whether or not any retention leases were expired, and the non-expired retention leases
+     * 获取续约信息
      */
     public Tuple<Boolean, RetentionLeases> getRetentionLeases(final boolean expireLeases) {
         assert expireLeases == false || assertPrimaryMode();
@@ -2549,11 +2646,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Adds a new retention lease.
      *
      * @param id                      the identifier of the retention lease
-     * @param retainingSequenceNumber the retaining sequence number
+     * @param retainingSequenceNumber the retaining sequence number  续约号码
      * @param source                  the source of the retention lease
      * @param listener                the callback when the retention lease is successfully added and synced to replicas
      * @return the new retention lease
      * @throws IllegalArgumentException if the specified retention lease already exists
+     * 增加一个新的续约信息
      */
     public RetentionLease addRetentionLease(
             final String id,
@@ -2564,7 +2662,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         assert assertPrimaryMode();
         verifyNotClosed();
         ensureSoftDeletesEnabled("retention leases");
+        // 获取续约锁
         try (Closeable ignore = acquireHistoryRetentionLock()) {
+            // 当要保留所有的续约对象时 获取此时最小的续约号
             final long actualRetainingSequenceNumber =
                 retainingSequenceNumber == RETAIN_ALL ? getMinRetainedSeqNo() : retainingSequenceNumber;
             return replicationTracker.addRetentionLease(id, actualRetainingSequenceNumber, source, listener);
@@ -2576,11 +2676,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Renews an existing retention lease.
      *
-     * @param id                      the identifier of the retention lease
+     * @param id                      the identifier of the retention lease  同于定位续约对象
      * @param retainingSequenceNumber the retaining sequence number
      * @param source                  the source of the retention lease
      * @return the renewed retention lease
      * @throws IllegalArgumentException if the specified retention lease does not exist
+     * 刷新某个续约对象的数据
      */
     public RetentionLease renewRetentionLease(final String id, final long retainingSequenceNumber, final String source) {
         assert assertPrimaryMode();
@@ -2600,6 +2701,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @param id       the identifier of the retention lease
      * @param listener the callback when the retention lease is successfully removed and synced to replicas
+     *                 移除某个续约对象
      */
     public void removeRetentionLease(final String id, final ActionListener<ReplicationResponse> listener) {
         Objects.requireNonNull(listener);
@@ -2613,6 +2715,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Updates retention leases on a replica.
      *
      * @param retentionLeases the retention leases
+     *                        直接指定内部的续约对象
      */
     public void updateRetentionLeasesOnReplica(final RetentionLeases retentionLeases) {
         assert assertReplicationTarget();
@@ -2625,6 +2728,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @return the retention leases
      * @throws IOException if an I/O exception occurs reading the retention leases
+     * 从 state文件中加载数据流并转换成续约对象
      */
     public RetentionLeases loadRetentionLeases() throws IOException {
         verifyNotClosed();
@@ -2652,10 +2756,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     public void syncRetentionLeases() {
         assert assertPrimaryMode();
         verifyNotClosed();
+        // 根据条件找到需要更新的续约对象 并进行更新
         replicationTracker.renewPeerRecoveryRetentionLeases();
         final Tuple<Boolean, RetentionLeases> retentionLeases = getRetentionLeases(true);
         if (retentionLeases.v1()) {
             logger.trace("syncing retention leases [{}] after expiration check", retentionLeases.v2());
+
+            // TODO 进行同步处理 还不清楚在做什么
             retentionLeaseSyncer.sync(
                     shardId,
                     shardRouting.allocationId().getId(),
@@ -2679,6 +2786,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * have been set up locally to track local checkpoint information for the shard and that the shard is added to the replication group.
      *
      * @param allocationId  the allocation ID of the shard for which recovery was initiated
+     *                      将某个CheckpointState.track 标识设置为true
      */
     public void initiateTracking(final String allocationId) {
         assert assertPrimaryMode();
@@ -2692,6 +2800,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @param allocationId    the allocation ID of the shard to mark as in-sync
      * @param localCheckpoint the current local checkpoint on the shard
+     *                        等待某个allocation的同步完成 如果localCheckpoint 超过了全局检查点 那么直接返回
      */
     public void markAllocationIdAsInSync(final String allocationId, final long localCheckpoint) throws InterruptedException {
         assert assertPrimaryMode();
@@ -2727,6 +2836,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Get the local knowledge of the global checkpoints for all in-sync allocation IDs.
      *
      * @return a map from allocation ID to the local knowledge of the global checkpoint for that allocation ID
+     * 返回所有 insync 为true的CheckpointState对应的 globalCheckpoint
      */
     public ObjectLongMap<String> getInSyncGlobalCheckpoints() {
         assert assertPrimaryMode();
@@ -2738,6 +2848,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Syncs the global checkpoint to the replicas if the global checkpoint on at least one replica is behind the global checkpoint on the
      * primary.
      * 在该indexShard相关的 IndexService中 每间隔一段时间就会触发该函数 同步全局检查点
+     * 主要功能都是通过globalCheckpointSyncer 实现的
      */
     public void maybeSyncGlobalCheckpoint(final String reason) {
         verifyNotClosed();
@@ -2802,6 +2913,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @param globalCheckpoint the global checkpoint
      * @param reason           the reason the global checkpoint was updated
+     *                         当前节点作为副本触发更新全局检查点
      */
     public void updateGlobalCheckpointOnReplica(final long globalCheckpoint, final String reason) {
         assert assertReplicationTarget();
@@ -2867,8 +2979,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         internalIndexingStats.noopUpdate();
     }
 
+    /**
+     * 进入检验index的阶段
+     */
     public void maybeCheckIndex() {
         recoveryState.setStage(RecoveryState.Stage.VERIFY_INDEX);
+        // 代表需要校验索引文件是否没被修改
         if (Booleans.isTrue(checkIndexOnStartup) || "checksum".equals(checkIndexOnStartup)) {
             try {
                 checkIndex();
@@ -2891,6 +3007,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 检查索引文件
+     * @throws IOException
+     */
     private void doCheckIndex() throws IOException {
         long timeNS = System.nanoTime();
         if (!Lucene.indexExists(store.directory())) {
@@ -2902,6 +3022,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         if ("checksum".equals(checkIndexOnStartup)) {
             // physical verification only: verify all checksums for the latest commit
             IOException corrupt = null;
+            // 读取segment_N 文件 获取此时的checkSum 文件长度等等信息
             MetadataSnapshot metadata = snapshotStoreMetadata();
             for (Map.Entry<String, StoreFileMetadata> entry : metadata.asMap().entrySet()) {
                 try {
@@ -3165,6 +3286,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return mapperService.documentMapperWithAutoCreate();
     }
 
+    /**
+     * 通过全局检查点生成一个 engineConfig 对象
+     * @param globalCheckpointSupplier
+     * @return
+     */
     private EngineConfig newEngineConfig(LongSupplier globalCheckpointSupplier) {
         final Sort indexSort = indexSortSupplier.get();
         final Engine.Warmer warmer = reader -> {

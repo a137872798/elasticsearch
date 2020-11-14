@@ -253,9 +253,12 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * primary shard calculates which leases are expired, and if any have expired, syncs the retention leases to any replicas. If the
      * expire leases parameter is true, this replication tracker must be in primary mode.
      *
+     * @param expireLeases 是否包含过期信息
      * @return a tuple indicating whether or not any retention leases were expired, and the non-expired retention leases
+     * 获取续约信息
      */
     public synchronized Tuple<Boolean, RetentionLeases> getRetentionLeases(final boolean expireLeases) {
+        // 非过期情况 直接返回当前续约信息
         if (expireLeases == false) {
             return Tuple.tuple(false, retentionLeases);
         }
@@ -263,9 +266,11 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         // the primary calculates the non-expired retention leases and syncs them to replicas
         final long currentTimeMillis = currentTimeMillisSupplier.getAsLong();
         final long retentionLeaseMillis = indexSettings.getRetentionLeaseMillis();
+        // 一组续约id
         final Set<String> leaseIdsForCurrentPeers
             = routingTable.assignedShards().stream().map(ReplicationTracker::getPeerRecoveryRetentionLeaseId).collect(Collectors.toSet());
         final boolean allShardsStarted = routingTable.allShardsStarted();
+        // TODO
         final long minimumReasonableRetainedSeqNo = allShardsStarted ? 0L : getMinimumReasonableRetainedSeqNo();
         final Map<Boolean, List<RetentionLease>> partitionByExpiration = retentionLeases
                 .leases()
@@ -319,6 +324,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * @param listener                the callback when the retention lease is successfully added and synced to replicas
      * @return the new retention lease
      * @throws RetentionLeaseAlreadyExistsException if the specified retention lease already exists
+     * 插入一个新的续约对象
      */
     public RetentionLease addRetentionLease(
             final String id,
@@ -374,6 +380,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * @param source                  the source of the retention lease
      * @return the new retention lease
      * @throws RetentionLeaseAlreadyExistsException if the specified retention lease already exists
+     * 插入一个新的续约对象
      */
     private RetentionLease innerAddRetentionLease(String id, long retainingSequenceNumber, String source) {
         assert Thread.holdsLock(this);
@@ -401,6 +408,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * @throws RetentionLeaseNotFoundException              if the specified retention lease does not exist
      * @throws RetentionLeaseInvalidRetainingSeqNoException if the new retaining sequence number is lower than
      *                                                      the retaining sequence number of the current retention lease.
+     *                                                      更新某个续约对象的数据
      */
     public synchronized RetentionLease renewRetentionLease(final String id, final long retainingSequenceNumber, final String source) {
         assert primaryMode;
@@ -431,6 +439,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param id       the identifier of the retention lease
      * @param listener the callback when the retention lease is successfully removed and synced to replicas
+     *                 移除某个续约对象
      */
     public void removeRetentionLease(final String id, final ActionListener<ReplicationResponse> listener) {
         Objects.requireNonNull(listener);
@@ -454,6 +463,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * Updates retention leases on a replica.
      *
      * @param retentionLeases the retention leases
+     *                        使用传入的续约信息 更新this.retentionLeases 一般 loadRetentionLeases 与该方法是一起调用的
      */
     public synchronized void updateRetentionLeasesOnReplica(final RetentionLeases retentionLeases) {
         assert primaryMode == false;
@@ -465,9 +475,10 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     /**
      * Loads the latest retention leases from their dedicated state file.
      *
-     * @param path the path to the directory containing the state file
+     * @param path the path to the directory containing the state file  相关文件的存储路径
      * @return the retention leases
      * @throws IOException if an I/O exception occurs reading the retention leases
+     * 加载续约信息
      */
     public RetentionLeases loadRetentionLeases(final Path path) throws IOException {
         final RetentionLeases retentionLeases;
@@ -491,11 +502,13 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param path the path to the directory containing the state file
      * @throws WriteStateException if an exception occurs writing the state file
+     * 将当前的续约信息持久化
      */
     public void persistRetentionLeases(final Path path) throws WriteStateException {
         synchronized (retentionLeasePersistenceLock) {
             final RetentionLeases currentRetentionLeases;
             synchronized (this) {
+                // 确保此时续约对象的相关信息比之前持久化的要新
                 if (retentionLeases.supersedes(persistedRetentionLeasesPrimaryTerm, persistedRetentionLeasesVersion) == false) {
                     logger.trace("skipping persisting retention leases [{}], already persisted", retentionLeases);
                     return;
@@ -503,7 +516,9 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 currentRetentionLeases = retentionLeases;
             }
             logger.trace("persisting retention leases [{}]", currentRetentionLeases);
+            // 将续约信息写入到某个地方
             RetentionLeases.FORMAT.writeAndCleanup(currentRetentionLeases, path);
+            // 因为持久化成功  更新persistedXXX的值
             persistedRetentionLeasesPrimaryTerm = currentRetentionLeases.primaryTerm();
             persistedRetentionLeasesVersion = currentRetentionLeases.version();
         }
@@ -568,6 +583,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     /**
      * Advance the peer-recovery retention leases for all assigned shard copies to discard history below the corresponding global
      * checkpoint, and renew any leases that are approaching expiry.
+     * 更新续约对象
      */
     public synchronized void renewPeerRecoveryRetentionLeases() {
         assert primaryMode;
@@ -578,14 +594,17 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
          * case the associated shard is temporarily unassigned. However we must not renew them too often, since each renewal must be
          * persisted and the resulting IO can be expensive on nodes with large numbers of shards (see #42299). We choose to renew them after
          * half the expiry time, so that by default the cluster has at least 6 hours to recover before these leases start to expire.
+         * 代表每隔多久要更新一次吧
          */
         final long renewalTimeMillis = currentTimeMillisSupplier.getAsLong() - indexSettings.getRetentionLeaseMillis() / 2;
 
         /*
          * If any of the peer-recovery retention leases need renewal, it's a good opportunity to renew them all.
+         * 检测是否需要更新
          */
         final boolean renewalNeeded = StreamSupport.stream(routingTable.spliterator(), false).filter(ShardRouting::assignedToNode)
             .anyMatch(shardRouting -> {
+                // 获取某个allocation 对应的续约对象
                 final RetentionLease retentionLease = retentionLeases.get(getPeerRecoveryRetentionLeaseId(shardRouting));
                 if (retentionLease == null) {
                     /*
@@ -596,6 +615,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                         || hasAllPeerRecoveryRetentionLeases == false;
                     return false;
                 }
+                // 续约对象的时间戳 小于需要续约的时间  或者号码小于global
                 return retentionLease.timestamp() <= renewalTimeMillis
                     || retentionLease.retainingSequenceNumber() <= checkpoints.get(shardRouting.allocationId().getId()).globalCheckpoint;
             });
@@ -642,6 +662,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         long globalCheckpoint;
         /**
          * whether this shard is treated as in-sync and thus contributes to the global checkpoint calculation
+         * 是否已经与全局检查点同步 同时localCheckpoint超过了全局检查点该标识就会被修改成true
          */
         boolean inSync;
 
@@ -971,6 +992,10 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         onReplicationGroupUpdated.accept(newReplicationGroup);
     }
 
+    /**
+     * 根据当前所有 allocation的同步状态生成 replicationGroup对象
+     * @return
+     */
     private ReplicationGroup calculateReplicationGroup() {
         long newVersion;
         if (replicationGroup == null) {
@@ -1003,6 +1028,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param newGlobalCheckpoint the new global checkpoint
      * @param reason              the reason the global checkpoint was updated
+     *                            在副本上更新全局检查点
      */
     public synchronized void updateGlobalCheckpointOnReplica(final long newGlobalCheckpoint, final String reason) {
         assert invariant();
@@ -1027,6 +1053,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param allocationId     the allocation ID to update the global checkpoint for
      * @param globalCheckpoint the global checkpoint
+     *                         更新全局检查点
      */
     public synchronized void updateGlobalCheckpointForShard(final String allocationId, final long globalCheckpoint) {
         assert primaryMode;
@@ -1193,6 +1220,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param allocationId    the allocation ID of the shard to mark as in-sync
      * @param localCheckpoint the current local checkpoint on the shard
+     *                        等待某个allocation的同步完成 如果localCheckpoint 超过了全局检查点 那么直接返回
      */
     public synchronized void markAllocationIdAsInSync(final String allocationId, final long localCheckpoint) throws InterruptedException {
         assert invariant();
@@ -1213,11 +1241,14 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert !cps.inSync || (cps.localCheckpoint >= getGlobalCheckpoint()) :
             "shard copy " + allocationId + " that's already in-sync should have a local checkpoint " + cps.localCheckpoint +
                 " that's above the global checkpoint " + getGlobalCheckpoint();
+
+        // 只要当前某个allocation 对应的localCheckpoint 小于全局检查点 就加入到待同步队列中
         if (cps.localCheckpoint < getGlobalCheckpoint()) {
             pendingInSync.add(allocationId);
             try {
                 while (true) {
                     if (pendingInSync.contains(allocationId)) {
+                        // 阻塞当前线程直到同步完成
                         waitForLocalCheckpointToAdvance();
                     } else {
                         break;
@@ -1236,6 +1267,13 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert invariant();
     }
 
+    /**
+     * 更新cps的本地检查点
+     * @param allocationId
+     * @param cps
+     * @param localCheckpoint
+     * @return
+     */
     private boolean updateLocalCheckpoint(String allocationId, CheckpointState cps, long localCheckpoint) {
         // a local checkpoint for a shard copy should be a valid sequence number
         assert localCheckpoint >= SequenceNumbers.NO_OPS_PERFORMED :
@@ -1257,6 +1295,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param allocationId    the allocation ID of the shard to update the local checkpoint for
      * @param localCheckpoint the local checkpoint for the shard
+     *                        更新本地检查点
      */
     public synchronized void updateLocalCheckpoint(final String allocationId, final long localCheckpoint) {
         assert invariant();
@@ -1267,16 +1306,22 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             // can happen if replica was removed from cluster but replication process is unaware of it yet
             return;
         }
+        // 更新之前的 state对象
         boolean increasedLocalCheckpoint = updateLocalCheckpoint(allocationId, cps, localCheckpoint);
+        // TODO 这个pending是什么
         boolean pending = pendingInSync.contains(allocationId);
+        // 代表已经追赶上全局检查点了   等下 那么全局检查点就不是所有节点一致了 因为还是有落后的节点 那么就是超半数同意 跟kafka一样???
         if (pending && cps.localCheckpoint >= getGlobalCheckpoint()) {
             pendingInSync.remove(allocationId);
             pending = false;
             cps.inSync = true;
+            // 因为此时某个allocation已经发生了变化 所以要更新replicationGroup 同时触发监听器
             updateReplicationGroupAndNotify();
             logger.trace("marked [{}] as in-sync", allocationId);
+            // 唤醒所有阻塞线程
             notifyAllWaiters();
         }
+        // 尝试更新全局检查点
         if (increasedLocalCheckpoint && pending == false) {
             updateGlobalCheckpointOnPrimary();
         }
@@ -1286,6 +1331,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     /**
      * Computes the global checkpoint based on the given local checkpoints. In case where there are entries preventing the
      * computation to happen (for example due to blocking), it returns the fallback value.
+     * 计算此时最新的全局检查点
      */
     private static long computeGlobalCheckpoint(final Set<String> pendingInSync, final Collection<CheckpointState> localCheckpoints,
                                                 final long fallback) {
@@ -1294,6 +1340,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             return fallback;
         }
         for (final CheckpointState cps : localCheckpoints) {
+            // 找到完成同步的节点   完成同步意味着 localCheckpoint 至少超过了globalCheckpoint 那么总体上检查点还是变大的
             if (cps.inSync) {
                 if (cps.localCheckpoint == SequenceNumbers.UNASSIGNED_SEQ_NO) {
                     // unassigned in-sync replica
@@ -1309,12 +1356,15 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
     /**
      * Scans through the currently known local checkpoint and updates the global checkpoint accordingly.
+     * 尝试更新全局检查点
      */
     private synchronized void updateGlobalCheckpointOnPrimary() {
         assert primaryMode;
         final long computedGlobalCheckpoint = computeGlobalCheckpoint(pendingInSync, checkpoints.values(), getGlobalCheckpoint());
         assert computedGlobalCheckpoint >= globalCheckpoint : "new global checkpoint [" + computedGlobalCheckpoint +
             "] is lower than previous one [" + globalCheckpoint + "]";
+
+        // 更新全局检查点 并触发函数
         if (globalCheckpoint != computedGlobalCheckpoint) {
             globalCheckpoint = computedGlobalCheckpoint;
             logger.trace("updated global checkpoint to [{}]", computedGlobalCheckpoint);
@@ -1395,6 +1445,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * primary relocation handoff.
      *
      * @param primaryContext the primary context used to initialize the state
+     *                       使用一个主分片上下文进行激活
      */
     public synchronized void activateWithPrimaryContext(PrimaryContext primaryContext) {
         assert invariant();

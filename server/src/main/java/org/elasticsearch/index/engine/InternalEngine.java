@@ -617,9 +617,13 @@ public class InternalEngine extends Engine {
         return this;
     }
 
+    /**
+     * 开启引擎对象 但是不需要从事务日志中恢复数据
+     */
     @Override
     public void skipTranslogRecovery() {
         assert pendingTranslogRecovery.get() : "translogRecovery is not pending but should be";
+        // 直接标记成已经完成恢复
         pendingTranslogRecovery.set(false); // we are good - now we can commit
     }
 

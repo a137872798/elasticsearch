@@ -35,6 +35,9 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * 当从本地分片恢复数据时 使用到这层抽象
+ */
 final class LocalShardSnapshot implements Closeable {
     private final IndexShard shard;
     private final Store store;
