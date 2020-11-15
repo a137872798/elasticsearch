@@ -118,7 +118,7 @@ public class CancellableThreads {
         IOException ioException = null;
 
         try {
-            // 执行可中断对象
+            // 执行任务
             interruptible.run();
         } catch (InterruptedException | ThreadInterruptedException e) {
             // ignore, this interrupt has been triggered by us in #cancel()...

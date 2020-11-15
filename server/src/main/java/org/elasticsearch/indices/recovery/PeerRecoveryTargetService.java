@@ -75,11 +75,15 @@ import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
  * <p>
  * Note, it can be safely assumed that there will only be a single recovery per shard (index+id) and
  * not several of them (since we don't allocate several shard replicas to the same node).
+ * 当需要从其他节点拉取数据以恢复本地数据时 会使用到该服务
  */
 public class PeerRecoveryTargetService implements IndexEventListener {
 
     private static final Logger logger = LogManager.getLogger(PeerRecoveryTargetService.class);
 
+    /**
+     * 拉取一些描述信息的指令
+     */
     public static class Actions {
         public static final String FILES_INFO = "internal:index/shard/recovery/filesInfo";
         public static final String FILE_CHUNK = "internal:index/shard/recovery/file_chunk";

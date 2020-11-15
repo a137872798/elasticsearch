@@ -58,6 +58,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Represents a recovery where the current node is the target node of the recovery. To track recoveries in a central place, instances of
  * this class are created through {@link RecoveriesCollection}.
+ * 代表从目标节点获取数据并恢复本地节点数据的对象  RecoveryTargetHandler定义了处理的接口
  */
 public class RecoveryTarget extends AbstractRefCounted implements RecoveryTargetHandler {
 
@@ -67,40 +68,69 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
 
     private static final String RECOVERY_PREFIX = "recovery.";
 
+    /**
+     * 数据的恢复是以分片为单位的
+     */
     private final ShardId shardId;
+    /**
+     * 每次发起的恢复操作应该都有一个id
+     */
     private final long recoveryId;
+
+    /**
+     * shardId 对应的分片对象
+     */
     private final IndexShard indexShard;
+    /**
+     * 代表会从这个节点上获取信息
+     */
     private final DiscoveryNode sourceNode;
+    /**
+     * 该对象管理对多个文件的写入操作
+     */
     private final MultiFileWriter multiFileWriter;
     private final Store store;
+
+    /**
+     * 基于钩子实现监听器
+     */
     private final PeerRecoveryTargetService.RecoveryListener listener;
 
+    /**
+     * 代表从目标节点恢复数据的这个流程是否完成
+     */
     private final AtomicBoolean finished = new AtomicBoolean();
 
+    /**
+     * 管理一组线程对象 通过一个关闭操作可以同时关闭管理的所有线程
+     */
     private final CancellableThreads cancellableThreads;
 
     // last time this status was accessed
     private volatile long lastAccessTime = System.nanoTime();
 
     // latch that can be used to blockingly wait for RecoveryTarget to be closed
+    // 提供阻塞等待close完成的能力
     private final CountDownLatch closedLatch = new CountDownLatch(1);
 
     /**
      * Creates a new recovery target object that represents a recovery to the provided shard.
      *
-     * @param indexShard                        local shard where we want to recover to
+     * @param indexShard                        local shard where we want to recover to   基于某个本地分片与 目标节点生成target对象 之后可以从目标节点获取数据流并在本地恢复索引文件
      * @param sourceNode                        source node of the recovery where we recover from
      * @param listener                          called when recovery is completed/failed
      */
     public RecoveryTarget(IndexShard indexShard, DiscoveryNode sourceNode, PeerRecoveryTargetService.RecoveryListener listener) {
         super("recovery_status");
         this.cancellableThreads = new CancellableThreads();
+        // 每个针对远端节点生成的恢复操作都有一个唯一id
         this.recoveryId = idGenerator.incrementAndGet();
         this.listener = listener;
         this.logger = Loggers.getLogger(getClass(), indexShard.shardId());
         this.indexShard = indexShard;
         this.sourceNode = sourceNode;
         this.shardId = indexShard.shardId();
+        // 生成特殊的临时文件前缀
         final String tempFilePrefix = RECOVERY_PREFIX + UUIDs.randomBase64UUID() + ".";
         this.multiFileWriter = new MultiFileWriter(indexShard.store(), indexShard.recoveryState().getIndex(), tempFilePrefix, logger,
             this::ensureRefCount);
@@ -162,6 +192,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
     /**
      * Closes the current recovery target and waits up to a certain timeout for resources to be freed.
      * Returns true if resetting the recovery was successful, false if the recovery target is already cancelled / failed or marked as done.
+     * 关闭当前的恢复操作
      */
     boolean resetRecovery(CancellableThreads newTargetCancellableThreads) throws IOException {
         if (finished.compareAndSet(false, true)) {
@@ -172,13 +203,16 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                 decRef();
             }
             try {
+                // 阻塞当前线程 直到本对象被关闭
                 newTargetCancellableThreads.execute(closedLatch::await);
             } catch (CancellableThreads.ExecutionCancelledException e) {
                 logger.trace("new recovery target cancelled for shard {} while waiting on old recovery target with id [{}] to close",
                     shardId, recoveryId);
                 return false;
             }
+            // 进入到这里时 代表 multiFileWriter已经被关闭了
             RecoveryState.Stage stage = indexShard.recoveryState().getStage();
+            // 当本次recovery 已经完成了 那么就无法重新执行一次恢复了
             if (indexShard.recoveryState().getPrimary() && (stage == RecoveryState.Stage.FINALIZE || stage == RecoveryState.Stage.DONE)) {
                 // once primary relocation has moved past the finalization step, the relocation source can put the target into primary mode
                 // and start indexing as primary into the target shard (see TransportReplicationAction). Resetting the target shard in this
@@ -187,6 +221,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                 assert stage != RecoveryState.Stage.DONE : "recovery should not have completed when it's being reset";
                 throw new IllegalStateException("cannot reset recovery as previous attempt made it past finalization step");
             }
+            // 这里只是将 recoveryState 重置成init
             indexShard.performRecoveryRestart();
             return true;
         }
@@ -199,6 +234,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
      * {@link #decRef()}
      * <p>
      * if {@link #cancellableThreads()} was used, the threads will be interrupted.
+     * 关闭此时正在运行的所有线程 推测每个线程会拉取某个文件的数据 但是多线程应该是无法提高网络IO的性能的 等下网络IO  跟磁盘IO是不同的 不需要旋转磁头可能能提高性能???
      */
     public void cancel(String reason) {
         if (finished.compareAndSet(false, true)) {
@@ -217,6 +253,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
      *
      * @param e                exception that encapsulating the failure
      * @param sendShardFailure indicates whether to notify the master of the shard failure
+     *                         因为某种原因使得恢复失败时触发  关闭此时运行的所有线程
      */
     public void fail(RecoveryFailedException e, boolean sendShardFailure) {
         if (finished.compareAndSet(false, true)) {
@@ -237,13 +274,16 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
         listener.onRecoveryFailure(state(), e, sendShardFailure);
     }
 
-    /** mark the current recovery as done */
+    /**
+     * mark the current recovery as done
+     * */
     public void markAsDone() {
         if (finished.compareAndSet(false, true)) {
             assert multiFileWriter.tempFileNames.isEmpty() : "not all temporary files are renamed";
             try {
                 // this might still throw an exception ie. if the shard is CLOSED due to some other event.
                 // it's safer to decrement the reference in a try finally here.
+                // 当恢复流程执行完毕后 将数据持久化同时修改recoveryState的状态
                 indexShard.postRecovery("peer recovery done");
             } finally {
                 // release the initial reference. recovery files will be cleaned as soon as ref count goes to zero, potentially now
@@ -253,6 +293,9 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
         }
     }
 
+    /**
+     * 当本对象被关闭时 关闭闭锁
+     */
     @Override
     protected void closeInternal() {
         try {
@@ -282,40 +325,62 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
     @Override
     public void prepareForTranslogOperations(int totalTranslogOps, ActionListener<Void> listener) {
         ActionListener.completeWith(listener, () -> {
+            // 标记本次恢复的操作数量
             state().getTranslog().totalOperations(totalTranslogOps);
+            // 打开engine对象 但是跳过数据恢复阶段
             indexShard().openEngineAndSkipTranslogRecovery();
             return null;
         });
     }
 
+    /**
+     * 代表整个恢复操作已经完成了  可以清理长期不被使用的 translogReader了
+     * @param globalCheckpoint the global checkpoint on the recovery source   此时从远端节点收到的globalCheckpoint
+     * @param trimAboveSeqNo   The recovery target should erase its existing translog above this sequence number
+     *                         from the previous primary terms.
+     * @param listener         the listener which will be notified when this method is completed
+     */
     @Override
     public void finalizeRecovery(final long globalCheckpoint, final long trimAboveSeqNo, ActionListener<Void> listener) {
         ActionListener.completeWith(listener, () -> {
+            // 更新 ReplicationTracker.globalCheckpoint
             indexShard.updateGlobalCheckpointOnReplica(globalCheckpoint, "finalizing recovery");
             // Persist the global checkpoint.
+            // 对事务日志进行刷盘
             indexShard.sync();
+            // 将续约信息写入到一个 _state 文件中
             indexShard.persistRetentionLeases();
+            // TODO 啥意思 如果这个值有效 就需要滚动事务文件
             if (trimAboveSeqNo != SequenceNumbers.UNASSIGNED_SEQ_NO) {
                 // We should erase all translog operations above trimAboveSeqNo as we have received either the same or a newer copy
                 // from the recovery source in phase2. Rolling a new translog generation is not strictly required here for we won't
                 // trim the current generation. It's merely to satisfy the assumption that the current generation does not have any
                 // operation that would be trimmed (see TranslogWriter#assertNoSeqAbove). This assumption does not hold for peer
                 // recovery because we could have received operations above startingSeqNo from the previous primary terms.
+                // 滚动事务文件会将 gen+1 并作为新的事务文件名  生成文件
                 indexShard.rollTranslogGeneration();
                 // the flush or translog generation threshold can be reached after we roll a new translog
                 indexShard.afterWriteOperation();
+                // 将指定seq之前的数据全部清除
                 indexShard.trimOperationOfPreviousPrimaryTerms(trimAboveSeqNo);
             }
             if (hasUncommittedOperations()) {
                 indexShard.flush(new FlushRequest().force(true).waitIfOngoing(true));
             }
+            // 当恢复操作完成时 修改recoveryState的状态
             indexShard.finalizeRecovery();
             return null;
         });
     }
 
+    /**
+     * 检查是否有未提交的数据
+     * @return
+     * @throws IOException
+     */
     private boolean hasUncommittedOperations() throws IOException {
         long localCheckpointOfCommit = Long.parseLong(indexShard.commitStats().getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY));
+        // 检测在指定seq之上有多少operation
         try (Translog.Snapshot snapshot =
                  indexShard.newChangesSnapshot("peer-recovery", localCheckpointOfCommit + 1, Long.MAX_VALUE, false)) {
             return snapshot.totalOperations() > 0;
@@ -327,6 +392,19 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
         indexShard.activateWithPrimaryContext(primaryContext);
     }
 
+    /**
+     * @param operations                          operations to index
+     * @param totalTranslogOps                    current number of total operations expected to be indexed
+     * @param maxSeenAutoIdTimestampOnPrimary     the maximum auto_id_timestamp of all append-only requests processed by the primary shard
+     * @param maxSeqNoOfDeletesOrUpdatesOnPrimary
+     * @param retentionLeases                     the retention leases on the primary
+     * @param mappingVersionOnPrimary             the mapping version which is at least as up to date as the mapping version that the
+     *                                            primary used to index translog {@code operations} in this request.
+     *                                            If the mapping version on the replica is not older this version, we should not retry on
+     *                                            {@link org.elasticsearch.index.mapper.MapperException}; otherwise we should wait for a
+     *                                            new mapping then retry.
+     * @param listener                            a listener which will be notified with the local checkpoint on the target
+     */
     @Override
     public void indexTranslogOperations(
             final List<Translog.Operation> operations,
@@ -338,8 +416,10 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
             final ActionListener<Long> listener) {
         ActionListener.completeWith(listener, () -> {
             final RecoveryState.Translog translog = state().getTranslog();
+            // 记录本次要恢复多少个operation
             translog.totalOperations(totalTranslogOps);
             assert indexShard().recoveryState() == state();
+            // 确保此时处于recovery状态
             if (indexShard().state() != IndexShardState.RECOVERING) {
                 throw new IndexShardNotRecoveringException(shardId, indexShard().state());
             }
@@ -348,19 +428,23 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
              * will be replayed. Bootstrapping this timestamp here will disable the optimization for original append-only requests
              * (source of these operations) replicated via replication. Without this step, we may have duplicate documents if we
              * replay these operations first (without timestamp), then optimize append-only requests (with timestamp).
+             * 这里更新时间戳是啥意思
              */
             indexShard().updateMaxUnsafeAutoIdTimestamp(maxSeenAutoIdTimestampOnPrimary);
             /*
              * Bootstrap the max_seq_no_of_updates from the primary to make sure that the max_seq_no_of_updates on this replica when
              * replaying any of these operations will be at least the max_seq_no_of_updates on the primary when that op was executed on.
+             * 更新某个值
              */
             indexShard().advanceMaxSeqNoOfUpdatesOrDeletes(maxSeqNoOfDeletesOrUpdatesOnPrimary);
             /*
              * We have to update the retention leases before we start applying translog operations to ensure we are retaining according to
              * the policy.
+             * 在当前是副本的基础上 更新续约信息  既然采用了从远端节点恢复数据的方式 那么当前节点必然是副本节点
              */
             indexShard().updateRetentionLeasesOnReplica(retentionLeases);
             for (Translog.Operation operation : operations) {
+                // 将operation 重新写入到 lucene中
                 Engine.Result result = indexShard().applyTranslogOperation(operation, Engine.Operation.Origin.PEER_RECOVERY);
                 if (result.getResultType() == Engine.Result.Type.MAPPING_UPDATE_REQUIRED) {
                     throw new MapperException("mapping updates are not allowed [" + operation + "]");
@@ -373,7 +457,9 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                 }
             }
             // update stats only after all operations completed (to ensure that mapping updates don't mess with stats)
+            // 记录当前总计恢复了多少operation
             translog.incrementRecoveredOperations(operations.size());
+            // 写入完成后将数据刷盘
             indexShard().sync();
             // roll over / flush / trim if needed
             indexShard().afterWriteOperation();
@@ -381,6 +467,15 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
         });
     }
 
+    /**
+     * 恢复文件信息
+     * @param phase1FileNames
+     * @param phase1FileSizes
+     * @param phase1ExistingFileNames
+     * @param phase1ExistingFileSizes
+     * @param totalTranslogOps
+     * @param listener
+     */
     @Override
     public void receiveFileInfo(List<String> phase1FileNames,
                                 List<Long> phase1FileSizes,
@@ -389,9 +484,12 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                                 int totalTranslogOps,
                                 ActionListener<Void> listener) {
         ActionListener.completeWith(listener, () -> {
+            // 重置成init状态
             indexShard.resetRecoveryStage();
+            // 切换成index状态
             indexShard.prepareForIndexRecovery();
             final RecoveryState.Index index = state().getIndex();
+            // 将文件的描述信息写入到index中
             for (int i = 0; i < phase1ExistingFileNames.size(); i++) {
                 index.addFileDetail(phase1ExistingFileNames.get(i), phase1ExistingFileSizes.get(i), true);
             }
@@ -404,6 +502,13 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
         });
     }
 
+    /**
+     * 清除文件信息
+     * @param totalTranslogOps an update number of translog operations that will be replayed later on
+     * @param globalCheckpoint the global checkpoint on the primary
+     * @param sourceMetadata   meta data of the source store
+     * @param listener
+     */
     @Override
     public void cleanFiles(int totalTranslogOps, long globalCheckpoint, Store.MetadataSnapshot sourceMetadata,
                            ActionListener<Void> listener) {
@@ -412,10 +517,12 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
             // first, we go and move files that were created with the recovery id suffix to
             // the actual names, its ok if we have a corrupted index here, since we have replicas
             // to recover from in case of a full cluster shutdown just when this code executes...
+            // 将所有写入的临时文件 修改成目标文件
             multiFileWriter.renameAllTempFiles();
             final Store store = store();
             store.incRef();
             try {
+                // 删除一些无用的文件
                 store.cleanupAndVerify("recovery CleanFilesRequestHandler", sourceMetadata);
                 final String translogUUID = Translog.createEmptyTranslog(
                     indexShard.shardPath().resolveTranslog(), globalCheckpoint, shardId, indexShard.getPendingPrimaryTerm());
@@ -429,6 +536,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                     assert indexShard.assertRetentionLeasesPersisted();
                 }
                 indexShard.maybeCheckIndex();
+                // 切换到从事务日志中恢复数据的阶段
                 state().setStage(RecoveryState.Stage.TRANSLOG);
             } catch (CorruptIndexException | IndexFormatTooNewException | IndexFormatTooOldException ex) {
                 // this is a fatal exception at this stage.
@@ -460,6 +568,15 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
         });
     }
 
+    /**
+     * 通过 multiFileWriter 将数据流写入到临时文件
+     * @param fileMetadata
+     * @param position
+     * @param content
+     * @param lastChunk
+     * @param totalTranslogOps
+     * @param listener
+     */
     @Override
     public void writeFileChunk(StoreFileMetadata fileMetadata, long position, BytesReference content,
                                boolean lastChunk, int totalTranslogOps, ActionListener<Void> listener) {

@@ -2117,6 +2117,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * called if recovery has to be restarted after network error / delay **
+     * 将recoveryState 重置成init
      */
     public void performRecoveryRestart() throws IOException {
         assert Thread.holdsLock(mutex) == false : "restart recovery under mutex";
@@ -2966,6 +2967,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Check if there are any recoveries pending in-sync.
      *
      * @return {@code true} if there is at least one shard pending in-sync, otherwise false
+     * 当前是否在等待某个节点的同步  也就是某个节点此时落后了
      */
     public boolean pendingInSync() {
         assert assertPrimaryMode();
@@ -3076,6 +3078,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return this.currentEngineReference.get();
     }
 
+    /**
+     * 开始从某个地方恢复本几点数据
+     * @param recoveryState  描述恢复相关的状态 比如现在所处的阶段
+     * @param recoveryTargetService 当需要从其它节点获取数据时 会使用这个对象
+     * @param recoveryListener
+     * @param repositoriesService
+     * @param mappingUpdateConsumer
+     * @param indicesService
+     */
     public void startRecovery(RecoveryState recoveryState, PeerRecoveryTargetService recoveryTargetService,
                               PeerRecoveryTargetService.RecoveryListener recoveryListener, RepositoriesService repositoriesService,
                               Consumer<MappingMetadata> mappingUpdateConsumer,
@@ -3684,13 +3695,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     // we can not protect with a lock since we "release" on a different thread
+    // 代表此时正在进行事务文件的刷盘 或者 滚动事务文件
     private final AtomicBoolean flushOrRollRunning = new AtomicBoolean();
 
     /**
      * Schedules a flush or translog generation roll if needed but will not schedule more than one concurrently. The operation will be
      * executed asynchronously on the flush thread pool.
+     * 每当往事务文件中写入一个新的 operation后触发 检测是否要触发 flush 或者滚动到下个事务文件
      */
     public void afterWriteOperation() {
+        // shouldRollTranslogGeneration 当前事务文件写入的数据过多时 会返回true 推荐滚动到下一个事务文件
         if (shouldPeriodicallyFlush() || shouldRollTranslogGeneration()) {
             if (flushOrRollRunning.compareAndSet(false, true)) {
                 /*
@@ -3700,6 +3714,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                  *
                  * Additionally, a flush implicitly executes a translog generation roll so if we execute a flush then we do not need to
                  * check if we should roll the translog generation.
+                 * 代表触发了刷盘操作
                  */
                 if (shouldPeriodicallyFlush()) {
                     logger.debug("submitting async flush request");
@@ -3713,6 +3728,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
                         @Override
                         protected void doRun() throws IOException {
+                            // 每次flush 实际上都会自动滚动到下一个事务文件 长时间未刷盘 且写入了大量数据到事务文件中 就会被动的触发roll
                             flush(new FlushRequest());
                             periodicFlushMetric.inc();
                         }
@@ -3720,6 +3736,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         @Override
                         public void onAfter() {
                             flushOrRollRunning.compareAndSet(true, false);
+                            // 刷盘之后也要触发该方法吗
                             afterWriteOperation();
                         }
                     };

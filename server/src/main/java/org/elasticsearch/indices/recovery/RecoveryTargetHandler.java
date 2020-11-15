@@ -28,6 +28,9 @@ import org.elasticsearch.index.translog.Translog;
 
 import java.util.List;
 
+/**
+ * 应该是打算从远端恢复数据时使用的处理器吧
+ */
 public interface RecoveryTargetHandler {
 
     /**

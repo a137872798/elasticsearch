@@ -32,7 +32,7 @@ import java.text.ParseException;
 import java.util.Objects;
 
 /**
- * store下所有文件信息
+ * store中 某个segment下 每个索引文件都对应一个该对象 记录文件的基本信息 (包括segement_N)
  */
 public class StoreFileMetadata implements Writeable {
 
