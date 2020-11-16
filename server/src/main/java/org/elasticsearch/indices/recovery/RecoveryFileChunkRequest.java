@@ -30,6 +30,9 @@ import org.elasticsearch.transport.TransportRequest;
 
 import java.io.IOException;
 
+/**
+ * 在传输数据时使用的req
+ */
 public final class RecoveryFileChunkRequest extends TransportRequest {
     private boolean lastChunk;
     private long recoveryId;

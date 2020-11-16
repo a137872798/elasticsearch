@@ -31,6 +31,7 @@ import java.io.IOException;
 
 /**
  * Represents a request for starting a peer recovery.
+ * 在从远端node拉取数据用于恢复本地节点时 会生成该对象
  */
 public class StartRecoveryRequest extends TransportRequest {
 

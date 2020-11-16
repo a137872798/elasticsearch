@@ -27,10 +27,19 @@ import org.elasticsearch.transport.TransportRequest;
 
 import java.io.IOException;
 
+/**
+ * 在恢复过程中使用的 需要target准备好事务文件的请求
+ */
 class RecoveryPrepareForTranslogOperationsRequest extends TransportRequest {
 
+    /**
+     * 每次恢复操作都有一个id 因为集群的状态是会变化的 某些变化可能会影响到恢复操作 不同的恢复操作之间使用不同的id进行隔离
+     */
     private final long recoveryId;
     private final ShardId shardId;
+    /**
+     * 预计会发送多少个operation的数据流
+     */
     private final int totalTranslogOps;
 
     RecoveryPrepareForTranslogOperationsRequest(long recoveryId, ShardId shardId, int totalTranslogOps) {

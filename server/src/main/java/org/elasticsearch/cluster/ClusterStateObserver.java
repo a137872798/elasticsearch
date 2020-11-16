@@ -37,6 +37,7 @@ import java.util.function.Supplier;
  * A utility class which simplifies interacting with the cluster state in cases where
  * one tries to take action based on the current state but may want to wait for a new state
  * and retry upon failure.
+ * 该对象负责观测集群状态
  */
 public class ClusterStateObserver {
 
@@ -49,7 +50,9 @@ public class ClusterStateObserver {
     private final ThreadContext contextHolder;
     volatile TimeValue timeOutValue;
 
-
+    /**
+     * 存储最近一次观测到的集群状态
+     */
     final AtomicReference<StoredState> lastObservedState;
     final TimeoutClusterStateListener clusterStateListener = new ObserverClusterStateListener();
     // observingContext is not null when waiting on cluster state changes
@@ -80,6 +83,14 @@ public class ClusterStateObserver {
         this(initialState, clusterService.getClusterApplierService(), timeout, logger, contextHolder);
     }
 
+    /**
+     * 初始化
+     * @param initialState
+     * @param clusterApplierService
+     * @param timeout
+     * @param logger
+     * @param contextHolder
+     */
     public ClusterStateObserver(ClusterState initialState, ClusterApplierService clusterApplierService, @Nullable TimeValue timeout,
                                 Logger logger, ThreadContext contextHolder) {
         this.clusterApplierService = clusterApplierService;
@@ -256,6 +267,7 @@ public class ClusterStateObserver {
 
     /**
      * The observer considers two cluster states to be the same if they have the same version and master node id (i.e. null or set)
+     * 可以理解为是一个 状态的快照
      */
     private static class StoredState {
         private final String masterNodeId;

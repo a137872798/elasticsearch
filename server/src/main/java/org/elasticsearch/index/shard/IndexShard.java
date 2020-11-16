@@ -3198,6 +3198,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return replicationTracker.addPeerRecoveryRetentionLease(nodeId, globalCheckpoint, listener);
     }
 
+    /**
+     * 根据相关信息生成续约对象 在远端节点从本节点上拉取恢复数据时会触发该函数
+     * @param nodeId
+     * @param listener
+     * @return
+     */
     public RetentionLease cloneLocalPeerRecoveryRetentionLease(String nodeId, ActionListener<ReplicationResponse> listener) {
         assert assertPrimaryMode();
         return replicationTracker.cloneLocalPeerRecoveryRetentionLease(nodeId, listener);
@@ -3331,6 +3337,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param debugInfo an extra information that can be useful when tracing an unreleased permit. When assertions are enabled
      *                  the tracing will capture the supplied object's {@link Object#toString()} value. Otherwise the object
      *                  isn't used
+     *                  先获取门票 获取成功后才可以执行任务
+     *                  而在 wrapPrimaryOperationPermitListener 要求当前shard必须是primary 才可以正常触发监听器
      */
     public void acquirePrimaryOperationPermit(ActionListener<Releasable> onPermitAcquired, String executorOnDelay, Object debugInfo) {
         verifyNotClosed();
@@ -3361,6 +3369,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return ActionListener.delegateFailure(
                 listener,
                 (l, r) -> {
+                    // shard在当前节点必须是 primary分片才可以正常触发监听器
                     if (replicationTracker.isPrimaryMode()) {
                         l.onResponse(r);
                     } else {

@@ -203,7 +203,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                 decRef();
             }
             try {
-                // 阻塞当前线程 直到本对象被关闭
+                // 阻塞新的线程 直到本对象被关闭
                 newTargetCancellableThreads.execute(closedLatch::await);
             } catch (CancellableThreads.ExecutionCancelledException e) {
                 logger.trace("new recovery target cancelled for shard {} while waiting on old recovery target with id [{}] to close",
@@ -404,6 +404,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
      *                                            {@link org.elasticsearch.index.mapper.MapperException}; otherwise we should wait for a
      *                                            new mapping then retry.
      * @param listener                            a listener which will be notified with the local checkpoint on the target
+     *                                            将source发来的事务文件数据 同步到本地
      */
     @Override
     public void indexTranslogOperations(
@@ -504,8 +505,9 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
 
     /**
      * 清除文件信息
+     * 这一步是在完成所有文件传输后调用的
      * @param totalTranslogOps an update number of translog operations that will be replayed later on
-     * @param globalCheckpoint the global checkpoint on the primary
+     * @param globalCheckpoint the global checkpoint on the primary   从primaryShard传过来的全局检查点  用它来判断哪些文件可以被删除
      * @param sourceMetadata   meta data of the source store
      * @param listener
      */
@@ -536,7 +538,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                     assert indexShard.assertRetentionLeasesPersisted();
                 }
                 indexShard.maybeCheckIndex();
-                // 切换到从事务日志中恢复数据的阶段
+                // 切换到从事务日志中恢复数据的阶段    因为经过上一阶段 数据已经从remote节点传输过来了 在本地形成了事务文件 所以现在可以通过本地事务文件进行恢复
                 state().setStage(RecoveryState.Stage.TRANSLOG);
             } catch (CorruptIndexException | IndexFormatTooNewException | IndexFormatTooOldException ex) {
                 // this is a fatal exception at this stage.
