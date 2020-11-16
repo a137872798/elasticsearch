@@ -47,7 +47,8 @@ import java.util.stream.Collectors;
  * This handler makes sure that the headers &amp; context of the handled {@link RestRequest requests} are copied over to
  * the transport requests executed by the associated client. While the context is fully copied over, not all the headers
  * are copied, but a selected few. It is possible to control what headers are copied over by returning them in
- * {@link ActionPlugin#getRestHeaders()}.
+ * {@link ActionPlugin#getRestHeaders()}
+ * 处理器骨架 .
  */
 public abstract class BaseRestHandler implements RestHandler {
 
@@ -70,10 +71,18 @@ public abstract class BaseRestHandler implements RestHandler {
 
     /**
      * {@inheritDoc}
+     * 每个route 定义了一种请求method 以及path信息 用于寻找对应的处理器对象
      */
     @Override
     public abstract List<Route> routes();
 
+    /**
+     * 准备处理某个请求对象
+     * @param request The request to handle
+     * @param channel The channel to write the request response to
+     * @param client A client to use to make internal requests on behalf of the original request
+     * @throws Exception
+     */
     @Override
     public final void handleRequest(RestRequest request, RestChannel channel, NodeClient client) throws Exception {
         // prepare the request for execution; has the side effect of touching the request parameters

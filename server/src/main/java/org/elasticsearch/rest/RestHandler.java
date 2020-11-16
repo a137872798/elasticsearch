@@ -28,6 +28,7 @@ import java.util.List;
 
 /**
  * Handler for REST requests
+ * 处理基于rest风格的请求处理器
  */
 public interface RestHandler {
 
@@ -39,6 +40,10 @@ public interface RestHandler {
      */
     void handleRequest(RestRequest request, RestChannel channel, NodeClient client) throws Exception;
 
+    /**
+     * 默认情况下处理能力受到熔断器限制
+     * @return
+     */
     default boolean canTripCircuitBreaker() {
         return true;
     }
@@ -89,6 +94,9 @@ public interface RestHandler {
         return Collections.emptyList();
     }
 
+    /**
+     * 应该是配合请求分发器确定分配给哪个处理器
+     */
     class Route {
 
         private final String path;

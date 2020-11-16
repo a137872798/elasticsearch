@@ -59,21 +59,37 @@ import static org.elasticsearch.rest.RestStatus.METHOD_NOT_ALLOWED;
 import static org.elasticsearch.rest.RestStatus.NOT_ACCEPTABLE;
 import static org.elasticsearch.rest.RestStatus.OK;
 
+/**
+ * 控制器 负责将req 分配到合适的handler进行处理 实际上就是一个 Dispatcher
+ */
 public class RestController implements HttpServerTransport.Dispatcher {
 
     private static final Logger logger = LogManager.getLogger(RestController.class);
     private static final DeprecationLogger deprecationLogger = new DeprecationLogger(logger);
 
+    /**
+     * path -> handler 通过单词查找树的形式进行存储
+     */
     private final PathTrie<MethodHandlers> handlers = new PathTrie<>(RestUtils.REST_DECODER);
 
+    /**
+     * 每个handler对象可以用该对象做一层包装
+     * 默认就是 Function.Identity
+     */
     private final UnaryOperator<RestHandler> handlerWrapper;
 
     private final NodeClient client;
 
+    /**
+     * 处理rest请求时 也会做限流操作
+     */
     private final CircuitBreakerService circuitBreakerService;
 
     /** Rest headers that are copied to internal requests made during a rest request. */
     private final Set<RestHeaderDefinition> headersToCopy;
+    /**
+     * 使用量相关的先忽略
+     */
     private final UsageService usageService;
 
     public RestController(Set<RestHeaderDefinition> headersToCopy, UnaryOperator<RestHandler> handlerWrapper,
@@ -95,6 +111,7 @@ public class RestController implements HttpServerTransport.Dispatcher {
      * @param path Path to handle (e.g., "/{index}/{type}/_bulk")
      * @param handler The handler to actually execute
      * @param deprecationMessage The message to log and send as a header in the response
+     *                           忽略被废弃的方法
      */
     protected void registerAsDeprecatedHandler(RestRequest.Method method, String path, RestHandler handler, String deprecationMessage) {
         assert (handler instanceof DeprecationRestHandler) == false;
@@ -142,13 +159,17 @@ public class RestController implements HttpServerTransport.Dispatcher {
      * @param path Path to handle (e.g., "/{index}/{type}/_bulk")
      * @param handler The handler to actually execute
      * @param method GET, POST, etc.
+     *               注册某种路径对应的handler对象
      */
     protected void registerHandler(RestRequest.Method method, String path, RestHandler handler) {
+        // 只有BaseHandler 会被usage服务管理
         if (handler instanceof BaseRestHandler) {
             usageService.addRestHandler((BaseRestHandler) handler);
         }
         final RestHandler maybeWrappedHandler = handlerWrapper.apply(handler);
+        // 插入到路径查找树
         handlers.insertOrUpdate(path, new MethodHandlers(path, maybeWrappedHandler, method),
+            // path匹配的时候 以method作为key
             (mHandlers, newMHandler) -> mHandlers.addMethods(maybeWrappedHandler, method));
     }
 

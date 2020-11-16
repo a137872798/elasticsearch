@@ -141,6 +141,7 @@ public interface DocWriteRequest<T> extends IndicesRequest {
 
     /**
      * Requested operation type to perform on the document
+     * 代表操作类型
      */
     enum OpType {
         /**

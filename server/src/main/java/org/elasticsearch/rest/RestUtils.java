@@ -36,6 +36,9 @@ public class RestUtils {
      */
     private static final boolean DECODE_PLUS_AS_SPACE = Booleans.parseBoolean(System.getProperty("es.rest.url_plus_as_space", "false"));
 
+    /**
+     * 解码器
+     */
     public static final PathTrie.Decoder REST_DECODER = new PathTrie.Decoder() {
         @Override
         public String decode(String value) {
@@ -137,12 +140,15 @@ public class RestUtils {
      *         If the string to decode is {@code null}, returns an empty string.
      * @throws IllegalArgumentException if the string contains a malformed
      *                                  escape sequence.
+     *                                  PathTrie.Decoder默认实现
      */
     private static String decodeComponent(final String s, final Charset charset, boolean plusAsSpace) {
         if (s == null) {
             return "";
         }
         final int size = s.length();
+        // 这里是检查string是否使用了url编码
+        // 如果未使用,不需要解析直接返回
         if (!decodingNeeded(s, size, plusAsSpace)) {
             return s;
         }
@@ -151,10 +157,18 @@ public class RestUtils {
         return new String(buf, 0, pos, charset);
     }
 
+    /**
+     * 检测是否需要url解码
+     * @param s
+     * @param size
+     * @param plusAsSpace
+     * @return
+     */
     private static boolean decodingNeeded(String s, int size, boolean plusAsSpace) {
         boolean decodingNeeded = false;
         for (int i = 0; i < size; i++) {
             final char c = s.charAt(i);
+            // 携带 '%' 就代表使用了URL编码
             if (c == '%') {
                 i++;  // We can skip at least one char, e.g. `%%'.
                 decodingNeeded = true;
@@ -165,6 +179,14 @@ public class RestUtils {
         return decodingNeeded;
     }
 
+    /**
+     * 进行url解码  不细看了
+     * @param s
+     * @param size
+     * @param buf
+     * @param plusAsSpace
+     * @return
+     */
     @SuppressWarnings("fallthrough")
     private static int decode(String s, int size, byte[] buf, boolean plusAsSpace) {
         int pos = 0;  // position in `buf'.

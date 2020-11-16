@@ -51,6 +51,9 @@ import java.util.Objects;
  */
 public class UsageService {
 
+    /**
+     * 只有BaseRestHandler会被该服务管理
+     */
     private final Map<String, BaseRestHandler> handlers;
 
     public UsageService() {

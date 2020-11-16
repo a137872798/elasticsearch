@@ -65,8 +65,10 @@ public abstract class DocWriteResponse extends ReplicationResponse implements Wr
     /**
      * An enum that represents the results of CRUD operations, primarily used to communicate the type of
      * operation that occurred.
+     * 某次写入操作的结果
      */
     public enum Result implements Writeable {
+        // 前3种代表操作成功
         CREATED(0),
         UPDATED(1),
         DELETED(2),
@@ -113,6 +115,9 @@ public abstract class DocWriteResponse extends ReplicationResponse implements Wr
         }
     }
 
+    /**
+     * 本次操作针对哪个索引
+     */
     private final ShardId shardId;
     private final String id;
     private final long version;

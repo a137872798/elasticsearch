@@ -25,6 +25,9 @@ import org.elasticsearch.transport.TransportRequest;
 
 import java.io.IOException;
 
+/**
+ * 以action作为入口 看看ES能够实现什么功能
+ */
 public abstract class ActionRequest extends TransportRequest {
 
     public ActionRequest() {
@@ -42,6 +45,7 @@ public abstract class ActionRequest extends TransportRequest {
 
     /**
      * Should this task store its result after it has finished?
+     * 是否需要存储结果
      */
     public boolean getShouldStoreResult() {
         return false;

@@ -3079,7 +3079,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 开始从某个地方恢复本几点数据
+     * 开始从某个地方恢复本节点数据
      * @param recoveryState  描述恢复相关的状态 比如现在所处的阶段
      * @param recoveryTargetService 当需要从其它节点获取数据时 会使用这个对象
      * @param recoveryListener
@@ -3111,11 +3111,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         switch (recoveryState.getRecoverySource().getType()) {
             case EMPTY_STORE:
             case EXISTING_STORE:
+                // 当store中存在数据时 直接通过recoverFromStore 进行恢复
                 executeRecovery("from store", recoveryState, recoveryListener, this::recoverFromStore);
                 break;
             case PEER:
                 try {
                     markAsRecovering("from " + recoveryState.getSourceNode(), recoveryState);
+                    // 从远端拉取数据进行恢复
                     recoveryTargetService.startRecovery(this, recoveryState.getSourceNode(), recoveryListener);
                 } catch (Exception e) {
                     failShard("corrupted preexisting index", e);
@@ -3123,6 +3125,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         new RecoveryFailedException(recoveryState, null, e), true);
                 }
                 break;
+                // 从repository中恢复数据 暂时还不理解
             case SNAPSHOT:
                 final String repo = ((SnapshotRecoverySource) recoveryState.getRecoverySource()).snapshot().getRepository();
                 executeRecovery("from snapshot",
@@ -3173,8 +3176,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     private void executeRecovery(String reason, RecoveryState recoveryState, PeerRecoveryTargetService.RecoveryListener recoveryListener,
                                  CheckedConsumer<ActionListener<Boolean>, Exception> action) {
+        // 标记成正在恢复中
         markAsRecovering(reason, recoveryState); // mark the shard as recovering on the cluster state thread
         threadPool.generic().execute(ActionRunnable.wrap(ActionListener.wrap(r -> {
+            // 这里声明了正常返回是一个BOOLEAN类型
                 if (r) {
                     recoveryListener.onRecoveryDone(recoveryState);
                 }
@@ -3356,6 +3361,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @param listener the listener to wrap
      * @return the wrapped listener
+     * 包装一层后必须当前是主分片才可以正常触发监听器
      */
     private ActionListener<Releasable> wrapPrimaryOperationPermitListener(final ActionListener<Releasable> listener) {
         return ActionListener.delegateFailure(
