@@ -90,12 +90,15 @@ public class RestListTasksAction extends BaseRestHandler {
 
     /**
      * Standard listener for extensions of {@link ListTasksResponse} that supports {@code group_by=nodes}.
+     * @param groupBy 会作为一个分组信息
      */
     public static <T extends ListTasksResponse> ActionListener<T> listTasksResponseListener(
                 Supplier<DiscoveryNodes> nodesInCluster,
                 String groupBy,
                 final RestChannel channel) {
+        // 默认情况下按照nodes进行分组   区别就是返回res会在buildRes中生成不同的格式化数据 之后会通过channel返回给client
         if ("nodes".equals(groupBy)) {
+
             return new RestBuilderListener<T>(channel) {
                 @Override
                 public RestResponse buildResponse(T response, XContentBuilder builder) throws Exception {

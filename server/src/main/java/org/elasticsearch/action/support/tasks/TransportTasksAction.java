@@ -60,6 +60,7 @@ import static java.util.Collections.emptyList;
 
 /**
  * The base class for transport actions that are interacting with currently running tasks.
+ * 这个action是专门用于处理 有关task的指令的
  */
 public abstract class TransportTasksAction<
         OperationTask extends Task,
@@ -76,6 +77,18 @@ public abstract class TransportTasksAction<
 
     protected final String transportNodeAction;
 
+    /**
+     *
+     * @param actionName
+     * @param clusterService
+     * @param transportService
+     * @param actionFilters
+     * 下面几个reader对象定义了如何将数据流转换为实体
+     * @param requestReader
+     * @param responsesReader
+     * @param responseReader
+     * @param nodeExecutor
+     */
     protected TransportTasksAction(String actionName, ClusterService clusterService, TransportService transportService,
                                    ActionFilters actionFilters, Writeable.Reader<TasksRequest> requestReader,
                                    Writeable.Reader<TasksResponse> responsesReader, Writeable.Reader<TaskResponse> responseReader,
@@ -88,18 +101,34 @@ public abstract class TransportTasksAction<
         this.responsesReader = responsesReader;
         this.responseReader = responseReader;
 
+        // 原本该对象在初始化时就会注册一个处理器到传输层
+        // 这里又额外注册了一组处理器  区别是这个actionName 额外携带了 [n]
         transportService.registerRequestHandler(transportNodeAction, nodeExecutor, NodeTaskRequest::new, new NodeTransportHandler());
     }
 
+    /**
+     * 当通过NodeClient处理请求时 最先转发到这个方法
+     * @param task
+     * @param request
+     * @param listener
+     */
     @Override
     protected void doExecute(Task task, TasksRequest request, ActionListener<TasksResponse> listener) {
         new AsyncAction(task, request, listener).start();
     }
 
+    /**
+     * 真正处理请求的函数
+     * @param nodeTaskRequest
+     * @param listener
+     */
     private void nodeOperation(NodeTaskRequest nodeTaskRequest, ActionListener<NodeTasksResponse> listener) {
         TasksRequest request = nodeTaskRequest.tasksRequest;
+
+        // 找到条件匹配的task 并设置到列表中
         List<OperationTask> tasks = new ArrayList<>();
         processTasks(request, tasks::add);
+        // 代表没有匹配的task 不需要处理
         if (tasks.isEmpty()) {
             listener.onResponse(new NodeTasksResponse(clusterService.localNode().getId(), emptyList(), emptyList()));
             return;
@@ -121,6 +150,9 @@ public abstract class TransportTasksAction<
                     respondIfFinished();
                 }
 
+                /**
+                 * 每当某个task处理有结果时
+                 */
                 private void respondIfFinished() {
                     if (counter.decrementAndGet() != 0) {
                         return;
@@ -141,6 +173,7 @@ public abstract class TransportTasksAction<
                 }
             };
             try {
+                // 处理每个任务 并将结果通知给监听器   由子类实现
                 taskOperation(request, tasks.get(taskIndex), taskListener);
             } catch (Exception e) {
                 taskListener.onFailure(e);
@@ -152,15 +185,29 @@ public abstract class TransportTasksAction<
         return nodesIds;
     }
 
+    /**
+     * 解析nodeIds
+     * @param request
+     * @param clusterState
+     * @return
+     */
     protected String[] resolveNodes(TasksRequest request, ClusterState clusterState) {
+        // 在rest请求参数中可能会携带task信息 这样就可以直接对应到目标节点
         if (request.getTaskId().isSet()) {
             return new String[]{request.getTaskId().getNodeId()};
         } else {
+            // 否则从nodeIds中找到有效的参数   这里一系列的匹配规则就先不看了
             return clusterState.nodes().resolveNodes(request.getNodes());
         }
     }
 
+    /**
+     * 从任务管理器中找到匹配的任务 并进行处理
+     * @param request
+     * @param operation  处理的函数
+     */
     protected void processTasks(TasksRequest request, Consumer<OperationTask> operation) {
+        // 这里只是寻找任务
         if (request.getTaskId().isSet()) {
             // we are only checking one task, we can optimize it
             Task task = taskManager.getTask(request.getTaskId().getId());
@@ -174,6 +221,7 @@ public abstract class TransportTasksAction<
                 throw new ResourceNotFoundException("task [{}] is missing", request.getTaskId());
             }
         } else {
+            // 找到所有符合条件的task
             for (Task task : taskManager.getTasks().values()) {
                 if (request.match(task)) {
                     operation.accept((OperationTask) task);
@@ -185,11 +233,19 @@ public abstract class TransportTasksAction<
     protected abstract TasksResponse newResponse(TasksRequest request, List<TaskResponse> tasks, List<TaskOperationFailure>
         taskOperationFailures, List<FailedNodeException> failedNodeExceptions);
 
+
+    /**
+     *
+     * @param request
+     * @param responses  数组中每个元素对应一个结果
+     * @return
+     */
     @SuppressWarnings("unchecked")
     protected TasksResponse newResponse(TasksRequest request, AtomicReferenceArray responses) {
         List<TaskResponse> tasks = new ArrayList<>();
         List<FailedNodeException> failedNodeExceptions = new ArrayList<>();
         List<TaskOperationFailure> taskOperationFailures = new ArrayList<>();
+        // 将响应结果进行分组
         for (int i = 0; i < responses.length(); i++) {
             Object response = responses.get(i);
             if (response instanceof FailedNodeException) {
@@ -204,6 +260,7 @@ public abstract class TransportTasksAction<
                 }
             }
         }
+        // 当本次没有有效的node时 传入2个空列表
         return newResponse(request, tasks, taskOperationFailures, failedNodeExceptions);
     }
 
@@ -212,24 +269,40 @@ public abstract class TransportTasksAction<
      */
     protected abstract void taskOperation(TasksRequest request, OperationTask task, ActionListener<TaskResponse> listener);
 
+    /**
+     * 当接收到一个请求时 生成一个该对象 并进行处理  在本节点直接处理时 还不会切换线程
+     */
     private class AsyncAction {
 
         private final TasksRequest request;
         private final String[] nodesIds;
         private final DiscoveryNode[] nodes;
         private final ActionListener<TasksResponse> listener;
+
+        /**
+         * 每个node 会对应一个res
+         */
         private final AtomicReferenceArray<Object> responses;
         private final AtomicInteger counter = new AtomicInteger();
         private final Task task;
 
+        /**
+         *
+         * @param task  请求会先被包装成task对象
+         * @param request
+         * @param listener
+         */
         private AsyncAction(Task task, TasksRequest request, ActionListener<TasksResponse> listener) {
             this.task = task;
             this.request = request;
             this.listener = listener;
             ClusterState clusterState = clusterService.state();
+            // 根据请求体信息 解析出一组nodeId
             String[] nodesIds = resolveNodes(request, clusterState);
+            // filterNodeIds是开放给子类的钩子 默认是NOOP
             this.nodesIds = filterNodeIds(clusterState.nodes(), nodesIds);
             ImmutableOpenMap<String, DiscoveryNode> nodes = clusterState.nodes().getNodes();
+            // 从state中 通过nodeId找到匹配的node对象
             this.nodes = new DiscoveryNode[nodesIds.length];
             for (int i = 0; i < this.nodesIds.length; i++) {
                 this.nodes[i] = nodes.get(this.nodesIds[i]);
@@ -237,7 +310,11 @@ public abstract class TransportTasksAction<
             this.responses = new AtomicReferenceArray<>(this.nodesIds.length);
         }
 
+        /**
+         * 当确定了本次相关任务所在的多个node后 开始处理
+         */
         private void start() {
+            // 对应的node不存在与集群中 或者其他原因 这些node都是无效的 直接触发监听器
             if (nodesIds.length == 0) {
                 // nothing to do
                 try {
@@ -256,11 +333,15 @@ public abstract class TransportTasksAction<
                     final int idx = i;
                     final DiscoveryNode node = nodes[i];
                     try {
+                        // 某个节点不存在 直接以失败作为结果
                         if (node == null) {
                             onFailure(idx, nodeId, new NoSuchNodeException(nodeId));
                         } else {
                             NodeTaskRequest nodeRequest = new NodeTaskRequest(request);
+                            // 某些task不会只在一个node上完成 可能在处理过程中会经过其他node 此时就生成了父子级关系
                             nodeRequest.setParentTask(clusterService.localNode().getId(), task.getId());
+                            // 注意这里使用的action 是加上[n] 的 其他节点接收后会通过 nodeOperation进行处理
+                            // 这个node也可能会包含自己
                             transportService.sendRequest(node, transportNodeAction, nodeRequest, builder.build(),
                                 new TransportResponseHandler<NodeTasksResponse>() {
                                     @Override
@@ -298,6 +379,12 @@ public abstract class TransportTasksAction<
             }
         }
 
+        /**
+         * 在往某个节点发送请求时有关处理外的异常 都会通过该方法进行处理
+         * @param idx
+         * @param nodeId
+         * @param t
+         */
         private void onFailure(int idx, String nodeId, Throwable t) {
             if (logger.isDebugEnabled() && !(t instanceof NodeShouldNotConnectException)) {
                 logger.debug(new ParameterizedMessage("failed to execute on node [{}]", nodeId), t);
@@ -310,6 +397,9 @@ public abstract class TransportTasksAction<
             }
         }
 
+        /**
+         * 代表发往每个node的请求都已经收到回复 可以根据现有的信息生成最终结果了
+         */
         private void finishHim() {
             TasksResponse finalResponse;
             try {
@@ -323,6 +413,9 @@ public abstract class TransportTasksAction<
         }
     }
 
+    /**
+     * 当传入 actionName[n] 时不会通过触发handler的execute处理请求 而是通过nodeOperation处理
+     */
     class NodeTransportHandler implements TransportRequestHandler<NodeTaskRequest> {
 
         @Override

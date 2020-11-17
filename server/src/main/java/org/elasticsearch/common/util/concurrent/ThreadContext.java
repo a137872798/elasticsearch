@@ -115,7 +115,7 @@ public final class ThreadContext implements Writeable {
     /**
      * Removes the current context and resets a default context. The removed context can be
      * restored by closing the returned {@link StoredContext}.
-     * 替换内部的线程上下文
+     * 此时为线程绑定一个空的上下文
      */
     public StoredContext stashContext() {
         final ThreadContextStruct context = threadLocal.get();
@@ -388,7 +388,7 @@ public final class ThreadContext implements Writeable {
     /**
      * Saves the current thread context and wraps command in a Runnable that restores that context before running command. If
      * <code>command</code> has already been passed through this method then it is returned unaltered rather than wrapped twice.
-     * 当es线程池执行某个 runnable时 尝试进行封装
+     * 封装runnable 使得可以存储线程上下文
      */
     public Runnable preserveContext(Runnable command) {
         if (command instanceof ContextPreservingAbstractRunnable) {
@@ -704,7 +704,7 @@ public final class ThreadContext implements Writeable {
         private final AbstractRunnable in;
 
         /**
-         * 该对象包含一个close的 api
+         * 调用该对象 将会还原创建该对象时的线程上下文
          */
         private final ThreadContext.StoredContext creatorsContext;
 
@@ -726,6 +726,7 @@ public final class ThreadContext implements Writeable {
                 in.onAfter();
             } finally {
                 if (threadsOriginalContext != null) {
+                    // 恢复成执行任务的线程
                     threadsOriginalContext.restore();
                 }
             }
@@ -743,7 +744,7 @@ public final class ThreadContext implements Writeable {
 
         @Override
         protected void doRun() throws Exception {
-            // 在开始执行任务前 暂存当前的线程上下文
+            // 暂存此时线程的上下文  因为初始化该对象的线程与执行该对象的线程 往往是不同的 (比如任务会交由线程池执行)
             threadsOriginalContext = stashContext();
             creatorsContext.restore();
             in.doRun();

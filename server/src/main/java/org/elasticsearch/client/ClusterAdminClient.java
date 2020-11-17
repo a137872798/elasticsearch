@@ -384,6 +384,7 @@ public interface ClusterAdminClient extends ElasticsearchClient {
      * @param request  The nodes tasks request
      * @param listener A listener to be notified with a result
      * @see org.elasticsearch.client.Requests#cancelTasksRequest()
+     * 指定关闭某个还在运行中的任务 所以才需要taskManager吗 方便从外部直接关闭
      */
     void cancelTasks(CancelTasksRequest request, ActionListener<CancelTasksResponse> listener);
 

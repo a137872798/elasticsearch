@@ -41,6 +41,10 @@ public abstract class RestActionListener<Response> implements ActionListener<Res
         this.channel = channel;
     }
 
+    /**
+     * 就是定义了一个模板 当处理res失败时 转发到onFailure上
+     * @param response
+     */
     @Override
     public final void onResponse(Response response) {
         try {

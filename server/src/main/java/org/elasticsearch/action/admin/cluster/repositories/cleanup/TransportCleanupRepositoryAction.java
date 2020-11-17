@@ -66,6 +66,7 @@ import java.io.IOException;
  * {@link BlobStoreRepository#cleanup} ensures that the repository state id has not changed between creation of the cluster state entry
  * and any delete/write operations. TODO: This will not work if we also want to clean up at the shard level as those will involve writes
  *                                        as well as deletes.
+ * 清理仓库的任务只能在leader节点执行  为什么 还有在Engine中并没有看到 有关仓库的存储动作
  */
 public final class TransportCleanupRepositoryAction extends TransportMasterNodeAction<CleanupRepositoryRequest,
                                                                                       CleanupRepositoryResponse> {
@@ -93,7 +94,9 @@ public final class TransportCleanupRepositoryAction extends TransportMasterNodeA
         // We add a state applier that will remove any dangling repository cleanup actions on master failover.
         // This is safe to do since cleanups will increment the repository state id before executing any operations to prevent concurrent
         // operations from corrupting the repository. This is the same safety mechanism used by snapshot deletes.
+        // 当集群状态发生变化时 要进行处理
         clusterService.addStateApplier(event -> {
+            // 因为本对象在所有节点上都会创建   当某个节点升级/降级 都会对执行任务造成影响
             if (event.localNodeMaster() && event.previousState().nodes().isLocalNodeElectedMaster() == false) {
                 final RepositoryCleanupInProgress repositoryCleanupInProgress = event.state().custom(RepositoryCleanupInProgress.TYPE);
                 if (repositoryCleanupInProgress == null || repositoryCleanupInProgress.hasCleanupInProgress() == false) {

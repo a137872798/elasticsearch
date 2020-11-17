@@ -33,6 +33,7 @@ import static org.elasticsearch.rest.RestRequest.Method.POST;
 
 /**
  * Cleans up a repository
+ * 清理仓库内部的数据
  */
 public class RestCleanupRepositoryAction extends BaseRestHandler {
 
@@ -48,6 +49,7 @@ public class RestCleanupRepositoryAction extends BaseRestHandler {
 
     @Override
     public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
+        // 从请求中获取要清理的仓库信息
         CleanupRepositoryRequest cleanupRepositoryRequest = cleanupRepositoryRequest(request.param("repository"));
         cleanupRepositoryRequest.timeout(request.paramAsTime("timeout", cleanupRepositoryRequest.timeout()));
         cleanupRepositoryRequest.masterNodeTimeout(request.paramAsTime("master_timeout", cleanupRepositoryRequest.masterNodeTimeout()));

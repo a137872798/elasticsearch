@@ -250,6 +250,7 @@ public class TaskManager implements ClusterStateApplier {
      * After starting cancellation on the parent task, the task manager tries to cancel all children tasks
      * of the current task. Once cancellation of the children tasks is done, the listener is triggered.
      * If the task is completed or unregistered from TaskManager, then the listener is called immediately.
+     * 在任务管理器中 可以关闭某些任务
      */
     public void cancel(CancellableTask task, String reason, Runnable listener) {
         CancellableTaskHolder holder = cancellableTasks.get(task.getId());
@@ -416,6 +417,8 @@ public class TaskManager implements ClusterStateApplier {
 
     /**
      * Returns a cancellable task with given id, or null if the task is not found.
+     * 任务管理器中存在2种任务 一种是普通任务 一种是可以关闭的任务
+     * 并且ES 对外开放了可以关闭task的接口  前提就是这些task本身是支持关闭的
      */
     public CancellableTask getCancellableTask(long id) {
         CancellableTaskHolder holder = cancellableTasks.get(id);
@@ -440,11 +443,13 @@ public class TaskManager implements ClusterStateApplier {
      * <p>
      * This method is called when a parent task that has children is cancelled.
      * @return a list of pending cancellable child tasks
+     * 将parentTaskId对应的子任务标记成禁止
      */
     public List<CancellableTask> setBan(TaskId parentTaskId, String reason) {
         logger.trace("setting ban for the parent task {} {}", parentTaskId, reason);
 
         // Set the ban first, so the newly created tasks cannot be registered
+        // 记录哪些任务被关闭了
         synchronized (banedParents) {
             if (lastDiscoveryNodes.nodeExists(parentTaskId.getNodeId())) {
                 // Only set the ban if the node is the part of the cluster
@@ -478,6 +483,7 @@ public class TaskManager implements ClusterStateApplier {
      * @param taskId                the parent task id
      * @param onChildTasksCompleted called when all child tasks are completed or failed
      * @return the set of current nodes that have outstanding child tasks
+     * 如果某个任务被关闭时 还要连带子任务被关闭 那么需要调用startBan
      */
     public Collection<DiscoveryNode> startBanOnChildrenNodes(long taskId, Runnable onChildTasksCompleted) {
         final CancellableTaskHolder holder = cancellableTasks.get(taskId);
@@ -588,6 +594,7 @@ public class TaskManager implements ClusterStateApplier {
                     toRun = listener;
                 } else {
                     toRun = () -> {};
+                    // 如果监听器为null 代表在当前线程完成任务 否则通过异步方式监听
                     if (listener != null) {
                         if (cancellationListeners == null) {
                             cancellationListeners = new ArrayList<>();
@@ -687,7 +694,7 @@ public class TaskManager implements ClusterStateApplier {
         }
 
         /**
-         * 此时禁止在增加新的子级任务  同时设置子级人物完成时的监听器
+         * 此时禁止在增加新的子级任务
          * @param onChildTasksCompleted
          * @return
          */
@@ -695,6 +702,7 @@ public class TaskManager implements ClusterStateApplier {
             final Set<DiscoveryNode> pendingChildNodes;
             final Runnable toRun;
             synchronized (this) {
+                // 子级任务在哪些节点上执行
                 banChildren = true;
                 if (childTasksPerNode == null) {
                     pendingChildNodes = Collections.emptySet();
@@ -706,6 +714,7 @@ public class TaskManager implements ClusterStateApplier {
                     assert childTaskCompletedListeners == null;
                     toRun = onChildTasksCompleted;
                 } else {
+                    // 如果有子级节点 当处理完毕后触发监听器
                     toRun = () -> {};
                     if (childTaskCompletedListeners == null) {
                         childTaskCompletedListeners = new ArrayList<>();

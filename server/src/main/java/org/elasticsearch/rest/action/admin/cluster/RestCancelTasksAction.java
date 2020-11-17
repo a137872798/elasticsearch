@@ -34,7 +34,9 @@ import java.util.function.Supplier;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.action.admin.cluster.RestListTasksAction.listTasksResponseListener;
 
-
+/**
+ * 该处理器是处理rest请求中的 task_cancel
+ */
 public class RestCancelTasksAction extends BaseRestHandler {
     private final Supplier<DiscoveryNodes> nodesInCluster;
 
@@ -53,9 +55,20 @@ public class RestCancelTasksAction extends BaseRestHandler {
             new Route(POST, "/_tasks/{task_id}/_cancel"));
     }
 
+    /**
+     * 定义了如何处理请求对象
+     * @param request the request to execute
+     * @param client  client for executing actions on the local node
+     * @return
+     * @throws IOException
+     */
     @Override
     public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
+        // 可能有多种途径可以关闭任务
+
+        // 从请求体中 获取参数信息 拆解成一组nodeid
         final String[] nodesIds = Strings.splitStringByCommaToArray(request.param("nodes"));
+        // 每当要处理请求时 就是先封装成一个Task对象 这里可以从外部直接关闭任务吗
         final TaskId taskId = new TaskId(request.param("task_id"));
         final String[] actions = Strings.splitStringByCommaToArray(request.param("actions"));
         final TaskId parentTaskId = new TaskId(request.param("parent_task_id"));
@@ -66,8 +79,10 @@ public class RestCancelTasksAction extends BaseRestHandler {
         cancelTasksRequest.setNodes(nodesIds);
         cancelTasksRequest.setActions(actions);
         cancelTasksRequest.setParentTaskId(parentTaskId);
+        // 是否要阻塞等待任务被关闭
         cancelTasksRequest.setWaitForCompletion(request.paramAsBoolean("wait_for_completion", cancelTasksRequest.waitForCompletion()));
         return channel ->
+            // listTasksResponseListener 这个监听器只是定义了 res会以什么形式展示
             client.admin().cluster().cancelTasks(cancelTasksRequest, listTasksResponseListener(nodesInCluster, groupBy, channel));
     }
 

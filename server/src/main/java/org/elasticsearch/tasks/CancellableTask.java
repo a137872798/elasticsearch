@@ -39,6 +39,7 @@ public abstract class CancellableTask extends Task {
 
     /**
      * This method is called by the task manager when this task is cancelled.
+     * 关闭某个任务 由子类实现具体逻辑
      */
     final void cancel(String reason) {
         assert reason != null;
@@ -58,6 +59,7 @@ public abstract class CancellableTask extends Task {
 
     /**
      * Returns true if this task can potentially have children that need to be cancelled when it parent is cancelled.
+     * 当本任务被关闭时 还会关闭子任务
      */
     public abstract boolean shouldCancelChildrenOnCancellation();
 

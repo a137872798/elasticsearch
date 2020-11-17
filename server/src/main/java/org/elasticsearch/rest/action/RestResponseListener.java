@@ -39,6 +39,7 @@ public abstract class RestResponseListener<Response> extends RestActionListener<
 
     /**
      * Builds the response to send back through the channel.
+     * 将结果转换成一个 RestRes对象 并通过channel发送
      */
     public abstract RestResponse buildResponse(Response response) throws Exception;
 }

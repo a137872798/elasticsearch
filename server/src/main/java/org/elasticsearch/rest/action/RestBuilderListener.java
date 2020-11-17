@@ -32,6 +32,12 @@ public abstract class RestBuilderListener<Response> extends RestResponseListener
         super(channel);
     }
 
+    /**
+     * 继续为父级方法增加模板
+     * @param response
+     * @return
+     * @throws Exception
+     */
     @Override
     public final RestResponse buildResponse(Response response) throws Exception {
         try (XContentBuilder builder = channel.newBuilder()) {
