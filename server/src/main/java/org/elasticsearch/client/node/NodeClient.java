@@ -43,6 +43,9 @@ import java.util.function.Supplier;
  */
 public class NodeClient extends AbstractClient {
 
+    /**
+     * 应用层action 与传输层action的映射
+     */
     @SuppressWarnings("rawtypes")
     private Map<ActionType, TransportAction> actions;
 
@@ -87,6 +90,15 @@ public class NodeClient extends AbstractClient {
         // nothing really to do
     }
 
+    /**
+     * ES节点对外开放REST接口 当收到某个请求时 会转发给NodeClient处理
+     * @param action  req对应的指令类型
+     * @param request
+     * @param listener  当处理完成后通过监听器处理结果 也就是异步的  通常就是将结果通过 RESTChannel返回给客户端
+     *                  因为底层使用了reactor模型线程  比如Netty 所以触发execute的线程都是IO线程  所以处理逻辑都需要通过业务线程执行
+     * @param <Request>
+     * @param <Response>
+     */
     @Override
     public <Request extends ActionRequest, Response extends ActionResponse>
     void doExecute(ActionType<Response> action, Request request, ActionListener<Response> listener) {
@@ -98,6 +110,7 @@ public class NodeClient extends AbstractClient {
      * Execute an {@link ActionType} locally, returning that {@link Task} used to track it, and linking an {@link ActionListener}.
      * Prefer this method if you don't need access to the task when listening for the response. This is the method used to
      * implement the {@link Client} interface.
+     * 在本地执行任务会先注册到 taskManager上
      */
     public <Request extends ActionRequest, Response extends ActionResponse>
     Task executeLocally(ActionType<Response> action, Request request, ActionListener<Response> listener) {
@@ -126,6 +139,7 @@ public class NodeClient extends AbstractClient {
 
     /**
      * Get the {@link TransportAction} for an {@link ActionType}, throwing exceptions if the action isn't available.
+     * 在应用层的action 与传输层的action 存在一个映射关系
      */
     @SuppressWarnings("unchecked")
     private <    Request extends ActionRequest,

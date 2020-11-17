@@ -28,6 +28,7 @@ import java.util.Map;
 public interface TaskAwareRequest {
     /**
      * Set a reference to task that caused this task to be run.
+     * 在通过TransportAction 处理请求时 会将task作为parentTask设置到req上
      */
     default void setParentTask(String parentTaskNode, long parentTaskId) {
         setParentTask(new TaskId(parentTaskNode, parentTaskId));

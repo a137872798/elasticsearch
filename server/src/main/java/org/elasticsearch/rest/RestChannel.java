@@ -28,6 +28,7 @@ import java.io.IOException;
 
 /**
  * A channel used to construct bytes / builder based outputs, and send responses.
+ * 定义了生成res的 builder对象  以及通过channel向客户端发送res的能力
  */
 public interface RestChannel {
 

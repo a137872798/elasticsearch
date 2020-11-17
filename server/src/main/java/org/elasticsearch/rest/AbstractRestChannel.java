@@ -34,11 +34,20 @@ import java.util.function.Predicate;
 
 import static java.util.stream.Collectors.toSet;
 
+/**
+ * 在HTTP层交互数据的通道
+ */
 public abstract class AbstractRestChannel implements RestChannel {
 
+    /**
+     * 根据首字符是否是 "-" 判断是包含还是排除关系
+     */
     private static final Predicate<String> INCLUDE_FILTER = f -> f.charAt(0) != '-';
     private static final Predicate<String> EXCLUDE_FILTER = INCLUDE_FILTER.negate();
 
+    /**
+     * 看来每收到一次请求就会生成一个channel
+     */
     protected final RestRequest request;
     private final boolean detailedErrorsEnabled;
     private final String format;
@@ -46,6 +55,9 @@ public abstract class AbstractRestChannel implements RestChannel {
     private final boolean pretty;
     private final boolean human;
 
+    /**
+     * 内部包含了byte容器 可以往容器中写入内容
+     */
     private BytesStreamOutput bytesOut;
 
     /**

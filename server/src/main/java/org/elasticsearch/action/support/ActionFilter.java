@@ -32,6 +32,7 @@ public interface ActionFilter {
 
     /**
      * The position of the filter in the chain. Execution is done from lowest order to highest.
+     * 每个拦截器可以获取在chain的位置
      */
     int order();
 
@@ -45,6 +46,7 @@ public interface ActionFilter {
      * A simple base class for injectable action filters that spares the implementation from handling the
      * filter chain. This base class should serve any action filter implementations that doesn't require
      * to apply async filtering logic.
+     * 每个过滤器在使用后 都应该通过调用 chain.proceed 切换到下一个filter 在Simple中写了模板代码 用户只需要专注apply的实现就可以
      */
     abstract class Simple implements ActionFilter {
         @Override

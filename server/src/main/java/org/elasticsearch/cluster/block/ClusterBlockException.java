@@ -34,6 +34,9 @@ import java.util.stream.Collectors;
 
 import static java.util.Collections.unmodifiableSet;
 
+/**
+ * 代表被阻塞的异常
+ */
 public class ClusterBlockException extends ElasticsearchException {
     private final Set<ClusterBlock> blocks;
 
@@ -70,6 +73,10 @@ public class ClusterBlockException extends ElasticsearchException {
         }
     }
 
+    /**
+     * 只要有一个block不允许重试   整个Exception就无法重试
+     * @return
+     */
     public boolean retryable() {
         for (ClusterBlock block : blocks) {
             if (!block.retryable()) {

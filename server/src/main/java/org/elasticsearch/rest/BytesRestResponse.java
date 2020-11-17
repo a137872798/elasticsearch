@@ -46,6 +46,9 @@ public class BytesRestResponse extends RestResponse {
 
     private static final String STATUS = "status";
 
+    /**
+     * 对应HTTP结果码
+     */
     private final RestStatus status;
     private final BytesReference content;
     private final String contentType;

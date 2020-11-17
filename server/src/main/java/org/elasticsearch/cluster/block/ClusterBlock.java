@@ -42,7 +42,7 @@ public class ClusterBlock implements Writeable, ToXContentFragment {
     private @Nullable String uuid;
     private String description;
     /**
-     * 阻塞级别
+     * 该阻塞对象针对哪些级别的操作   比如读/写索引数据  或者读/写集群元数据
      */
     private EnumSet<ClusterBlockLevel> levels;
     private boolean retryable;

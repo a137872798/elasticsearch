@@ -137,8 +137,10 @@ public class TaskManager implements ClusterStateApplier {
         Map<String, String> headers = new HashMap<>();
         long headerSize = 0;
         long maxSize = maxHeaderSize.getBytes();
-        // 获取当前线程上下文
+        // 获取当前线程上下文   当从外层RestController收到请求时 有些请求头会被转存到 ThreadContext中
         ThreadContext threadContext = threadPool.getThreadContext();
+
+        // 代表task本身需要携带的头部信息
         for (String key : taskHeaders) {
             // 从上下文中获取各种请求头
             String httpHeader = threadContext.getHeader(key);
@@ -158,6 +160,7 @@ public class TaskManager implements ClusterStateApplier {
             logger.trace("register {} [{}] [{}] [{}]", task.getId(), type, action, task.getDescription());
         }
 
+        // TODO 默认情况下生成的是普通task
         if (task instanceof CancellableTask) {
             registerCancellableTask(task);
         } else {
@@ -183,9 +186,11 @@ public class TaskManager implements ClusterStateApplier {
     Task registerAndExecute(String type, TransportAction<Request, Response> action, Request request,
                             BiConsumer<Task, Response> onResponse, BiConsumer<Task, Exception> onFailure) {
         final Releasable unregisterChildNode;
+        // TODO
         if (request.getParentTask().isSet()) {
             unregisterChildNode = registerChildNode(request.getParentTask().getId(), lastDiscoveryNodes.getLocalNode());
         } else {
+            // 默认情况下传入的req是没有父子级关系的
             unregisterChildNode = () -> {};
         }
         Task task = register(type, action.actionName, request);
@@ -333,8 +338,11 @@ public class TaskManager implements ClusterStateApplier {
 
     /**
      * Stores the task result
+     * 某些req 会标注在处理完毕后需要存储result
+     * 在分布式环境 result会存储在多个节点上
      */
     public <Response extends ActionResponse> void storeResult(Task task, Response response, ActionListener<Response> listener) {
+        // 当本节点没有加入到集群时 无法保存result
         DiscoveryNode localNode = lastDiscoveryNodes.getLocalNode();
         if (localNode == null) {
             // too early to store anything, shouldn't really be here - just pass the response along
@@ -351,7 +359,13 @@ public class TaskManager implements ClusterStateApplier {
             return;
         }
 
+        // 通过 taskResultService 存储结果
         taskResultsService.storeResult(taskResult, new ActionListener<Void>() {
+
+            /**
+             * 存储成功后通过listener 将结果通知到 客户端
+             * @param aVoid
+             */
             @Override
             public void onResponse(Void aVoid) {
                 listener.onResponse(response);

@@ -47,6 +47,10 @@ public class ClusterStateObserver {
 
     private final ClusterApplierService clusterApplierService;
     private final ThreadPool threadPool;
+
+    /**
+     * 在处理action时 会创建一个该对象 同时将此时线程上下文传入
+     */
     private final ThreadContext contextHolder;
     volatile TimeValue timeOutValue;
 
@@ -127,6 +131,11 @@ public class ClusterStateObserver {
         waitForNextChange(listener, MATCH_ALL_CHANGES_PREDICATE, timeOutValue);
     }
 
+    /**
+     * 阻塞 等待集群变化
+     * @param listener
+     * @param statePredicate
+     */
     public void waitForNextChange(Listener listener, Predicate<ClusterState> statePredicate) {
         waitForNextChange(listener, statePredicate, null);
     }
@@ -136,18 +145,23 @@ public class ClusterStateObserver {
      *
      * @param listener        callback listener
      * @param statePredicate predicate to check whether cluster state changes are relevant and the callback should be called
+     *                       当收到的state满足这个函数条件才从该方法退出
      * @param timeOutValue    a timeout for waiting. If null the global observer timeout will be used.
+     *                        阻塞一定的时间 直到集群状态发生了变化
      */
     public void waitForNextChange(Listener listener, Predicate<ClusterState> statePredicate, @Nullable TimeValue timeOutValue) {
+        // 这里将上下文先存储起来
         listener = new ContextPreservingListener(listener, contextHolder.newRestorableContext(false));
         if (observingContext.get() != null) {
             throw new ElasticsearchException("already waiting for a cluster state change");
         }
 
         Long timeoutTimeLeftMS;
+        // 如果未指定超时时间 使用全局超时时间
         if (timeOutValue == null) {
             timeOutValue = this.timeOutValue;
             if (timeOutValue != null) {
+                // 全局超时时间指的就是从该对象被初始化开始到现在的时间  所以要减去一个timeSinceStartMS
                 long timeSinceStartMS = threadPool.relativeTimeInMillis() - startTimeMS;
                 timeoutTimeLeftMS = timeOutValue.millis() - timeSinceStartMS;
                 if (timeoutTimeLeftMS <= 0L) {
@@ -161,6 +175,7 @@ public class ClusterStateObserver {
                     return;
                 }
             } else {
+                // 如果全局超时时间也未设置 则没有时间限制
                 timeoutTimeLeftMS = null;
             }
         } else {
@@ -172,6 +187,7 @@ public class ClusterStateObserver {
 
         // sample a new state. This state maybe *older* than the supplied state if we are called from an applier,
         // which wants to wait for something else to happen
+        // 立即获取一次集群状态 并进行检测 因为触发该方法的时候 可能集群状态就已经改变了 如果不行再进行阻塞
         ClusterState newState = clusterApplierService.state();
         if (lastObservedState.get().isOlderOrDifferentMaster(newState) && statePredicate.test(newState)) {
             // good enough, let's go.
@@ -179,16 +195,24 @@ public class ClusterStateObserver {
             lastObservedState.set(new StoredState(newState));
             listener.onNewClusterState(newState);
         } else {
+
+            // 这里就要开启定时任务了
             logger.trace("observer: sampled state rejected by predicate ({}). adding listener to ClusterService", newState);
+
+            // observer 不能在同一周期中调用多次 监听状态更新
             final ObservingContext context = new ObservingContext(listener, statePredicate);
             if (!observingContext.compareAndSet(null, context)) {
                 throw new ElasticsearchException("already waiting for a cluster state change");
             }
+            // 在执行该方法后 回调函数会在另一个线程池中执行 所以前面需要先存储线程上下文
             clusterApplierService.addTimeoutListener(timeoutTimeLeftMS == null ?
                 null : new TimeValue(timeoutTimeLeftMS), clusterStateListener);
         }
     }
 
+    /**
+     * 监听集群状态的变化
+     */
     class ObserverClusterStateListener implements TimeoutClusterStateListener {
 
         @Override
@@ -199,6 +223,7 @@ public class ClusterStateObserver {
                 return;
             }
             final ClusterState state = event.state();
+            // 只有本次状态符合 predicate的要求 才会触发相关的监听器
             if (context.statePredicate.test(state)) {
                 if (observingContext.compareAndSet(context, null)) {
                     clusterApplierService.removeTimeoutListener(this);
@@ -214,6 +239,10 @@ public class ClusterStateObserver {
             }
         }
 
+        /**
+         * 当该监听器设置到 clusterApplierService的监听器队列后触发该方法
+         * 此时状态有可能刚好发生了改变 所以检测一下
+         */
         @Override
         public void postAdded() {
             ObservingContext context = observingContext.get();
@@ -297,6 +326,9 @@ public class ClusterStateObserver {
         void onTimeout(TimeValue timeout);
     }
 
+    /**
+     * 检测集群状态是否更新的上下文
+     */
     static class ObservingContext {
         public final Listener listener;
         public final Predicate<ClusterState> statePredicate;
@@ -307,8 +339,19 @@ public class ClusterStateObserver {
         }
     }
 
+    /**
+     * 该函数会在指定的上下文中执行
+     */
     private static final class ContextPreservingListener implements Listener {
+
+        /**
+         * 实际应当被通知的监听器
+         */
         private final Listener delegate;
+
+        /**
+         * 用于获取之前保存的上下文的函数
+         */
         private final Supplier<ThreadContext.StoredContext> contextSupplier;
 
 
@@ -319,6 +362,8 @@ public class ClusterStateObserver {
 
         @Override
         public void onNewClusterState(ClusterState state) {
+            // 当调用contextSupplier.get()时 会恢复之前暂存的结构体对象 而在处理完毕时 自动触发AutoClosable.close() 也就是context.close() 又还原了结构体对象
+            // NB!!!
             try (ThreadContext.StoredContext context  = contextSupplier.get()) {
                 delegate.onNewClusterState(state);
             }

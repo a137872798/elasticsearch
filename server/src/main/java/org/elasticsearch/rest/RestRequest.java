@@ -55,7 +55,7 @@ import static org.elasticsearch.common.unit.ByteSizeValue.parseBytesSizeValue;
 import static org.elasticsearch.common.unit.TimeValue.parseTimeValue;
 
 /**
- * 代表基于rest风格进行交互的请求体
+ * RestController只识别 RestRequest 不识别普通的req
  */
 public class RestRequest implements ToXContent.Params {
 
@@ -76,6 +76,9 @@ public class RestRequest implements ToXContent.Params {
      * 请求头
      */
     private final Map<String, List<String>> headers;
+    /**
+     * 未通过 url解码的原始url
+     */
     private final String rawPath;
     private final Set<String> consumedParams = new HashSet<>();
     private final SetOnce<XContentType> xContentType = new SetOnce<>();
@@ -100,6 +103,7 @@ public class RestRequest implements ToXContent.Params {
                         Map<String, List<String>> headers, HttpRequest httpRequest, HttpChannel httpChannel, long requestId) {
         final XContentType xContentType;
         try {
+            // 通过从请求报文的 Content-Type中获取内容体格式信息
             xContentType = parseContentType(headers.get("Content-Type"));
         } catch (final IllegalArgumentException e) {
             throw new ContentTypeHeaderException(e);
@@ -514,6 +518,7 @@ public class RestRequest implements ToXContent.Params {
 
     /**
      * Parses the given content type string for the media type. This method currently ignores parameters.
+     * 获取内容信息
      */
     // TODO stop ignoring parameters such as charset...
     public static XContentType parseContentType(List<String> header) {
@@ -524,6 +529,7 @@ public class RestRequest implements ToXContent.Params {
         }
 
         String rawContentType = header.get(0);
+        // 比如 aplication/json;UTF-8 这种
         final String[] elements = rawContentType.split("[ \t]*;");
         if (elements.length > 0) {
             final String[] splitMediaType = elements[0].split("/");

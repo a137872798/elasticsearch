@@ -255,6 +255,11 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
      * 代表某个node信息不参与选举相关的操作
      */
     public static class VotingConfigExclusion implements Writeable, ToXContentFragment {
+
+        /**
+         * 如果使用nodeId 进行查询 没有找到匹配的节点 那么 nodeName 就会设置成_absent_
+         * 反之 如果使用nodeName进行查询 没有找到匹配的节点 那么 nodeId 就会设置成 _absent_
+         */
         public static final String MISSING_VALUE_MARKER = "_absent_";
         private final String nodeId;
         private final String nodeName;

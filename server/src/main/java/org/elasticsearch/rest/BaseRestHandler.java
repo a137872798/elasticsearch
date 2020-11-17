@@ -48,12 +48,17 @@ import java.util.stream.Collectors;
  * the transport requests executed by the associated client. While the context is fully copied over, not all the headers
  * are copied, but a selected few. It is possible to control what headers are copied over by returning them in
  * {@link ActionPlugin#getRestHeaders()}.
+ * RestHandler 定义了处理 req对象的api
+ * 该对象则是骨架类
  */
 public abstract class BaseRestHandler implements RestHandler {
 
     public static final Setting<Boolean> MULTI_ALLOW_EXPLICIT_INDEX =
         Setting.boolSetting("rest.action.multi.allow_explicit_index", true, Property.NodeScope);
 
+    /**
+     * 总计被使用了多少次
+     */
     private final LongAdder usageCount = new LongAdder();
 
     public final long getUsageCount() {
@@ -70,21 +75,32 @@ public abstract class BaseRestHandler implements RestHandler {
 
     /**
      * {@inheritDoc}
+     * 哪些请求path + method 的二元组会匹配到这个handler上
      */
     @Override
     public abstract List<Route> routes();
 
+    /**
+     * 处理接受到的请求对象
+     * @param request The request to handle
+     * @param channel The channel to write the request response to
+     * @param client A client to use to make internal requests on behalf of the original request
+     * @throws Exception
+     */
     @Override
     public final void handleRequest(RestRequest request, RestChannel channel, NodeClient client) throws Exception {
         // prepare the request for execution; has the side effect of touching the request parameters
+        // 生成req处理对象
         final RestChannelConsumer action = prepareRequest(request, client);
 
         // validate unconsumed params, but we must exclude params used to format the response
         // use a sorted set so the unconsumed parameters appear in a reliable sorted order
+        // 找到未被使用的参数  这里还要额外排除掉在 res中使用的参数
         final SortedSet<String> unconsumedParams =
             request.unconsumedParams().stream().filter(p -> !responseParams().contains(p)).collect(Collectors.toCollection(TreeSet::new));
 
         // validate the non-response params
+        // 代表存在一些不被使用的参数  这样会抛出异常
         if (!unconsumedParams.isEmpty()) {
             final Set<String> candidateParams = new HashSet<>();
             candidateParams.addAll(request.consumedParams());
@@ -92,6 +108,7 @@ public abstract class BaseRestHandler implements RestHandler {
             throw new IllegalArgumentException(unrecognized(request, unconsumedParams, candidateParams, "parameter"));
         }
 
+        // 当req的内容没有被使用时 也会抛出异常
         if (request.hasContent() && request.isContentConsumed() == false) {
             throw new IllegalArgumentException("request [" + request.method() + " " + request.path() + "] does not support having a body");
         }
@@ -183,6 +200,9 @@ public abstract class BaseRestHandler implements RestHandler {
         return Collections.emptySet();
     }
 
+    /**
+     * 装饰器模式
+     */
     public static class Wrapper extends BaseRestHandler {
 
         protected final BaseRestHandler delegate;

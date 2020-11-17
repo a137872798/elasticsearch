@@ -60,7 +60,8 @@ import static org.elasticsearch.common.unit.TimeValue.timeValueMillis;
 
 /**
  * Service that can store task results.
- * 该对象负责存储某个 task的结果
+ * 该服务专门负责存储 req 的处理结果
+ * 结果会发送到集群中 而不是只存储在本节点就算成功了
  */
 public class TaskResultsService {
 

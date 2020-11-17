@@ -31,6 +31,9 @@ import java.util.Set;
 
 public abstract class RestResponse {
 
+    /**
+     * 对应响应头信息
+     */
     private Map<String, List<String>> customHeaders;
 
     /**

@@ -27,10 +27,15 @@ import java.util.Set;
 
 /**
  * Encapsulate multiple handlers for the same path, allowing different handlers for different HTTP verbs.
+ * 针对同一个path 在不同方法级维护了restHandler
  */
 final class MethodHandlers {
 
     private final String path;
+
+    /**
+     *
+     */
     private final Map<RestRequest.Method, RestHandler> methodHandlers;
 
     MethodHandlers(String path, RestHandler handler, RestRequest.Method... methods) {
