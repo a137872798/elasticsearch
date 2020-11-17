@@ -185,14 +185,26 @@ public class ClusterBlocks extends AbstractDiffable<ClusterBlocks> {
         }
     }
 
+    /**
+     * 检测某个级别的操作是否应该被阻塞
+     * @param level
+     * @return 返回false代表不需要被阻塞
+     */
     private boolean globalBlocked(ClusterBlockLevel level) {
+        // 当level对应的global为true时
         return global(level).isEmpty() == false;
     }
 
+    /**
+     * 当发起某个级别的操作时 检测是否需要被阻塞
+     * @param level
+     * @return
+     */
     public ClusterBlockException globalBlockedException(ClusterBlockLevel level) {
         if (globalBlocked(level) == false) {
             return null;
         }
+        // 只要global() 不为空 就会返回异常
         return new ClusterBlockException(global(level));
     }
 

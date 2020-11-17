@@ -55,6 +55,8 @@ import java.util.function.Predicate;
 
 /**
  * A base class for operations that needs to be performed on the master node.
+ * 代表这些操作应该交由 role:master 的节点处理
+ * action在本节点通过 RestAction进行映射  当发送到其他节点时 通过transportService 进行匹配
  */
 public abstract class TransportMasterNodeAction<Request extends MasterNodeRequest<Request>, Response extends ActionResponse>
     extends HandledTransportAction<Request, Response> {
@@ -66,14 +68,38 @@ public abstract class TransportMasterNodeAction<Request extends MasterNodeReques
     protected final ClusterService clusterService;
     protected final IndexNameExpressionResolver indexNameExpressionResolver;
 
+    /**
+     * 线程池类型
+     */
     private final String executor;
 
+    /**
+     *
+     * @param actionName
+     * @param transportService
+     * @param clusterService
+     * @param threadPool
+     * @param actionFilters  在初始化某个action时 往往指定了相关的filter
+     * @param request
+     * @param indexNameExpressionResolver
+     */
     protected TransportMasterNodeAction(String actionName, TransportService transportService,
                                         ClusterService clusterService, ThreadPool threadPool, ActionFilters actionFilters,
                                         Writeable.Reader<Request> request, IndexNameExpressionResolver indexNameExpressionResolver) {
         this(actionName, true, transportService, clusterService, threadPool, actionFilters, request, indexNameExpressionResolver);
     }
 
+    /**
+     *
+     * @param actionName
+     * @param canTripCircuitBreaker  检测处理该action是否可能触发熔断
+     * @param transportService
+     * @param clusterService
+     * @param threadPool
+     * @param actionFilters
+     * @param request
+     * @param indexNameExpressionResolver
+     */
     protected TransportMasterNodeAction(String actionName, boolean canTripCircuitBreaker,
                                         TransportService transportService, ClusterService clusterService, ThreadPool threadPool,
                                         ActionFilters actionFilters, Writeable.Reader<Request> request,
@@ -90,6 +116,14 @@ public abstract class TransportMasterNodeAction<Request extends MasterNodeReques
 
     protected abstract Response read(StreamInput in) throws IOException;
 
+    /**
+     * 对应在leader节点上执行操作   有关元数据变化的操作肯定只能在leader节点上  因为分布式一致性算法采用了CP的实现
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     * @throws Exception
+     */
     protected abstract void masterOperation(Task task, Request request, ClusterState state,
                                             ActionListener<Response> listener) throws Exception;
 
@@ -97,30 +131,55 @@ public abstract class TransportMasterNodeAction<Request extends MasterNodeReques
         return false;
     }
 
+    /**
+     * 判断本次请求是否应当被阻塞
+     * @param request
+     * @param state
+     * @return
+     */
     protected abstract ClusterBlockException checkBlock(Request request, ClusterState state);
 
+    /**
+     * 当通过一系列的过滤器后 最终调用该方法  这里需要定义处理action的真正逻辑
+     * @param task
+     * @param request
+     * @param listener
+     */
     @Override
     protected void doExecute(Task task, final Request request, ActionListener<Response> listener) {
         new AsyncSingleAction(task, request, listener).start();
     }
 
+    /**
+     * 这里就是线程的切换点  也就是默认情况下在拦截器中都还是IO线程 而到了最后一步 切换到了线程池中的其他线程
+     * 当然用户可以提前切换线程
+     */
     class AsyncSingleAction {
 
         private final ActionListener<Response> listener;
         private final Request request;
+
         private volatile ClusterStateObserver observer;
         private final Task task;
 
+        /**
+         *
+         * @param task  在RestController接收请求后 会先注册到TaskManager上 并包装成task对象
+         * @param request   请求体中的数据
+         * @param listener   当完成任务时触发的监听器
+         */
         AsyncSingleAction(Task task, Request request, ActionListener<Response> listener) {
             this.task = task;
             this.request = request;
             if (task != null) {
+                // 为 req设置task
                 request.setParentTask(clusterService.localNode().getId(), task.getId());
             }
             this.listener = listener;
         }
 
         public void start() {
+            // 获取此时的集群状态
             ClusterState state = clusterService.state();
             logger.trace("starting processing request [{}] with cluster state version [{}]", request, state.version());
             this.observer
@@ -128,14 +187,22 @@ public abstract class TransportMasterNodeAction<Request extends MasterNodeReques
             doStart(state);
         }
 
+        /**
+         * 处理action
+         * @param clusterState
+         */
         protected void doStart(ClusterState clusterState) {
             try {
+                // 一个检测state新旧的函数
                 final Predicate<ClusterState> masterChangePredicate = MasterNodeChangePredicate.build(clusterState);
                 final DiscoveryNodes nodes = clusterState.nodes();
+                // 检测当前节点是否是 leader节点  或者该req将在当前节点执行
                 if (nodes.isLocalNodeElectedMaster() || localExecute(request)) {
                     // check for block, if blocked, retry, else, execute locally
                     final ClusterBlockException blockException = checkBlock(request, clusterState);
+                    // 发现本次操作被阻塞
                     if (blockException != null) {
+                        // 本次任务无法重试 以失败方式触发监听器
                         if (!blockException.retryable()) {
                             logger.trace("can't execute due to a non-retryable cluster block", blockException);
                             listener.onFailure(blockException);
@@ -152,8 +219,12 @@ public abstract class TransportMasterNodeAction<Request extends MasterNodeReques
                                 }
                             });
                         }
+                        // 代表本次操作不会被阻塞
                     } else {
-                        ActionListener<Response> delegate = ActionListener.delegateResponse(listener, (delegatedListener, t) -> {
+                        // 对监听器进行包装
+                        ActionListener<Response> delegate = ActionListener.delegateResponse(listener,
+                            // 当出现异常时 检测异常是否可重试
+                            (delegatedListener, t) -> {
                             if (t instanceof FailedToCommitClusterStateException || t instanceof NotMasterException) {
                                 logger.debug(() -> new ParameterizedMessage("master could not publish cluster state or " +
                                     "stepped down before publishing action [{}], scheduling a retry", actionName), t);
@@ -163,10 +234,14 @@ public abstract class TransportMasterNodeAction<Request extends MasterNodeReques
                                 delegatedListener.onFailure(t);
                             }
                         });
+
+                        // 在这里进行了线程的切换
                         threadPool.executor(executor)
                             .execute(ActionRunnable.wrap(delegate, l -> masterOperation(task, request, clusterState, l)));
                     }
                 } else {
+
+                    // 当前不在master节点上执行任务   此时还未选举出leader节点 整个集群处于不可用状态  监听集群状态变化
                     if (nodes.getMasterNode() == null) {
                         logger.debug("no known master node, scheduling a retry");
                         retry(null, masterChangePredicate);
@@ -174,7 +249,10 @@ public abstract class TransportMasterNodeAction<Request extends MasterNodeReques
                         DiscoveryNode masterNode = nodes.getMasterNode();
                         final String actionName = getMasterActionName(masterNode);
                         logger.trace("forwarding request [{}] to master [{}]", actionName, masterNode);
+
+                        // 因为这个 MasterNodeAction 本身已经要求 相关的action 必须在leader节点上执行 所以将请求发送到leader节点
                         transportService.sendRequest(masterNode, actionName, request,
+                            // 默认情况下 execute是 SAME 代表回调逻辑直接在当前线程执行
                             new ActionListenerResponseHandler<Response>(listener, TransportMasterNodeAction.this::read) {
                                 @Override
                                 public void handleException(final TransportException exp) {
@@ -185,6 +263,7 @@ public abstract class TransportMasterNodeAction<Request extends MasterNodeReques
                                         logger.debug("connection exception while trying to forward request with action name [{}] to " +
                                                 "master node [{}], scheduling a retry. Error: [{}]",
                                             actionName, nodes.getMasterNode(), exp.getDetailedMessage());
+                                        // 允许重试
                                         retry(cause, masterChangePredicate);
                                     } else {
                                         logger.trace(new ParameterizedMessage("failure when forwarding request [{}] to master [{}]",
@@ -201,7 +280,13 @@ public abstract class TransportMasterNodeAction<Request extends MasterNodeReques
             }
         }
 
+        /**
+         * 等待集群状态的变化 之后重试任务
+         * @param failure
+         * @param statePredicate 检测新的集群状态是否满足条件
+         */
         private void retry(final Throwable failure, final Predicate<ClusterState> statePredicate) {
+            // 等待集群变化后 可能就会清除掉某些block
             observer.waitForNextChange(
                 new ClusterStateObserver.Listener() {
                     @Override
@@ -209,6 +294,8 @@ public abstract class TransportMasterNodeAction<Request extends MasterNodeReques
                         logger.trace("retrying with cluster state version [{}]", state.version());
                         doStart(state);
                     }
+
+                    // 当因异常原因导致重试失败时  触发action.listener.onFailure
 
                     @Override
                     public void onClusterServiceClose() {

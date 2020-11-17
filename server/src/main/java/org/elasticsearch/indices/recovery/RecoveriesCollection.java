@@ -42,10 +42,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * of those recoveries). The class is used to guarantee concurrent semantics such that once a recoveries was done/cancelled/failed
  * no other thread will be able to find it. Last, the {@link RecoveryRef} inner class verifies that recovery temporary files
  * and store will only be cleared once on going usage is finished.
+ * 每个target都对应集群中的一个节点 代表从这个节点获取数据并恢复本地节点
  */
 public class RecoveriesCollection {
 
-    /** This is the single source of truth for ongoing recoveries. If it's not here, it was canceled or done */
+    /**
+     * This is the single source of truth for ongoing recoveries. If it's not here, it was canceled or done
+     * 维护了每个 recoveryId 与 target对象的映射关系
+     */
     private final ConcurrentMap<Long, RecoveryTarget> onGoingRecoveries = ConcurrentCollections.newConcurrentMap();
 
     private final Logger logger;
@@ -60,6 +64,7 @@ public class RecoveriesCollection {
      * Starts are new recovery for the given shard, source node and state
      *
      * @return the id of the new recovery.
+     * 将某个分片与对应的node 合成一个target对象
      */
     public long startRecovery(IndexShard indexShard, DiscoveryNode sourceNode,
                               PeerRecoveryTargetService.RecoveryListener listener, TimeValue activityTimeout) {
@@ -68,6 +73,11 @@ public class RecoveriesCollection {
         return recoveryTarget.recoveryId();
     }
 
+    /**
+     * 在启动恢复操作时 会开启一个监控器  定期检查target的lastAccessTime是否更新
+     * @param recoveryTarget
+     * @param activityTimeout
+     */
     private void startRecoveryInternal(RecoveryTarget recoveryTarget, TimeValue activityTimeout) {
         RecoveryTarget existingTarget = onGoingRecoveries.putIfAbsent(recoveryTarget.recoveryId(), recoveryTarget);
         assert existingTarget == null : "found two RecoveryStatus instances with the same id";
@@ -82,6 +92,7 @@ public class RecoveriesCollection {
      *
      * @see IndexShard#performRecoveryRestart()
      * @return newly created RecoveryTarget
+     * 重启某个恢复操作
      */
     public RecoveryTarget resetRecovery(final long recoveryId, final TimeValue activityTimeout) {
         RecoveryTarget oldRecoveryTarget = null;
@@ -96,11 +107,13 @@ public class RecoveriesCollection {
                     return null;
                 }
 
+                // 生成一个新的恢复对象 同时开始监控这个新对象
                 newRecoveryTarget = oldRecoveryTarget.retryCopy();
                 startRecoveryInternal(newRecoveryTarget, activityTimeout);
             }
 
             // Closes the current recovery target
+            // 将之前的 recoveryState 重置成 init    当从该方法返回时 已经从阻塞状态解除了
             boolean successfulReset = oldRecoveryTarget.resetRecovery(newRecoveryTarget.cancellableThreads());
             if (successfulReset) {
                 logger.trace("{} restarted recovery from {}, id [{}], previous id [{}]", newRecoveryTarget.shardId(),
@@ -134,6 +147,7 @@ public class RecoveriesCollection {
     public RecoveryRef getRecovery(long id) {
         RecoveryTarget status = onGoingRecoveries.get(id);
         if (status != null && status.tryIncRef()) {
+            // 在获取该对象时增加引用计数 同时在返回时减少引用计数
             return new RecoveryRef(status);
         }
         return null;
@@ -149,7 +163,10 @@ public class RecoveriesCollection {
         return recoveryRef;
     }
 
-    /** cancel the recovery with the given id (if found) and remove it from the recovery collection */
+    /**
+     * cancel the recovery with the given id (if found) and remove it from the recovery collection
+     * 一般是当某个恢复操作已经完成时触发
+     */
     public boolean cancelRecovery(long id, String reason) {
         RecoveryTarget removed = onGoingRecoveries.remove(id);
         boolean cancelled = false;
@@ -168,6 +185,8 @@ public class RecoveriesCollection {
      * @param id               id of the recovery to fail
      * @param e                exception with reason for the failure
      * @param sendShardFailure true a shard failed message should be sent to the master
+     *                         是否需要将失败信息发送到master节点
+     *                         实际上是触发 target 内部监听器的相关钩子
      */
     public void failRecovery(long id, RecoveryFailedException e, boolean sendShardFailure) {
         RecoveryTarget removed = onGoingRecoveries.remove(id);
@@ -183,6 +202,7 @@ public class RecoveriesCollection {
         RecoveryTarget removed = onGoingRecoveries.remove(id);
         if (removed != null) {
             logger.trace("{} marking recovery from {} as done, id [{}]", removed.shardId(), removed.sourceNode(), removed.recoveryId());
+            // 修改recoveryState的状态为已完成
             removed.markAsDone();
         }
     }
@@ -198,6 +218,7 @@ public class RecoveriesCollection {
      * @param reason       reason for cancellation
      * @param shardId      shardId for which to cancel recoveries
      * @return true if a recovery was cancelled
+     * 针对同一个分片允许同时存在多个 recoveryId 吗???
      */
     public boolean cancelRecoveriesForShard(ShardId shardId, String reason) {
         boolean cancelled = false;
@@ -251,10 +272,20 @@ public class RecoveriesCollection {
         }
     }
 
+    /**
+     * 这是一个监视器
+     */
     private class RecoveryMonitor extends AbstractRunnable {
         private final long recoveryId;
+
+        /**
+         * 每次触发检查的时间间隔
+         */
         private final TimeValue checkInterval;
 
+        /**
+         * 记录最近一次看到的 recoveryId对应的status对象记录的时间戳
+         */
         private volatile long lastSeenAccessTime;
 
         private RecoveryMonitor(long recoveryId, long lastSeenAccessTime, TimeValue checkInterval) {

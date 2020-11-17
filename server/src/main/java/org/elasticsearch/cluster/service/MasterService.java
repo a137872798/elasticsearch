@@ -656,6 +656,9 @@ public class MasterService extends AbstractLifecycleComponent {
         }
     }
 
+    /**
+     * 在执行回调时 会将线程上下文切换成 context中暂存的
+     */
     private static class SafeClusterStateTaskListener implements ClusterStateTaskListener {
         private final ClusterStateTaskListener listener;
         protected final Supplier<ThreadContext.StoredContext> context;
@@ -994,11 +997,14 @@ public class MasterService extends AbstractLifecycleComponent {
             return;
         }
         final ThreadContext threadContext = threadPool.getThreadContext();
+        // 将当前线程上下文暂存到这个函数中
         final Supplier<ThreadContext.StoredContext> supplier = threadContext.newRestorableContext(true);
+        // threadContext.stashContext 开启一个新的上下文
         try (ThreadContext.StoredContext ignore = threadContext.stashContext()) {
             threadContext.markAsSystemContext();
 
             List<Batcher.UpdateTask> safeTasks = tasks.entrySet().stream()
+                // 传入supplier是为了用户可以根据自己的需要随时恢复线程上下文
                 .map(e -> taskBatcher.new UpdateTask(config.priority(), source, e.getKey(), safe(e.getValue(), supplier), executor))
                 .collect(Collectors.toList());
             taskBatcher.submitTasks(safeTasks, config.timeout());

@@ -27,23 +27,17 @@ import java.util.Set;
 
 /**
  * Encapsulate multiple handlers for the same path, allowing different handlers for different HTTP verbs.
- * Method指的是 Rest请求类型
+ * 针对同一个path 在不同方法级维护了restHandler
  */
 final class MethodHandlers {
 
     private final String path;
 
     /**
-     * 处理器与 method是一对多的关系  多种method可以交由同一handler进行处理
+     *
      */
     private final Map<RestRequest.Method, RestHandler> methodHandlers;
 
-    /**
-     *
-     * @param path
-     * @param handler  已经被包装过的handler对象
-     * @param methods  请求类型
-     */
     MethodHandlers(String path, RestHandler handler, RestRequest.Method... methods) {
         this.path = path;
         this.methodHandlers = new HashMap<>(methods.length);
@@ -55,7 +49,6 @@ final class MethodHandlers {
     /**
      * Add a handler for an additional array of methods. Note that {@code MethodHandlers}
      * does not allow replacing the handler for an already existing method.
-     * 只是简单的增加映射关系
      */
     MethodHandlers addMethods(RestHandler handler, RestRequest.Method... methods) {
         for (RestRequest.Method method : methods) {

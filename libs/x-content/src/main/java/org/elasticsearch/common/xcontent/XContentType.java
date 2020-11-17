@@ -38,6 +38,10 @@ public enum XContentType {
      * 代表使用JSON类型
      */
     JSON(0) {
+        /**
+         * 在Http请求头中如果检测到了 application/json 就代表内容体是json格式
+         * @return
+         */
         @Override
         public String mediaTypeWithoutParameters() {
             return "application/json";

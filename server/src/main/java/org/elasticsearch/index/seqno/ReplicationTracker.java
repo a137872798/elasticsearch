@@ -345,12 +345,13 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     /**
      * Atomically clones an existing retention lease to a new ID.
      *
-     * @param sourceLeaseId the identifier of the source retention lease
-     * @param targetLeaseId the identifier of the retention lease to create
+     * @param sourceLeaseId the identifier of the source retention lease         通过主分片节点生成的续约id
+     * @param targetLeaseId the identifier of the retention lease to create      通过目标节点生成的续约id
      * @param listener      the callback when the retention lease is successfully added and synced to replicas
      * @return the new retention lease
      * @throws RetentionLeaseNotFoundException      if the specified source retention lease does not exist
      * @throws RetentionLeaseAlreadyExistsException if the specified target retention lease already exists
+     * 生成续约对象 意味着什么
      */
     RetentionLease cloneRetentionLease(String sourceLeaseId, String targetLeaseId, ActionListener<ReplicationResponse> listener) {
         Objects.requireNonNull(listener);
@@ -358,6 +359,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         final RetentionLeases currentRetentionLeases;
         synchronized (this) {
             assert primaryMode;
+            // 当前续约信息不存在会抛出异常
             if (getRetentionLeases().contains(sourceLeaseId) == false) {
                 throw new RetentionLeaseNotFoundException(sourceLeaseId);
             }
@@ -541,9 +543,17 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             PEER_RECOVERY_RETENTION_LEASE_SOURCE, listener);
     }
 
+    /**
+     * 根据相关信息生成续约对象
+     * @param nodeId
+     * @param listener
+     * @return
+     */
     public RetentionLease cloneLocalPeerRecoveryRetentionLease(String nodeId, ActionListener<ReplicationResponse> listener) {
         return cloneRetentionLease(
+            // 生成主分片相关的续约id
             getPeerRecoveryRetentionLeaseId(routingTable.primaryShard()),
+            // 目标节点对应的续约id
             getPeerRecoveryRetentionLeaseId(nodeId), listener);
     }
 

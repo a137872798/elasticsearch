@@ -30,7 +30,8 @@ import org.elasticsearch.tasks.TaskManager;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 该对象可以直接运行
+ * 传输层Action 应该是对应在ES内部使用的
+ * ES 对外会提供HTTP接口 对内则是直接通过传输层进行通信
  * @param <Request>
  * @param <Response>
  */
@@ -66,7 +67,9 @@ public abstract class TransportAction<Request extends ActionRequest, Response ex
             return;
         }
 
+        // 如果需要存储处理结果
         if (task != null && request.getShouldStoreResult()) {
+            // 包装回调对象 追加存储能力  即使是异常信息也会存储
             listener = new TaskResultStoringActionListener<>(taskManager, task, listener);
         }
 
@@ -85,7 +88,8 @@ public abstract class TransportAction<Request extends ActionRequest, Response ex
             implements ActionFilterChain<Request, Response> {
 
         /**
-         * 该对象本身可以直接运行
+         * 每个req对应一个 chain
+         * 多个chain 对应一个transportAction
          */
         private final TransportAction<Request, Response> action;
         private final AtomicInteger index = new AtomicInteger();
@@ -100,8 +104,10 @@ public abstract class TransportAction<Request extends ActionRequest, Response ex
         public void proceed(Task task, String actionName, Request request, ActionListener<Response> listener) {
             int i = index.getAndIncrement();
             try {
+                // 前面通过各种拦截器处理  每个拦截器在处理完后需要调用 proceed 进行下一环
                 if (i < this.action.filters.length) {
                     this.action.filters[i].apply(task, actionName, request, listener, this);
+                    // 最终触发doExecute
                 } else if (i == this.action.filters.length) {
                     this.action.doExecute(task, request, listener);
                 } else {

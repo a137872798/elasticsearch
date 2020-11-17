@@ -54,6 +54,10 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+/**
+ * 匹配 AddVotingConfigExclusionsAction
+ * 在选举阶段 会将某些节点排除 避免他们成为leader节点
+ */
 public class TransportAddVotingConfigExclusionsAction extends TransportMasterNodeAction<AddVotingConfigExclusionsRequest,
     AddVotingConfigExclusionsResponse> {
 
@@ -72,6 +76,7 @@ public class TransportAddVotingConfigExclusionsAction extends TransportMasterNod
             AddVotingConfigExclusionsRequest::new, indexNameExpressionResolver);
 
         maxVotingConfigExclusions = MAXIMUM_VOTING_CONFIG_EXCLUSIONS_SETTING.get(settings);
+        // 有关最大数量的 exclusion是一个动态配置
         clusterSettings.addSettingsUpdateConsumer(MAXIMUM_VOTING_CONFIG_EXCLUSIONS_SETTING, this::setMaxVotingConfigExclusions);
     }
 
@@ -79,6 +84,10 @@ public class TransportAddVotingConfigExclusionsAction extends TransportMasterNod
         this.maxVotingConfigExclusions = maxVotingConfigExclusions;
     }
 
+    /**
+     * 指定 masterOperation 在当前线程执行
+     * @return
+     */
     @Override
     protected String executor() {
         return Names.SAME;
@@ -89,23 +98,41 @@ public class TransportAddVotingConfigExclusionsAction extends TransportMasterNod
         return new AddVotingConfigExclusionsResponse(in);
     }
 
+    /**
+     * 当本节点是集群中的leader节点时触发       修改集群元数据的操作也只能在leader节点上执行
+     * 在传输层 接收到请求后 会立刻将请求对应的handler对象在线程池中执行  所以这时线程已经切换了
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     * @throws Exception
+     */
     @Override
     protected void masterOperation(Task task, AddVotingConfigExclusionsRequest request, ClusterState state,
                                    ActionListener<AddVotingConfigExclusionsResponse> listener) throws Exception {
 
+        // 检验确保排除数没有达到上限
         resolveVotingConfigExclusionsAndCheckMaximum(request, state, maxVotingConfigExclusions);
         // throws IAE if no nodes matched or maximum exceeded
 
+        // 更新集群状态  当前节点必然是leader节点 那么任务就会直接在本节点触发
         clusterService.submitStateUpdateTask("add-voting-config-exclusions", new ClusterStateUpdateTask(Priority.URGENT) {
 
             private Set<VotingConfigExclusion> resolvedExclusions;
 
+            /**
+             * 这里定义了更新状态的逻辑    之后新的集群状态会通过 协调对象通知到集群中所有的节点
+             * @param currentState
+             * @return
+             */
             @Override
             public ClusterState execute(ClusterState currentState) {
                 assert resolvedExclusions == null : resolvedExclusions;
+                // 重新检测一下 本次增加的配置
                 final int finalMaxVotingConfigExclusions = TransportAddVotingConfigExclusionsAction.this.maxVotingConfigExclusions;
                 resolvedExclusions = resolveVotingConfigExclusionsAndCheckMaximum(request, currentState, finalMaxVotingConfigExclusions);
 
+                // 返回新的集群元数据
                 final CoordinationMetadata.Builder builder = CoordinationMetadata.builder(currentState.coordinationMetadata());
                 resolvedExclusions.forEach(builder::addVotingConfigExclusion);
                 final Metadata newMetadata = Metadata.builder(currentState.metadata()).coordinationMetadata(builder.build()).build();
@@ -119,6 +146,12 @@ public class TransportAddVotingConfigExclusionsAction extends TransportMasterNod
                 listener.onFailure(e);
             }
 
+            /**
+             * 任务完成的时候会触发监听器   也就是发布任务并不能确保已经完成了   必须确保超半数节点修改成功 才能触发相关钩子
+             * @param source
+             * @param oldState
+             * @param newState
+             */
             @Override
             public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
 
@@ -128,6 +161,7 @@ public class TransportAddVotingConfigExclusionsAction extends TransportMasterNod
                 final Set<String> excludedNodeIds = resolvedExclusions.stream().map(VotingConfigExclusion::getNodeId)
                     .collect(Collectors.toSet());
 
+                // 当这些节点不再出现在参选节点列表后
                 final Predicate<ClusterState> allNodesRemoved = clusterState -> {
                     final Set<String> votingConfigNodeIds = clusterState.getLastCommittedConfiguration().getNodeIds();
                     return excludedNodeIds.stream().noneMatch(votingConfigNodeIds::contains);
@@ -152,6 +186,7 @@ public class TransportAddVotingConfigExclusionsAction extends TransportMasterNod
                     }
                 };
 
+                // TODO 这个监听器应该是要发布到超过半数  role:master 才会触发onNewClusterState吧
                 if (allNodesRemoved.test(newState)) {
                     clusterStateListener.onNewClusterState(newState);
                 } else {
@@ -161,6 +196,13 @@ public class TransportAddVotingConfigExclusionsAction extends TransportMasterNod
         });
     }
 
+    /**
+     * 校验确保总计排除的 master节点不超过上限
+     * @param request
+     * @param state
+     * @param maxVotingConfigExclusions
+     * @return
+     */
     private static Set<VotingConfigExclusion> resolveVotingConfigExclusionsAndCheckMaximum(AddVotingConfigExclusionsRequest request,
                                                                                            ClusterState state,
                                                                                            int maxVotingConfigExclusions) {
@@ -168,6 +210,13 @@ public class TransportAddVotingConfigExclusionsAction extends TransportMasterNod
             MAXIMUM_VOTING_CONFIG_EXCLUSIONS_SETTING.getKey());
     }
 
+    /**
+     * 当处理某个请求时 检测是否应该返回被阻塞的异常
+     * 该action是修改参选的节点  属于修改元数据的操作 所以是 METADATA_WRITE
+     * @param request
+     * @param state
+     * @return
+     */
     @Override
     protected ClusterBlockException checkBlock(AddVotingConfigExclusionsRequest request, ClusterState state) {
         return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA_WRITE);

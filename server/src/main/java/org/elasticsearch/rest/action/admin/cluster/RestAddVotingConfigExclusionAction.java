@@ -33,6 +33,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 记得在选举过程中 可以声明哪个节点会被排除
+ */
 public class RestAddVotingConfigExclusionAction extends BaseRestHandler {
     private static final TimeValue DEFAULT_TIMEOUT = TimeValue.timeValueSeconds(30L);
 
@@ -41,14 +44,28 @@ public class RestAddVotingConfigExclusionAction extends BaseRestHandler {
         return "add_voting_config_exclusions_action";
     }
 
+    /**
+     * 代表当使用什么path + method 会匹配到这个处理器
+     * @return
+     */
     @Override
     public List<Route> routes() {
         return List.of(new Route(POST, "/_cluster/voting_config_exclusions"));
     }
 
+    /**
+     * 生成消费者对象
+     * @param request the request to execute
+     * @param client  client for executing actions on the local node
+     * @return
+     * @throws IOException
+     */
     @Override
     protected RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
+        // 将RestReq转换成了 ESReq
         AddVotingConfigExclusionsRequest votingConfigExclusionsRequest = resolveVotingConfigExclusionsRequest(request);
+
+        // 返回一个接收channel对象并处理请求的消费者
         return channel -> client.execute(
             AddVotingConfigExclusionsAction.INSTANCE,
             votingConfigExclusionsRequest,
@@ -60,6 +77,7 @@ public class RestAddVotingConfigExclusionAction extends BaseRestHandler {
         String nodeIds = null;
         String nodeNames = null;
 
+        // 这里获取相关参数 同时将这些参数标记成已使用   在上层的 BaseRestHandler中会检测是否有未使用的参数  存在则抛出异常
         if (request.hasParam("node_ids")) {
             nodeIds = request.param("node_ids");
         }
@@ -68,6 +86,7 @@ public class RestAddVotingConfigExclusionAction extends BaseRestHandler {
             nodeNames = request.param("node_names");
         }
 
+        // 将从Rest客户端接收到的请求转换成了ES内部的请求对象
         return new AddVotingConfigExclusionsRequest(
             Strings.splitStringByCommaToArray(nodeIds),
             Strings.splitStringByCommaToArray(nodeNames),

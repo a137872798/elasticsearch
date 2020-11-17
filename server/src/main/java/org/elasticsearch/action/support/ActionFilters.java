@@ -25,6 +25,7 @@ import java.util.Set;
 
 /**
  * Holds the action filters injected through plugins, properly sorted by {@link org.elasticsearch.action.support.ActionFilter#order()}
+ * 对应某个TransportAction的全部filter
  */
 public class ActionFilters {
 

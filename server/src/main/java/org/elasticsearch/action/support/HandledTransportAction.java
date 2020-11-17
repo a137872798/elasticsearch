@@ -29,6 +29,7 @@ import org.elasticsearch.transport.TransportService;
 
 /**
  * A TransportAction that self registers a handler into the transport service
+ * HandledTransportAction 在初始化时会将自己装配到 TransportService上 通过指定action 设置匹配的handler
  */
 public abstract class HandledTransportAction<Request extends ActionRequest, Response extends ActionResponse>
         extends TransportAction<Request, Response> {

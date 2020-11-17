@@ -28,6 +28,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 在recovery.phase1 阶段用于同步文件信息的请求体
+ */
 public class RecoveryFilesInfoRequest extends TransportRequest {
 
     private long recoveryId;

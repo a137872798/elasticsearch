@@ -60,7 +60,7 @@ import static org.elasticsearch.rest.RestStatus.NOT_ACCEPTABLE;
 import static org.elasticsearch.rest.RestStatus.OK;
 
 /**
- * 控制器 负责将req 分配到合适的handler进行处理 实际上就是一个 Dispatcher
+ * 处理http请求的控制器
  */
 public class RestController implements HttpServerTransport.Dispatcher {
 
@@ -68,28 +68,27 @@ public class RestController implements HttpServerTransport.Dispatcher {
     private static final DeprecationLogger deprecationLogger = new DeprecationLogger(logger);
 
     /**
-     * path -> handler 通过单词查找树的形式进行存储
+     * 通过trie的算法 实现路径/handler 匹配
+     * 针对同一路径的多个method 会通过同一个methodHandler处理
+     * 在methodHandler内部 通过method 来匹配不同的restHandler
+     * restHandler 就是最小粒度的处理器
      */
     private final PathTrie<MethodHandlers> handlers = new PathTrie<>(RestUtils.REST_DECODER);
 
-    /**
-     * 每个handler对象可以用该对象做一层包装
-     * 默认就是 Function.Identity
-     */
     private final UnaryOperator<RestHandler> handlerWrapper;
 
     private final NodeClient client;
 
-    /**
-     * 处理rest请求时 也会做限流操作
-     */
     private final CircuitBreakerService circuitBreakerService;
 
-    /** Rest headers that are copied to internal requests made during a rest request. */
-    private final Set<RestHeaderDefinition> headersToCopy;
     /**
-     * 使用量相关的先忽略
+     * Rest headers that are copied to internal requests made during a rest request.
+     * 这里定义了请求头的规则   每个收到的req对象需要通过这组规则进行校验  匹配成功的请求头将会存储一份到ThreadContext上
+     * 便于在后面的处理中随时获取
+     * RestHeaderDefinition.name 代表什么请求头会受到约束
+     * RestHeaderDefinition.multiValueAllowed  说明这个请求头是否支持多个value
      */
+    private final Set<RestHeaderDefinition> headersToCopy;
     private final UsageService usageService;
 
     public RestController(Set<RestHeaderDefinition> headersToCopy, UnaryOperator<RestHandler> handlerWrapper,
@@ -111,7 +110,6 @@ public class RestController implements HttpServerTransport.Dispatcher {
      * @param path Path to handle (e.g., "/{index}/{type}/_bulk")
      * @param handler The handler to actually execute
      * @param deprecationMessage The message to log and send as a header in the response
-     *                           忽略被废弃的方法
      */
     protected void registerAsDeprecatedHandler(RestRequest.Method method, String path, RestHandler handler, String deprecationMessage) {
         assert (handler instanceof DeprecationRestHandler) == false;
@@ -159,34 +157,41 @@ public class RestController implements HttpServerTransport.Dispatcher {
      * @param path Path to handle (e.g., "/{index}/{type}/_bulk")
      * @param handler The handler to actually execute
      * @param method GET, POST, etc.
-     *               注册某种路径对应的handler对象
+     *               将处理器注册到PathTrie中
      */
     protected void registerHandler(RestRequest.Method method, String path, RestHandler handler) {
-        // 只有BaseHandler 会被usage服务管理
         if (handler instanceof BaseRestHandler) {
             usageService.addRestHandler((BaseRestHandler) handler);
         }
         final RestHandler maybeWrappedHandler = handlerWrapper.apply(handler);
-        // 插入到路径查找树
         handlers.insertOrUpdate(path, new MethodHandlers(path, maybeWrappedHandler, method),
-            // path匹配的时候 以method作为key
             (mHandlers, newMHandler) -> mHandlers.addMethods(maybeWrappedHandler, method));
     }
 
     /**
      * Registers a REST handler with the controller. The REST handler declares the {@code method}
      * and {@code path} combinations.
+     *
      */
     public void registerHandler(final RestHandler restHandler) {
+        // routes 返回这个handler允许处理的所有 route   route包含path/method2个关键属性
         restHandler.routes().forEach(route -> registerHandler(route.getMethod(), route.getPath(), restHandler));
+        // TODO 忽略兼容性代码
         restHandler.deprecatedRoutes().forEach(route ->
             registerAsDeprecatedHandler(route.getMethod(), route.getPath(), restHandler, route.getDeprecationMessage()));
         restHandler.replacedRoutes().forEach(route -> registerWithDeprecatedHandler(route.getMethod(), route.getPath(),
             restHandler, route.getDeprecatedMethod(), route.getDeprecatedPath()));
     }
 
+    /**
+     * 当接收到一个rest请求后 分发到对应handler进行处理
+     * @param request       the request to dispatch
+     * @param channel       the response channel of this request  该通道是用于返回结果的
+     * @param threadContext the thread context
+     */
     @Override
     public void dispatchRequest(RestRequest request, RestChannel channel, ThreadContext threadContext) {
+        // TODO
         if (request.rawPath().equals("/favicon.ico")) {
             handleFavicon(request.method(), request.uri(), channel);
             return;
@@ -195,6 +200,7 @@ public class RestController implements HttpServerTransport.Dispatcher {
             tryAllHandlers(request, channel, threadContext);
         } catch (Exception e) {
             try {
+                // 将异常信息转换成数据流 并发送到对端
                 channel.sendResponse(new BytesRestResponse(channel, e));
             } catch (Exception inner) {
                 inner.addSuppressed(e);
@@ -204,6 +210,9 @@ public class RestController implements HttpServerTransport.Dispatcher {
         }
     }
 
+    /**
+     * 当接收到一个畸形的req时 触发该方法
+     */
     @Override
     public void dispatchBadRequest(final RestChannel channel, final ThreadContext threadContext, final Throwable cause) {
         try {
@@ -215,6 +224,7 @@ public class RestController implements HttpServerTransport.Dispatcher {
             } else {
                 e = new ElasticsearchException(cause);
             }
+            // 直接将异常信息返回给对端
             channel.sendResponse(new BytesRestResponse(channel, BAD_REQUEST, e));
         } catch (final IOException e) {
             if (cause != null) {
@@ -225,14 +235,23 @@ public class RestController implements HttpServerTransport.Dispatcher {
         }
     }
 
+    /**
+     * 使用处理器 处理req对象
+     * @param request
+     * @param channel  通过该对象可以将数据流写回给客户端
+     * @param handler
+     * @throws Exception
+     */
     private void dispatchRequest(RestRequest request, RestChannel channel, RestHandler handler) throws Exception {
         final int contentLength = request.contentLength();
         if (contentLength > 0) {
+            // 请求体中的 XContentType 就是通过解析请求头携带的Content-Type获得的
             final XContentType xContentType = request.getXContentType();
             if (xContentType == null) {
                 sendContentTypeErrorMessage(request.getAllHeaderValues("Content-Type"), channel);
                 return;
             }
+            // 当handler支持处理数据流    要求此时contentType 必须是json或者smile  啥意思 ???
             if (handler.supportsContentStream() && xContentType != XContentType.JSON && xContentType != XContentType.SMILE) {
                 channel.sendResponse(BytesRestResponse.createSimpleErrorResponse(channel, RestStatus.NOT_ACCEPTABLE,
                     "Content-Type [" + xContentType + "] does not support stream parsing. Use JSON or SMILE instead"));
@@ -241,31 +260,46 @@ public class RestController implements HttpServerTransport.Dispatcher {
         }
         RestChannel responseChannel = channel;
         try {
+            // 这个处理器是否受熔断器限制
             if (handler.canTripCircuitBreaker()) {
                 inFlightRequestsBreaker(circuitBreakerService).addEstimateBytesAndMaybeBreak(contentLength, "<http_request>");
             } else {
+                // withoutBreaking 会增加负载量 但是不会触发熔断  这样其他action会更容易达到熔断值
                 inFlightRequestsBreaker(circuitBreakerService).addWithoutBreaking(contentLength);
             }
             // iff we could reserve bytes for the request we need to send the response also over this channel
             responseChannel = new ResourceHandlingHttpChannel(channel, circuitBreakerService, contentLength);
             // TODO: Count requests double in the circuit breaker if they need copying?
+            // 这一步的含义是什么 特地拷贝了一份 httpRequest
             if (handler.allowsUnsafeBuffers() == false) {
                 request.ensureSafeBuffers();
             }
             handler.handleRequest(request, responseChannel, client);
         } catch (Exception e) {
+            // 当处理失败时 将异常信息序列化并发送给client
             responseChannel.sendResponse(new BytesRestResponse(responseChannel, e));
         }
     }
 
+    /**
+     * 当指定path/method找不到匹配的handler时
+     * @param rawPath
+     * @param method
+     * @param uri
+     * @param channel
+     * @return
+     */
     private boolean handleNoHandlerFound(String rawPath, RestRequest.Method method, String uri, RestChannel channel) {
         // Get the map of matching handlers for a request, for the full set of HTTP methods.
         final Set<RestRequest.Method> validMethodSet = getValidHandlerMethodSet(rawPath);
+        // 如果这个method总集不包含 入参方法  就代表确实不存在对应的handler
         if (validMethodSet.contains(method) == false) {
             if (method == RestRequest.Method.OPTIONS) {
+                // 如果是Options 会返回支持的所有method到请求端
                 handleOptionsRequest(channel, validMethodSet);
                 return true;
             }
+            // 代表如果更换method就可以与handler匹配成功  需要将提示信息返回给对端
             if (validMethodSet.isEmpty() == false) {
                 // If an alternative handler for an explicit path is registered to a
                 // different HTTP method than the one supplied - return a 405 Method
@@ -277,6 +311,12 @@ public class RestController implements HttpServerTransport.Dispatcher {
         return false;
     }
 
+    /**
+     * 将错误信息返回给客户端 有关内容体格式的
+     * @param contentTypeHeader
+     * @param channel
+     * @throws IOException
+     */
     private void sendContentTypeErrorMessage(@Nullable List<String> contentTypeHeader, RestChannel channel) throws IOException {
         final String errorMessage;
         if (contentTypeHeader == null) {
@@ -289,24 +329,37 @@ public class RestController implements HttpServerTransport.Dispatcher {
         channel.sendResponse(BytesRestResponse.createSimpleErrorResponse(channel, NOT_ACCEPTABLE, errorMessage));
     }
 
+    /**
+     * 在处理正常的 RestReq时 会转发到该方法
+     * @param request
+     * @param channel
+     * @param threadContext
+     * @throws Exception
+     */
     private void tryAllHandlers(final RestRequest request, final RestChannel channel, final ThreadContext threadContext) throws Exception {
+        // 这部分请求头会存储到 ThreadContext中
         for (final RestHeaderDefinition restHeader : headersToCopy) {
             final String name = restHeader.getName();
+            // 请求头中一个name 可能会对应多个value的
             final List<String> headerValues = request.getAllHeaderValues(name);
             if (headerValues != null && headerValues.isEmpty() == false) {
                 final List<String> distinctHeaderValues = headerValues.stream().distinct().collect(Collectors.toList());
+                // 在请求头不允许多个value时 检测到多个value 直接将异常信息返回
                 if (restHeader.isMultiValueAllowed() == false && distinctHeaderValues.size() > 1) {
                     channel.sendResponse(
                         BytesRestResponse.
                             createSimpleErrorResponse(channel, BAD_REQUEST, "multiple values for single-valued header [" + name + "]."));
                     return;
                 } else {
+                    // 将请求头信息设置到当前线程绑定的上下文中
+                    // ThreadContext 在很多方法中都有使用 为了方便使用者获取此时绑定在线程上的特殊信息
                     threadContext.putHeader(name, String.join(",", distinctHeaderValues));
                 }
             }
         }
         // error_trace cannot be used when we disable detailed errors
         // we consume the error_trace parameter first to ensure that it is always consumed
+        // 当channel 不支持追踪异常信息 而在请求头中指定要追踪 则代表这是一个不合理的请求
         if (request.paramAsBoolean("error_trace", false) && channel.detailedErrorsEnabled() == false) {
             channel.sendResponse(
                     BytesRestResponse.createSimpleErrorResponse(channel, BAD_REQUEST, "error traces in responses are disabled."));
@@ -320,6 +373,7 @@ public class RestController implements HttpServerTransport.Dispatcher {
             // Resolves the HTTP method and fails if the method is invalid
             requestMethod = request.method();
             // Loop through all possible handlers, attempting to dispatch the request
+            // 获取所有符合条件的处理器
             Iterator<MethodHandlers> allHandlers = getAllHandlers(request.params(), rawPath);
             while (allHandlers.hasNext()) {
                 final RestHandler handler;
@@ -330,10 +384,13 @@ public class RestController implements HttpServerTransport.Dispatcher {
                     handler = handlers.getHandler(requestMethod);
                 }
                 if (handler == null) {
+                    // 返回true 就是已经将提示信息返回给对端了
+                    // 返回false 会继续遍历下一个 MethodHandlers
                   if (handleNoHandlerFound(rawPath, requestMethod, uri, channel)) {
                       return;
                   }
                 } else {
+                    // 当找到匹配的handler时触发该方法
                     dispatchRequest(request, channel, handler);
                     return;
                 }
@@ -343,9 +400,16 @@ public class RestController implements HttpServerTransport.Dispatcher {
             return;
         }
         // If request has not been handled, fallback to a bad request error.
+        // 代表不存在匹配的handler 也没有handler的相关提示信息返回给请求端    代表这是一个BadRequest
         handleBadRequest(uri, requestMethod, channel);
     }
 
+    /**
+     * 获取所有path命中的处理器
+     * @param requestParamsRef   在解析过程中如果匹配上了 通配符 就将token，value存储到map中 相当于是从path上解析参数
+     * @param rawPath  未使用url解码的路径
+     * @return
+     */
     Iterator<MethodHandlers> getAllHandlers(@Nullable Map<String, String> requestParamsRef, String rawPath) {
         final Supplier<Map<String, String>> paramsSupplier;
         if (requestParamsRef == null) {
@@ -354,8 +418,11 @@ public class RestController implements HttpServerTransport.Dispatcher {
             // Between retrieving the correct path, we need to reset the parameters,
             // otherwise parameters are parsed out of the URI that aren't actually handled.
             final Map<String, String> originalParams = Map.copyOf(requestParamsRef);
+
+            // 因为在retrieveAll中会进行多次匹配  每次匹配之间的参数应该相互隔离 所以每次都是获得requestParamsRef的副本
             paramsSupplier = () -> {
                 // PathTrie modifies the request, so reset the params between each iteration
+                // 每次调用该函数 就获取一份 requestParamsRef
                 requestParamsRef.clear();
                 requestParamsRef.putAll(originalParams);
                 return requestParamsRef;
@@ -407,14 +474,17 @@ public class RestController implements HttpServerTransport.Dispatcher {
      * list of valid HTTP methods for the endpoint (see
      * <a href="https://tools.ietf.org/html/rfc2616#section-9.2">HTTP/1.1 - 9.2
      * - Options</a>).
+     * @param validMethodSet 支持的所有方法类型
      */
     private void handleOptionsRequest(RestChannel channel, Set<RestRequest.Method> validMethodSet) {
+        // 如果传入的是Optional 代表本次是一个探测请求  会返回所有支持的方法
         BytesRestResponse bytesRestResponse = new BytesRestResponse(OK, TEXT_CONTENT_TYPE, BytesArray.EMPTY);
         // When we have an OPTIONS HTTP request and no valid handlers, simply send OK by default (with the Access Control Origin header
         // which gets automatically added).
         if (validMethodSet.isEmpty() == false) {
             bytesRestResponse.addHeader("Allow", Strings.collectionToDelimitedString(validMethodSet, ","));
         }
+        // 将结果返回给对端
         channel.sendResponse(bytesRestResponse);
     }
 
@@ -435,6 +505,7 @@ public class RestController implements HttpServerTransport.Dispatcher {
 
     /**
      * Get the valid set of HTTP methods for a REST request.
+     * 返回当前所有匹配的handler的method总集
      */
     private Set<RestRequest.Method> getValidHandlerMethodSet(String rawPath) {
         Set<RestRequest.Method> validMethods = new HashSet<>();
@@ -470,6 +541,9 @@ public class RestController implements HttpServerTransport.Dispatcher {
         }
     }
 
+    /**
+     * 在普通的handler上包装了一层熔断器  当处理完毕时 减少熔断器的负载
+     */
     private static final class ResourceHandlingHttpChannel implements RestChannel {
         private final RestChannel delegate;
         private final CircuitBreakerService circuitBreakerService;
@@ -524,6 +598,9 @@ public class RestController implements HttpServerTransport.Dispatcher {
             delegate.sendResponse(response);
         }
 
+        /**
+         * 就是在发送结果时 减少熔断器的负载
+         */
         private void close() {
             // attempt to close once atomically
             if (closed.compareAndSet(false, true) == false) {

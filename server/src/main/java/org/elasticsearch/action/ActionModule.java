@@ -495,6 +495,8 @@ public class ActionModule extends AbstractModule {
         }
         ActionRegistry actions = new ActionRegistry();
 
+        // 在处理RestReq的时候 具体命令的Action 会被映射成 TransportAction   不同的 TransportAction包含不同的filter
+
         actions.register(MainAction.INSTANCE, TransportMainAction.class);
         actions.register(NodesInfoAction.INSTANCE, TransportNodesInfoAction.class);
         actions.register(RemoteInfoAction.INSTANCE, TransportRemoteInfoAction.class);
@@ -638,6 +640,10 @@ public class ActionModule extends AbstractModule {
             Collections.unmodifiableSet(actionPlugins.stream().flatMap(p -> p.getActionFilters().stream()).collect(Collectors.toSet())));
     }
 
+    /**
+     * 在 RestController上注册各种请求处理器
+     * @param nodesInCluster
+     */
     public void initRestHandlers(Supplier<DiscoveryNodes> nodesInCluster) {
         List<AbstractCatAction> catActions = new ArrayList<>();
         Consumer<RestHandler> registerHandler = handler -> {

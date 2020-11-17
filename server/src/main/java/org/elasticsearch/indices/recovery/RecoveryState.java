@@ -720,7 +720,13 @@ public class RecoveryState implements ToXContentFragment, Writeable {
 
         public static final long UNKNOWN = -1L;
 
+        /**
+         * 数据源那端在传输过程中被限流的总时长
+         */
         private long sourceThrottlingInNanos = UNKNOWN;
+        /**
+         * 接收端的限流总时长
+         */
         private long targetThrottleTimeInNanos = UNKNOWN;
 
         public Index() {

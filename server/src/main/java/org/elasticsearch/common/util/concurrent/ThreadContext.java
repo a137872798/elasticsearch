@@ -115,7 +115,7 @@ public final class ThreadContext implements Writeable {
     /**
      * Removes the current context and resets a default context. The removed context can be
      * restored by closing the returned {@link StoredContext}.
-     * 在执行任务前 先暂存当前线程上下文对象
+     * 替换内部的线程上下文
      */
     public StoredContext stashContext() {
         final ThreadContextStruct context = threadLocal.get();
@@ -185,13 +185,17 @@ public final class ThreadContext implements Writeable {
      *                                这里根据当前线程创建一个上下文对象
      */
     public StoredContext newStoredContext(boolean preserveResponseHeaders) {
+
+        // 先获取此时在当前线程的结构体
         final ThreadContextStruct context = threadLocal.get();
 
-        // 下面是 StoredContext.close()
+        // 下面是 StoredContext.close()   可以理解为从存储状态中释放
         return ()  -> {
+            // 代表在释放时 需要将那个时机的线程上下文的响应头回填到之前暂存的结构体上
             if (preserveResponseHeaders && threadLocal.get() != context) {
                 threadLocal.set(context.putResponseHeaders(threadLocal.get().responseHeaders));
             } else {
+                // 只是普通的释放 就是将结构体重新设置到 ThreadLocal上
                 threadLocal.set(context);
             }
         };
@@ -217,6 +221,7 @@ public final class ThreadContext implements Writeable {
      *
      * @param preserveResponseHeaders if set to <code>true</code> the response headers of the restore thread will be preserved.
      * @return a restorable context supplier
+     * 将当前上下文对象存储在某个位置 并且通过调用该函数可以重新获取
      */
     public Supplier<StoredContext> newRestorableContext(boolean preserveResponseHeaders) {
         return wrapRestorable(newStoredContext(preserveResponseHeaders));
@@ -225,13 +230,16 @@ public final class ThreadContext implements Writeable {
     /**
      * Same as {@link #newRestorableContext(boolean)} but wraps an existing context to restore.
      * @param storedContext the context to restore
+     *                      当调用这个函数时就会触发结构体的还原
      */
     public Supplier<StoredContext> wrapRestorable(StoredContext storedContext) {
         return () -> {
-            // 比如在触发监听器的相关方法时 先触发该方法 这时可以理解为 获取了一个临时的上下文对象 但是还没有处理它
+            // 调用 Supplier.get 就是一个触发器 会触发 storedContext.close() 也就会还原之前存储的线程上下文
+            // 先将此时的线程上下文也存储在某个位置
             StoredContext context = newStoredContext(false);
-            // 先使用一个新的context 设置到当前线程
+            // 还原成之前设置的上下文
             storedContext.restore();
+            // 通过该对象的close函数 可以恢复这个上下文对象 但是是否执行由用户决定  之前的结构体会隐式恢复
             return context;
         };
     }
@@ -327,6 +335,7 @@ public final class ThreadContext implements Writeable {
 
     /**
      * Puts a header into the context
+     * ThreadContext是可以存储 RestRequest中的请求头的
      */
     public void putHeader(String key, String value) {
         threadLocal.set(threadLocal.get().putRequest(key, value));
@@ -463,9 +472,16 @@ public final class ThreadContext implements Writeable {
         private static final ThreadContextStruct EMPTY =
             new ThreadContextStruct(Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap(), false);
 
+        /**
+         * 在接收到RestRequest时
+         * 会将请求头保存到线程上下文中
+         */
         private final Map<String, String> requestHeaders;
         private final Map<String, Object> transientHeaders;
         private final Map<String, Set<String>> responseHeaders;
+        /**
+         * 代表此时是ES根据自己需要切换的上下文
+         */
         private final boolean isSystemContext;
         //saving current warning headers' size not to recalculate the size with every new warning header
         private final long warningHeadersSize;
@@ -513,6 +529,12 @@ public final class ThreadContext implements Writeable {
             this(Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap(), false);
         }
 
+        /**
+         * 使用写时拷贝计数  减少对读取的性能影响
+         * @param key
+         * @param value
+         * @return
+         */
         private ThreadContextStruct putRequest(String key, String value) {
             Map<String, String> newRequestHeaders = new HashMap<>(this.requestHeaders);
             putSingleHeader(key, value, newRequestHeaders);

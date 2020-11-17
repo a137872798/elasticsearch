@@ -42,6 +42,7 @@ import java.util.stream.StreamSupport;
 /**
  * A request to add voting config exclusions for certain master-eligible nodes, and wait for these nodes to be removed from the voting
  * configuration.
+ * 被指定的node 将不会参与选举   选举是在一组role为 master中进行的
  */
 public class AddVotingConfigExclusionsRequest extends MasterNodeRequest<AddVotingConfigExclusionsRequest> {
     private final String[] nodeIds;
@@ -96,6 +97,11 @@ public class AddVotingConfigExclusionsRequest extends MasterNodeRequest<AddVotin
         assert (nodeIds.length > 0) != (nodeNames.length > 0);
     }
 
+    /**
+     * 获取当前集群状态中存在的 exclusion
+     * @param currentState
+     * @return
+     */
     Set<VotingConfigExclusion> resolveVotingConfigExclusions(ClusterState currentState) {
         final DiscoveryNodes allNodes = currentState.nodes();
         Set<VotingConfigExclusion> newVotingConfigExclusions = new HashSet<>();
@@ -104,6 +110,7 @@ public class AddVotingConfigExclusionsRequest extends MasterNodeRequest<AddVotin
             for (String nodeId : nodeIds) {
                 if (allNodes.nodeExists(nodeId)) {
                     DiscoveryNode discoveryNode = allNodes.get(nodeId);
+                    // 首先确保该节点的 role中包含master 也就是参选节点
                     if (discoveryNode.isMasterNode()) {
                         newVotingConfigExclusions.add(new VotingConfigExclusion(discoveryNode));
                     }
@@ -123,19 +130,31 @@ public class AddVotingConfigExclusionsRequest extends MasterNodeRequest<AddVotin
                         newVotingConfigExclusions.add(new VotingConfigExclusion(discoveryNode));
                     }
                 } else {
+                    // 通过名称无法找到的情况下 也是插入 _absent_
                     newVotingConfigExclusions.add(new VotingConfigExclusion(VotingConfigExclusion.MISSING_VALUE_MARKER, nodeName));
                 }
             }
         }
 
+        // 此时已经存在的 exclusion 不需要加入
         newVotingConfigExclusions.removeIf(n -> currentState.getVotingConfigExclusions().contains(n));
         return newVotingConfigExclusions;
     }
 
+    /**
+     * 根据相关配置 抽取出哪些节点将会被排除于选举外
+     * @param currentState
+     * @param maxExclusionsCount
+     * @param maximumSettingKey
+     * @return
+     */
     Set<VotingConfigExclusion> resolveVotingConfigExclusionsAndCheckMaximum(ClusterState currentState, int maxExclusionsCount,
                                                                             String maximumSettingKey) {
+
+        // 得到本次新增的所有exclusion信息
         final Set<VotingConfigExclusion> resolvedExclusions = resolveVotingConfigExclusions(currentState);
 
+        // 这里总大小不能超过限制值
         final int oldExclusionsCount = currentState.getVotingConfigExclusions().size();
         final int newExclusionsCount = resolvedExclusions.size();
         if (oldExclusionsCount + newExclusionsCount > maxExclusionsCount) {

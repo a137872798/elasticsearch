@@ -24,7 +24,6 @@ import java.util.EnumSet;
 
 /**
  * 代表哪些操作被阻塞
- *
  */
 public enum ClusterBlockLevel {
     READ,

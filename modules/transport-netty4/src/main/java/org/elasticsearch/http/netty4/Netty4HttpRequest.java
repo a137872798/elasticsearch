@@ -124,19 +124,23 @@ public class Netty4HttpRequest implements HttpRequest {
         }
     }
 
+
     @Override
     public HttpRequest releaseAndCopy() {
         assert released.get() == false;
+        // 如果该对象允许池化 那么返回原对象  代表重复利用
         if (pooled == false) {
             return this;
         }
         try {
+            // 申请一份非池化的 ByteBuf对象
             final ByteBuf copiedContent = Unpooled.copiedBuffer(request.content());
             return new Netty4HttpRequest(
                 new DefaultFullHttpRequest(request.protocolVersion(), request.method(), request.uri(), copiedContent, request.headers(),
                     request.trailingHeaders()),
                 headers, sequence, new AtomicBoolean(false), false, Netty4Utils.toBytesReference(copiedContent));
         } finally {
+            // 释放本对象  非池化对象通过GC自动回收
             release();
         }
     }

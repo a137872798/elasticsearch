@@ -32,6 +32,7 @@ public final class MasterNodeChangePredicate {
     /**
      * builds a predicate that will accept a cluster state only if it was generated after the current has
      * (re-)joined the master
+     * 传入一个新的state判断 那个state是否比当前state要新
      */
     public static Predicate<ClusterState> build(ClusterState currentState) {
         final long currentVersion = currentState.version();
