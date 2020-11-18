@@ -37,6 +37,9 @@ import java.util.function.Consumer;
 
 import static org.elasticsearch.common.unit.TimeValue.timeValueSeconds;
 
+/**
+ * 根据请求体信息查询一组任务对象
+ */
 public class TransportListTasksAction extends TransportTasksAction<Task, ListTasksRequest, ListTasksResponse, TaskInfo> {
     public static long waitForCompletionTimeout(TimeValue timeout) {
         if (timeout == null) {
@@ -53,22 +56,43 @@ public class TransportListTasksAction extends TransportTasksAction<Task, ListTas
             ListTasksRequest::new, ListTasksResponse::new, TaskInfo::new, ThreadPool.Names.MANAGEMENT);
     }
 
+    /**
+     * 将在每个node上处理的结果包装成一个最终结果
+     * @param request
+     * @param tasks
+     * @param taskOperationFailures
+     * @param failedNodeExceptions
+     * @return
+     */
     @Override
     protected ListTasksResponse newResponse(ListTasksRequest request, List<TaskInfo> tasks,
             List<TaskOperationFailure> taskOperationFailures, List<FailedNodeException> failedNodeExceptions) {
         return new ListTasksResponse(tasks, taskOperationFailures, failedNodeExceptions);
     }
 
+    /**
+     * 挨个处理每个任务  这里就是获取任务信息并返回
+     * @param request
+     * @param task
+     * @param listener
+     */
     @Override
     protected void taskOperation(ListTasksRequest request, Task task, ActionListener<TaskInfo> listener) {
         listener.onResponse(task.taskInfo(clusterService.localNode().getId(), request.getDetailed()));
     }
 
+    /**
+     * 寻找符合条件的任务
+     * @param request
+     * @param operation  处理的函数
+     */
     @Override
     protected void processTasks(ListTasksRequest request, Consumer<Task> operation) {
+        // 在原本的消费者上追加等待任务执行完成的逻辑
         if (request.getWaitForCompletion()) {
             long timeoutNanos = waitForCompletionTimeout(request.getTimeout());
             operation = operation.andThen(task -> {
+                // 忽略获取查找task的任务
                 if (task.getAction().startsWith(ListTasksAction.NAME)) {
                     // It doesn't make sense to wait for List Tasks and it can cause an infinite loop of the task waiting
                     // for itself or one of its child tasks

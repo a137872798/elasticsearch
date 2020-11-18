@@ -704,6 +704,11 @@ public abstract class AbstractClient implements Client {
             return execute(ClusterHealthAction.INSTANCE, request);
         }
 
+        /**
+         * 获取健康信息
+         * @param request  The cluster state request
+         * @param listener A listener to be notified with a result
+         */
         @Override
         public void health(final ClusterHealthRequest request, final ActionListener<ClusterHealthResponse> listener) {
             execute(ClusterHealthAction.INSTANCE, request, listener);

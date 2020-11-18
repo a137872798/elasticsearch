@@ -43,7 +43,9 @@ import java.util.function.Supplier;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
-
+/**
+ * 获取一组任务
+ */
 public class RestListTasksAction extends BaseRestHandler {
 
     private final Supplier<DiscoveryNodes> nodesInCluster;
@@ -65,11 +67,17 @@ public class RestListTasksAction extends BaseRestHandler {
     @Override
     public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
         final ListTasksRequest listTasksRequest = generateListTasksRequest(request);
+        // 默认情况下返回的数据按照nodes分组
         final String groupBy = request.param("group_by", "nodes");
         return channel -> client.admin().cluster().listTasks(listTasksRequest,
                 listTasksResponseListener(nodesInCluster, groupBy, channel));
     }
 
+    /**
+     * 从请求体中解析参数
+     * @param request
+     * @return
+     */
     public static ListTasksRequest generateListTasksRequest(RestRequest request) {
         boolean detailed = request.paramAsBoolean("detailed", false);
         String[] nodes = Strings.splitStringByCommaToArray(request.param("nodes"));

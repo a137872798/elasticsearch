@@ -501,18 +501,24 @@ public class ActionModule extends AbstractModule {
         actions.register(NodesInfoAction.INSTANCE, TransportNodesInfoAction.class);
         actions.register(RemoteInfoAction.INSTANCE, TransportRemoteInfoAction.class);
         actions.register(NodesStatsAction.INSTANCE, TransportNodesStatsAction.class);
+        // 获取节点内存使用量的请求
         actions.register(NodesUsageAction.INSTANCE, TransportNodesUsageAction.class);
         actions.register(NodesHotThreadsAction.INSTANCE, TransportNodesHotThreadsAction.class);
+        // 按照条件搜索一组任务
         actions.register(ListTasksAction.INSTANCE, TransportListTasksAction.class);
+        // 查看某个任务的信息
         actions.register(GetTaskAction.INSTANCE, TransportGetTaskAction.class);
         // 当需要关闭某个task时 通过rest发起请求会对应CancelTasksAction
         actions.register(CancelTasksAction.INSTANCE, TransportCancelTasksAction.class);
 
         actions.register(AddVotingConfigExclusionsAction.INSTANCE, TransportAddVotingConfigExclusionsAction.class);
+        // 清理exclusion配置信息
         actions.register(ClearVotingConfigExclusionsAction.INSTANCE, TransportClearVotingConfigExclusionsAction.class);
+        // 获取位置信息 可以是针对某个分片 index 等等
         actions.register(ClusterAllocationExplainAction.INSTANCE, TransportClusterAllocationExplainAction.class);
         actions.register(ClusterStatsAction.INSTANCE, TransportClusterStatsAction.class);
         actions.register(ClusterStateAction.INSTANCE, TransportClusterStateAction.class);
+        // 有关健康信息的处理器
         actions.register(ClusterHealthAction.INSTANCE, TransportClusterHealthAction.class);
         actions.register(ClusterUpdateSettingsAction.INSTANCE, TransportClusterUpdateSettingsAction.class);
         actions.register(ClusterRerouteAction.INSTANCE, TransportClusterRerouteAction.class);

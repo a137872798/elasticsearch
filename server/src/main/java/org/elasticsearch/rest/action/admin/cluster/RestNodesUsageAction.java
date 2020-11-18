@@ -39,6 +39,9 @@ import java.util.Set;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取指定节点当前内存使用量的处理器
+ */
 public class RestNodesUsageAction extends BaseRestHandler {
 
     @Override

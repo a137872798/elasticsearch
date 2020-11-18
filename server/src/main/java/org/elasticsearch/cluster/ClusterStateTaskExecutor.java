@@ -130,6 +130,7 @@ public interface ClusterStateTaskExecutor<T> {
             }
 
             ClusterTasksResult<T> build(ClusterTasksResult<T> result, ClusterState previousState) {
+                // 如果本次生成的 clusterState为null 代表集群状态没有发生变化
                 return new ClusterTasksResult<>(result.resultingState == null ? previousState : result.resultingState,
                     executionResults);
             }

@@ -55,7 +55,6 @@ import java.util.function.Predicate;
 
 /**
  * A base class for operations that needs to be performed on the master node.
- * 代表这些操作应该交由 role:master 的节点处理
  * action在本节点通过 RestAction进行映射  当发送到其他节点时 通过transportService 进行匹配
  */
 public abstract class TransportMasterNodeAction<Request extends MasterNodeRequest<Request>, Response extends ActionResponse>

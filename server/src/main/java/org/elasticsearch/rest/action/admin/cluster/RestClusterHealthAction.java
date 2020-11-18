@@ -39,6 +39,9 @@ import java.util.Set;
 import static org.elasticsearch.client.Requests.clusterHealthRequest;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取有关健康信息的处理器
+ */
 public class RestClusterHealthAction extends BaseRestHandler {
 
     @Override

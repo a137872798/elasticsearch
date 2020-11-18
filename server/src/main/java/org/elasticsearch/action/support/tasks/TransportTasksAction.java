@@ -324,6 +324,7 @@ public abstract class TransportTasksAction<
                     listener.onFailure(e);
                 }
             } else {
+                // 将请求发往相关节点 并处理task (比如关闭/查询)
                 TransportRequestOptions.Builder builder = TransportRequestOptions.builder();
                 if (request.getTimeout() != null) {
                     builder.withTimeout(request.getTimeout());
@@ -338,7 +339,7 @@ public abstract class TransportTasksAction<
                             onFailure(idx, nodeId, new NoSuchNodeException(nodeId));
                         } else {
                             NodeTaskRequest nodeRequest = new NodeTaskRequest(request);
-                            // 某些task不会只在一个node上完成 可能在处理过程中会经过其他node 此时就生成了父子级关系
+                            // 这些请求都是由最早的请求衍生的 所以构建链路关系
                             nodeRequest.setParentTask(clusterService.localNode().getId(), task.getId());
                             // 注意这里使用的action 是加上[n] 的 其他节点接收后会通过 nodeOperation进行处理
                             // 这个node也可能会包含自己

@@ -534,6 +534,7 @@ public class TaskManager implements ClusterStateApplier {
 
     /**
      * Blocks the calling thread, waiting for the task to vanish from the TaskManager.
+     * 阻塞当前线程 直到任务完成
      */
     public void waitForTaskCompletion(Task task, long untilInNanos) {
         while (System.nanoTime() - untilInNanos < 0) {

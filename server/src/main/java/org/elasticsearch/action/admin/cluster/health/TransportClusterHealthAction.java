@@ -51,6 +51,9 @@ import java.io.IOException;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
+/**
+ * 获取index健康信息的处理器
+ */
 public class TransportClusterHealthAction extends TransportMasterNodeReadAction<ClusterHealthRequest, ClusterHealthResponse> {
 
     private static final Logger logger = LogManager.getLogger(TransportClusterHealthAction.class);
@@ -83,14 +86,23 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
         return null;
     }
 
+    /**
+     * 入口
+     * @param task
+     * @param request
+     * @param unusedState
+     * @param listener
+     */
     @Override
     protected void masterOperation(final Task task,
                                    final ClusterHealthRequest request,
                                    final ClusterState unusedState,
                                    final ActionListener<ClusterHealthResponse> listener) {
 
+        // 总计要等待多少数据
         final int waitCount = getWaitCount(request);
 
+        // 这里有一个等待事件的优先级
         if (request.waitForEvents() != null) {
             waitForEventsAndExecuteHealth(request, listener, waitCount, threadPool.relativeTimeInMillis() + request.timeout().millis());
         } else {
@@ -99,21 +111,31 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
         }
     }
 
+    /**
+     * 如果请求体标明了需要等待 events
+     * @param request
+     * @param listener
+     * @param waitCount  req标明了等待多少属性
+     * @param endTimeRelativeMillis
+     */
     private void waitForEventsAndExecuteHealth(final ClusterHealthRequest request,
                                                final ActionListener<ClusterHealthResponse> listener,
                                                final int waitCount,
                                                final long endTimeRelativeMillis) {
         assert request.waitForEvents() != null;
         if (request.local()) {
+            // 代表可能在非leader节点发起的查询
             clusterService.submitStateUpdateTask("cluster_health (wait_for_events [" + request.waitForEvents() + "])",
                 new LocalClusterUpdateTask(request.waitForEvents()) {
                     @Override
                     public ClusterTasksResult<LocalClusterUpdateTask> execute(ClusterState currentState) {
+                        // 这里新状态为 null 也就代表集群本身不发生变化
                         return unchanged();
                     }
 
                     @Override
                     public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
+                        // 超时时间每次都会减少 直到变成0时 就必须触发listener
                         final long timeoutInMillis = Math.max(0, endTimeRelativeMillis - threadPool.relativeTimeInMillis());
                         final TimeValue newTimeout = TimeValue.timeValueMillis(timeoutInMillis);
                         request.timeout(newTimeout);
@@ -128,7 +150,10 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
                     }
                 });
         } else {
+            // 在leader上发起的任务类型不一样  与LocalClusterUpdateTask在后续的处理中会有什么不同吗
             clusterService.submitStateUpdateTask("cluster_health (wait_for_events [" + request.waitForEvents() + "])",
+
+                // 下面的处理逻辑一致
                 new ClusterStateUpdateTask(request.waitForEvents()) {
                     @Override
                     public ClusterState execute(ClusterState currentState) {
@@ -167,21 +192,33 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
         }
     }
 
+    /**
+     * 检测健康信息
+     * @param request
+     * @param currentState
+     * @param listener
+     * @param waitCount
+     * @param onNewClusterStateAfterDelay
+     */
     private void executeHealth(final ClusterHealthRequest request,
                                final ClusterState currentState,
                                final ActionListener<ClusterHealthResponse> listener,
                                final int waitCount,
                                final Consumer<ClusterState> onNewClusterStateAfterDelay) {
 
+        // 等待时间已经用完
         if (request.timeout().millis() == 0) {
             listener.onResponse(getResponse(request, currentState, waitCount, true));
             return;
         }
 
+        // 只有当新的集群状态达到了req要求的各种属性时 才进行后续处理
         final Predicate<ClusterState> validationPredicate = newState -> validateRequest(request, newState, waitCount);
         if (validationPredicate.test(currentState)) {
             listener.onResponse(getResponse(request, currentState, waitCount, false));
         } else {
+
+            // 监听集群状态的变化 直到条件满足
             final ClusterStateObserver observer
                 = new ClusterStateObserver(currentState, clusterService, null, logger, threadPool.getThreadContext());
             final ClusterStateObserver.Listener stateListener = new ClusterStateObserver.Listener() {
@@ -204,6 +241,11 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
         }
     }
 
+    /**
+     * 总计要等待多少属性
+     * @param request
+     * @return
+     */
     private static int getWaitCount(ClusterHealthRequest request) {
         int waitCount = 0;
         if (request.waitForStatus() != null) {
@@ -235,9 +277,11 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
 
     private ClusterHealthResponse getResponse(final ClusterHealthRequest request, ClusterState clusterState,
                                               final int waitFor, boolean timedOut) {
+        // 将相关信息包装成res 对象
         ClusterHealthResponse response = clusterHealth(request, clusterState, clusterService.getMasterService().numberOfPendingTasks(),
             allocationService.getNumberOfInFlightFetches(), clusterService.getMasterService().getMaxTaskWaitTime());
         int readyCounter = prepareResponse(request, response, clusterState, indexNameExpressionResolver);
+        // 代表所有数据都已经准备完毕
         boolean valid = (readyCounter == waitFor);
         assert valid || timedOut;
         // we check for a timeout here since this method might be called from the wait_for_events
@@ -249,8 +293,18 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
         return response;
     }
 
+    /**
+     * 代表请求中要求的多少属性已经准备完毕了
+     * @param request
+     * @param response
+     * @param clusterState
+     * @param indexNameExpressionResolver
+     * @return
+     */
     static int prepareResponse(final ClusterHealthRequest request, final ClusterHealthResponse response,
                                final ClusterState clusterState, final IndexNameExpressionResolver indexNameExpressionResolver) {
+
+        // 每当请求的某个等待条件被此时的集群状态满足时  计数器+1
         int waitForCounter = 0;
         if (request.waitForStatus() != null && response.getStatus().value() <= request.waitForStatus().value()) {
             waitForCounter++;
@@ -261,15 +315,19 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
         if (request.waitForNoInitializingShards() && response.getInitializingShards() == 0) {
             waitForCounter++;
         }
+
+        // == ActiveShardCount.NONE 代表不做限制
         if (request.waitForActiveShards().equals(ActiveShardCount.NONE) == false) {
             ActiveShardCount waitForActiveShards = request.waitForActiveShards();
             assert waitForActiveShards.equals(ActiveShardCount.DEFAULT) == false :
                 "waitForActiveShards must not be DEFAULT on the request object, instead it should be NONE";
+            // 代表要求所有分片此时都处于活跃状态
             if (waitForActiveShards.equals(ActiveShardCount.ALL)) {
                 if (response.getUnassignedShards() == 0 && response.getInitializingShards() == 0) {
                     // if we are waiting for all shards to be active, then the num of unassigned and num of initializing shards must be 0
                     waitForCounter++;
                 }
+                // 如果只是要求有一定数量的活跃分片 且此时集群状态的活跃分片数量达到了要求值
             } else if (waitForActiveShards.enoughShardsActive(response.getActiveShards())) {
                 // there are enough active shards to meet the requirements of the request
                 waitForCounter++;
@@ -277,6 +335,7 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
         }
         if (request.indices() != null && request.indices().length > 0) {
             try {
+                // 如果要求的索引都能够在集群中找到
                 indexNameExpressionResolver.concreteIndexNames(clusterState, IndicesOptions.strictExpand(), request.indices());
                 waitForCounter++;
             } catch (IndexNotFoundException e) {
@@ -336,6 +395,15 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
     }
 
 
+    /**
+     * 生成集群健康状态描述对象
+     * @param request
+     * @param clusterState
+     * @param numberOfPendingTasks
+     * @param numberOfInFlightFetch
+     * @param pendingTaskTimeInQueue
+     * @return
+     */
     private ClusterHealthResponse clusterHealth(ClusterHealthRequest request, ClusterState clusterState, int numberOfPendingTasks,
                                                 int numberOfInFlightFetch, TimeValue pendingTaskTimeInQueue) {
         if (logger.isTraceEnabled()) {

@@ -44,6 +44,7 @@ import static org.elasticsearch.cluster.routing.allocation.AbstractAllocationDec
  * A {@code ClusterAllocationExplanation} is an explanation of why a shard is unassigned,
  * or if it is not unassigned, then which nodes it could possibly be relocated to.
  * It is an immutable class.
+ * 一个简单的bean对象 用于展示给用户
  */
 public final class ClusterAllocationExplanation implements ToXContentObject, Writeable {
 

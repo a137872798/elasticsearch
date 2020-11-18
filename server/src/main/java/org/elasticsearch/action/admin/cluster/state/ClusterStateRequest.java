@@ -34,7 +34,11 @@ public class ClusterStateRequest extends MasterNodeReadRequest<ClusterStateReque
 
     public static final TimeValue DEFAULT_WAIT_FOR_NODE_TIMEOUT = TimeValue.timeValueMinutes(1);
 
+    // 标识为true 就代表在res中需要设置相关的信息
     private boolean routingTable = true;
+    /**
+     * 代表在获取 clusterState时 需要携带此时集群节点的信息
+     */
     private boolean nodes = true;
     private boolean metadata = true;
     private boolean blocks = true;

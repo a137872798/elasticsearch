@@ -30,10 +30,16 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * 描述存储层的清理情况
+ */
 public final class RepositoryCleanupInProgress extends AbstractNamedDiffable<ClusterState.Custom> implements ClusterState.Custom {
 
     public static final String TYPE = "repository_cleanup";
 
+    /**
+     * 只要entry不为空 就代表还有仓库正在被清理
+     */
     private final List<Entry> entries;
 
     public RepositoryCleanupInProgress(Entry... entries) {
@@ -95,10 +101,16 @@ public final class RepositoryCleanupInProgress extends AbstractNamedDiffable<Clu
         return Version.V_7_4_0;
     }
 
+    /**
+     * 在inProgress对象中每个实体对象的信息
+     */
     public static final class Entry implements Writeable, RepositoryOperation {
 
         private final String repository;
 
+        /**
+         * 对应仓库存储数据的 gen
+         */
         private final long repositoryStateId;
 
         private Entry(StreamInput in) throws IOException {

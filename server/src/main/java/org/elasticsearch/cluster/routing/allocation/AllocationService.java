@@ -642,6 +642,12 @@ public class AllocationService {
         return existingShardsAllocators.values().stream().mapToInt(ExistingShardsAllocator::getNumberOfInFlightFetches).sum();
     }
 
+    /**
+     * 生成描述信息
+     * @param shardRouting
+     * @param allocation
+     * @return
+     */
     public ShardAllocationDecision explainShardAllocation(ShardRouting shardRouting, RoutingAllocation allocation) {
         assert allocation.debugDecision();
         AllocateUnassignedDecision allocateDecision
@@ -653,11 +659,19 @@ public class AllocationService {
         }
     }
 
+    /**
+     * 代表未分配的决策信息
+     * @param shardRouting
+     * @param routingAllocation
+     * @return
+     */
     private AllocateUnassignedDecision explainUnassignedShardAllocation(ShardRouting shardRouting, RoutingAllocation routingAllocation) {
         assert shardRouting.unassigned();
         assert routingAllocation.debugDecision();
         assert assertInitialized();
+        // 通过相关配置项 获取目标分片的index对应的分配者
         final ExistingShardsAllocator existingShardsAllocator = getAllocatorForShard(shardRouting, routingAllocation);
+        // 通过分配者 获取决策信息
         final AllocateUnassignedDecision decision
             = existingShardsAllocator.explainUnassignedShardAllocation(shardRouting, routingAllocation);
         if (decision.isDecisionTaken()) {
@@ -668,14 +682,17 @@ public class AllocationService {
 
     /**
      * 这里根据当前分片的索引名 找到了一个特殊的分配器
-     * @param shardRouting
-     * @param routingAllocation
+     * @param shardRouting   与某个分片对应
+     * @param routingAllocation 这个对象可以获取到所有分片的分配信息
      * @return
      */
     private ExistingShardsAllocator getAllocatorForShard(ShardRouting shardRouting, RoutingAllocation routingAllocation) {
         assert assertInitialized();
+        // 获取索引对应的分配者
         final String allocatorName = ExistingShardsAllocator.EXISTING_SHARDS_ALLOCATOR_SETTING.get(
             routingAllocation.metadata().getIndexSafe(shardRouting.index()).getSettings());
+
+        // 找到对应的分配者
         final ExistingShardsAllocator existingShardsAllocator = existingShardsAllocators.get(allocatorName);
         return existingShardsAllocator != null ? existingShardsAllocator : new NotFoundAllocator(allocatorName);
     }

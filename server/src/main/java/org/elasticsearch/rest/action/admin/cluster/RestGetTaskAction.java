@@ -32,6 +32,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取某个任务信息的请求处理器
+ */
 public class RestGetTaskAction extends BaseRestHandler {
 
     @Override

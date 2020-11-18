@@ -43,6 +43,9 @@ import java.util.Set;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 这是一个获取集群配置的请求
+ */
 public class RestClusterGetSettingsAction extends BaseRestHandler {
 
     private final Settings settings;
@@ -80,6 +83,10 @@ public class RestClusterGetSettingsAction extends BaseRestHandler {
         });
     }
 
+    /**
+     * 在响应结果中使用到的参数
+     * @return
+     */
     @Override
     protected Set<String> responseParams() {
         return Settings.FORMAT_PARAMS;
@@ -95,6 +102,15 @@ public class RestClusterGetSettingsAction extends BaseRestHandler {
         return response(state, renderDefaults, settingsFilter, clusterSettings, settings).toXContent(builder, params);
     }
 
+    /**
+     * 如何将包含全部信息的 clusterState 转换成应当展示给用户的 ClusterGetSettingsResponse
+     * @param state
+     * @param renderDefaults
+     * @param settingsFilter
+     * @param clusterSettings
+     * @param settings
+     * @return
+     */
     static ClusterGetSettingsResponse response(
             final ClusterState state,
             final boolean renderDefaults,

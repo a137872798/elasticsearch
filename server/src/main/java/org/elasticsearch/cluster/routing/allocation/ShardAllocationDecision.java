@@ -41,6 +41,11 @@ import java.io.IOException;
  * objects whose {@code isDecisionTaken()} method returns {@code false}.
  */
 public final class ShardAllocationDecision implements ToXContentFragment, Writeable {
+
+    /**
+     * 代表没有关于这个分片的决策信息
+     * 当这个分片在 initializing/relocating 状态时 不包含决策信息
+     */
     public static final ShardAllocationDecision NOT_TAKEN =
         new ShardAllocationDecision(AllocateUnassignedDecision.NOT_TAKEN, MoveDecision.NOT_TAKEN);
 

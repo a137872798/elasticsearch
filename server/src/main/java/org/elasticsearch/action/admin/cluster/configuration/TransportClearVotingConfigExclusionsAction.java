@@ -48,6 +48,9 @@ import org.elasticsearch.transport.TransportService;
 import java.io.IOException;
 import java.util.function.Predicate;
 
+/**
+ * 清理exclusion配置信息  必须在leader节点上执行
+ */
 public class TransportClearVotingConfigExclusionsAction
     extends TransportMasterNodeAction<ClearVotingConfigExclusionsRequest, ClearVotingConfigExclusionsResponse> {
 
@@ -71,12 +74,21 @@ public class TransportClearVotingConfigExclusionsAction
         return new ClearVotingConfigExclusionsResponse(in);
     }
 
+    /**
+     * 当本节点是leader节点时 进行处理
+     * @param task
+     * @param request
+     * @param initialState
+     * @param listener
+     * @throws Exception
+     */
     @Override
     protected void masterOperation(Task task, ClearVotingConfigExclusionsRequest request, ClusterState initialState,
                                    ActionListener<ClearVotingConfigExclusionsResponse> listener) throws Exception {
 
         final long startTimeMillis = threadPool.relativeTimeInMillis();
 
+        // 检测是否参选的节点已经不存在于集群了
         final Predicate<ClusterState> allExclusionsRemoved = newState -> {
             for (VotingConfigExclusion tombstone : initialState.getVotingConfigExclusions()) {
                 // NB checking for the existence of any node with this persistent ID, because persistent IDs are how votes are counted.
@@ -87,6 +99,7 @@ public class TransportClearVotingConfigExclusionsAction
             return true;
         };
 
+        // 如果要等待节点从集群中移除  推测是为了降低选举的复杂度
         if (request.getWaitForRemoval() && allExclusionsRemoved.test(initialState) == false) {
             final ClusterStateObserver clusterStateObserver = new ClusterStateObserver(initialState, clusterService, request.getTimeout(),
                 logger, threadPool.getThreadContext());
@@ -111,15 +124,23 @@ public class TransportClearVotingConfigExclusionsAction
                 }
             }, allExclusionsRemoved);
         } else {
+            // 如果请求没有要求这些node 从集群中被移除 那么直接清除元数据就可以
             submitClearVotingConfigExclusionsTask(request, startTimeMillis, listener);
         }
     }
 
+    /**
+     * 此时原本被排除的节点都已经不在集群中了
+     * @param request
+     * @param startTimeMillis
+     * @param listener
+     */
     private void submitClearVotingConfigExclusionsTask(ClearVotingConfigExclusionsRequest request, long startTimeMillis,
                                                        ActionListener<ClearVotingConfigExclusionsResponse> listener) {
         clusterService.submitStateUpdateTask("clear-voting-config-exclusions", new ClusterStateUpdateTask(Priority.URGENT) {
             @Override
             public ClusterState execute(ClusterState currentState) {
+                // 就是清空 voteConfigExclusion配置后 发布到集群中
                 final CoordinationMetadata newCoordinationMetadata =
                         CoordinationMetadata.builder(currentState.coordinationMetadata()).clearVotingConfigExclusions().build();
                 final Metadata newMetadata = Metadata.builder(currentState.metadata()).

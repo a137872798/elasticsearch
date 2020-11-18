@@ -48,6 +48,13 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
+/**
+ * 这个是以节点为单位接收请求的  也就是处理过程中会涉及到多个node
+ * @param <NodesRequest>
+ * @param <NodesResponse>
+ * @param <NodeRequest>
+ * @param <NodeResponse>
+ */
 public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest<NodesRequest>,
                                            NodesResponse extends BaseNodesResponse,
                                            NodeRequest extends TransportRequest,
@@ -71,12 +78,19 @@ public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest
         this.transportService = Objects.requireNonNull(transportService);
         this.nodeResponseClass = Objects.requireNonNull(nodeResponseClass);
 
+        // 也是在action上增加一个[n] 代表会发起复数的请求
         this.transportNodeAction = actionName + "[n]";
 
         transportService.registerRequestHandler(
             transportNodeAction, nodeExecutor, nodeRequest, new NodeTransportHandler());
     }
 
+    /**
+     * 处理逻辑的入口
+     * @param task
+     * @param request
+     * @param listener
+     */
     @Override
     protected void doExecute(Task task, NodesRequest request, ActionListener<NodesResponse> listener) {
         new AsyncAction(task, request, listener).start();
@@ -135,19 +149,33 @@ public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest
     }
 
 
+    /**
+     * 定义了子类拓展什么接口来实现功能处理
+     */
     class AsyncAction {
 
         private final NodesRequest request;
         private final ActionListener<NodesResponse> listener;
+
+        /**
+         * 每个元素对应某个节点的处理结果
+         */
         private final AtomicReferenceArray<Object> responses;
         private final AtomicInteger counter = new AtomicInteger();
         private final Task task;
 
+        /**
+         *
+         * @param task  每次处理请求前都会设置到 taskManager中 这个任务就是req被包装后的对象
+         * @param request
+         * @param listener
+         */
         AsyncAction(Task task, NodesRequest request, ActionListener<NodesResponse> listener) {
             this.task = task;
             this.request = request;
             this.listener = listener;
             if (request.concreteNodes() == null) {
+                // 如果没有指定node的情况 则默认获取集群下所有节点的node信息
                 resolveRequest(request, clusterService.state());
                 assert request.concreteNodes() != null;
             }

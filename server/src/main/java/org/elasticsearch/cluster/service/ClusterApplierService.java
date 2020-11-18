@@ -119,7 +119,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     private final Collection<ClusterStateListener> clusterStateListeners = new CopyOnWriteArrayList<>();
 
     /**
-     * 存储一组延时任务
+     * 存储一组会在一定延时后自动关闭的监听器
      */
     private final Collection<TimeoutClusterStateListener> timeoutClusterStateListeners =
         Collections.newSetFromMap(new ConcurrentHashMap<>());

@@ -40,6 +40,7 @@ import static org.elasticsearch.rest.RestRequest.Method.POST;
 
 /**
  * Class handling cluster allocation explanation at the REST level
+ * 获取描述分配的详细信息
  */
 public class RestClusterAllocationExplainAction extends BaseRestHandler {
 
@@ -62,6 +63,7 @@ public class RestClusterAllocationExplainAction extends BaseRestHandler {
             // Empty request signals "explain the first unassigned shard you find"
             req = new ClusterAllocationExplainRequest();
         } else {
+            // 如果包含数据体 那么解析成req对象   就是对应post请求   可以指定 shard index primary等参数
             try (XContentParser parser = request.contentOrSourceParamParser()) {
                 req = ClusterAllocationExplainRequest.parse(parser);
             }

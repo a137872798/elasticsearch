@@ -47,6 +47,11 @@ public abstract class TransportMasterNodeReadAction<Request extends MasterNodeRe
             indexNameExpressionResolver);
     }
 
+    /**
+     * 如果请求中有要求在本地执行 不需要转发到leader节点
+     * @param request
+     * @return
+     */
     @Override
     protected final boolean localExecute(Request request) {
         return request.local();

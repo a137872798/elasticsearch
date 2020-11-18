@@ -335,6 +335,7 @@ public class MasterService extends AbstractLifecycleComponent {
                 logger.debug("publishing cluster state version [{}]", newClusterState.version());
 
                 // 在发布完成时 会触发listener 也就是通知发起join请求的node
+                // 某些状态变化 即使在非leader节点上也能发布到集群
                 publish(clusterChangedEvent, taskOutputs, publicationStartTime);
             } catch (Exception e) {
                 handleException(summary, publicationStartTime, newClusterState, e);

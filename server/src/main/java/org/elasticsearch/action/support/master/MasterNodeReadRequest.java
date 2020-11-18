@@ -29,6 +29,9 @@ import java.io.IOException;
  */
 public abstract class MasterNodeReadRequest<Request extends MasterNodeReadRequest<Request>> extends MasterNodeRequest<Request> {
 
+    /**
+     * 是否允许在本地执行
+     */
     protected boolean local = false;
 
     protected MasterNodeReadRequest() {

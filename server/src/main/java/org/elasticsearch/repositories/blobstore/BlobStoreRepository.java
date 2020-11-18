@@ -689,7 +689,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
     /**
      * Loads {@link RepositoryData} ensuring that it is consistent with the given {@code rootBlobs} as well of the assumed generation.
      *
-     * @param repositoryStateId Expected repository generation
+     * @param repositoryStateId Expected repository generation   想要获取的数据文件对应的gen
      * @param rootBlobs         Blobs at the repository root  这些数据体的命名格式就是 index-gen
      * @return RepositoryData
      */
@@ -969,14 +969,16 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
      * parameters {@code foundIndices}, {@code rootBlobs}
      *
      * @param foundIndices all indices blob containers found in the repository before {@code newRepoData} was written    此时能找到的所有索引
-     * @param rootBlobs    all blobs found directly under the repository root
-     * @param newRepoData  new repository data that was just written
+     * @param rootBlobs    all blobs found directly under the repository root   此时能找到的所有数据块
+     * @param newRepoData  new repository data that was just written      此时已经是最新的记录了
      * @param listener     listener to invoke with the combined {@link DeleteResult} of all blobs removed in this operation
      *
-     *                     清理此时已经认定为失效的 blob 对象
+     *                     清理过期数据块
      */
     private void cleanupStaleBlobs(Map<String, BlobContainer> foundIndices, Map<String, BlobMetadata> rootBlobs,
                                    RepositoryData newRepoData, ActionListener<DeleteResult> listener) {
+
+        // 当相关数据都被清除时 触发该监听器
         final GroupedActionListener<DeleteResult> groupedListener = new GroupedActionListener<>(ActionListener.wrap(deleteResults -> {
             DeleteResult deleteResult = DeleteResult.ZERO;
             for (DeleteResult result : deleteResults) {
@@ -988,6 +990,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         final Executor executor = threadPool.executor(ThreadPool.Names.SNAPSHOT);
         executor.execute(ActionRunnable.supply(groupedListener, () -> {
             // 通过staleRootBlobs方法   找到失效的blob
+            // 通过cleanupStaleRootFiles 删除失效的blob
             List<String> deletedBlobs = cleanupStaleRootFiles(staleRootBlobs(newRepoData, rootBlobs.keySet()));
             return new DeleteResult(deletedBlobs.size(), deletedBlobs.stream().mapToLong(name -> rootBlobs.get(name).length()).sum());
         }));
@@ -1005,27 +1008,42 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
      *     <li>Deleting stale indices {@link #cleanupStaleIndices}</li>
      *     <li>Deleting unreferenced root level blobs {@link #cleanupStaleRootFiles}</li>
      * </ul>
-     * @param repositoryStateId     Current repository state id
+     * @param repositoryStateId     Current repository state id   当前仓库要清理的数据文件对应的gen
      * @param repositoryMetaVersion version of the updated repository metadata to write
      * @param listener              Listener to complete when done
+     *                              清理仓库中的某个数据文件
      */
     public void cleanup(long repositoryStateId, Version repositoryMetaVersion, ActionListener<RepositoryCleanupResult> listener) {
         try {
             if (isReadOnly()) {
                 throw new RepositoryException(metadata.name(), "cannot run cleanup on readonly repository");
             }
+            // 获取每个数据块的元数据信息   对于文件系统来说 实际上就是文件名/长度
+            // blobContainer 就是 blobStore().blobContainer(basePath())
             Map<String, BlobMetadata> rootBlobs = blobContainer().listBlobs();
+
+            // 解析对应文件 并将数据流反序列化成实体   在safeXXX中如果gen与传入的预期值不符合 抛出异常
             final RepositoryData repositoryData = safeRepositoryData(repositoryStateId, rootBlobs);
+
+            // 这是存储所有索引文件的容器
             final Map<String, BlobContainer> foundIndices = blobStore().blobContainer(indicesPath()).children();
+
+            // TODO 存储层的作用是什么  这里存了一组索引id 干嘛用的
             final Set<String> survivingIndexIds =
                 repositoryData.getIndices().values().stream().map(IndexId::getId).collect(Collectors.toSet());
+
+            // 找到一组不被使用的文件
             final List<String> staleRootBlobs = staleRootBlobs(repositoryData, rootBlobs.keySet());
+
+            // 索引文件都是必要的 且没有找到过期的文件 那么本次不需要删除任何文件
             if (survivingIndexIds.equals(foundIndices.keySet()) && staleRootBlobs.isEmpty()) {
                 // Nothing to clean up we return
                 listener.onResponse(new RepositoryCleanupResult(DeleteResult.ZERO));
             } else {
                 // write new index-N blob to ensure concurrent operations will fail
+                // 根据此时的repositoryData 配合最新的snapshot 生成一个新的index-n 文件  同时删除旧的index-n文件
                 writeIndexGen(repositoryData, repositoryStateId, SnapshotsService.useShardGenerations(repositoryMetaVersion),
+                        // cleanupStaleBlobs 这里才开始清理过期数据
                         Function.identity(), ActionListener.wrap(v -> cleanupStaleBlobs(foundIndices, rootBlobs, repositoryData,
                         ActionListener.map(listener, RepositoryCleanupResult::new)), listener::onFailure));
             }
@@ -1034,21 +1052,25 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         }
     }
 
-    // Finds all blobs directly under the repository root path that are not referenced by the current RepositoryData
-    // 以root目录为起始位置 找到所有未引用的blob
+    /**
+     * Finds all blobs directly under the repository root path that are not referenced by the current RepositoryData
+     * 返回当前数据块对应的文件之外的其他文件  这些文件都属于不被使用的文件
+     * @param repositoryData  某一数据块反序列化后生成的存储数据对象
+     * @param rootBlobNames  本次考虑范围内的所有数据块描述对象
+     * @return
+     */
     private List<String> staleRootBlobs(RepositoryData repositoryData, Set<String> rootBlobNames) {
-        // 找到此时还有效的快照
+        // 某个描述存储数据的文件 会有一组关联的快照  这组快照文件都不允许被删除
         final Set<String> allSnapshotIds =
             repositoryData.getSnapshotIds().stream().map(SnapshotId::getUUID).collect(Collectors.toSet());
         return rootBlobNames.stream().filter(
             blob -> {
-                // 如果时临时文件 需要被删除
+                // 如果是临时文件 需要被删除
                 if (FsBlobContainer.isTempBlobName(blob)) {
                     return true;
                 }
                 if (blob.endsWith(".dat")) {
                     final String foundUUID;
-                    // 如果此时尾缀的 uuid 已经与当前blob不一致  就代表该blob 已经过时了
                     if (blob.startsWith(SNAPSHOT_PREFIX)) {
                         foundUUID = blob.substring(SNAPSHOT_PREFIX.length(), blob.length() - ".dat".length());
                         assert snapshotFormat.blobName(foundUUID).equals(blob);
@@ -1056,14 +1078,19 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                         foundUUID = blob.substring(METADATA_PREFIX.length(), blob.length() - ".dat".length());
                         assert globalMetadataFormat.blobName(foundUUID).equals(blob);
                     } else {
+                        // 当 .dat 文件既不是快照文件也不是元数据文件  不进行处理  应该是避免误删文件
                         return false;
                     }
+
+                    // 快照文件或者元数据文件对应的uuid 已经不包含在最新的repositoryData内   那么可以删除这个文件
                     return allSnapshotIds.contains(foundUUID) == false;
-                    // 如果是 index-n 文件   gen匹配不上则进行删除
+                    // 如果是 index-n 文件   gen 小于本次预期的gen 就可以被删除
                 } else if (blob.startsWith(INDEX_FILE_PREFIX)) {
                     // TODO: Include the current generation here once we remove keeping index-(N-1) around from #writeIndexGen
                     return repositoryData.getGenId() > Long.parseLong(blob.substring(INDEX_FILE_PREFIX.length()));
                 }
+
+                // 避免误删文件 其余文件不做处理
                 return false;
             }
         ).collect(Collectors.toList());
@@ -1097,6 +1124,12 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         return Collections.emptyList();
     }
 
+    /**
+     * 清除被判定为过期的索引数据
+     * @param foundIndices
+     * @param survivingIndexIds
+     * @return
+     */
     private DeleteResult cleanupStaleIndices(Map<String, BlobContainer> foundIndices, Set<String> survivingIndexIds) {
         DeleteResult deleteResult = DeleteResult.ZERO;
         try {
@@ -1682,7 +1715,8 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                     // even if a repository has been manually cleared of all contents we will never reuse the same repository generation.
                     // This is motivated by the consistency behavior the S3 based blob repository implementation has to support which does
                     // not offer any consistency guarantees when it comes to overwriting the same blob name with different content.
-                    // pending 代表此时开始执行写入操作了 当写入完成时会将gen与 pendingGen同步
+
+                    // 代表开启了新一次的写入操作 每次写入 都会将gen+1
                     final long nextPendingGen = metadata.pendingGeneration() + 1;
                     newGen = uninitializedMeta ? Math.max(expectedGen + 1, nextPendingGen) : nextPendingGen;
                     assert newGen > latestKnownRepoGen.get() : "Attempted new generation [" + newGen +
@@ -1720,9 +1754,12 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         setPendingStep.whenComplete(newGen -> threadPool().executor(ThreadPool.Names.SNAPSHOT).execute(ActionRunnable.wrap(listener, l -> {
             // BwC logic: Load snapshot version information if any snapshot is missing a version in RepositoryData so that the new
             // RepositoryData contains a version for every snapshot
-            // 找到此时还没有版本号的 快照id   TODO 什么场景下会出现这种情况
+
+            // 存储的数据体会关联一组快照id  这里找到某些没有版本信息的快照
             final List<SnapshotId> snapshotIdsWithoutVersion = repositoryData.getSnapshotIds().stream().filter(
                 snapshotId -> repositoryData.getVersion(snapshotId) == null).collect(Collectors.toList());
+
+            // 代表所有快照都有版本号
             if (snapshotIdsWithoutVersion.isEmpty() == false) {
                 final Map<SnapshotId, Version> updatedVersionMap = new ConcurrentHashMap<>();
                 final GroupedActionListener<Void> loadAllVersionsListener = new GroupedActionListener<>(
@@ -1740,14 +1777,13 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                                 logger.warn("Failure when trying to load missing version information from snapshot metadata", e);
                             }
                         },
-                        // 当执行完监听器的 onRes/onFail 后会触发该方法
+                        // 当将快照相关的版本信息设置到 RepositoryData 后 触发filterRepositoryDataStep
                         () -> filterRepositoryDataStep.onResponse(repositoryData.withVersions(updatedVersionMap))),
                     snapshotIdsWithoutVersion.size());
                 // 找到每个快照并将版本号 设置进去 当设置完成时触发监听器
                 for (SnapshotId snapshotId : snapshotIdsWithoutVersion) {
                     threadPool().executor(ThreadPool.Names.SNAPSHOT).execute(ActionRunnable.run(loadAllVersionsListener,
-                        // 当执行完这串逻辑后会触发回调
-                        // 每个快照以及对应快照信息的版本号被填充到map 中
+                        // 找到快照对应的版本信息  因为既然写入了快照id 就代表这个快照数据已经存在了  内部会包含版本信息  现在只是再取出来
                         () -> updatedVersionMap.put(snapshotId, getSnapshotInfo(snapshotId).version())));
                 }
             } else {
@@ -1756,9 +1792,9 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             }
         })), listener::onFailure);
 
-        // 再将所有快照的版本号都填充完毕后  结果被写入到监听器中 进而触发该方法
+        // 在将所有快照的版本号都填充完毕后  结果被写入到监听器中 进而触发该方法
         filterRepositoryDataStep.whenComplete(filteredRepositoryData -> {
-            // 获取此时最新的gen
+            // 代表本次写入文件对应的gen
             final long newGen = setPendingStep.result();
             if (latestKnownRepoGen.get() >= newGen) {
                 throw new IllegalArgumentException(
@@ -1781,7 +1817,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             }
             logger.debug("Repository [{}] updating index.latest with generation [{}]", metadata.name(), newGen);
 
-            // 就一个gen 也单独写入到文件中么  并且进行覆盖   那么直接读取这个文件就可以知道此时最新的 gen了
+            // 这个文件是单独记录此时最新的gen的
             writeAtomic(INDEX_LATEST_BLOB, genBytes, false);
 
             // Step 3: Update CS to reflect new repository generation.
@@ -1824,7 +1860,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                         final RepositoryData writtenRepositoryData = filteredRepositoryData.withGenId(newGen);
                         // 将数据写入到缓存中
                         cacheRepositoryData(writtenRepositoryData);
-                        // 删除前1000个blob index-n  TODO 什么时候能删除 当最新的gen被发布到集群时 ， 这意味着什么 之前的数据如果还有对象在访问会怎么样
+                        // 将newGen之前的所有gen 都删除
                         threadPool.executor(ThreadPool.Names.SNAPSHOT).execute(ActionRunnable.supply(listener, () -> {
                             // Delete all now outdated index files up to 1000 blobs back from the new generation.
                             // If there are more than 1000 dangling index-N cleanup functionality on repo delete will take care of them.

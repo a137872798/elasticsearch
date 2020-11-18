@@ -37,6 +37,9 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 获取每个节点上内存使用量的处理器
+ */
 public class TransportNodesUsageAction
         extends TransportNodesAction<NodesUsageRequest, NodesUsageResponse, TransportNodesUsageAction.NodeUsageRequest, NodeUsage> {
 

@@ -272,6 +272,10 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
         return coordinationMetadata().getLastAcceptedConfiguration();
     }
 
+    /**
+     * 获取最新的集群选举相关的配置 比如哪些节点在参选范围内
+     * @return
+     */
     public VotingConfiguration getLastCommittedConfiguration() {
         return coordinationMetadata().getLastCommittedConfiguration();
     }

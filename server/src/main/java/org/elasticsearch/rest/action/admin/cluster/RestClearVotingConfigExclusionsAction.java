@@ -31,6 +31,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 
+/**
+ * 清空此时所有的 exclusion配置
+ */
 public class RestClearVotingConfigExclusionsAction extends BaseRestHandler {
 
     @Override
