@@ -704,6 +704,9 @@ public class MasterService extends AbstractLifecycleComponent {
         }
     }
 
+    /**
+     * TODO 什么时候触发ack钩子来着???
+     */
     private static class SafeAckedClusterStateTaskListener extends SafeClusterStateTaskListener implements AckedClusterStateTaskListener {
         private final AckedClusterStateTaskListener listener;
         private final Logger logger;

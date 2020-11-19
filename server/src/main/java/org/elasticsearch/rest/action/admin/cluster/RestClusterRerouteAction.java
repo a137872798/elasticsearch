@@ -43,6 +43,9 @@ import java.util.Set;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 处理reroute的指令
+ */
 public class RestClusterRerouteAction extends BaseRestHandler {
     private static final ObjectParser<ClusterRerouteRequest, Void> PARSER = new ObjectParser<>("cluster_reroute");
     static {
@@ -72,6 +75,7 @@ public class RestClusterRerouteAction extends BaseRestHandler {
 
     @Override
     public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
+        // 从泛化的Rest请求对象中抽取相关参数生成 reroute请求
         ClusterRerouteRequest clusterRerouteRequest = createRequest(request);
         settingsFilter.addFilterSettingParams(request);
         if (clusterRerouteRequest.explain()) {
@@ -106,6 +110,7 @@ public class RestClusterRerouteAction extends BaseRestHandler {
         clusterRerouteRequest.timeout(request.paramAsTime("timeout", clusterRerouteRequest.timeout()));
         clusterRerouteRequest.setRetryFailed(request.paramAsBoolean("retry_failed", clusterRerouteRequest.isRetryFailed()));
         clusterRerouteRequest.masterNodeTimeout(request.paramAsTime("master_timeout", clusterRerouteRequest.masterNodeTimeout()));
+        // 解析 cluster_reroute 并将内部数据填充到clusterRerouteRequest中
         request.applyContentParser(parser -> PARSER.parse(parser, clusterRerouteRequest, null));
         return clusterRerouteRequest;
     }

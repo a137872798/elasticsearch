@@ -203,6 +203,7 @@ public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest
                         nodeRequest.setParentTask(clusterService.localNode().getId(), task.getId());
                     }
 
+                    // 因为请求涉及到多个节点 这里是往不同节点发送请求 如果某个node就是localNode 那么会通过localChannel处理 也就是不经过网络层
                     transportService.sendRequest(node, transportNodeAction, nodeRequest, builder.build(),
                             new TransportResponseHandler<NodeResponse>() {
                                 @Override
@@ -248,6 +249,9 @@ public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest
             }
         }
 
+        /**
+         * 当每个节点都生成对应res后 会将他们合并成一个最终结果
+         */
         private void finishHim() {
             NodesResponse finalResponse;
             try {

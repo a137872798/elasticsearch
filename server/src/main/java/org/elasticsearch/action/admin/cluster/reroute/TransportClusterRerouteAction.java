@@ -58,6 +58,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 在 allocationExplain 和 reroute中都使用到了allocationService
+ */
 public class TransportClusterRerouteAction extends TransportMasterNodeAction<ClusterRerouteRequest, ClusterRerouteResponse> {
 
     private static final Logger logger = LogManager.getLogger(TransportClusterRerouteAction.class);
@@ -79,6 +82,12 @@ public class TransportClusterRerouteAction extends TransportMasterNodeAction<Clu
         return ThreadPool.Names.SAME;
     }
 
+    /**
+     * 修改路由信息是一种修改元数据的操作
+     * @param request
+     * @param state
+     * @return
+     */
     @Override
     protected ClusterBlockException checkBlock(ClusterRerouteRequest request, ClusterState state) {
         return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA_WRITE);
@@ -89,11 +98,20 @@ public class TransportClusterRerouteAction extends TransportMasterNodeAction<Clu
         return new ClusterRerouteResponse(in);
     }
 
+    /**
+     * 在主节点上处理
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     */
     @Override
     protected void masterOperation(Task task, final ClusterRerouteRequest request, final ClusterState state,
                                    final ActionListener<ClusterRerouteResponse> listener) {
         Map<String, List<AbstractAllocateAllocationCommand>> stalePrimaryAllocations = new HashMap<>();
         for (AllocationCommand command : request.getCommands().commands()) {
+            // 这里只处理某种特定类型的分配指令
+            // 针对陈旧的主分片的分配指令
             if (command instanceof AllocateStalePrimaryAllocationCommand) {
                 final AllocateStalePrimaryAllocationCommand cmd = (AllocateStalePrimaryAllocationCommand) command;
                 stalePrimaryAllocations.computeIfAbsent(cmd.index(), k -> new ArrayList<>()).add(cmd);
@@ -106,8 +124,15 @@ public class TransportClusterRerouteAction extends TransportMasterNodeAction<Clu
         }
     }
 
+    /**
+     * 当本次的处理命令中包含 AllocateStalePrimaryAllocationCommand 时 触发该方法
+     * @param request
+     * @param listener
+     * @param stalePrimaryAllocations
+     */
     private void verifyThenSubmitUpdate(ClusterRerouteRequest request, ActionListener<ClusterRerouteResponse> listener,
         Map<String, List<AbstractAllocateAllocationCommand>> stalePrimaryAllocations) {
+        // 还是交给本节点执行 这里替换成了另一种指令
         transportService.sendRequest(transportService.getLocalNode(), IndicesShardStoresAction.NAME,
             new IndicesShardStoresRequest().indices(stalePrimaryAllocations.keySet().toArray(Strings.EMPTY_ARRAY)),
             new ActionListenerResponseHandler<>(
@@ -151,6 +176,11 @@ public class TransportClusterRerouteAction extends TransportMasterNodeAction<Clu
                 ), IndicesShardStoresResponse::new));
     }
 
+    /**
+     * 当不包含陈旧的主分片时 触发该方法
+     * @param request
+     * @param listener
+     */
     private void submitStateUpdate(final ClusterRerouteRequest request, final ActionListener<ClusterRerouteResponse> listener) {
         clusterService.submitStateUpdateTask("cluster_reroute (api)",
             new ClusterRerouteResponseAckedClusterStateUpdateTask(logger, allocationService, request,
@@ -163,6 +193,9 @@ public class TransportClusterRerouteAction extends TransportMasterNodeAction<Clu
                     })));
     }
 
+    /**
+     * 更新集群的任务 并且在集群的大多数节点处理完后 会触发内部的监听器
+     */
     static class ClusterRerouteResponseAckedClusterStateUpdateTask extends AckedClusterStateUpdateTask<ClusterRerouteResponse> {
 
         private final ClusterRerouteRequest request;
@@ -197,6 +230,11 @@ public class TransportClusterRerouteAction extends TransportMasterNodeAction<Clu
             super.onFailure(source, e);
         }
 
+        /**
+         * 根据现有的集群状态进行更新 并将新的状态发布给集群的其他节点
+         * @param currentState
+         * @return
+         */
         @Override
         public ClusterState execute(ClusterState currentState) {
             AllocationService.CommandsResult commandsResult =
