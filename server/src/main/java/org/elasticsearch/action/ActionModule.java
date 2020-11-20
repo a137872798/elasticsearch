@@ -523,6 +523,7 @@ public class ActionModule extends AbstractModule {
         actions.register(ClusterUpdateSettingsAction.INSTANCE, TransportClusterUpdateSettingsAction.class);
         // 有关重路由的处理器
         actions.register(ClusterRerouteAction.INSTANCE, TransportClusterRerouteAction.class);
+        // 查询指定index下所有的分片
         actions.register(ClusterSearchShardsAction.INSTANCE, TransportClusterSearchShardsAction.class);
         actions.register(PendingClusterTasksAction.INSTANCE, TransportPendingClusterTasksAction.class);
         actions.register(PutRepositoryAction.INSTANCE, TransportPutRepositoryAction.class);

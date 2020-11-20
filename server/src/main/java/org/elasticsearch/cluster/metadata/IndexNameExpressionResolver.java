@@ -71,9 +71,12 @@ public class IndexNameExpressionResolver {
     /**
      * Same as {@link #concreteIndexNames(ClusterState, IndicesOptions, String...)}, but the index expressions and options
      * are encapsulated in the specified request.
+     * 从当前集群状态中选择一组符合索引状态筛选条件的索引
      */
     public String[] concreteIndexNames(ClusterState state, IndicesRequest request) {
+        // 将相关参数包裹成上下文
         Context context = new Context(state, request.indicesOptions());
+        // 解析表达式 并将匹配的所有索引名称查询返回
         return concreteIndexNames(context, request.indices());
     }
 
@@ -141,8 +144,16 @@ public class IndexNameExpressionResolver {
         return concreteIndices(context, indexExpressions);
     }
 
+    /**
+     *
+     * @param context 该对象中包含了需要的参数信息  比如IndexOptional
+     * @param indexExpressions  本次需要获取的所有index的特殊字符串  内部可能需要通过通配符去匹配index
+     * @return
+     */
     String[] concreteIndexNames(Context context, String... indexExpressions) {
+        // 将表达式转换成索引对象
         Index[] indexes = concreteIndices(context, indexExpressions);
+        // 取出索引名称后返回
         String[] names = new String[indexes.length];
         for (int i = 0; i < indexes.length; i++) {
             names[i] = indexes[i].getName();
@@ -157,13 +168,15 @@ public class IndexNameExpressionResolver {
      * @return
      */
     Index[] concreteIndices(Context context, String... indexExpressions) {
-        // 如果没有传入索引表达式 默认就是全匹配
+        // 如果没有传入索引表达式 默认就是全匹配   可以理解为用户没有显式声明要处理的索引 所以处理所有的索引
         if (indexExpressions == null || indexExpressions.length == 0) {
             indexExpressions = new String[]{Metadata.ALL};
         }
         Metadata metadata = context.getState().metadata();
+
+        // 选出的所有还要符合这个选项要求
         IndicesOptions options = context.getOptions();
-        // 禁止关闭的索引 且 不忽略无法使用的索引
+        // 禁止关闭的索引 且 不忽略无法使用的索引    也就是遇到被关闭的索引时选择失败
         final boolean failClosed = options.forbidClosedIndices() && options.ignoreUnavailable() == false;
         // If only one index is specified then whether we fail a request if an index is missing depends on the allow_no_indices
         // option. At some point we should change this, because there shouldn't be a reason why whether a single index
@@ -470,17 +483,25 @@ public class IndexNameExpressionResolver {
      * Resolves the search routing if in the expression aliases are used. If expressions point to concrete indices
      * or aliases with no routing defined the specified routing is used.
      *
+     * @param routing 路由信息
+     * @param expressions 本次相关的索引信息
      * @return routing values grouped by concrete index
+     * 获取本次相关的所有索引的路由信息
+     * TODO 这个方法在干什么 ???
      */
     public Map<String, Set<String>> resolveSearchRouting(ClusterState state, @Nullable String routing, String... expressions) {
         List<String> resolvedExpressions = expressions != null ? Arrays.asList(expressions) : Collections.emptyList();
+        // 生成一个上下文对象
         Context context = new Context(state, IndicesOptions.lenientIncludeDataStreamsExpandOpen());
+        // 使用多个index解析器 进行解析 并将结果设置到list中  先忽略解析逻辑
         for (ExpressionResolver expressionResolver : expressionResolvers) {
             resolvedExpressions = expressionResolver.resolve(context, resolvedExpressions);
         }
 
         // TODO: it appears that this can never be true?
+        // 代表需要获取所有index的信息
         if (isAllIndices(resolvedExpressions)) {
+            // 实际上还是使用了传入的routing 信息 所有索引都会与这些routing构建关联关系 如果routing为null 返回null
             return resolveSearchRoutingAllIndices(state.metadata(), routing);
         }
 
@@ -492,14 +513,20 @@ public class IndexNameExpressionResolver {
             paramRouting = Sets.newHashSet(Strings.splitStringByCommaToArray(routing));
         }
 
+        // 代表不是针对所有index  这里开始遍历解析出来的index
         for (String expression : resolvedExpressions) {
+            // 找到某个索引相关的数据
             IndexAbstraction indexAbstraction = state.metadata().getIndicesLookup().get(expression);
+            // 代表是通过 alias命中的
             if (indexAbstraction != null && indexAbstraction.getType() == IndexAbstraction.Type.ALIAS) {
                 IndexAbstraction.Alias alias = (IndexAbstraction.Alias) indexAbstraction;
+                // 遍历内部所有的index
                 for (Tuple<String, AliasMetadata> item : alias.getConcreteIndexAndAliasMetadatas()) {
                     String concreteIndex = item.v1();
                     AliasMetadata aliasMetadata = item.v2();
+                    // 这里是去重的吧 如果已经确定了某个index是没有路由信息的就不需要重复处理了
                     if (!norouting.contains(concreteIndex)) {
+                        // 代表存在相关的路由信息
                         if (!aliasMetadata.searchRoutingValues().isEmpty()) {
                             // Routing alias
                             if (routings == null) {
@@ -510,7 +537,9 @@ public class IndexNameExpressionResolver {
                                 r = new HashSet<>();
                                 routings.put(concreteIndex, r);
                             }
+                            // 把找到的所有路由信息设置进去
                             r.addAll(aliasMetadata.searchRoutingValues());
+                            // 如果在参数中指定了routing 那么仅保留交集
                             if (paramRouting != null) {
                                 r.retainAll(paramRouting);
                             }
@@ -519,8 +548,10 @@ public class IndexNameExpressionResolver {
                             }
                         } else {
                             // Non-routing alias
+                            // 某个index 没有找到任何路由相关信息 就加入到容器中避免被重复处理
                             if (!norouting.contains(concreteIndex)) {
                                 norouting.add(concreteIndex);
+                                // 这时参数中的路由还是会设置进去
                                 if (paramRouting != null) {
                                     Set<String> r = new HashSet<>(paramRouting);
                                     if (routings == null) {
@@ -538,6 +569,7 @@ public class IndexNameExpressionResolver {
                 }
             } else {
                 // Index
+                // 处理index类型的 IndexAbstraction   这种就直接使用传入的routing
                 if (!norouting.contains(expression)) {
                     norouting.add(expression);
                     if (paramRouting != null) {
@@ -563,9 +595,12 @@ public class IndexNameExpressionResolver {
 
     /**
      * Sets the same routing for all indices
+     * @param routing 路由信息 可能可以拆分
+     *                将每个索引 与拆解后的所有路由信息构建映射关系  如果没有路由信息返回null
      */
     public Map<String, Set<String>> resolveSearchRoutingAllIndices(Metadata metadata, String routing) {
         if (routing != null) {
+            // ,拆分
             Set<String> r = Sets.newHashSet(Strings.splitStringByCommaToArray(routing));
             Map<String, Set<String>> routings = new HashMap<>();
             String[] concreteIndices = metadata.getConcreteAllIndices();
@@ -574,6 +609,7 @@ public class IndexNameExpressionResolver {
             }
             return routings;
         }
+        // 当用户没有传入路由信息时 返回null
         return null;
     }
 
@@ -633,6 +669,9 @@ public class IndexNameExpressionResolver {
 
         private final ClusterState state;
         private final IndicesOptions options;
+        /**
+         * 生成该对象后 立刻就要开始解析index表达式了 这里记录的是解析的起始时间
+         */
         private final long startTime;
         private final boolean preserveAliases;
         private final boolean resolveToWriteIndex;
@@ -715,12 +754,13 @@ public class IndexNameExpressionResolver {
             Metadata metadata = context.getState().metadata();
             // only check open/closed since if we do not expand to open or closed it doesn't make sense to
             // expand to hidden
-            // expandWildcardsXXX  代表通配符允许匹配的索引范围  在集群中一共有3种状态的索引  打开的OPEN 已被关闭的CLOSED 被隐藏的 HIDDEN
+            // 代表不会对打开或者关闭的索引解析通配符     打开+关闭应该就涵盖了所有待处理的index 所以直接不处理了
+            // 可能hidden的索引就是不会返回给用户的吧
             if (options.expandWildcardsClosed() == false && options.expandWildcardsOpen() == false) {
                 return expressions;
             }
 
-            // 代表表达式为空 或者是 "*" 或者 ALL
+            // 代表表达式为空(空就认为是查询所有index) 或者是 "*" 或者 ALL
             if (isEmptyOrTrivialWildcard(expressions)) {
                 // 如果不包含数据流 但是数据流不为空 抛出异常
                 if (options.includeDataStreams() == false && metadata.dataStreams().isEmpty() == false) {
@@ -730,6 +770,7 @@ public class IndexNameExpressionResolver {
                 return resolveEmptyOrTrivialWildcard(options, metadata);
             }
 
+            // 开始解析
             Set<String> result = innerResolve(context, expressions, options, metadata);
 
             // 当没有解析出结果时 返回原数据 因为在外层是链式解析 交由下一环解析就好
@@ -748,7 +789,7 @@ public class IndexNameExpressionResolver {
         /**
          * 将通配符表达式转换成indexName
          * @param context
-         * @param expressions
+         * @param expressions  index表达式
          * @param options
          * @param metadata
          * @return
@@ -783,13 +824,14 @@ public class IndexNameExpressionResolver {
                 }
                 if (result == null) {
                     // add all the previous ones...
-                    // 之前的都已经解析完毕了 首次进入到下面
+                    // 之前的都通过aliasOrIndexExists 所以不需要解析
                     result = new HashSet<>(expressions.subList(0, i));
                 }
-                // 代表不包含 *
+                // 代表不包含 *  这里没有做解析啊 直接存入result了
                 if (Regex.isSimpleMatchPattern(expression) == false) {
-                    // 下面的逻辑和直接匹配是一样的
                     //TODO why does wildcard resolver throw exceptions regarding non wildcarded expressions? This should not be done here.
+
+                    // 这里就是根据 optional + 本次查询出来的类型进行匹配 不合适立即抛出异常
                     if (options.ignoreUnavailable() == false) {
                         IndexAbstraction indexAbstraction = metadata.getIndicesLookup().get(expression);
                         if (indexAbstraction == null) {
@@ -850,18 +892,19 @@ public class IndexNameExpressionResolver {
          * @return
          */
         private static boolean aliasOrIndexExists(IndicesOptions options, Metadata metadata, String expression) {
+            // 没办法直接找到匹配的 indexAbstraction 代表expression没有命中别名或者indexName
             IndexAbstraction indexAbstraction = metadata.getIndicesLookup().get(expression);
             if (indexAbstraction == null) {
                 return false;
             }
 
             //treat aliases as unavailable indices when ignoreAliases is set to true (e.g. delete index and update aliases api)
-            // 如果匹配上的index是别名  且设置了要忽略别名 那么就不需要处理了
+            // 如果匹配上的index是别名  且设置了要忽略别名 那么认为没有匹配成功 这样之后它还会被解析
             if (indexAbstraction.getType() == IndexAbstraction.Type.ALIAS && options.ignoreAliases()) {
                 return false;
             }
 
-            // 如果是数据流 且设置了不包含 则返回false
+            // 如果匹配到的是数据流 且指明了不包含数据流 那么忽略
             if (indexAbstraction.getType() == IndexAbstraction.Type.DATA_STREAM && options.includeDataStreams() == false) {
                 return false;
             }
@@ -1031,13 +1074,14 @@ public class IndexNameExpressionResolver {
         }
 
         /**
-         * 处理表达式为空 或者 "*" ALL   根据options中的信息返回不同的IndexName
+         * 处理表达式为空 或者 "*" ALL
+         * 根据options中的信息返回不同的IndexName
          * @param options
          * @param metadata
          * @return
          */
         private static List<String> resolveEmptyOrTrivialWildcard(IndicesOptions options, Metadata metadata) {
-            // 同时开启3种状态
+            // 因为前提是获取所有索引信息了 这里只是根据optional进行过滤
             if (options.expandWildcardsOpen() && options.expandWildcardsClosed() && options.expandWildcardsHidden()) {
                 // 获取所有索引
                 return Arrays.asList(metadata.getConcreteAllIndices());

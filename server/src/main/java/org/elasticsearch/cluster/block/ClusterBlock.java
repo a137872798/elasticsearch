@@ -34,7 +34,7 @@ import java.util.Locale;
 import java.util.Objects;
 
 /**
- * 描述集群被阻塞
+ * 代表针对某个索引的某种操作被阻塞
  */
 public class ClusterBlock implements Writeable, ToXContentFragment {
 

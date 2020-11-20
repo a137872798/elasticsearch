@@ -45,6 +45,7 @@ import static org.elasticsearch.rest.RestRequest.Method.POST;
 
 /**
  * 处理reroute的指令
+ * TODO reroute相关的先忽略
  */
 public class RestClusterRerouteAction extends BaseRestHandler {
     private static final ObjectParser<ClusterRerouteRequest, Void> PARSER = new ObjectParser<>("cluster_reroute");

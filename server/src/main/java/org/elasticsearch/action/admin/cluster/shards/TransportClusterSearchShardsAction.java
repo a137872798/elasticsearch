@@ -46,9 +46,17 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 查询shard
+ *
+ * TransportMasterNodeReadAction 在req允许的情况下 可以直接通过本节点缓存的clusterState查询分片 否则必须通过leader节点查询
+ */
 public class TransportClusterSearchShardsAction extends
     TransportMasterNodeReadAction<ClusterSearchShardsRequest, ClusterSearchShardsResponse> {
 
+    /**
+     * 索引服务 所有相关的分片都通过该服务来访问
+     */
     private final IndicesService indicesService;
 
     @Inject
@@ -66,6 +74,12 @@ public class TransportClusterSearchShardsAction extends
         return ThreadPool.Names.SAME;
     }
 
+    /**
+     * 检测某些index 的元数据读取是否被阻塞   看来这个block还可以对应多种维度
+     * @param request
+     * @param state
+     * @return
+     */
     @Override
     protected ClusterBlockException checkBlock(ClusterSearchShardsRequest request, ClusterState state) {
         return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_READ,
@@ -77,13 +91,23 @@ public class TransportClusterSearchShardsAction extends
         return new ClusterSearchShardsResponse(in);
     }
 
+    /**
+     * 处理主入口
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     */
     @Override
     protected void masterOperation(Task task, final ClusterSearchShardsRequest request, final ClusterState state,
                                    final ActionListener<ClusterSearchShardsResponse> listener) {
         ClusterState clusterState = clusterService.state();
+        // 本次要获取哪些index 在处理前会通过checkBlock 所以这些index必然是可以正常获取信息的
         String[] concreteIndices = indexNameExpressionResolver.concreteIndexNames(clusterState, request);
+        // 获取索引的路由信息  实际上基本都是通过传入的routing来设置的
         Map<String, Set<String>> routingMap = indexNameExpressionResolver.resolveSearchRouting(state, request.routing(), request.indices());
         Map<String, AliasFilter> indicesAndFilters = new HashMap<>();
+        // 解析本次请求需要获取的index
         Set<String> indicesAndAliases = indexNameExpressionResolver.resolveExpressions(clusterState, request.indices());
         for (String index : concreteIndices) {
             final AliasFilter aliasFilter = indicesService.buildAliasFilter(clusterState, index, indicesAndAliases);

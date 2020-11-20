@@ -83,6 +83,12 @@ public class ClusterBlocks extends AbstractDiffable<ClusterBlocks> {
         return levelHolders.get(level).indices();
     }
 
+    /**
+     * 查询某个索引的某种操作是否会被阻塞
+     * @param level
+     * @param index
+     * @return
+     */
     private Set<ClusterBlock> blocksForIndex(ClusterBlockLevel level, String index) {
         return indices(level).getOrDefault(index, emptySet());
     }
@@ -223,16 +229,28 @@ public class ClusterBlocks extends AbstractDiffable<ClusterBlocks> {
         return globalBlocked(level) || blocksForIndex(level, index).isEmpty() == false;
     }
 
+    /**
+     * 检查某些索引相关的操作是否被阻塞
+     * @param level
+     * @param indices
+     * @return
+     */
     public ClusterBlockException indicesBlockedException(ClusterBlockLevel level, String[] indices) {
+        // 这个是针对所有索引的全局阻塞对象
         Set<ClusterBlock> globalLevelBlocks = global(level);
+
+        // 存放最终结果的容器
         Map<String, Set<ClusterBlock>> indexLevelBlocks = new HashMap<>();
         for (String index : indices) {
+            // 找到某个索引在某个level下的所有block对象  就是简单的map操作
             Set<ClusterBlock> indexBlocks = blocksForIndex(level, index);
+            // 全局的block 针对每个index又单独插入了一遍
             if (indexBlocks.isEmpty() == false || globalLevelBlocks.isEmpty() == false) {
                 indexLevelBlocks.put(index, Sets.union(indexBlocks, globalLevelBlocks));
             }
         }
         if (indexLevelBlocks.isEmpty()) {
+            // 如果没有针对index级别的 会单独将global级别的block取出来
             if(globalLevelBlocks.isEmpty() == false){
                 return new ClusterBlockException(globalLevelBlocks);
             }
@@ -333,6 +351,10 @@ public class ClusterBlocks extends AbstractDiffable<ClusterBlocks> {
         return AbstractDiffable.readDiffFrom(ClusterBlocks::new, in);
     }
 
+    /**
+     * 所有levelBlock对象 最先是被level分组 其次根据index进行分组
+     * 这里是已经对应到某个level了
+     */
     static class ImmutableLevelHolder {
 
         private final Set<ClusterBlock> global;
