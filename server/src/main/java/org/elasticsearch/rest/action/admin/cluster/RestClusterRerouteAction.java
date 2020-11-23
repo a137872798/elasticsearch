@@ -43,6 +43,9 @@ import java.util.Set;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 集群重路由
+ */
 public class RestClusterRerouteAction extends BaseRestHandler {
     private static final ObjectParser<ClusterRerouteRequest, Void> PARSER = new ObjectParser<>("cluster_reroute");
     static {
@@ -99,6 +102,12 @@ public class RestClusterRerouteAction extends BaseRestHandler {
         return RESPONSE_PARAMS;
     }
 
+    /**
+     * 从标准的rest请求对象中抽取相关属性 生成ClusterRerouteRequest
+     * @param request
+     * @return
+     * @throws IOException
+     */
     public static ClusterRerouteRequest createRequest(RestRequest request) throws IOException {
         ClusterRerouteRequest clusterRerouteRequest = Requests.clusterRerouteRequest();
         clusterRerouteRequest.dryRun(request.paramAsBoolean("dry_run", clusterRerouteRequest.dryRun()));

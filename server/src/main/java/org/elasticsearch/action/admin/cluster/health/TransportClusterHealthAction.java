@@ -102,7 +102,6 @@ public class TransportClusterHealthAction extends TransportMasterNodeReadAction<
         // 总计要等待多少数据
         final int waitCount = getWaitCount(request);
 
-        // 这里有一个等待事件的优先级
         if (request.waitForEvents() != null) {
             waitForEventsAndExecuteHealth(request, listener, waitCount, threadPool.relativeTimeInMillis() + request.timeout().millis());
         } else {
