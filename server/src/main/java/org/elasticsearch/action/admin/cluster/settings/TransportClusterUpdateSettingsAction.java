@@ -114,9 +114,14 @@ public class TransportClusterUpdateSettingsAction extends
 
                 @Override
                 protected ClusterUpdateSettingsResponse newResponse(boolean acknowledged) {
+                    // 获取本次更新奏效的配置
                     return new ClusterUpdateSettingsResponse(acknowledged, updater.getTransientUpdates(), updater.getPersistentUpdate());
                 }
 
+                /**
+                 * 当所有节点接受到结果后  如果配置发生了变化 尝试更新路由  是先在集群范围成功更新配置后 才更新路由
+                 * @param e optional error that might have been thrown
+                 */
                 @Override
                 public void onAllNodesAcked(@Nullable Exception e) {
                     if (changed) {
@@ -135,10 +140,15 @@ public class TransportClusterUpdateSettingsAction extends
                     }
                 }
 
+                /**
+                 * 尝试更新路由信息
+                 * @param updateSettingsAcked  本次配置同步到集群是否成功
+                 */
                 private void reroute(final boolean updateSettingsAcked) {
                     // We're about to send a second update task, so we need to check if we're still the elected master
                     // For example the minimum_master_node could have been breached and we're no longer elected master,
                     // so we should *not* execute the reroute.
+                    // 当本节点不再是 leader后 不需要处理重路由了  但是本次配置应该已经更新成功了(比如 updateSettingsAcked为true)
                     if (!clusterService.state().nodes().isLocalNodeElectedMaster()) {
                         logger.debug("Skipping reroute after cluster update settings, because node is no longer master");
                         listener.onResponse(new ClusterUpdateSettingsResponse(updateSettingsAcked, updater.getTransientUpdates(),
@@ -202,6 +212,7 @@ public class TransportClusterUpdateSettingsAction extends
                  */
                 @Override
                 public ClusterState execute(final ClusterState currentState) {
+                    // 更新内部配置 同时触发监听配置变化的钩子
                     final ClusterState clusterState =
                         updater.updateSettings(
                             currentState,

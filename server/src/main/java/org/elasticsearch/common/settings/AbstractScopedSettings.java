@@ -155,11 +155,13 @@ public abstract class AbstractScopedSettings {
     /**
      * Validates the given settings by running it through all update listeners without applying it. This
      * method will not change any settings but will fail if any of the settings can't be applied.
+     * 对给定的配置项进行校验
      */
     public synchronized Settings validateUpdate(Settings settings) {
         final Settings current = Settings.builder().put(this.settings).put(settings).build();
         final Settings previous = Settings.builder().put(this.settings).put(this.lastSettingsApplied).build();
         List<RuntimeException> exceptions = new ArrayList<>();
+        // 触发更新配置
         for (SettingUpdater<?> settingUpdater : settingUpdaters) {
             try {
                 // ensure running this through the updater / dynamic validator
@@ -607,7 +609,7 @@ public abstract class AbstractScopedSettings {
      * Transactional interface to update settings.
      * @see Setting
      * @param <T> the type of the value of the setting
-     *           封装了 处理集群配置变化的逻辑
+     *           监听配置的变化 并进行相应的处理
      */
     public interface SettingUpdater<T> {
 

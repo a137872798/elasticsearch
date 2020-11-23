@@ -302,6 +302,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * 该索引下总计有多少分片
      */
     private final int numberOfShards;
+    /**
+     * 该索引下总计有多少副本
+     */
     private final int numberOfReplicas;
 
     private final Index index;
@@ -309,6 +312,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
     private final long mappingVersion;
 
+    /**
+     * 每当index配置发生一次变化 就用版本号来记录 这跟lucene的套路基本是一致的
+     */
     private final long settingsVersion;
 
     private final long aliasesVersion;
@@ -477,6 +483,10 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         return numberOfShards;
     }
 
+    /**
+     * 此时该索引总计有多少副本
+     * @return
+     */
     public int getNumberOfReplicas() {
         return numberOfReplicas;
     }

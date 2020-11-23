@@ -407,6 +407,9 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
     public static class Builder {
 
         private long version;
+        /**
+         * 每个索引 以及他们的分配情况
+         */
         private ImmutableOpenMap.Builder<String, IndexRoutingTable> indicesRouting = ImmutableOpenMap.builder();
 
         public Builder() {
@@ -468,6 +471,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
          * 更新某些索引推荐的副本数量
          */
         public Builder updateNumberOfReplicas(final int numberOfReplicas, final String[] indices) {
+            // 代表已经调用过build()方法了
             if (indicesRouting == null) {
                 throw new IllegalStateException("once build is called the builder cannot be reused");
             }
@@ -477,18 +481,23 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
                     // ignore index missing failure, its closed...
                     continue;
                 }
+                // 一个索引的数据会被拆分成多份  也就出来了分片的概念  而副本是针对分片而言的 同一索引的多个分片可以在同一node下  但是副本就必须在不同的节点
+                // 这个是主分片的副本数量
                 int currentNumberOfReplicas = indexRoutingTable.shards().get(0).size() - 1; // remove the required primary
                 IndexRoutingTable.Builder builder = new IndexRoutingTable.Builder(indexRoutingTable.getIndex());
+
                 // re-add all the shards
+                // 将所有分片转移到新的builder中
                 for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
                     builder.addIndexShard(indexShardRoutingTable);
                 }
+                // 代表需要增加新的副本
                 if (currentNumberOfReplicas < numberOfReplicas) {
                     // now, add "empty" ones
-                    // 为每个shards 都增加一个新的shard
                     for (int i = 0; i < (numberOfReplicas - currentNumberOfReplicas); i++) {
                         builder.addReplica();
                     }
+                // 代表需要丢弃一些副本  怎么知道要丢哪几个node对应的副本呢
                 } else if (currentNumberOfReplicas > numberOfReplicas) {
                     int delta = currentNumberOfReplicas - numberOfReplicas;
                     if (delta <= 0) {
@@ -499,6 +508,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
                         }
                     }
                 }
+                // 将更新后的 index级别的路由信息设置到 indicesRouting中
                 indicesRouting.put(index, builder.build());
             }
             return this;

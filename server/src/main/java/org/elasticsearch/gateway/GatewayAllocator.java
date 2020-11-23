@@ -56,7 +56,7 @@ import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
 /**
- * 默认情况下使用的应该就是这个类
+ * ES默认的 replicate primary分配器
  */
 public class GatewayAllocator implements ExistingShardsAllocator {
 
@@ -79,9 +79,19 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     // AsyncShardFetch 代表从集群相关节点中获取有关该分片的数据
     private final ConcurrentMap<ShardId, AsyncShardFetch<NodeGatewayStartedShards>>
         asyncFetchStarted = ConcurrentCollections.newConcurrentMap();
+
+    /**
+     * 以分片作为key  一个index对应多个shard
+     * 每个shard 有一个primary 以及多个replicate
+     * 应该是这样  这个对象存储了某个分片下所有数据文件的元数据信息  因为在一个分片下 primary和replcate 最终的数据应该是一致的
+     * 所以只使用了一份 NodeStoreFilesMetadata 或者说这个数据就是从primary上获取的
+     */
     private final ConcurrentMap<ShardId, AsyncShardFetch<NodeStoreFilesMetadata>>
         asyncFetchStore = ConcurrentCollections.newConcurrentMap();
 
+    /**
+     * 存储了某个时刻观测到的所有node 的瞬时id  如果新增了节点就可以通过 container函数判断出来
+     */
     private Set<String> lastSeenEphemeralIds = Collections.emptySet();
 
     /**
@@ -156,7 +166,7 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     }
 
     /**
-     * 在开启一轮新的分配前 先触发该函数
+     * 在进行分配前需要做的前置工作
      * @param allocation
      */
     @Override
@@ -217,14 +227,15 @@ public class GatewayAllocator implements ExistingShardsAllocator {
 
     /**
      * Clear the fetched data for the primary to ensure we do not cancel recoveries based on excessively stale data.
-     * 检测最近是否发生过 主分片的拉取任务
+     * @param allocation 包含了此时集群中所有分片的分配信息
+     * 在进行一轮新的 replicate primary分配前 需要调用该方法
      */
     private void ensureAsyncFetchStorePrimaryRecency(RoutingAllocation allocation) {
         // 本次分配涉及到的所有node
         DiscoveryNodes nodes = allocation.nodes();
         // 代表有新的node
         if (hasNewNodes(nodes)) {
-            // 将每个node 的ephemeralId 取出来
+            // 将之前的node的 ephemeralId取出来
             final Set<String> newEphemeralIds = StreamSupport.stream(nodes.getDataNodes().spliterator(), false)
                 .map(node -> node.value.getEphemeralId()).collect(Collectors.toSet());
             // Invalidate the cache if a data node has been added to the cluster. This ensures that we do not cancel a recovery if a node
@@ -233,8 +244,11 @@ public class GatewayAllocator implements ExistingShardsAllocator {
             // making the wrong decision here is not catastrophic so we only need to cover the common case.
             logger.trace(() -> new ParameterizedMessage(
                 "new nodes {} found, clearing primary async-fetch-store cache", Sets.difference(newEphemeralIds, lastSeenEphemeralIds)));
+
+            // 将上一次拉取的相关缓存清理掉
             asyncFetchStore.values().forEach(fetch -> clearCacheForPrimary(fetch, allocation));
             // recalc to also (lazily) clear out old nodes.
+            // 更新最近的瞬时id 通过它可以判断是否有新增的node
             this.lastSeenEphemeralIds = newEphemeralIds;
         }
     }

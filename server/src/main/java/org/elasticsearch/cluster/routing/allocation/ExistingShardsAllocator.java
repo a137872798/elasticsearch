@@ -32,6 +32,7 @@ import java.util.List;
 /**
  * Searches for, and allocates, shards for which there is an existing on-disk copy somewhere in the cluster. The default implementation is
  * {@link GatewayAllocator}, but plugins can supply their own implementations too.
+ * 该对象包含了如何分配 unassigned副本的逻辑
  */
 public interface ExistingShardsAllocator {
 

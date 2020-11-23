@@ -40,7 +40,7 @@ import java.util.Objects;
  * allocation process.
  *
  * @see AllocationDecider
- * 代表一个决定  这个决定可能是由一个 Decision生成的 也可能是多个Decision作用的结果
+ * 代表一个有关重分配的决策结果   多个结果可以进行组合
  */
 public abstract class Decision implements ToXContent, Writeable {
 

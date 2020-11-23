@@ -48,7 +48,7 @@ import java.util.Set;
 
 /**
  * Holds additional information as to why the shard is in unassigned state.
- * 未分配信息
+ * 描述某个副本未分配的原因  (分片只有primary 和 replicate 2种)
  */
 public final class UnassignedInfo implements ToXContentFragment, Writeable {
 
@@ -91,6 +91,7 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
         EXISTING_INDEX_RESTORED,
         /**
          * Unassigned as a result of explicit addition of a replica.
+         * 由于为某个分片创建了一个新的副本  所以此时该副本处于 unassigned状态
          */
         REPLICA_ADDED,
         /**
@@ -220,7 +221,13 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
      */
     private final Reason reason;
     private final long unassignedTimeMillis; // used for display and log messages, in milliseconds
+    /**
+     * 推测是该对象的创建时间  用于计算延迟相关的东西
+     */
     private final long unassignedTimeNanos; // in nanoseconds, used to calculate delay for delayed shard allocation
+    /**
+     * 这个未分配的副本 被标记成延时状态
+     */
     private final boolean delayed; // if allocation of this shard is delayed due to INDEX_DELAYED_NODE_LEFT_TIMEOUT_SETTING
     private final String message;
     private final Exception failure;
@@ -392,9 +399,13 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
      * Only relevant if shard is effectively delayed (see {@link #isDelayed()})
      * Returns 0 if delay is negative
      *
+     * @param nanoTimeNow 当前时间
+     * @param indexSettings 某个索引相关的配置
      * @return calculated delay in nanoseconds
+     * 获取剩余的延迟时间
      */
     public long getRemainingDelay(final long nanoTimeNow, final Settings indexSettings) {
+        // 计算一个 有关unassigned相关的超时时间
         long delayTimeoutNanos = INDEX_DELAYED_NODE_LEFT_TIMEOUT_SETTING.get(indexSettings).nanos();
         assert nanoTimeNow >= unassignedTimeNanos;
         return Math.max(0L, delayTimeoutNanos - (nanoTimeNow - unassignedTimeNanos));

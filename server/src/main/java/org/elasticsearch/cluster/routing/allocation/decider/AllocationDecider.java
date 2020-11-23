@@ -37,6 +37,8 @@ public abstract class AllocationDecider {
      * Returns a {@link Decision} whether the given shard routing can be
      * re-balanced to the given allocation. The default is
      * {@link Decision#ALWAYS}.
+     * @param shardRouting 本次待决策的分片信息
+     * @param allocation 当前集群下所有分片的分配情况
      * 检测某个分片路由是否支持重分配
      */
     public Decision canRebalance(ShardRouting shardRouting, RoutingAllocation allocation) {
@@ -79,6 +81,7 @@ public abstract class AllocationDecider {
     /**
      * Returns a {@link Decision} whether the given node can allow any allocation at all at this state of the
      * {@link RoutingAllocation}. The default is {@link Decision#ALWAYS}.
+     * 几个函数判断的维度还是不一样的
      */
     public Decision canAllocate(RoutingNode node, RoutingAllocation allocation) {
         return Decision.ALWAYS;

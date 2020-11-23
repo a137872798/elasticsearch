@@ -45,7 +45,7 @@ import static java.util.Collections.emptySet;
  * The {@link RoutingAllocation} keep the state of the current allocation
  * of shards and holds the {@link AllocationDeciders} which are responsible
  *  for the current routing state.
- *  一个可分配的对象
+ * 这个对象以集群为单位
  */
 public class RoutingAllocation {
 
@@ -55,7 +55,7 @@ public class RoutingAllocation {
     private final AllocationDeciders deciders;
 
     /**
-     * 该对象维护了集群中所有node 的分片
+     * 描述了集群上每个节点分配的分片情况
      */
     private final RoutingNodes routingNodes;
 
@@ -98,6 +98,9 @@ public class RoutingAllocation {
      */
     private boolean hasPendingAsyncFetch = false;
 
+    /**
+     * 本对象创建时间
+     */
     private final long currentNanoTime;
 
     /**

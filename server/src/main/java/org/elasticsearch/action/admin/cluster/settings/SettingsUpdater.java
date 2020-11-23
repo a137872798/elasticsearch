@@ -118,6 +118,7 @@ final class SettingsUpdater {
             clusterSettings.validate(transientFinalSettings, true);
             clusterSettings.validate(persistentFinalSettings, true);
 
+            // 更新此时的元数据信息
             Metadata.Builder metadata = Metadata.builder(currentState.metadata())
                     .transientSettings(Settings.builder().put(transientFinalSettings).put(unknownOrInvalidTransientSettings).build())
                     .persistentSettings(Settings.builder().put(persistentFinalSettings).put(unknownOrInvalidPersistentSettings).build());
@@ -125,6 +126,7 @@ final class SettingsUpdater {
             ClusterBlocks.Builder blocks = ClusterBlocks.builder().blocks(currentState.blocks());
             boolean updatedReadOnly = Metadata.SETTING_READ_ONLY_SETTING.get(metadata.persistentSettings())
                     || Metadata.SETTING_READ_ONLY_SETTING.get(metadata.transientSettings());
+            // 这里尝试更新block配置
             if (updatedReadOnly) {
                 blocks.addGlobalBlock(Metadata.CLUSTER_READ_ONLY_BLOCK);
             } else {
@@ -137,6 +139,7 @@ final class SettingsUpdater {
             } else {
                 blocks.removeGlobalBlock(Metadata.CLUSTER_READ_ONLY_ALLOW_DELETE_BLOCK);
             }
+            // 根据最新的元数据信息 生成集群配置对象
             clusterState = builder(currentState).metadata(metadata).blocks(blocks).build();
         } else {
             clusterState = currentState;
@@ -147,6 +150,7 @@ final class SettingsUpdater {
          * logging, but will not actually apply them.
          */
         final Settings settings = clusterState.metadata().settings();
+        // 配置发生了变化  触发监听的钩子
         clusterSettings.validateUpdate(settings);
 
         return clusterState;

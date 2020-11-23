@@ -176,7 +176,14 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
         }
     }
 
+    /**
+     * 描述存储的文件 它对应的维度是什么  segment吗 还是更细粒度的文件???
+     */
     public static class StoreFilesMetadata implements Iterable<StoreFileMetadata>, Writeable {
+
+        /**
+         * 这些文件信息是针对哪个分片下的
+         */
         private final ShardId shardId;
         private final Store.MetadataSnapshot metadataSnapshot;
         private final List<RetentionLease> peerRecoveryRetentionLeases;
@@ -373,6 +380,9 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
         }
     }
 
+    /**
+     * 有关某个节点上存储的文件信息的元数据对象
+     */
     public static class NodeStoreFilesMetadata extends BaseNodeResponse {
 
         private StoreFilesMetadata storeFilesMetadata;

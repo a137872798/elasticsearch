@@ -49,10 +49,8 @@ import java.util.Set;
  * referred to as replicas of a shard. Given that, this class encapsulates all
  * replicas (instances) for a single index shard.
  *
- * 该对象管理了某个index在集群范围的所有分片   并且按照当前分片的状态划分到不同的容器中
- *
  * IndexShardRoutingTable 与 RoutingNode 是以不同维度管理数据分片的
- * IndexShardRoutingTable 代表某个索引相关的shardId相同的所有分片
+ * IndexShardRoutingTable 代表某个索引下某个分片以及相关副本的分配信息
  * RoutingNode            代表某个node下的所有分片
  */
 public class IndexShardRoutingTable implements Iterable<ShardRouting> {

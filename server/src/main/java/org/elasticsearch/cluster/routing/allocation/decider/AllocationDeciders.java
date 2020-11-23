@@ -33,7 +33,7 @@ import java.util.Collections;
 /**
  * A composite {@link AllocationDecider} combining the "decision" of multiple
  * {@link AllocationDecider} implementations into a single allocation decision.
- * 将一组分配对象包装成一个
+ * 代表多个决策对象组合的结果  每个决策对象都可以根据某个分片/节点  以及此时集群下所有分片的分配情况 进行适当的调整
  */
 public class AllocationDeciders extends AllocationDecider {
 
@@ -64,6 +64,7 @@ public class AllocationDeciders extends AllocationDecider {
                 if (!allocation.debugDecision()) {
                     return decision;
                 } else {
+                    // 需要输出日志的情况就会添加到ret中
                     ret.add(decision);
                 }
             } else {
@@ -305,7 +306,7 @@ public class AllocationDeciders extends AllocationDecider {
 
     private void addDecision(Decision.Multi ret, Decision decision, RoutingAllocation allocation) {
         // We never add ALWAYS decisions and only add YES decisions when requested by debug mode (since Multi default is YES).
-        // 非成功情况 且需要打印日志 添加到ret中
+        // always就不用打印日志了   当日志被关闭时 如果结果是YES 还是需要打印日志 加入到ret后 会打印日志
         if (decision != Decision.ALWAYS
             && (allocation.getDebugMode() == RoutingAllocation.DebugMode.ON || decision.type() != Decision.Type.YES)) {
             ret.add(decision);

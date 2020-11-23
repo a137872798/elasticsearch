@@ -64,8 +64,7 @@ import java.util.function.Predicate;
  * <li> {@link #relocateShard} starts relocation of a started shard.
  * <li> {@link #failShard} fails/cancels an assigned shard.
  * </ul>
- * 每个RoutingNode 代表某个节点上此时包含的所有分片信息  分片信息用 ShardRouting表示
- * 而该对象代表的是整个集群下所有node 此时分配的分片信息
+ * 直接将所有分片副本的路由信息按照node进行划分 这样就可以快速找到某个分片的副本在哪个node上还没有分配
  */
 public class RoutingNodes implements Iterable<RoutingNode> {
 
@@ -80,7 +79,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     private final UnassignedShards unassignedShards = new UnassignedShards(this);
 
     /**
-     * 该容器管理所有已分配的分片
+     * 记录所有已经找到归属节点的副本  key则是这些副本的分片id  (在ES的架构中最小的数据单位就是副本)
      */
     private final Map<ShardId, List<ShardRouting>> assignedShards = new HashMap<>();
 
@@ -89,12 +88,18 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      */
     private final boolean readOnly;
 
+    /**
+     * 记录此时有多少primary分片 处于init状态
+     */
     private int inactivePrimaryCount = 0;
 
+    /**
+     * 包含primary and replicate在内 处于init状态的数量
+     */
     private int inactiveShardCount = 0;
 
     /**
-     * 此时正在移动中的分片数量
+     * 记录此时正在移动中的分片数量
      */
     private int relocatingShards = 0;
 
@@ -104,7 +109,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     private final Map<String, ObjectIntHashMap<String>> nodesPerAttributeNames = new HashMap<>();
 
     /**
-     * key 应该标识每个node value代表每个node的补偿对象
+     * 存储此时需要进行数据恢复的节点
      */
     private final Map<String, Recoveries> recoveriesPerNode = new HashMap<>();
 
@@ -119,41 +124,41 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     /**
      * 通过之前以索引为单位维护的分片信息转换成以node为维度
      * @param clusterState  通过当前集群状态对象进行初始化
-     * @param readOnly
+     * @param readOnly 是否只读 默认是false  如果是只读对象 是不允许修改内部数据的
      */
     public RoutingNodes(ClusterState clusterState, boolean readOnly) {
         this.readOnly = readOnly;
-        /**
-         * 该对象以索引为维度存储了所有分片信息
-         * 内部还有更细化的
-         * 维护同一索引的
-         * 维护同一shardId的(同一shardId在同一索引的基础上)
-         */
+
+        // 该对象维护了集群下所有分片 以及分片副本的分配情况
         final RoutingTable routingTable = clusterState.routingTable();
 
+        // key1: nodeId  key2: shardId  value: replicate
         Map<String, LinkedHashMap<ShardId, ShardRouting>> nodesToShards = new HashMap<>();
         // fill in the nodeToShards with the "live" nodes
-        // 遍历所有存储数据的node  并追加映射关系
+        // 只需要遍历数据节点  因为其他节点是不支持存储数据的
         for (ObjectCursor<DiscoveryNode> cursor : clusterState.nodes().getDataNodes().values()) {
             nodesToShards.put(cursor.value.getId(), new LinkedHashMap<>()); // LinkedHashMap to preserve order
         }
 
         // fill in the inverse of node -> shards allocated
         // also fill replicaSet information
+        // 当前集群下所有索引
         for (ObjectCursor<IndexRoutingTable> indexRoutingTable : routingTable.indicesRouting().values()) {
-            // 这里管理的就是每个 shardId 下的所有分片  (虽然id相同但是他们可以归属于不同的node)
+            // 遍历每个分片 再下一级则是副本
             for (IndexShardRoutingTable indexShard : indexRoutingTable.value) {
                 assert indexShard.primary != null;
+                // 遍历每个副本
                 for (ShardRouting shard : indexShard) {
                     // to get all the shards belonging to an index, including the replicas,
                     // we define a replica set and keep track of it. A replica set is identified
                     // by the ShardId, as this is common for primary and replicas.
                     // A replica Set might have one (and not more) replicas with the state of RELOCATING.
-                    // 找到此时已经分配好的分片
+                    // 代表这个副本已经决定好分配的node了
                     if (shard.assignedToNode()) {
                         Map<ShardId, ShardRouting> entries = nodesToShards.computeIfAbsent(shard.currentNodeId(),
                             k -> new LinkedHashMap<>()); // LinkedHashMap to preserve order
                         ShardRouting previousValue = entries.put(shard.shardId(), shard);
+                        // 同一个分片的多个副本不能分配到同一个节点上
                         if (previousValue != null) {
                             throw new IllegalArgumentException("Cannot have two different shards with same shard id on same node");
                         }
@@ -166,24 +171,28 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                             // LinkedHashMap to preserve order.
                             // Add the counterpart shard with relocatingNodeId reflecting the source from which
                             // it's relocating from.
+                            // 在relocate的节点上 又增加了一份关联关系  相当于此时可以认为该副本同时在2个节点上生效  应该是起到保护作用吧
                             entries = nodesToShards.computeIfAbsent(shard.relocatingNodeId(),
                                 k -> new LinkedHashMap<>());
-                            // 当分片处于重分配状态时 会在内部存储一个 targetRelocating
+                            // 当分片处于重分配状态时 会在内部存储一个 targetRelocating  对应重分配后的位置
                             ShardRouting targetShardRouting = shard.getTargetRelocatingShard();
+                            // 这里添加一个需要恢复数据的副本对象  因为副本是需要与主分片同步数据的    TODO 如果主分片挂了 副本会晋升吗???
                             addInitialRecovery(targetShardRouting, indexShard.primary);
                             previousValue = entries.put(targetShardRouting.shardId(), targetShardRouting);
                             if (previousValue != null) {
                                 throw new IllegalArgumentException("Cannot have two different shards with same shard id on same node");
                             }
-                            // 将重分配的节点也加入
+                            // 重分配后的节点也加入到 assigned中
                             assignedShardsAdd(targetShardRouting);
                         } else if (shard.initializing()) {
                             if (shard.primary()) {
                                 inactivePrimaryCount++;
                             }
                             inactiveShardCount++;
+                            // 初始状态的分片也是需要恢复数据的
                             addInitialRecovery(shard, indexShard.primary);
                         }
+                        // TODO 处于started状态的副本不做处理
                     } else {
                         unassignedShards.add(shard);
                     }
@@ -206,14 +215,19 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         updateRecoveryCounts(routing, false, findAssignedPrimaryIfPeerRecovery(routing));
     }
 
+    /**
+     * 代表目标副本进入了数据恢复的初始阶段
+     * @param routing  本次需要同步数据的副本
+     * @param initialPrimaryShard  对应的主分片
+     */
     private void addInitialRecovery(ShardRouting routing, ShardRouting initialPrimaryShard) {
         updateRecoveryCounts(routing, true, initialPrimaryShard);
     }
 
     /**
-     * TODO 这个方法还需要再梳理
+     * 更新需要恢复数据的副本数量
      * @param routing  待处理的分片
-     * @param increment  本次是添加还是移除
+     * @param increment  新增需要恢复的副本/又完成了一个需要恢复的副本
      * @param primary   与 routing相同shardId的 某个私有分片 在IndexShardRoutingTable中可以看到 每个shardId 对应的所有分片中都有一个是私有分片
      */
     private void updateRecoveryCounts(final ShardRouting routing, final boolean increment, @Nullable final ShardRouting primary) {
@@ -223,19 +237,19 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         assert primary == null || primary.assignedToNode() :
             "shard is initializing but its primary is not assigned to a node";
 
-        // 代表某个节点对应的分片数量增加了1
+        // 代表某个节点对应的需要恢复数据的副本数发生了变化
         Recoveries.getOrAdd(recoveriesPerNode, routing.currentNodeId()).addIncoming(howMany);
 
-        // 如果该分片的数据从 其他节点获取  那么必须设置私有分片  TODO 难道私有分片的定位就是 用来恢复数据的
+        // 默认情况下 副本的恢复源就是 PEER  其余情况 比如primary就不需要处理了 并且应该是通过本地数据还原
         if (routing.recoverySource().getType() == RecoverySource.Type.PEER) {
             // add/remove corresponding outgoing recovery on node with primary shard
             if (primary == null) {
                 throw new IllegalStateException("shard is peer recovering but primary is unassigned");
             }
-            // 记录一次私有分片
+            // 主分片对应数据输出 也就是outgoing
             Recoveries.getOrAdd(recoveriesPerNode, primary.currentNodeId()).addOutgoing(howMany);
 
-            // 如果本次是某个分片的移除操作 并且该分片是私有分片
+            // TODO 等到了 increment == false的场景再看
             if (increment == false && routing.primary() && routing.relocatingNodeId() != null) {
                 // primary is done relocating, move non-primary recoveries from old primary to new primary
                 int numRecoveringReplicas = 0;
@@ -960,7 +974,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
 
     /**
-     * 整个集群中所有还未分配的分片
+     * 该对象负责管理此时所有还未分配的 replicate primary
      */
     public static final class UnassignedShards implements Iterable<ShardRouting>  {
 
@@ -1069,7 +1083,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         }
 
         /**
-         * 该对象负责遍历此时未分配的 分片
+         * 该对象负责遍历此时所有未分配的副本
          */
         public class UnassignedIterator implements Iterator<ShardRouting>, ExistingShardsAllocator.UnassignedAllocationHandler {
 
@@ -1367,11 +1381,18 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     }
 
     /**
-     * 补偿对象  每个对象都允许输出/输入 一些数值
+     * 记录此时所有需要恢复数据的分片
+     * 以node作为划分界限
      */
     private static final class Recoveries {
         private static final Recoveries EMPTY = new Recoveries();
+        /**
+         * 需要接收数据的分片 比如 replicate
+         */
         private int incoming = 0;
+        /**
+         * 此时往外输出数据的分片 比如 primary
+         */
         private int outgoing = 0;
 
         void addOutgoing(int howMany) {

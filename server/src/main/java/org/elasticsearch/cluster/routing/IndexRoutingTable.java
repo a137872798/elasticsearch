@@ -513,7 +513,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
         }
 
         /**
-         * 为每个分片都增加一个副本
+         * 增加一个副本 就代表着为该索引下所有的分片都增加一个副本
          * @return
          */
         public Builder addReplica() {
@@ -521,11 +521,11 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
                 int shardNumber = cursor.value;
                 ShardId shardId = new ShardId(index, shardNumber);
                 // version 0, will get updated when reroute will happen
-                // 指明了创建的分片对象的 未分配原因为 REPLICA_ADDED
+                // 指明了创建的分片对象的 未分配原因为 REPLICA_ADDED     注意这里的恢复源选择的是从远端节点  副本肯定是从primary中恢复数据的
                 ShardRouting shard = ShardRouting.newUnassigned(shardId, false, PeerRecoverySource.INSTANCE,
                     new UnassignedInfo(UnassignedInfo.Reason.REPLICA_ADDED, null));
 
-                // 额外增加一个新的shard
+                // 在额外增加一个副本后覆盖之前的 IndexShardRoutingTable信息
                 shards.put(shardNumber,
                         new IndexShardRoutingTable.Builder(shards.get(shard.id())).addShard(shard).build()
                 );
@@ -534,18 +534,21 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
         }
 
         /**
-         * 为每个分片对象都移除副本
+         * 将分片下多个副本中的其中一个移除
          * @return
          */
         public Builder removeReplica() {
             for (IntCursor cursor : shards.keys()) {
                 int shardId = cursor.value;
+                // 对应某个分片下所有的副本分配情况
                 IndexShardRoutingTable indexShard = shards.get(shardId);
+                // 当此时已经没有副本了 就无法移除 (不能通过这种方式移除primary)
                 if (indexShard.replicaShards().isEmpty()) {
                     // nothing to do here!
                     return this;
                 }
                 // re-add all the current ones
+                // 先将此时所有的副本设置进去
                 IndexShardRoutingTable.Builder builder = new IndexShardRoutingTable.Builder(indexShard.shardId());
                 for (ShardRouting shardRouting : indexShard) {
                     builder.addShard(shardRouting);
@@ -553,7 +556,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
                 // first check if there is one that is not assigned to a node, and remove it
                 boolean removed = false;
                 for (ShardRouting shardRouting : indexShard) {
-                    // 只能移除非私有的 且还未分配的shard  并且只打算移除一个副本
+                    // 首先主分片必然是无法被移除的  其次优先找到此时node未明确的副本
                     if (!shardRouting.primary() && !shardRouting.assignedToNode()) {
                         builder.removeShard(shardRouting);
                         removed = true;
@@ -562,7 +565,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
                 }
                 if (!removed) {
                     for (ShardRouting shardRouting : indexShard) {
-                        // 如果分片都已经分配的情况下 选择移除一个已经分配的分片
+                        // 此时只能选择一个已经分配好的副本进行移除
                         if (!shardRouting.primary()) {
                             builder.removeShard(shardRouting);
                             break;

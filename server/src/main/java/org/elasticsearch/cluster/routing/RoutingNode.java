@@ -75,7 +75,7 @@ public class RoutingNode implements Iterable<ShardRouting> {
      *
      * @param nodeId
      * @param node
-     * @param shards 当前节点上存在的各种分片
+     * @param shards 当前节点上存在的各种分片  key 对应分片id value对应primary以及replicate
      */
     RoutingNode(String nodeId, DiscoveryNode node, LinkedHashMap<ShardId, ShardRouting> shards) {
         this.nodeId = nodeId;
