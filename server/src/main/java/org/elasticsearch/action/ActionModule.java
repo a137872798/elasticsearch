@@ -516,10 +516,12 @@ public class ActionModule extends AbstractModule {
         actions.register(ClearVotingConfigExclusionsAction.INSTANCE, TransportClearVotingConfigExclusionsAction.class);
         // 获取位置信息 可以是针对某个分片 index 等等
         actions.register(ClusterAllocationExplainAction.INSTANCE, TransportClusterAllocationExplainAction.class);
+        // 获取统计信息
         actions.register(ClusterStatsAction.INSTANCE, TransportClusterStatsAction.class);
         actions.register(ClusterStateAction.INSTANCE, TransportClusterStateAction.class);
         // 有关健康信息的处理器
         actions.register(ClusterHealthAction.INSTANCE, TransportClusterHealthAction.class);
+        // 更新配置信息
         actions.register(ClusterUpdateSettingsAction.INSTANCE, TransportClusterUpdateSettingsAction.class);
         // 有关重路由的处理器
         actions.register(ClusterRerouteAction.INSTANCE, TransportClusterRerouteAction.class);

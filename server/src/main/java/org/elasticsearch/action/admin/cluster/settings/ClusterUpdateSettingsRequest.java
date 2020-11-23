@@ -113,6 +113,7 @@ public class ClusterUpdateSettingsRequest extends AcknowledgedRequest<ClusterUpd
 
     /**
      * Sets the transient settings to be updated. They will not survive a full cluster restart
+     * 追加瞬时配置到req中
      */
     public ClusterUpdateSettingsRequest transientSettings(Map<String, ?> source) {
         try {

@@ -1747,15 +1747,17 @@ public class IndicesService extends AbstractLifecycleComponent
 
 
     /**
-     * 通过一组正则规则构建别名过滤器
+     * 这是在构建别名处理器
      * @param state
-     * @param index
-     * @param resolvedExpressions
+     * @param index  某个索引名称
+     * @param resolvedExpressions  所有索引名 或者索引别名
      * @return
      */
     public AliasFilter buildAliasFilter(ClusterState state, String index, Set<String> resolvedExpressions) {
         /* Being static, parseAliasFilter doesn't have access to whatever guts it needs to parse a query. Instead of passing in a bunch
-         * of dependencies we pass in a function that can perform the parsing. */
+         * of dependencies we pass in a function that can perform the parsing.
+         * 该函数负责将数据流转换成 queryBuilder对象
+         */
         CheckedFunction<byte[], QueryBuilder, IOException> filterParser = bytes -> {
             try (XContentParser parser = XContentFactory.xContent(bytes)
                 .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, bytes)) {
@@ -1763,6 +1765,7 @@ public class IndicesService extends AbstractLifecycleComponent
             }
         };
         IndexMetadata indexMetadata = state.metadata().index(index);
+        // 找到index所有相关的别名  可能会返回null
         String[] aliases = indexNameExpressionResolver.filteringAliases(state, index, resolvedExpressions);
         return new AliasFilter(ShardSearchRequest.parseAliasFilter(filterParser, indexMetadata, aliases), aliases);
     }

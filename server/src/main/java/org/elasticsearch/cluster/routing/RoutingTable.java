@@ -85,6 +85,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
      * @param indexRouting IndexRoutingTable
      * @param shardId ShardId
      * @return IndexShardRoutingTable
+     *
      */
     public static IndexShardRoutingTable shardRoutingTable(IndexRoutingTable indexRouting, int shardId) {
         IndexShardRoutingTable indexShard = indexRouting.shard(shardId);

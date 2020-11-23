@@ -37,7 +37,13 @@ import java.util.Objects;
  */
 public final class AliasFilter implements Writeable, Rewriteable<AliasFilter> {
 
+    /**
+     * 构成该过滤器相关的所有别名
+     */
     private final String[] aliases;
+    /**
+     * 该对象负责构建包含过滤功能的查询对象  查询条件也就意味着过滤不符合的数据 也就是一种过滤器
+     */
     private final QueryBuilder filter;
 
     public static final AliasFilter EMPTY = new AliasFilter(null, Strings.EMPTY_ARRAY);

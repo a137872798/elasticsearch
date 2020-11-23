@@ -141,7 +141,8 @@ public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest
 
     /**
      * resolve node ids to concrete nodes of the incoming request
-     **/
+     * 当req中没有显式声明获取哪些node的信息时调用该方法
+     */
     protected void resolveRequest(NodesRequest request, ClusterState clusterState) {
         assert request.concreteNodes() == null : "request concreteNodes shouldn't be set";
         String[] nodesIds = clusterState.nodes().resolveNodes(request.nodesIds());
@@ -179,9 +180,13 @@ public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest
                 resolveRequest(request, clusterService.state());
                 assert request.concreteNodes() != null;
             }
+            // 以节点数量为单位生成结果数组
             this.responses = new AtomicReferenceArray<>(request.concreteNodes().length);
         }
 
+        /**
+         * 开始往每个node发送请求 并暂存结果
+         */
         void start() {
             final DiscoveryNode[] nodes = request.concreteNodes();
             if (nodes.length == 0) {
@@ -198,6 +203,7 @@ public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest
                 final DiscoveryNode node = nodes[i];
                 final String nodeId = node.getId();
                 try {
+                    // 包装成 node级别的请求对象
                     TransportRequest nodeRequest = newNodeRequest(request);
                     if (task != null) {
                         nodeRequest.setParentTask(clusterService.localNode().getId(), task.getId());

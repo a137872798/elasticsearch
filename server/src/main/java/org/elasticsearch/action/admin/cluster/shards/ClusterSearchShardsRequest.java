@@ -39,6 +39,10 @@ public class ClusterSearchShardsRequest extends MasterNodeReadRequest<ClusterSea
     private String[] indices = Strings.EMPTY_ARRAY;
     @Nullable
     private String routing;
+
+    /**
+     * 偏向于某个分片
+     */
     @Nullable
     private String preference;
     private IndicesOptions indicesOptions = IndicesOptions.lenientExpandOpen();

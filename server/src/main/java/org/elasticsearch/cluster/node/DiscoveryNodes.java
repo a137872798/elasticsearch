@@ -359,6 +359,7 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
      */
     public String[] resolveNodes(String... nodes) {
         if (nodes == null || nodes.length == 0) {
+            // 当没有指定node时 将所有node返回
             return StreamSupport.stream(this.spliterator(), false).map(DiscoveryNode::getId).toArray(String[]::new);
         } else {
             ObjectHashSet<String> resolvedNodesIds = new ObjectHashSet<>(nodes.length);

@@ -51,6 +51,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 获取统计信息相关的处理器
+ * 这个任务没有要求必须在leader节点才处理
+ */
 public class TransportClusterStatsAction extends TransportNodesAction<ClusterStatsRequest, ClusterStatsResponse,
         TransportClusterStatsAction.ClusterStatsNodeRequest, ClusterStatsNodeResponse> {
 
@@ -84,6 +88,11 @@ public class TransportClusterStatsAction extends TransportNodesAction<ClusterSta
             state);
     }
 
+    /**
+     * 抽取相关信息 生成节点级别的请求对象  实际上这里没有做区分
+     * @param request
+     * @return
+     */
     @Override
     protected ClusterStatsNodeRequest newNodeRequest(ClusterStatsRequest request) {
         return new ClusterStatsNodeRequest(request);
@@ -94,6 +103,13 @@ public class TransportClusterStatsAction extends TransportNodesAction<ClusterSta
         return new ClusterStatsNodeResponse(in);
     }
 
+    /**
+     * 当相关节点接收到请求后开始处理
+     * TODO 统计信息的实现就不细看了
+     * @param nodeRequest
+     * @param task
+     * @return
+     */
     @Override
     protected ClusterStatsNodeResponse nodeOperation(ClusterStatsNodeRequest nodeRequest, Task task) {
         NodeInfo nodeInfo = nodeService.info(true, true, false, true, false, true, false, true, false, false);

@@ -37,10 +37,19 @@ import static org.elasticsearch.common.settings.AbstractScopedSettings.ARCHIVED_
 /**
  * Updates transient and persistent cluster state settings if there are any changes
  * due to the update.
+ * 描述更新了什么样的配置
  */
 final class SettingsUpdater {
+
+    /**
+     * 更新时使用到的 builder对象
+     */
     final Settings.Builder transientUpdates = Settings.builder();
     final Settings.Builder persistentUpdates = Settings.builder();
+
+    /**
+     * 当前集群配置
+     */
     private final ClusterSettings clusterSettings;
 
     SettingsUpdater(ClusterSettings clusterSettings) {
@@ -55,6 +64,14 @@ final class SettingsUpdater {
         return persistentUpdates.build();
     }
 
+    /**
+     * 将一组更新的配置作用在当前集群上
+     * @param currentState
+     * @param transientToApply
+     * @param persistentToApply
+     * @param logger
+     * @return
+     */
     synchronized ClusterState updateSettings(
             final ClusterState currentState, final Settings transientToApply, final Settings persistentToApply, final Logger logger) {
         boolean changed = false;
@@ -71,13 +88,19 @@ final class SettingsUpdater {
          *  - validate the incoming settings update combined with the existing known and valid settings
          *  - merge in the archived unknown or invalid settings
          */
+        // 对当前的瞬时配置进行校验
         final Tuple<Settings, Settings> partitionedTransientSettings =
                 partitionKnownAndValidSettings(currentState.metadata().transientSettings(), "transient", logger);
+
+        // 当前已知的通过校验的配置 内部包含了 archived配置 和 非archived配置
         final Settings knownAndValidTransientSettings = partitionedTransientSettings.v1();
         final Settings unknownOrInvalidTransientSettings = partitionedTransientSettings.v2();
+        // 将此时有效的瞬时配置取出来生成builder
         final Settings.Builder transientSettings = Settings.builder().put(knownAndValidTransientSettings);
+        // 根据本次传入的动态配置进行更新   最终结果体现在transientSettings  而涉及到的所有更新配置体现在transientUpdates (该配置与一开始传入的toApply不同 因为有些配置可能是用来删除的)
         changed |= clusterSettings.updateDynamicSettings(transientToApply, transientSettings, transientUpdates, "transient");
 
+        // 针对持久化配置再执行一次
         final Tuple<Settings, Settings> partitionedPersistentSettings =
                 partitionKnownAndValidSettings(currentState.metadata().persistentSettings(), "persistent", logger);
         final Settings knownAndValidPersistentSettings = partitionedPersistentSettings.v1();
@@ -91,6 +114,7 @@ final class SettingsUpdater {
             Settings persistentFinalSettings = persistentSettings.build();
             // both transient and persistent settings must be consistent by itself we can't allow dependencies to be
             // in either of them otherwise a full cluster restart will break the settings validation
+            // 因为之前移除了一些配置 所以现在检测配置的依赖关系是否被破坏
             clusterSettings.validate(transientFinalSettings, true);
             clusterSettings.validate(persistentFinalSettings, true);
 
@@ -137,10 +161,13 @@ final class SettingsUpdater {
      * @param settingsType a string to identify the settings (for logging)
      * @param logger       a logger to sending warnings to
      * @return the partitioned settings
+     * 校验已知的配置
      */
     private Tuple<Settings, Settings> partitionKnownAndValidSettings(
             final Settings settings, final String settingsType, final Logger logger) {
+        // 如果配置包含了  archived 前缀  代表是存档配置
         final Settings existingArchivedSettings = settings.filter(k -> k.startsWith(ARCHIVED_SETTINGS_PREFIX));
+        // 这里是非存档配置
         final Settings settingsExcludingExistingArchivedSettings =
                 settings.filter(k -> k.startsWith(ARCHIVED_SETTINGS_PREFIX) == false);
         final Settings settingsWithUnknownOrInvalidArchived = clusterSettings.archiveUnknownOrInvalidSettings(
@@ -149,9 +176,11 @@ final class SettingsUpdater {
                 (e, ex) -> logInvalidSetting(settingsType, e, ex, logger));
         return Tuple.tuple(
                 Settings.builder()
+                    // 同时插入非存档配置 和存档配置
                         .put(settingsWithUnknownOrInvalidArchived.filter(k -> k.startsWith(ARCHIVED_SETTINGS_PREFIX) == false))
                         .put(existingArchivedSettings)
                         .build(),
+                // 在archiveUnknownOrInvalidSettings 中 遇到未知的或者无效的会将key的前缀修改成ARCHIVED 所以这里过滤得到的就是一些异常的settings
                 settingsWithUnknownOrInvalidArchived.filter(k -> k.startsWith(ARCHIVED_SETTINGS_PREFIX)));
     }
 

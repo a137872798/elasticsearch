@@ -98,12 +98,14 @@ public class Setting<T> implements ToXContentObject {
 
         /**
          * iff this setting can be dynamically updateable
+         * 动态配置支持更新
          */
         Dynamic,
 
         /**
          * mark this setting as final, not updateable even when the context is not dynamic
          * ie. Setting this property on an index scoped setting will fail update when the index is closed
+         * 代表当前配置是不可变的  并且不能被移除
          */
         Final,
 
@@ -432,6 +434,7 @@ public class Setting<T> implements ToXContentObject {
      *
      * @param settings the settings
      * @return true if the setting including fallback settings is present in the given settings instance, otherwise false
+     * 检测当前配置是否存在于 settings中
      */
     public boolean existsOrFallbackExists(final Settings settings) {
         return settings.keySet().contains(getKey()) || (fallbackSetting != null && fallbackSetting.existsOrFallbackExists(settings));

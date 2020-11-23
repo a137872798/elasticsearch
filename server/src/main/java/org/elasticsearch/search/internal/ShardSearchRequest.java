@@ -427,6 +427,9 @@ public class ShardSearchRequest extends TransportRequest implements IndicesReque
      * <p>
      * The list of filtering aliases should be obtained by calling Metadata.filteringAliases.
      * Returns {@code null} if no filtering is required.</p>
+     * @param filterParser 该函数可以将数据流转换成 queryBuilder
+     * @param metadata 某个索引的元数据信息
+     * @param aliasNames 该索引相关的所有别名
      */
     public static QueryBuilder parseAliasFilter(CheckedFunction<byte[], QueryBuilder, IOException> filterParser,
                                                 IndexMetadata metadata, String... aliasNames) {
@@ -435,6 +438,7 @@ public class ShardSearchRequest extends TransportRequest implements IndicesReque
         }
         Index index = metadata.getIndex();
         ImmutableOpenMap<String, AliasMetadata> aliases = metadata.getAliases();
+        // 从别名元数据中 filter()属性对应的数据流转换成查询对象
         Function<AliasMetadata, QueryBuilder> parserFunction = (alias) -> {
             if (alias.filter() == null) {
                 return null;
@@ -454,6 +458,7 @@ public class ShardSearchRequest extends TransportRequest implements IndicesReque
             return parserFunction.apply(alias);
         } else {
             // we need to bench here a bit, to see maybe it makes sense to use OrFilter
+            // BoolQuery 是多个查询结果共同作用的结果  通过往内部追加条件可以起到过滤的作用
             BoolQueryBuilder combined = new BoolQueryBuilder();
             for (String aliasName : aliasNames) {
                 AliasMetadata alias = aliases.get(aliasName);
