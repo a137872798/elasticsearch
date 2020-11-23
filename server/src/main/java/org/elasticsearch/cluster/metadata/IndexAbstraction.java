@@ -18,6 +18,9 @@
  */
 package org.elasticsearch.cluster.metadata;
 
+import static org.elasticsearch.cluster.metadata.DataStream.getBackingIndexName;
+import static org.elasticsearch.cluster.metadata.IndexMetadata.INDEX_HIDDEN_SETTING;
+
 import org.apache.lucene.util.SetOnce;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
@@ -29,9 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
-
-import static org.elasticsearch.cluster.metadata.DataStream.getBackingIndexName;
-import static org.elasticsearch.cluster.metadata.IndexMetadata.INDEX_HIDDEN_SETTING;
 
 /**
  * An index abstraction is a reference to one or more concrete indices.
@@ -72,7 +72,8 @@ public interface IndexAbstraction {
      * @return the data stream to which this index belongs or <code>null</code> if this is not a concrete index or
      * if it is a concrete index that does not belong to a data stream.
      */
-    @Nullable DataStream getParentDataStream();
+    @Nullable
+    DataStream getParentDataStream();
 
     /**
      * @return whether this index abstraction is hidden or not
@@ -117,9 +118,13 @@ public interface IndexAbstraction {
 
     /**
      * Represents an concrete index and encapsulates its {@link IndexMetadata}
+     * 代表通过lookup对象 + indexName 仅能匹配到一个描述索引的对象 此时是一一对应的关系
      */
     class Index implements IndexAbstraction {
 
+        /**
+         * 该索引的元数据信息
+         */
         private final IndexMetadata concreteIndex;
         private final DataStream dataStream;
 
@@ -128,6 +133,11 @@ public interface IndexAbstraction {
             this.dataStream = dataStream;
         }
 
+        /**
+         * 可以看出 默认情况下 DataStream是不设置的
+         *
+         * @param indexMetadata
+         */
         public Index(IndexMetadata indexMetadata) {
             this(indexMetadata, null);
         }
@@ -165,14 +175,26 @@ public interface IndexAbstraction {
 
     /**
      * Represents an alias and groups all {@link IndexMetadata} instances sharing the same alias name together.
+     * 如果indexName去查找时 对应到了一个别名对象  那么该别名对象本身可能就对应了多个index   (多个index使用了同一个别名)
+     * 一个index 也可以对应多个 aliasMetadata
      */
     class Alias implements IndexAbstraction {
 
+        /**
+         * 别名
+         */
         private final String aliasName;
+        /**
+         * 相关的索引对应的元数据
+         */
         private final List<IndexMetadata> referenceIndexMetadatas;
         private final SetOnce<IndexMetadata> writeIndex = new SetOnce<>();
         private final boolean isHidden;
 
+        /**
+         * @param aliasMetadata
+         * @param indexMetadata
+         */
         public Alias(AliasMetadata aliasMetadata, IndexMetadata indexMetadata) {
             this.aliasName = aliasMetadata.getAlias();
             this.referenceIndexMetadatas = new ArrayList<>();
@@ -216,6 +238,7 @@ public interface IndexAbstraction {
          * <p>
          * (note that although alias can point to the same concrete indices, each alias reference may have its own routing
          * and filters)
+         * 遍历内部所有的 索引元数据
          */
         public Iterable<Tuple<String, AliasMetadata>> getConcreteIndexAndAliasMetadatas() {
             return () -> new Iterator<>() {
@@ -239,10 +262,15 @@ public interface IndexAbstraction {
             return referenceIndexMetadatas.get(0).getAliases().get(aliasName);
         }
 
+        /**
+         * 追加其他索引的元数据
+         * @param indexMetadata
+         */
         void addIndex(IndexMetadata indexMetadata) {
             this.referenceIndexMetadatas.add(indexMetadata);
         }
 
+        // 忽略校验代码
         public void computeAndValidateAliasProperties() {
             // Validate write indices
             List<IndexMetadata> writeIndices = referenceIndexMetadatas.stream()
@@ -250,7 +278,7 @@ public interface IndexAbstraction {
                 .collect(Collectors.toList());
 
             if (writeIndices.isEmpty() && referenceIndexMetadatas.size() == 1
-                    && referenceIndexMetadatas.get(0).getAliases().get(aliasName).writeIndex() == null) {
+                && referenceIndexMetadatas.get(0).getAliases().get(aliasName).writeIndex() == null) {
                 writeIndices.add(referenceIndexMetadatas.get(0));
             }
 
@@ -283,6 +311,9 @@ public interface IndexAbstraction {
         }
     }
 
+    /**
+     * 代表以数据流的形式  该对象内部也是一组index
+     */
     class DataStream implements IndexAbstraction {
 
         private final org.elasticsearch.cluster.metadata.DataStream dataStream;
@@ -292,7 +323,7 @@ public interface IndexAbstraction {
         public DataStream(org.elasticsearch.cluster.metadata.DataStream dataStream, List<IndexMetadata> dataStreamIndices) {
             this.dataStream = dataStream;
             this.dataStreamIndices = List.copyOf(dataStreamIndices);
-            this.writeIndex =  dataStreamIndices.get(dataStreamIndices.size() - 1);
+            this.writeIndex = dataStreamIndices.get(dataStreamIndices.size() - 1);
             assert writeIndex.getIndex().getName().equals(getBackingIndexName(dataStream.getName(), dataStream.getGeneration()));
         }
 

@@ -141,7 +141,8 @@ public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest
 
     /**
      * resolve node ids to concrete nodes of the incoming request
-     **/
+     * 当req中没有显式声明获取哪些node的信息时调用该方法
+     */
     protected void resolveRequest(NodesRequest request, ClusterState clusterState) {
         assert request.concreteNodes() == null : "request concreteNodes shouldn't be set";
         String[] nodesIds = clusterState.nodes().resolveNodes(request.nodesIds());
@@ -179,9 +180,13 @@ public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest
                 resolveRequest(request, clusterService.state());
                 assert request.concreteNodes() != null;
             }
+            // 以节点数量为单位生成结果数组
             this.responses = new AtomicReferenceArray<>(request.concreteNodes().length);
         }
 
+        /**
+         * 开始往每个node发送请求 并暂存结果
+         */
         void start() {
             final DiscoveryNode[] nodes = request.concreteNodes();
             if (nodes.length == 0) {
@@ -198,11 +203,13 @@ public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest
                 final DiscoveryNode node = nodes[i];
                 final String nodeId = node.getId();
                 try {
+                    // 包装成 node级别的请求对象
                     TransportRequest nodeRequest = newNodeRequest(request);
                     if (task != null) {
                         nodeRequest.setParentTask(clusterService.localNode().getId(), task.getId());
                     }
 
+                    // 因为请求涉及到多个节点 这里是往不同节点发送请求 如果某个node就是localNode 那么会通过localChannel处理 也就是不经过网络层
                     transportService.sendRequest(node, transportNodeAction, nodeRequest, builder.build(),
                             new TransportResponseHandler<NodeResponse>() {
                                 @Override
@@ -248,6 +255,9 @@ public abstract class TransportNodesAction<NodesRequest extends BaseNodesRequest
             }
         }
 
+        /**
+         * 当每个节点都生成对应res后 会将他们合并成一个最终结果
+         */
         private void finishHim() {
             NodesResponse finalResponse;
             try {

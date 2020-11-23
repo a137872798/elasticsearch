@@ -30,6 +30,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取有关统计项的信息
+ */
 public class RestClusterStatsAction extends BaseRestHandler {
 
     @Override
@@ -46,11 +49,16 @@ public class RestClusterStatsAction extends BaseRestHandler {
 
     @Override
     public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
+        // 可以指定获取哪些node的统计信息
         ClusterStatsRequest clusterStatsRequest = new ClusterStatsRequest().nodesIds(request.paramAsStringArray("nodeId", null));
         clusterStatsRequest.timeout(request.param("timeout"));
         return channel -> client.admin().cluster().clusterStats(clusterStatsRequest, new NodesResponseRestListener<>(channel));
     }
 
+    /**
+     * 这种请求不会触发熔断
+     * @return
+     */
     @Override
     public boolean canTripCircuitBreaker() {
         return false;

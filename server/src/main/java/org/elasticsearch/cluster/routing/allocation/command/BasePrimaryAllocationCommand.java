@@ -29,6 +29,7 @@ import java.io.IOException;
 
 /**
  * Abstract base class for allocating an unassigned primary shard to a node
+ * 代表分配的分片是一个主分片
  */
 public abstract class BasePrimaryAllocationCommand extends AbstractAllocateAllocationCommand {
 
@@ -40,6 +41,9 @@ public abstract class BasePrimaryAllocationCommand extends AbstractAllocateAlloc
         return parser;
     }
 
+    /**
+     * 是否允许数据丢失
+     */
     protected final boolean acceptDataLoss;
 
     protected BasePrimaryAllocationCommand(String index, int shardId, String node, boolean acceptDataLoss) {

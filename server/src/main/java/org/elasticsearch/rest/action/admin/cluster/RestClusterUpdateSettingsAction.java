@@ -35,6 +35,9 @@ import java.util.Set;
 
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
+/**
+ * 更新某个配置 在ES 中某些配置是支持动态更新的
+ */
 public class RestClusterUpdateSettingsAction extends BaseRestHandler {
 
     private static final String PERSISTENT = "persistent";
@@ -60,6 +63,7 @@ public class RestClusterUpdateSettingsAction extends BaseRestHandler {
         try (XContentParser parser = request.contentParser()) {
             source = parser.map();
         }
+        // 设置瞬时配置 和 持久化配置
         if (source.containsKey(TRANSIENT)) {
             clusterUpdateSettingsRequest.transientSettings((Map) source.get(TRANSIENT));
         }

@@ -29,8 +29,14 @@ import org.elasticsearch.index.shard.ShardId;
 
 import java.io.IOException;
 
+/**
+ * 有关查询分片的结果
+ */
 public class ClusterSearchShardsGroup implements Writeable, ToXContentObject {
 
+    /**
+     * 每个分片id 会对应一组分片
+     */
     private final ShardId shardId;
     private final ShardRouting[] shards;
 

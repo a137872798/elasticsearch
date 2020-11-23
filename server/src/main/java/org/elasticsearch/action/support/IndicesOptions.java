@@ -103,6 +103,9 @@ public class IndicesOptions implements ToXContentFragment {
      */
     public enum Option {
 
+        /**
+         * 当某个索引键(indexName 或者 alias)无法找到对应的索引时 是否允许这种情况
+         */
         IGNORE_UNAVAILABLE,
         IGNORE_ALIASES,
         ALLOW_NO_INDICES,

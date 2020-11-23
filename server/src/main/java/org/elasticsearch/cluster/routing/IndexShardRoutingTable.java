@@ -324,12 +324,13 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
     public ShardIterator activeInitializingShardsRankedIt(@Nullable ResponseCollectorService collector,
                                                           @Nullable Map<String, Long> nodeSearchCounts) {
         final int seed = shuffler.nextSeed();
+        // 没有处于init状态的分片 返回当前所有活跃分片
         if (allInitializingShards.isEmpty()) {
-            // 仅返回活跃分片
             return new PlainShardIterator(shardId,
                     rankShardsAndUpdateStats(shuffler.shuffle(activeShards, seed), collector, nodeSearchCounts));
         }
 
+        // 分别将活跃分片 与初始状态分片打乱后设置到容器中
         ArrayList<ShardRouting> ordered = new ArrayList<>(activeShards.size() + allInitializingShards.size());
         List<ShardRouting> rankedActiveShards =
                 rankShardsAndUpdateStats(shuffler.shuffle(activeShards, seed), collector, nodeSearchCounts);
@@ -422,7 +423,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
     }
 
     /**
-     *
+     * 进行数据统计 方便自适应调整
      * @param shards  当前待处理的分片
      * @param collector   该对象具备收集节点 响应时间 服务时间等的能力
      * @param nodeSearchCounts   节点查询数是什么???
@@ -434,6 +435,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
             return shards;
         }
 
+        // TODO 先忽略 默认情况下 collector/nodeSearchCounts 都为null
         // Retrieve which nodes we can potentially send the query to
         final Set<String> nodeIds = getAllNodeIds(shards);
         // 获取每个节点对应的统计数据  当对应数据不存在时  Optional为空
@@ -577,6 +579,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
     }
 
     /**
+     * 优先将 nodeIds 的排在前面
      * @param nodeIds
      * @return
      */

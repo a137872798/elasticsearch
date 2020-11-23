@@ -38,7 +38,8 @@ import java.util.Objects;
 /**
  * A simple {@link AllocationCommand} composite managing several
  * {@link AllocationCommand} implementations
- * 代表需要进行重分配的指令
+ * 由用户通过REST 向ES集群发起重分配请求 只能在leader节点上处理
+ * AllocationCommand 定义了哪个分片应该被怎样分配
  */
 public class AllocationCommands implements ToXContentFragment {
     private final List<AllocationCommand> commands = new ArrayList<>();

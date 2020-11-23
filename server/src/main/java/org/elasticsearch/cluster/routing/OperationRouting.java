@@ -105,8 +105,8 @@ public class OperationRouting {
      * 寻找一组分片
      * @param clusterState
      * @param concreteIndices  传入多个索引 每个索引都有对应的一些分片
-     * @param routing
-     * @param preference
+     * @param routing  这是一个查询范围  key对应索引 value对应索引所在的路由的范围
+     * @param preference  偏向于使用哪个结果
      * @return
      */
     public GroupShardsIterator<ShardIterator> searchShards(ClusterState clusterState,
@@ -120,8 +120,8 @@ public class OperationRouting {
     /**
      * 根据指定的一组索引 返回分片数据    GroupShardsIterator 就是多个迭代器的组合对象
      * @param clusterState
-     * @param concreteIndices
-     * @param routing
+     * @param concreteIndices 相关的所有索引名 不包含别名
+     * @param routing  这是查询范围
      * @param preference
      * @param collectorService
      * @param nodeCounts
@@ -133,11 +133,11 @@ public class OperationRouting {
                                                            @Nullable String preference,
                                                            @Nullable ResponseCollectorService collectorService,
                                                            @Nullable Map<String, Long> nodeCounts) {
-        // 返回所有符合条件的分片路由对象
+        // 通过传入的routingMap信息 计算shardId 并将相关的路由表取出来 如果没有条件限制 就是返回所有的路由表信息
         final Set<IndexShardRoutingTable> shards = computeTargetedShards(clusterState, concreteIndices, routing);
         final Set<ShardIterator> set = new HashSet<>(shards.size());
         for (IndexShardRoutingTable shard : shards) {
-            // 此时按照 preference 在进行一次处理
+            // 通过偏向的分片进一步做过滤
             ShardIterator iterator = preferenceActiveShardIterator(shard,
                     clusterState.nodes().getLocalNodeId(), clusterState.nodes(), preference, collectorService, nodeCounts);
             if (iterator != null) {
@@ -150,10 +150,10 @@ public class OperationRouting {
     private static final Map<String, Set<String>> EMPTY_ROUTING = Collections.emptyMap();
 
     /**
-     * 返回索引命中的分片
-     * @param clusterState
-     * @param concreteIndices
-     * @param routing  以index为key 存储了一组路由信息
+     * 返回concreteIndices 相关的所有索引的分片  每个分片会分配到一个node上 换言之就知道了该index在整个集群的分布情况
+     * @param clusterState  当前集群状态
+     * @param concreteIndices   相关的所有索引
+     * @param routing  以index为key 存储了一组路由信息 作为查询条件
      * @return
      */
     private Set<IndexShardRoutingTable> computeTargetedShards(ClusterState clusterState, String[] concreteIndices,
@@ -162,20 +162,23 @@ public class OperationRouting {
         final Set<IndexShardRoutingTable> set = new HashSet<>();
         // we use set here and not list since we might get duplicates
         for (String index : concreteIndices) {
+            // 从元数据中获取索引相关的路由表  记录了这个索引的所有分片在哪些节点上
             final IndexRoutingTable indexRouting = indexRoutingTable(clusterState, index);
             final IndexMetadata indexMetadata = indexMetadata(clusterState, index);
+
+            // 路由信息可以转换成分片id  每个分片id 对应一个路由表和多个分片
             final Set<String> effectiveRouting = routing.get(index);
             if (effectiveRouting != null) {
-                // 这个值是用来计算id 的   也就是在某个索引下所有的shardId对应的分片 只有匹配 effectiveRouting的分片才会被返回
                 for (String r : effectiveRouting) {
-                    // 获取路由的分区数
                     final int routingPartitionSize = indexMetadata.getRoutingPartitionSize();
+                    // 从路由表中找到与 r 匹配的路由信息 并设置到set中
                     for (int partitionOffset = 0; partitionOffset < routingPartitionSize; partitionOffset++) {
+                        // calculateScaledShardId(indexMetadata, r, partitionOffset) 计算shardId
                         set.add(RoutingTable.shardRoutingTable(indexRouting, calculateScaledShardId(indexMetadata, r, partitionOffset)));
                     }
                 }
             } else {
-                // 否则返回所有分片
+                // 当没有指定查询范围时 全部范围
                 for (IndexShardRoutingTable indexShard : indexRouting) {
                     set.add(indexShard);
                 }
@@ -185,8 +188,7 @@ public class OperationRouting {
     }
 
     /**
-     * 按照喜好返回特定的分片  或者将喜好的分片排在前面
-     * @param indexShard   该对象内部包含了本次选择范围内的所有分片
+     * @param indexShard   某个分片
      * @param localNodeId    当前进程对应的节点
      * @param nodes      当前集群内所有的节点
      * @param preference    偏向于选择哪些分片
@@ -198,17 +200,19 @@ public class OperationRouting {
                                                         DiscoveryNodes nodes, @Nullable String preference,
                                                         @Nullable ResponseCollectorService collectorService,
                                                         @Nullable Map<String, Long> nodeCounts) {
+        // 当没有指定偏好信息时 将有效的分片包装成一个迭代器
         if (preference == null || preference.isEmpty()) {
             return shardRoutings(indexShard, nodes, collectorService, nodeCounts);
         }
         // 要求 preference 的首个字符必须是 _ 才处理
         if (preference.charAt(0) == '_') {
+            // 解析偏好信息
             Preference preferenceType = Preference.parse(preference);
             if (preferenceType == Preference.SHARDS) {
                 // starts with _shards, so execute on specific ones
-                // 可能代表是混合吧
                 int index = preference.indexOf('|');
 
+                // 截取 _shards 到 | 的部分
                 String shards;
                 if (index == -1) {
                     shards = preference.substring(Preference.SHARDS.type().length() + 1);
@@ -218,13 +222,14 @@ public class OperationRouting {
                 // 代表指定了要获取哪些分片id 对应的数据
                 String[] ids = Strings.splitStringByCommaToArray(shards);
                 boolean found = false;
-                // 要求本次候选的shardId 必须要在preference内
+                // 本次分片是否在偏好的分片内
                 for (String id : ids) {
                     if (Integer.parseInt(id) == indexShard.shardId().id()) {
                         found = true;
                         break;
                     }
                 }
+                // 没有找到合适的分片 直接返回
                 if (!found) {
                     return null;
                 }
@@ -238,6 +243,8 @@ public class OperationRouting {
                     preference = preference.substring(index + 1);
                 }
             }
+
+            // 解析非 Preference.SHARDS
             preferenceType = Preference.parse(preference);
             switch (preferenceType) {
                 // 代表指定了某些节点
@@ -267,17 +274,17 @@ public class OperationRouting {
     }
 
     /**
-     * 返回分片信息
+     * 将相关的路由信息包装成迭代器
      * @param indexShard
      * @param nodes
-     * @param collectorService
-     * @param nodeCounts
+     * @param collectorService  可空
+     * @param nodeCounts  可空
      * @return
      */
     private ShardIterator shardRoutings(IndexShardRoutingTable indexShard, DiscoveryNodes nodes,
             @Nullable ResponseCollectorService collectorService, @Nullable Map<String, Long> nodeCounts) {
+        // 默认为true  通过collectorService做一些数据统计 便于之后自适应的调整
         if (useAdaptiveReplicaSelection) {
-            // 同样是获取分片 不过会先将数据累加到 collectorService中
             return indexShard.activeInitializingShardsRankedIt(collectorService, nodeCounts);
         } else {
             // 返回活跃状态 以及初始状态的分片
@@ -285,6 +292,12 @@ public class OperationRouting {
         }
     }
 
+    /**
+     * 从集群状态中获取某个索引的路由表  路由表一开始就存储在元数据中
+     * @param clusterState
+     * @param index
+     * @return
+     */
     protected IndexRoutingTable indexRoutingTable(ClusterState clusterState, String index) {
         IndexRoutingTable indexRouting = clusterState.routingTable().index(index);
         if (indexRouting == null) {

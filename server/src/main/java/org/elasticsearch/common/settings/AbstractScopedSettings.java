@@ -438,8 +438,9 @@ public abstract class AbstractScopedSettings {
      * Validates that all settings are registered and valid.
      *
      * @param settings             the settings to validate
-     * @param validateDependencies true if dependent settings should be validated
+     * @param validateDependencies true if dependent settings should be validated  检测范围是否包含依赖关系
      * @see Setting#getSettingsDependencies(String)
+     * 对这组配置进行检测
      */
     public final void validate(final Settings settings, final boolean validateDependencies) {
         validate(settings, validateDependencies, false, false);
@@ -483,16 +484,18 @@ public abstract class AbstractScopedSettings {
      * @param ignoreArchivedSettings         true if archived settings should be ignored during validation
      * @param validateInternalOrPrivateIndex true if index internal settings should be validated
      * @see Setting#getSettingsDependencies(String)
+     * 对配置进行校验
      */
     public final void validate(
             final Settings settings,
             final boolean validateDependencies,
-            final boolean ignorePrivateSettings,
-            final boolean ignoreArchivedSettings,
+            final boolean ignorePrivateSettings,  // 是否要忽略私有配置
+            final boolean ignoreArchivedSettings,  // 是否要忽略存档配置
             final boolean validateInternalOrPrivateIndex) {
         final List<RuntimeException> exceptions = new ArrayList<>();
         for (final String key : settings.keySet()) { // settings iterate in deterministic fashion
             final Setting<?> setting = getRaw(key);
+            // 某些特殊的配置是不需要校验的
             if (((isPrivateSetting(key) || (setting != null && setting.isPrivateIndex())) && ignorePrivateSettings)) {
                 continue;
             }
@@ -523,15 +526,17 @@ public abstract class AbstractScopedSettings {
     /**
      * Validates that the settings is valid.
      *
-     * @param key                            the key of the setting to validate
+     * @param key                            the key of the setting to validate   本次期待被校验的配置key
      * @param settings                       the settings
      * @param validateDependencies           true if dependent settings should be validated
      * @param validateInternalOrPrivateIndex true if internal index settings should be validated
      * @throws IllegalArgumentException if the setting is invalid
+     * 对相关配置进行校验
      */
     void validate(
             final String key, final Settings settings, final boolean validateDependencies, final boolean validateInternalOrPrivateIndex) {
         Setting<?> setting = getRaw(key);
+        // TODO LevenshteinDistance 啥玩意???
         if (setting == null) {
             LevenshteinDistance ld = new LevenshteinDistance();
             List<Tuple<Float, String>> scoredKeys = new ArrayList<>();
@@ -557,14 +562,18 @@ public abstract class AbstractScopedSettings {
             }
             throw new IllegalArgumentException(msg);
         } else  {
+            // 获取该配置依赖的所有配置
             Set<Setting.SettingDependency> settingsDependencies = setting.getSettingsDependencies(key);
+            // TODO
             if (setting.hasComplexMatcher()) {
                 setting = setting.getConcreteSetting(key);
             }
+            // 进行依赖项的校验
             if (validateDependencies && settingsDependencies.isEmpty() == false) {
                 for (final Setting.SettingDependency settingDependency : settingsDependencies) {
                     final Setting<?> dependency = settingDependency.getSetting();
                     // validate the dependent setting is set
+                    // 当依赖项没有在新的配置中找到时 代表依赖项校验失败
                     if (dependency.existsOrFallbackExists(settings) == false) {
                         final String message = String.format(
                                 Locale.ROOT,
@@ -574,10 +583,12 @@ public abstract class AbstractScopedSettings {
                         throw new IllegalArgumentException(message);
                     }
                     // validate the dependent setting value
+                    // 依赖项本身还会校验依赖它的数据是否合法
                     settingDependency.validate(setting.getKey(), setting.get(settings), dependency.get(settings));
                 }
             }
             // the only time that validateInternalOrPrivateIndex should be true is if this call is coming via the update settings API
+            // TODO
             if (validateInternalOrPrivateIndex) {
                 if (setting.isInternalIndex()) {
                     throw new IllegalArgumentException(
@@ -588,6 +599,7 @@ public abstract class AbstractScopedSettings {
                 }
             }
         }
+        // 利用配置项本身的校验器 和转换器处理配置值 如果不合法会抛出异常
         setting.get(settings);
     }
 
@@ -664,6 +676,7 @@ public abstract class AbstractScopedSettings {
         if (setting != null) {
             return setting;
         }
+        // 没有直接命中时 可能采用某种匹配规则
         for (Map.Entry<String, Setting<?>> entry : complexMatchers.entrySet()) {
             if (entry.getValue().match(key)) {
                 assert assertMatcher(key, 1);
@@ -766,44 +779,58 @@ public abstract class AbstractScopedSettings {
 
     /**
      * Returns <code>true</code> if the given key is a valid delete key
+     * @param onlyDynamic 代表仅处理动态配置
+     * 检测某个配置能否被移除  TODO
      */
     private boolean isValidDelete(String key, boolean onlyDynamic) {
+        // 首先final配置是不能移除的
         return isFinalSetting(key) == false && // it's not a final setting
-            (onlyDynamic && isDynamicSetting(key)  // it's a dynamicSetting and we only do dynamic settings
-                || get(key) == null && key.startsWith(ARCHIVED_SETTINGS_PREFIX) // the setting is not registered AND it's been archived
-                || (onlyDynamic == false && get(key) != null)); // if it's not dynamic AND we have a key
+            // 如果是动态配置 允许删除
+            // the setting is not registered AND it's been archived
+            // it's a dynamicSetting and we only do dynamic settings
+            (onlyDynamic && isDynamicSetting(key) || get(key) == null && key.startsWith(ARCHIVED_SETTINGS_PREFIX)
+                ||
+                (onlyDynamic == false && get(key) != null)); // if it's not dynamic AND we have a key
     }
 
     /**
      * Updates a target settings builder with new, updated or deleted settings from a given settings builder.
      *
-     * @param toApply the new settings to apply
+     * @param toApply the new settings to apply    本次会作用的新配置
      * @param target the target settings builder that the updates are applied to. All keys that have explicit null value in toApply will be
-     *        removed from this builder
-     * @param updates a settings builder that holds all updates applied to target
+     *        removed from this builder      之前的旧配置
+     * @param updates a settings builder that holds all updates applied to target   处理后的结果会存储在该对象中
      * @param type a free text string to allow better exceptions messages
      * @param onlyDynamic if <code>false</code> all settings are updated otherwise only dynamic settings are updated. if set to
-     *        <code>true</code> and a non-dynamic setting is updated an exception is thrown.
+     *        <code>true</code> and a non-dynamic setting is updated an exception is thrown.    代表仅更新 属性为Dynamic的settings  默认为true
      * @return <code>true</code> if the target has changed otherwise <code>false</code>
      */
     private boolean updateSettings(Settings toApply, Settings.Builder target, Settings.Builder updates, String type, boolean onlyDynamic) {
         boolean changed = false;
         final Set<String> toRemove = new HashSet<>();
         Settings.Builder settingsBuilder = Settings.builder();
+
+        // 首先部分配置是不允许更新的
         final Predicate<String> canUpdate = (key) -> (
             isFinalSetting(key) == false && // it's not a final setting
                 ((onlyDynamic == false && get(key) != null) || isDynamicSetting(key)));
         for (String key : toApply.keySet()) {
+            // keys 和 settings是分离的  hasValue 为false 就代表这个配置被删除了
             boolean isDelete = toApply.hasValue(key) == false;
+            // 当key 精确命中的配置项支持删除 或者key是一个模糊匹配 那么可以存储到remove容器中
             if (isDelete && (isValidDelete(key, onlyDynamic) || key.endsWith("*"))) {
                 // this either accepts null values that suffice the canUpdate test OR wildcard expressions (key ends with *)
                 // we don't validate if there is any dynamic setting with that prefix yet we could do in the future
                 toRemove.add(key);
                 // we don't set changed here it's set after we apply deletes below if something actually changed
+                // 被更新的配置首先应该确保存在原始配置
             } else if (get(key) == null) {
                 throw new IllegalArgumentException(type + " setting [" + key + "], not recognized");
+                // 本次是更新操作且满足更新条件
             } else if (isDelete == false && canUpdate.test(key)) {
+                // 获取该旧配置相关的校验器 并针对新配置中的值进行校验  不同的配置可能有不同的校验规则
                 get(key).validateWithoutDependencies(toApply); // we might not have a full picture here do to a dependency validation
+                // 将新的配置设置到 builder中
                 settingsBuilder.copy(key, toApply);
                 updates.copy(key, toApply);
                 changed |= toApply.get(key).equals(target.get(key)) == false;
@@ -815,17 +842,26 @@ public abstract class AbstractScopedSettings {
                 }
             }
         }
+        // 在处理完更新后 处理之前找到的所有待删除的配置
         changed |= applyDeletes(toRemove, target, k -> isValidDelete(k, onlyDynamic));
         target.put(settingsBuilder.build());
         return changed;
     }
 
+    /**
+     * 处理之前所有待删除的配置
+     * @param deletes  本次要被删除的所有key   这个key可能包含了通配符
+     * @param builder  删除动作会被作用到这个容器中
+     * @param canRemove  检测能否支持删除
+     * @return
+     */
     private static boolean applyDeletes(Set<String> deletes, Settings.Builder builder, Predicate<String> canRemove) {
         boolean changed = false;
         for (String entry : deletes) {
             Set<String> keysToRemove = new HashSet<>();
             Set<String> keySet = builder.keys();
             for (String key : keySet) {
+                // 找到符合条件的进行删除
                 if (Regex.simpleMatch(entry, key) && canRemove.test(key)) {
                     // we have to re-check with canRemove here since we might have a wildcard expression foo.* that matches
                     // dynamic as well as static settings if that is the case we might remove static settings since we resolve the
@@ -862,17 +898,20 @@ public abstract class AbstractScopedSettings {
      *
      * @param settings the settings instance that might contain settings to be upgraded
      * @return a new settings instance if any settings required upgrade, otherwise the same settings instance as specified
+     * 将升级的所有配置包装成 Settings对象
      */
     public Settings upgradeSettings(final Settings settings) {
         final Settings.Builder builder = Settings.builder();
         boolean changed = false; // track if any settings were upgraded
         for (final String key : settings.keySet()) {
+            // 获取旧配置
             final Setting<?> setting = getRaw(key);
             final SettingUpgrader<?> upgrader = settingUpgraders.get(setting);
             if (upgrader == null) {
                 // the setting does not have an upgrader, copy the setting
                 builder.copy(key, settings);
             } else {
+                // TODO 目前没有看到SettingUpgrader 的实现类 先忽略
                 // the setting has an upgrader, so mark that we have changed a setting and apply the upgrade logic
                 changed = true;
                 // noinspection ConstantConditions
@@ -898,10 +937,10 @@ public abstract class AbstractScopedSettings {
      * will be archived. This means the setting is prefixed with {@value ARCHIVED_SETTINGS_PREFIX}
      * and remains in the settings object. This can be used to detect invalid settings via APIs.
      *
-     * @param settings        the {@link Settings} instance to scan for unknown or invalid settings
-     * @param unknownConsumer callback on unknown settings (consumer receives unknown key and its
+     * @param settings        the {@link Settings} instance to scan for unknown or invalid settings     当校验的相关配置
+     * @param unknownConsumer callback on unknown settings (consumer receives unknown key and its    当遇到未知配置时通过该函数进行处理  当前仅是打印日志
      *                        associated value)
-     * @param invalidConsumer callback on invalid settings (consumer receives invalid key, its
+     * @param invalidConsumer callback on invalid settings (consumer receives invalid key, its    针对无效配置 打印日志
      *                        associated value and an exception)
      * @return a {@link Settings} instance with the unknown or invalid settings archived
      */
@@ -913,11 +952,13 @@ public abstract class AbstractScopedSettings {
         boolean changed = false;
         for (String key : settings.keySet()) {
             try {
+                // 当前已经存在的配置 不需要做处理 拷贝到builder中
                 Setting<?> setting = get(key);
                 if (setting != null) {
                     setting.get(settings);
                     builder.copy(key, settings);
                 } else {
+                    // 如果配置是存档配置   或者是某些特殊的配置 也是直接拷贝
                     if (key.startsWith(ARCHIVED_SETTINGS_PREFIX) || isPrivateSetting(key)) {
                         builder.copy(key, settings);
                     } else {

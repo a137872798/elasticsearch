@@ -25,6 +25,7 @@ import java.util.List;
  * Represents the logic to upgrade a setting.
  *
  * @param <T> the type of the underlying setting
+ *           描述一个升级了的配置
  */
 public interface SettingUpgrader<T> {
 

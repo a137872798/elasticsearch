@@ -58,6 +58,13 @@ public class TransportNodesUsageAction
         this.sinceTime = System.currentTimeMillis();
     }
 
+    /**
+     * 将本次处理的结果合并成一个最终结果对象   这种在多个node上处理 或者针对不同节点上的task 没有做什么强一致性处理 允许部分成功 部分失败
+     * @param request The associated request.
+     * @param responses All successful node-level responses.
+     * @param failures All node-level failures.
+     * @return
+     */
     @Override
     protected NodesUsageResponse newResponse(NodesUsageRequest request, List<NodeUsage> responses, List<FailedNodeException> failures) {
         return new NodesUsageResponse(clusterService.getClusterName(), responses, failures);
@@ -73,6 +80,12 @@ public class TransportNodesUsageAction
         return new NodeUsage(in);
     }
 
+    /**
+     * 定义了在某个节点上的处理逻辑
+     * @param nodeUsageRequest
+     * @param task
+     * @return
+     */
     @Override
     protected NodeUsage nodeOperation(NodeUsageRequest nodeUsageRequest, Task task) {
         NodesUsageRequest request = nodeUsageRequest.request;

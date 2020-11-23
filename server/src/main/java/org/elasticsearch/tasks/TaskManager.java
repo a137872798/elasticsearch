@@ -186,7 +186,7 @@ public class TaskManager implements ClusterStateApplier {
     Task registerAndExecute(String type, TransportAction<Request, Response> action, Request request,
                             BiConsumer<Task, Response> onResponse, BiConsumer<Task, Exception> onFailure) {
         final Releasable unregisterChildNode;
-        // TODO
+        // 代表本次请求是由某次父级请求间接生成的
         if (request.getParentTask().isSet()) {
             unregisterChildNode = registerChildNode(request.getParentTask().getId(), lastDiscoveryNodes.getLocalNode());
         } else {

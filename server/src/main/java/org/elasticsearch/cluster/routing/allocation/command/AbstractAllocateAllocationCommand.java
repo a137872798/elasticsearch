@@ -42,9 +42,11 @@ import java.util.Objects;
 
 /**
  * Abstract base class for allocating an unassigned shard to a node
+ * 包含一些分配指令的基础信息
  */
 public abstract class AbstractAllocateAllocationCommand implements AllocationCommand {
 
+    // 通过index+shardId 定位到唯一分片  而node代表分配的目标节点
     private static final String INDEX_FIELD = "index";
     private static final String SHARD_FIELD = "shard";
     private static final String NODE_FIELD = "node";

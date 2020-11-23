@@ -166,7 +166,7 @@ public class TransportClusterStateAction extends TransportMasterNodeReadAction<C
         if (request.routingTable()) {
             if (request.indices().length > 0) {
                 RoutingTable.Builder routingTableBuilder = RoutingTable.builder();
-                // 根据请求体中携带的indices 转换成相关的索引名
+                // 如果请求中有指定的索引 那么仅添加相关的路由
                 String[] indices = indexNameExpressionResolver.concreteIndexNames(currentState, request);
                 for (String filteredIndex : indices) {
                     if (currentState.routingTable().getIndicesRouting().containsKey(filteredIndex)) {

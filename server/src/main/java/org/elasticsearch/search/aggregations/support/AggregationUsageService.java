@@ -23,6 +23,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.LongAdder;
 
+/**
+ * 就是一个累加器
+ */
 public class AggregationUsageService {
     private final Map<String, Map<String, LongAdder>> aggs;
 

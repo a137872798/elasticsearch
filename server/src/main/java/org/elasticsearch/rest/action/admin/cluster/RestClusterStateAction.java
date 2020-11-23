@@ -48,6 +48,9 @@ import java.util.Set;
 import static java.util.Collections.singletonMap;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 查询集群状态的指令 基本上就是直接在leader节点获取clusterState 并根据req的需求 读取相关属性
+ */
 public class RestClusterStateAction extends BaseRestHandler {
 
     private final SettingsFilter settingsFilter;
@@ -103,6 +106,14 @@ public class RestClusterStateAction extends BaseRestHandler {
         settingsFilter.addFilterSettingParams(request);
 
         return channel -> client.admin().cluster().state(clusterStateRequest, new RestBuilderListener<ClusterStateResponse>(channel) {
+
+            /**
+             * 怎么处理返回的数据流用于展示  先忽略
+             * @param response
+             * @param builder
+             * @return
+             * @throws Exception
+             */
             @Override
             public RestResponse buildResponse(ClusterStateResponse response, XContentBuilder builder) throws Exception {
                 builder.startObject();
