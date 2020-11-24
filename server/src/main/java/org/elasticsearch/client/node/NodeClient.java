@@ -110,7 +110,6 @@ public class NodeClient extends AbstractClient {
      * Execute an {@link ActionType} locally, returning that {@link Task} used to track it, and linking an {@link ActionListener}.
      * Prefer this method if you don't need access to the task when listening for the response. This is the method used to
      * implement the {@link Client} interface.
-     * 在本地执行任务会先注册到 taskManager上
      */
     public <Request extends ActionRequest, Response extends ActionResponse>
     Task executeLocally(ActionType<Response> action, Request request, ActionListener<Response> listener) {

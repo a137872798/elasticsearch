@@ -57,19 +57,23 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
      * Process existing recoveries of replicas and see if we need to cancel them if we find a better
      * match. Today, a better match is one that can perform a no-op recovery while the previous recovery
      * has to copy segment files.
-     * @param allocation 本次分配的结果
+     * @param allocation 该对象包含了此时集群下所有分片的分配情况
+     *                   处理当前正在执行恢复操作的分片 可能会关闭一些恢复操作
+     *                   这些操作应该是都交由leader节点来控制
+     *                   该方法的调用场景是 当主分片完成分配后  副本进行分配前 可以对这些这些 recovery的动作进行处理  以确保replicate操作能正常执行
      */
     public void processExistingRecoveries(RoutingAllocation allocation) {
-        // 该对象内部整合了各种元数据信息
+        // 获取各种元数据的总集对象
         Metadata metadata = allocation.metadata();
-        // 每个RoutingNode 包含了该node下所有的分片信息  RoutingNodes 则维护了整个集群下所有node的分片信息
+
+        // 以node 为单位维护下面相关分片的状况
         RoutingNodes routingNodes = allocation.routingNodes();
         List<Runnable> shardCancellationActions = new ArrayList<>();
         for (RoutingNode routingNode : routingNodes) {
-            // 获取每个分片的路由信息
+            // 遍历每个分片
             for (ShardRouting shard : routingNode) {
 
-                // 只处理副本&完成初始化的&没有处于重定位状态的
+                // 只处理 init状态的replicate  TODO 主分片的数据恢复该怎么做???
                 if (shard.primary()) {
                     continue;
                 }
@@ -81,11 +85,12 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
                 }
 
                 // if we are allocating a replica because of index creation, no need to go and find a copy, there isn't one...
-                // 分片此时如果处于未分配状态 并且原因是 index_created  那么也不需要处理
+                // TODO INDEX_CREATE 应该是代表索引刚刚被创建 此时没有需要恢复的数据
                 if (shard.unassignedInfo() != null && shard.unassignedInfo().getReason() == UnassignedInfo.Reason.INDEX_CREATED) {
                     continue;
                 }
 
+                // 通过副本分配器 拉取数据
                 AsyncShardFetch.FetchResult<NodeStoreFilesMetadata> shardStores = fetchData(shard, allocation);
                 if (shardStores.hasData() == false) {
                     logger.trace("{}: fetching new stores for initializing shard", shard);

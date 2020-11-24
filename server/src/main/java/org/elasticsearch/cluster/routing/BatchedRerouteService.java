@@ -39,8 +39,9 @@ import java.util.function.BiFunction;
  * A {@link BatchedRerouteService} is a {@link RerouteService} that batches together reroute requests to avoid unnecessary extra reroutes.
  * This component only does meaningful work on the elected master node. Reroute requests will fail with a {@link NotMasterException} on
  * other nodes.
- * 什么是reroute服务 在JoinTaskExecutor.execute中如果master节点发生了变化 会调用该服务
- * 将多个reroute请求合并成一次  但是reroute的逻辑还是由外部设置
+ * ES内置的重路由服务对象
+ * 原本是因为某个shard 而发起的重路由 实际上并没有局限于仅处理一个
+ * 这个batched的意思是将多次reroute请求合并成一次执行
  */
 public class BatchedRerouteService implements RerouteService {
     private static final Logger logger = LogManager.getLogger(BatchedRerouteService.class);
@@ -76,6 +77,8 @@ public class BatchedRerouteService implements RerouteService {
 
     /**
      * Initiates a reroute.
+     * 开始执行重路由服务   就是用来决定某个shard的 primary replicate 应该怎样分配在集群中
+     * reroute会自动去重
      */
     @Override
     public final void reroute(String reason, Priority priority, ActionListener<ClusterState> listener) {
@@ -83,7 +86,7 @@ public class BatchedRerouteService implements RerouteService {
         synchronized (mutex) {
             // 代表有囤积的reroute任务
             if (pendingRerouteListeners != null) {
-                // 如果优先级还比当前囤积的任务低 那么直接追加到list就好
+                // 如果优先级还比当前囤积的任务低 那么直接追加到list就好   注意这里没有重复发起reroute请求
                 if (priority.sameOrAfter(pendingTaskPriority)) {
                     logger.trace("already has pending reroute at priority [{}], adding [{}] with priority [{}] to batch",
                         pendingTaskPriority, reason, priority);
@@ -111,11 +114,12 @@ public class BatchedRerouteService implements RerouteService {
         }
         try {
             // 通过集群服务来批量提交任务  该任务完成时 还会发布到集群所有节点上
+            // 进行allocate 和 reroute的应该都是leader节点
             clusterService.submitStateUpdateTask(CLUSTER_UPDATE_TASK_SOURCE + "(" + reason + ")",
                 new ClusterStateUpdateTask(priority) {
 
                     /**
-                     * 该任务执行的逻辑
+                     * 重路由的逻辑
                      * @param currentState
                      * @return
                      */
@@ -125,7 +129,7 @@ public class BatchedRerouteService implements RerouteService {
                         synchronized (mutex) {
                             assert currentListeners.isEmpty() == (pendingRerouteListeners != currentListeners)
                                 : "currentListeners=" + currentListeners + ", pendingRerouteListeners=" + pendingRerouteListeners;
-                            // 本次数据已经发生变动了 忽略本次执行 因为之后就会有一个最新的任务被添加
+                            // 代表期间没有新的reroute请求 本次reroute执行完后 就不需要重复执行了
                             currentListenersArePending = pendingRerouteListeners == currentListeners;
                             if (currentListenersArePending) {
                                 pendingRerouteListeners = null;
@@ -135,6 +139,7 @@ public class BatchedRerouteService implements RerouteService {
                             logger.trace("performing batched reroute [{}]", reason);
                             return reroute.apply(currentState, reason);
                         } else {
+                            // 既然追加了新的reroute请求 那么本次就不需要执行了
                             logger.trace("batched reroute [{}] was promoted", reason);
                             return currentState;
                         }

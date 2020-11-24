@@ -63,6 +63,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 以节点为单位  获取某个shard在该节点上的数据文件信息
+ */
 public class TransportNodesListShardStoreMetadata extends TransportNodesAction<TransportNodesListShardStoreMetadata.Request,
     TransportNodesListShardStoreMetadata.NodesStoreFilesMetadata,
     TransportNodesListShardStoreMetadata.NodeRequest,
@@ -103,6 +106,12 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
         return new NodesStoreFilesMetadata(clusterService.getClusterName(), responses, failures);
     }
 
+    /**
+     * 当某个节点接收到请求后 开始处理
+     * @param request
+     * @param task
+     * @return
+     */
     @Override
     protected NodeStoreFilesMetadata nodeOperation(NodeRequest request, Task task) {
         try {
@@ -112,6 +121,12 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
         }
     }
 
+    /**
+     * 根据请求体内部的参数 获取数据文件元数据
+     * @param request
+     * @return
+     * @throws IOException
+     */
     private StoreFilesMetadata listStoreMetadata(NodeRequest request) throws IOException {
         final ShardId shardId = request.getShardId();
         logger.trace("listing store meta data for {}", shardId);
@@ -177,7 +192,7 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
     }
 
     /**
-     * 描述存储的文件 它对应的维度是什么  segment吗 还是更细粒度的文件???
+     * 描述存储的文件
      */
     public static class StoreFilesMetadata implements Iterable<StoreFileMetadata>, Writeable {
 
@@ -185,6 +200,9 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
          * 这些文件信息是针对哪个分片下的
          */
         private final ShardId shardId;
+        /**
+         * 内部可以获取到某个时刻下store内部最新的lucene.segment_N对应的文件
+         */
         private final Store.MetadataSnapshot metadataSnapshot;
         private final List<RetentionLease> peerRecoveryRetentionLeases;
 

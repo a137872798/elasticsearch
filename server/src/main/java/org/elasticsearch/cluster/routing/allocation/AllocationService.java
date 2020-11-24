@@ -479,9 +479,10 @@ public class AllocationService {
      * If the same instance of ClusterState is returned, then no change has been made.
      * @param clusterState 此时最新的集群状态
      * 根据此时最新的集群状态(主要是内部的配置) 进行重路由
+     *                     BatchedRerouteService.reroute 也会转发到该方法
      */
     public ClusterState reroute(ClusterState clusterState, String reason) {
-        // 自适应调整此时的副本数量 并更新到集群状态中  减少的话不需要做处理 但是增加的话 就会有新的副本处于未分配的状态  TODO 那么如何确定副本应该被设置到哪个node上呢 应该是通过那个decision对象
+        // 自适应调整此时的副本数量 并更新到集群状态中  减少的话不需要做处理 但是增加的话 就会有新的副本处于未分配的状态
         ClusterState fixedClusterState = adaptAutoExpandReplicas(clusterState);
 
         // 将此时所有分片的分配情况按照node来划分
@@ -550,6 +551,7 @@ public class AllocationService {
 
         // 这是分配器 这里允许在处理前增加一些逻辑
         for (final ExistingShardsAllocator existingShardsAllocator : existingShardsAllocators.values()) {
+            // 针对ES 内置的分配器  GatewayAllocator来说 做的是清理缓存的工作
             existingShardsAllocator.beforeAllocation(allocation);
         }
 
@@ -562,7 +564,7 @@ public class AllocationService {
             }
         }
 
-        // TODO 先忽略
+        // 在完成了primary的分配后  开始replicate的分配前 执行的钩子
         for (final ExistingShardsAllocator existingShardsAllocator : existingShardsAllocators.values()) {
             existingShardsAllocator.afterPrimariesBeforeReplicas(allocation);
         }

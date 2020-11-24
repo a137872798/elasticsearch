@@ -558,7 +558,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
 
     /**
-     * 获取有关某个分片的所有分配者id
+     * 获取某个分片相关的所有 allocationId
      * @param shardId
      * @return
      */

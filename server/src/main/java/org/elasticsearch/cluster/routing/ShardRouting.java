@@ -404,13 +404,13 @@ public final class ShardRouting implements Writeable, ToXContentObject {
      *
      * @param existingAllocationId allocation id to use. If null, a fresh allocation id is generated.
      *                             将当前分片更新成初始状态
-     *                             注意从 未分配状态到初始状态 relocatingNodeId 为null
      */
     public ShardRouting initialize(String nodeId, @Nullable String existingAllocationId, long expectedShardSize) {
         assert state == ShardRoutingState.UNASSIGNED : this;
         assert relocatingNodeId == null : this;
 
-        // 每当初始化状态时 就会生成一个新的 位置id
+        // 每当初始化状态时 就会生成一个新的allocationId
+        // AllocationId 内部总计包含2个属性 一个是 relocateId 还有个是 allocationId
         final AllocationId allocationId;
         if (existingAllocationId == null) {
             allocationId = AllocationId.newInitializing();

@@ -49,14 +49,15 @@ public abstract class BaseGatewayShardAllocator {
      * Allocate an unassigned shard to nodes (if any) where valid copies of the shard already exist.
      * It is up to the individual implementations of {@link #makeAllocationDecision(ShardRouting, RoutingAllocation, Logger)}
      * to make decisions on assigning shards to nodes.
-     * @param shardRouting the shard to allocate  此时该对象内部的 nodeId啥的应该还没有填充
-     * @param allocation the allocation state container object  存储分配状态的容器
+     * @param shardRouting the shard to allocate
+     * @param allocation the allocation state container object
      * @param unassignedAllocationHandler handles the allocation of the current shard
-     *                                    分配一个 未分配的分片对象
+     *
+     *                                    将某个unassigned的主分片分配到一个合适的位置
      */
     public void allocateUnassigned(ShardRouting shardRouting, RoutingAllocation allocation,
                                    ExistingShardsAllocator.UnassignedAllocationHandler unassignedAllocationHandler) {
-        // 决定该分片会分配到的位置
+        // allocateUnassignedDecision 决定分配的结果
         final AllocateUnassignedDecision allocateUnassignedDecision = makeAllocationDecision(shardRouting, allocation, logger);
 
         // 如果 处理没有产生结果 直接返回
@@ -65,16 +66,17 @@ public abstract class BaseGatewayShardAllocator {
             return;
         }
 
-        // 如果本次结果是yes
+        // 代表本次找到了一个合适的node
         if (allocateUnassignedDecision.getAllocationDecision() == AllocationDecision.YES) {
-            // 初始化用于处理未分配分片的handler 对象
+            // TODO 这里获取到的node 应该是还未分配该shard的节点  那么已经分配过的节点又是在什么时候排除的呢 推测是利用 ignoreNode机制
             unassignedAllocationHandler.initialize(allocateUnassignedDecision.getTargetNode().getId(),
                 allocateUnassignedDecision.getAllocationId(),
                 shardRouting.primary() ? ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE :
                     allocation.clusterInfo().getShardSize(shardRouting, ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE),
+                // 这个对象会观测某个分片的状态变化 比如某个新的unassigned 转换成init状态
                 allocation.changes());
         } else {
-            // 否则忽略该分片
+            // 无法分配或者以异步形式处理 则可以从迭代器中移除这个分片了  同时会更新 unassignedInfo信息 以及触发相关的钩子
             unassignedAllocationHandler.removeAndIgnore(allocateUnassignedDecision.getAllocationStatus(), allocation.changes());
         }
     }

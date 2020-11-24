@@ -125,11 +125,11 @@ public final class ShardPath {
      * This method walks through the nodes shard paths to find the data and state path for the given shard. If multiple
      * directories with a valid shard state exist the one with the highest version will be used.
      * <b>Note:</b> this method resolves custom data locations for the shard if such a custom data path is provided.
-     * 根据当前环境 已经自定义数据路径 以及分片id 生成属于该分片的路径
+     * 根据当前环境 自定义数据路径 以及分片id 生成属于该分片的路径
      */
     public static ShardPath loadShardPath(Logger logger, NodeEnvironment env,
                                           ShardId shardId, String customDataPath) throws IOException {
-        // 生成 shard级别的路径
+        // 生成 shard级别的路径  虽然这里可能会返回多个目录 但是在下面的检测中会抛出异常
         final Path[] paths = env.availableShardPaths(shardId);
         // 这是存储共享数据的路径
         final Path sharedDataPath = env.sharedDataPath();
@@ -140,6 +140,8 @@ public final class ShardPath {
      * This method walks through the nodes shard paths to find the data and state path for the given shard. If multiple
      * directories with a valid shard state exist the one with the highest version will be used.
      * <b>Note:</b> this method resolves custom data locations for the shard.
+     * @param shardId   表示本次要获取的是哪个分片的数据
+     * @param customDataPath  自定义数据的路径
      * @param availableShardPaths 所有分片路径
      * @param sharedDataPath 共享数据路径
      */
@@ -152,6 +154,7 @@ public final class ShardPath {
             // EMPTY is safe here because we never call namedObject
             // 读取每个目录下的数据流 并转换成 metadata对象
             ShardStateMetadata load = ShardStateMetadata.FORMAT.loadLatestState(logger, NamedXContentRegistry.EMPTY, path);
+            // shardId 是由远端发来的请求 基于当前最新的clusterState 因为能发起该请求的就是leader节点  那么通过匹配uuid 可以得知此时正在被使用的node目录
             if (load != null) {
                 if (load.indexUUID.equals(indexUUID) == false && IndexMetadata.INDEX_UUID_NA_VALUE.equals(load.indexUUID) == false) {
                     logger.warn("{} found shard on path: [{}] with a different index UUID - this "
@@ -166,7 +169,6 @@ public final class ShardPath {
                     throw new IllegalStateException(shardId + " more than one shard state found");
                 }
             }
-
         }
         if (loadedPath == null) {
             return null;

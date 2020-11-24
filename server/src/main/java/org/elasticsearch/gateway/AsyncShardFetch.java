@@ -55,7 +55,8 @@ import static java.util.Collections.emptySet;
  * The async fetch logic maintains a map of which nodes are being fetched from in an async manner,
  * and once the results are back, it makes sure to schedule a reroute to make sure those results will
  * be taken into account.
- * 代表一个拉取分片数据的结果
+ * 表示从某个分片拉取数据的动作
+ * 该对象应该由leader节点掌控
  */
 public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Releasable {
 
@@ -69,19 +70,28 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
     protected final Logger logger;
     protected final String type;
     /**
-     * 拉取的分片id
+     * 拉取的分片id  应该是只会拉取shard.primary的数据 副本应该是不在考虑范围内的
      */
     protected final ShardId shardId;
     /**
-     * 自定义的数据路径
+     * 自定义的数据路径  推测应该是告知去目标分片的哪个目录获取数据
      */
     protected final String customDataPath;
 
+    /**
+     * AsyncShardFetch 本身只是一个模板 代表针对某一分片 在哪些节点上执行拉取任务
+     * 具体的拉取动作由该对象决定 同时还决定了 res 的类型
+     */
     private final Lister<BaseNodesResponse<T>, T> action;
+    /**
+     * 发起的通往某个节点的拉取任务会被暂存在这里
+     * 同时当获取到结果后 会作为缓存 存储在内部
+     * key: nodeId
+     */
     private final Map<String, NodeEntry<T>> cache = new HashMap<>();
 
     /**
-     * 记录了 哪些节点的数据不会被拉取
+     * 代表不会从哪些节点上获取该分片的数据
      */
     private final Set<String> nodesToIgnore = new HashSet<>();
 
@@ -134,18 +144,22 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
      * <p>
      * The ignoreNodes are nodes that are supposed to be ignored for this round, since fetching is async, we need
      * to keep them around and make sure we add them back when all the responses are fetched and returned.
-     * @param nodes 当前集群节点集
-     * @param ignoreNodes 该集群中哪些节点需要被忽略
+     * @param nodes 当前集群中包含的所有节点
+     * @param ignoreNodes 代表数据不会出现在哪些节点上
      */
     public synchronized FetchResult<T> fetchData(DiscoveryNodes nodes, Set<String> ignoreNodes) {
         if (closed) {
             throw new IllegalStateException(shardId + ": can't fetch data on closed async fetch");
         }
         nodesToIgnore.addAll(ignoreNodes);
-        // 同步 cache与nodes的数据 也就是移除多出来的 补上缺少的
+
+        // 新增的node包装成entry后加入cache 不再有效的node从cache中移除
         fillShardCacheWithDataNodes(cache, nodes);
+        // 这里就利用到了缓存 只有还未拉取到数据的节点才会发起请求 TODO 缓存什么时候被清理 ???
         // 找到还未拉取数据  以及fetching=false的节点
         List<NodeEntry<T>> nodesToFetch = findNodesToFetch(cache);
+
+        // 代表本次有需要拉取数据的相关节点
         if (nodesToFetch.isEmpty() == false) {
             // mark all node as fetching and go ahead and async fetch them
             // use a unique round id to detect stale responses in processAsyncFetch
@@ -161,12 +175,13 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
         }
 
         // if we are still fetching, return null to indicate it
-        // 只要某个节点处于 fetching 返回一个拉取的结果
+        // 因为此时还处于拉取阶段 只能返回一个空对象   之后在拉取完成时 会通过回调函数处理拉取结果
         if (hasAnyNodeFetching(cache)) {
             return new FetchResult<>(shardId, null, emptySet());
         } else {
+            // 代表此时所有nodeEntry的数据都已经设置  使用缓存中的数据
             // nothing to fetch, yay, build the return value
-            // 正常拉取到数据的节点存储在这个容器中
+            // 存储有效的结果
             Map<DiscoveryNode, T> fetchData = new HashMap<>();
             // 所有处理失败的节点会被存储到该列表中
             Set<String> failedNodes = new HashSet<>();
@@ -196,7 +211,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
             nodesToIgnore.clear();
             // if at least one node failed, make sure to have a protective reroute
             // here, just case this round won't find anything, and we need to retry fetching data
-            // 当有节点处理失败时 触发reroute
+            // 有节点不可用 或者 该分片在某个node下被禁用 那么以防万一 就要重新分配路由 避免导致之前某个分片不可以使用
             if (failedNodes.isEmpty() == false || allIgnoreNodes.isEmpty() == false) {
                 reroute(shardId, "nodes failed [" + failedNodes.size() + "], ignored [" + allIgnoreNodes.size() + "]");
             }
@@ -209,7 +224,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
      * on the same cache generation, otherwise the results are discarded. It then goes and fills the relevant data for
      * the shard (response + failures), issuing a reroute at the end of it to make sure there will be another round
      * of allocations taking this new data into account.
-     * 当fetch执行完毕后触发该方法
+     * 当拉取任务完成时触发该方法
      */
     protected synchronized void processAsyncFetch(List<T> responses, List<FailedNodeException> failures, long fetchingRound) {
         if (closed) {
@@ -221,9 +236,10 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
 
         if (responses != null) {
             for (T response : responses) {
-                // 找到本次返回数据的节点信息
+                // 在执行拉取任务前 相关entry都应该已经被填入
                 NodeEntry<T> nodeEntry = cache.get(response.getNode().getId());
                 if (nodeEntry != null) {
+                    // TODO 先忽略异常情况
                     if (nodeEntry.getFetchingRound() != fetchingRound) {
                         assert nodeEntry.getFetchingRound() > fetchingRound : "node entries only replaced by newer rounds";
                         logger.trace("{} received response for [{}] from node {} for an older fetching round (expected: {} but was: {})",
@@ -234,14 +250,14 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
                     } else {
                         // if the entry is there, for the right fetching round and not marked as failed already, process it
                         logger.trace("{} marking {} as done for [{}], result is [{}]", shardId, nodeEntry.getNodeId(), type, response);
-                        // 当拉取到结果后触发后置钩子
+                        // 成功后将结果设置到 entry中
                         nodeEntry.doneFetching(response);
                     }
                 }
             }
         }
 
-        // 有些节点的拉取失败
+        // 有些节点的拉取失败   异常情况属于失败
         if (failures != null) {
             for (FailedNodeException failure : failures) {
                 logger.trace("{} processing failure {} for [{}]", shardId, failure, type);
@@ -251,11 +267,13 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
                         assert nodeEntry.getFetchingRound() > fetchingRound : "node entries only replaced by newer rounds";
                         logger.trace("{} received failure for [{}] from node {} for an older fetching round (expected: {} but was: {})",
                             shardId, nodeEntry.getNodeId(), type, nodeEntry.getFetchingRound(), fetchingRound);
+
+                        // 代表首次设置成failure
                     } else if (nodeEntry.isFailed() == false) {
                         // if the entry is there, for the right fetching round and not marked as failed already, process it
                         Throwable unwrappedCause = ExceptionsHelper.unwrapCause(failure.getCause());
                         // if the request got rejected or timed out, we need to try it again next time...
-                        // 针对可重试异常 不会设置value 和 valueSet属性 只会重置fetching
+                        // !! 针对可重试异常 不会设置value 和 valueSet属性 只会重置fetching
                         if (unwrappedCause instanceof EsRejectedExecutionException ||
                             unwrappedCause instanceof ReceiveTimeoutTransportException ||
                             unwrappedCause instanceof ElasticsearchTimeoutException) {
@@ -263,6 +281,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
                         } else {
                             logger.warn(() -> new ParameterizedMessage("{}: failed to list shard for {} on node [{}]",
                                 shardId, type, failure.nodeId()), failure);
+                            // 设置失败结果
                             nodeEntry.doneFetching(failure.getCause());
                         }
                     }
@@ -270,7 +289,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
             }
         }
 
-        // 当完成拉取任务时 为什么要触发 reroute呢
+        // 异步完成后 此时情况已经不可控了 比如之前设置的ignore 可能已经被清除掉了  所以最好是进行一次重路由
         reroute(shardId, "post_response");
     }
 
@@ -292,7 +311,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
      */
     private void fillShardCacheWithDataNodes(Map<String, NodeEntry<T>> shardCache, DiscoveryNodes nodes) {
         // verify that all current data nodes are there
-        // 遍历集群中所有的数据节点
+        // 只需要为数据节点创建缓存
         for (ObjectObjectCursor<String, DiscoveryNode> cursor : nodes.getDataNodes()) {
             DiscoveryNode node = cursor.value;
             // 如果该节点没有保存在 cache中 那么将node包裹成entry后 设置到cache中
@@ -308,6 +327,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
     /**
      * Finds all the nodes that need to be fetched. Those are nodes that have no
      * data, and are not in fetch mode.
+     * 找到所有还未填充数据 以及还未开始拉取数据的 entry
      */
     private List<NodeEntry<T>> findNodesToFetch(Map<String, NodeEntry<T>> shardCache) {
         List<NodeEntry<T>> nodesToFetch = new ArrayList<>();
@@ -335,10 +355,8 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
      * Async fetches data for the provided shard with the set of nodes that need to be fetched from.
      * 执行异步拉取任务
      */
-    // visible for testing
     void asyncFetch(final DiscoveryNode[] nodes, long fetchingRound) {
         logger.trace("{} fetching [{}] from {}", shardId, type, nodes);
-        // action 暂时还不知道是干什么的
         action.list(shardId, customDataPath, nodes, new ActionListener<BaseNodesResponse<T>>() {
             @Override
             public void onResponse(BaseNodesResponse<T> response) {
@@ -347,6 +365,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
 
             @Override
             public void onFailure(Exception e) {
+                // 当出现异常 没有正常返回时 直接将所有node都填充失败信息
                 List<FailedNodeException> failures = new ArrayList<>(nodes.length);
                 for (final DiscoveryNode node: nodes) {
                     failures.add(new FailedNodeException(node.getId(), "total failure in fetching", e));
@@ -443,6 +462,10 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
             this.fetchingRound = fetchingRound;
         }
 
+        /**
+         * 当fetch动作成功时 修改标识 以及设置结果
+         * @param value
+         */
         void doneFetching(T value) {
             assert fetching : "setting value but not in fetching mode";
             assert failure == null : "setting value when failure already set";
@@ -451,6 +474,10 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
             this.fetching = false;
         }
 
+        /**
+         * 代表从该node拉取shard信息 得到了不可重试的失败结果
+         * @param failure
+         */
         void doneFetching(Throwable failure) {
             assert fetching : "setting value but not in fetching mode";
             assert valueSet == false : "setting failure when already set value";

@@ -59,8 +59,10 @@ import java.util.Objects;
  * This transport action is used to fetch the shard version from each node during primary allocation in {@link GatewayAllocator}.
  * We use this to find out which node holds the latest shard version and which of them used to be a primary in order to allocate
  * shards after node or cluster restarts.
+ * 处理往某个节点获取某个shard的数据
  */
 public class TransportNodesListGatewayStartedShards extends
+    // TransportNodesAction 代表着请求将会发往多个节点
     TransportNodesAction<TransportNodesListGatewayStartedShards.Request,
         TransportNodesListGatewayStartedShards.NodesGatewayStartedShards,
         TransportNodesListGatewayStartedShards.NodeRequest,
@@ -97,21 +99,39 @@ public class TransportNodesListGatewayStartedShards extends
         return new NodeGatewayStartedShards(in);
     }
 
+    /**
+     * 将通往每个节点的处理结果包装成一个对象  即使访问失败也会记录失败信息
+     * @param request The associated request.
+     * @param responses All successful node-level responses.
+     * @param failures All node-level failures.
+     * @return
+     */
     @Override
     protected NodesGatewayStartedShards newResponse(Request request,
                                                     List<NodeGatewayStartedShards> responses, List<FailedNodeException> failures) {
         return new NodesGatewayStartedShards(clusterService.getClusterName(), responses, failures);
     }
 
+    /**
+     * 定义了在每个节点上如何处理请求
+     * @param request
+     * @param task
+     * @return
+     */
     @Override
     protected NodeGatewayStartedShards nodeOperation(NodeRequest request, Task task) {
         try {
             final ShardId shardId = request.getShardId();
             logger.trace("{} loading local shard state info", shardId);
+            // 通过最外层元数据文件 还原有关这个shard的所有信息
             ShardStateMetadata shardStateMetadata = ShardStateMetadata.FORMAT.loadLatestState(logger, namedXContentRegistry,
+                // 从env中找到该分片所在的目录
                 nodeEnv.availableShardPaths(request.shardId));
             if (shardStateMetadata != null) {
+
+                // 代表对应的IndexShard对象还没有创建
                 if (indicesService.getShardOrNull(shardId) == null) {
+                    // 这里是获取数据文件路径
                     final String customDataPath;
                     if (request.getCustomDataPath() != null) {
                         customDataPath = request.getCustomDataPath();
@@ -126,12 +146,15 @@ public class TransportNodesListGatewayStartedShards extends
                         }
                     }
                     // we don't have an open shard on the store, validate the files on disk are openable
+                    // 分片的路径通过这个特殊对象来表示
                     ShardPath shardPath = null;
                     try {
+                        // 从env中获取node的数据目录等 然后拼接成数据目录
                         shardPath = ShardPath.loadShardPath(logger, nodeEnv, shardId, customDataPath);
                         if (shardPath == null) {
                             throw new IllegalStateException(shardId + " no shard path found");
                         }
+                        // 这里主要是校验index级别数据是否被损坏的
                         Store.tryOpenIndex(shardPath.resolveIndex(), shardId, nodeEnv::shardLock, logger);
                     } catch (Exception exception) {
                         final ShardPath finalShardPath = shardPath;
@@ -151,15 +174,22 @@ public class TransportNodesListGatewayStartedShards extends
                 logger.debug("{} shard state info found: [{}]", shardId, shardStateMetadata);
                 String allocationId = shardStateMetadata.allocationId != null ?
                     shardStateMetadata.allocationId.getId() : null;
+                // 在结果中标识了当前节点是否是 shard.primary所在的节点 已经此时分配的id 每次分配动作完成后 就会生成一个id
                 return new NodeGatewayStartedShards(clusterService.localNode(), allocationId, shardStateMetadata.primary);
             }
             logger.trace("{} no local shard info found", shardId);
+            // 代表在当前node上没有找到shard信息
+            // 这种情况是正常的  因为allocator对象在一开始并不明确shard分布的节点情况 所以会往集群内所有节点发起请求
+            // TODO 但是ShardStateMetadata 准确的生成时机是什么时候呢???
             return new NodeGatewayStartedShards(clusterService.localNode(), null, false);
         } catch (Exception e) {
             throw new ElasticsearchException("failed to load started shards", e);
         }
     }
 
+    /**
+     * 该请求用于从shard所在的某个node上拉取元数据
+     */
     public static class Request extends BaseNodesRequest<Request> {
 
         private final ShardId shardId;
@@ -279,6 +309,9 @@ public class TransportNodesListGatewayStartedShards extends
 
         private final String allocationId;
         private final boolean primary;
+        /**
+         * 代表在目标节点校验index文件数据时出现异常
+         */
         private final Exception storeException;
 
         public NodeGatewayStartedShards(StreamInput in) throws IOException {

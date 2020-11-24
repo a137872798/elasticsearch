@@ -932,6 +932,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
 
         /**
          * Returns shard for the specified id if it exists otherwise returns <code>null</code>.
+         * 每个节点上包含一个 IndexService  内部包含了本节点维护的所有index 以及本节点在该index上维护的所有shard 而且同一shard 仅会存在一份数据 (一个replicate 或者一个primary)
          */
         default T getShardOrNull(ShardId shardId) {
             U indexRef = indexService(shardId.getIndex());

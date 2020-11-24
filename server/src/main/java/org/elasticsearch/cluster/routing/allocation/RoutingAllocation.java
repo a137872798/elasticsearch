@@ -94,7 +94,7 @@ public class RoutingAllocation {
     private DebugMode debugDecision = DebugMode.OFF;
 
     /**
-     * 代表此时正在进行某种大规模操作
+     * 代表此时正在执行某个拉取任务
      */
     private boolean hasPendingAsyncFetch = false;
 
@@ -225,7 +225,7 @@ public class RoutingAllocation {
     }
 
     /**
-     * 将某个分片不会分配到某个node 的关系添加到容器中   一般是尝试将某个分片分配到该节点失败时触发
+     * 代表不会将某个分片分配到这些节点上
      * @param shardId
      * @param nodeId
      */
@@ -255,6 +255,11 @@ public class RoutingAllocation {
         return nodes != null && nodes.contains(nodeId);
     }
 
+    /**
+     * 该分片不应该出现在哪些node上
+     * @param shardId
+     * @return
+     */
     public Set<String> getIgnoreNodes(ShardId shardId) {
         if (ignoredShardToNodes == null) {
             return emptySet();
