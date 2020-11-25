@@ -94,7 +94,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     private final long expectedShardSize;
 
     /**
-     * 维护了重分配后的对象
+     * 如果此时创建的shardRouting 处于 relocation 那么会生成该对象  挂载在targetNode上 并且标识状态为INIT
      */
     @Nullable
     private final ShardRouting targetRelocatingShard;
@@ -115,7 +115,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
         this.unassignedInfo = unassignedInfo;
         this.allocationId = allocationId;
         this.expectedShardSize = expectedShardSize;
-        // 初始化重定位的 分片信息
+        // 初始化relocation对应的分片
         this.targetRelocatingShard = initializeTargetRelocatingShard();
         this.asList = Collections.singletonList(this);
         assert expectedShardSize == UNAVAILABLE_EXPECTED_SHARD_SIZE || state == ShardRoutingState.INITIALIZING ||
@@ -424,7 +424,8 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     /**
      * Relocate the shard to another node.
      *
-     * @param relocatingNodeId id of the node to relocate the shard  移动的目标节点
+     * @param relocatingNodeId id of the node to relocate the shard  本分片本次要前往的目标节点
+     *                         生成一个处于重定向的node
      */
     public ShardRouting relocate(String relocatingNodeId, long expectedShardSize) {
         assert state == ShardRoutingState.STARTED : "current shard has to be started in order to be relocated " + this;

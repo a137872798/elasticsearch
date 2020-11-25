@@ -107,7 +107,7 @@ import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
 public abstract class Engine implements Closeable {
 
     /**
-     * 同步id是什么东西
+     * 如果同步id是相同的 就代表同一shardId 的2个不同的shard(比如primary replica) 的数据是一致的  也就是不需要做数据拷贝
      */
     public static final String SYNC_COMMIT_ID = "sync_id"; // TODO: Remove sync_id in 9.0
 

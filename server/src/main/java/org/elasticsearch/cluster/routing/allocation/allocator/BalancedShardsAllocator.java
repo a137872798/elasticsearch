@@ -113,7 +113,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         setWeightFunction(INDEX_BALANCE_FACTOR_SETTING.get(settings), SHARD_BALANCE_FACTOR_SETTING.get(settings));
         setThreshold(THRESHOLD_SETTING.get(settings));
 
-        // 注册2个会动态变化的配置
+        // 追加2个处理配置变化时的消费者
         clusterSettings.addSettingsUpdateConsumer(INDEX_BALANCE_FACTOR_SETTING, SHARD_BALANCE_FACTOR_SETTING, this::setWeightFunction);
         clusterSettings.addSettingsUpdateConsumer(THRESHOLD_SETTING, this::setThreshold);
     }
@@ -127,23 +127,23 @@ public class BalancedShardsAllocator implements ShardsAllocator {
     }
 
     /**
-     * 根据当前分片在集群中的分配状态进行重分配
+     * 处理此时处于init状态的分片
      * @param allocation current node allocation
      */
     @Override
     public void allocate(RoutingAllocation allocation) {
-        // 代表此时集群中所有分片都处于未分配状态
+        // 代表此时全都是未分配的shard   (即使是从unassigned转移到init状态 也会加入到routingNodes的相关容器)
+        // TODO 先忽略这种情况
         if (allocation.routingNodes().size() == 0) {
-            // 将 unassignedInfo 修改成decide_no 状态  TODO 为什么???
             failAllocationOfNewPrimaries(allocation);
             return;
         }
         final Balancer balancer = new Balancer(logger, allocation, weightFunction, threshold);
-        // 为所有之前未分配的分片分配到某个位置   这件事由谁来做  协调节点???
+        // 先分配所有unassigned shard   TODO 如果是通过allocationService调用该方法 那么之前就应该已经为unassigned分配完毕了 如果是异步处理 那么也从unassigned中移除了
         balancer.allocateUnassigned();
-        // 检测哪些分片需要移动
+        // 找出此时所有需要移动的分片 将当前分片状态从start修改成 relocation 并且插入一个在target的init分片  检测是否需要移动 以及应该分配在哪个节点 都是通过一组deciders决定的
         balancer.moveShards();
-        // 针对当前分片进行重分配
+        // 针对当前分片进行重分配  并没有发生数据的迁移  也只是将一些分片从start修改成relocation
         balancer.balance();
     }
 
@@ -242,20 +242,23 @@ public class BalancedShardsAllocator implements ShardsAllocator {
      * </li>
      * </ul>
      * <code>weight(node, index) = weight<sub>index</sub>(node, index) + weight<sub>node</sub>(node, index)</code>
-     * 基于2个维度计算权重值 一个是某节点的分片数量与其他节点作比较
-     * 一个是节点下某个索引的分片数量
+     * 该对象是用于计算权重值的
+     * 权重值本身应该是越小越好  相当于负载越低
+     * 同时当分片数在node上都一致时  index上的分片数量就变成了决定权重大小的关键变量
      */
     private static class WeightFunction {
 
+        // 这2个因子是随便填的
         private final float indexBalance;
         private final float shardBalance;
+
+        // 下面2个是它们的占比
         private final float theta0;
         private final float theta1;
 
         /**
-         * 通过2个平衡因子进行初始化
-         * @param indexBalance
-         * @param shardBalance
+         * @param indexBalance  默认 0.55
+         * @param shardBalance  默认 0.45
          */
         WeightFunction(float indexBalance, float shardBalance) {
             float sum = indexBalance + shardBalance;
@@ -269,15 +272,16 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         }
 
         /**
-         * 该方法负责 计算某个节点上某个索引相关的数据已经占了多少权重
+         * 计算某个node上 index的权重值  方便平衡集群中每个节点下 某index的分片数量
          * @param balancer
          * @param node
          * @param index
          * @return
          */
         float weight(Balancer balancer, ModelNode node, String index) {
-            // 该节点相较于其他节点的分片数量
+            // 节点上分片总数 与标准值的偏差量
             final float weightShard = node.numShards() - balancer.avgShardsPerNode();
+            // 在某个索引级别下 分片数量与标准值的偏差值
             final float weightIndex = node.numShards(index) - balancer.avgShardsPerNode(index);
             return theta0 * weightShard + theta1 * weightIndex;
         }
@@ -285,12 +289,14 @@ public class BalancedShardsAllocator implements ShardsAllocator {
 
     /**
      * A {@link Balancer}
-     * 重分配对象
+     * 平衡器对象 通过一系列的规则确定shard最适合被放在哪个node上
      */
     public static class Balancer {
         private final Logger logger;
         /**
-         * 将当前集群中已经分配好的分片 包装成ModelNode
+         * key: nodeId
+         * value: modelNode 对应一个routingNode下的数据 提供了需要的api接口
+         * 内部不包含处于 relocate状态的shard
          */
         private final Map<String, ModelNode> nodes;
         private final RoutingAllocation allocation;
@@ -309,7 +315,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
          */
         private final Metadata metadata;
         /**
-         * 平均每个节点上有多少分片
+         * 平均每个节点上分片的最佳数量  (不包含shardId相同的shard 因为 primary或者replica 是要分配在不同node上的)
          */
         private final float avgShardsPerNode;
 
@@ -318,6 +324,13 @@ public class BalancedShardsAllocator implements ShardsAllocator {
          */
         private final NodeSorter sorter;
 
+        /**
+         * 初始化 balancer对象
+         * @param logger
+         * @param allocation
+         * @param weight  这个对象是用来计算权重的
+         * @param threshold
+         */
         public Balancer(Logger logger, RoutingAllocation allocation, WeightFunction weight, float threshold) {
             this.logger = logger;
             this.allocation = allocation;
@@ -383,12 +396,13 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         /**
          * Balances the nodes on the cluster model according to the weight function.
          * The actual balancing is delegated to {@link #balanceByWeights()}
+         * 通过计算权重 将shard分散到node上   这里没有发生数据的迁移 只是将几个shard转换成了 relocation
          */
         private void balance() {
             if (logger.isTraceEnabled()) {
                 logger.trace("Start balancing cluster");
             }
-            // 代表此时正在执行某种任务 无法进行大规模迁移  TODO 那么balance会在之后的某个时刻执行么
+            // 正在异步拉取一些数据 此时先不进行处理 而在异步回调中还是会触发reroute 进而转发到 allocate上 最终还是会调用balance
             if (allocation.hasPendingAsyncFetch()) {
                 /*
                  * see https://github.com/elastic/elasticsearch/issues/14387
@@ -400,15 +414,17 @@ public class BalancedShardsAllocator implements ShardsAllocator {
                 logger.debug("skipping rebalance due to in-flight shard/store fetches");
                 return;
             }
+            // 检测此时是否需要balance
             if (allocation.deciders().canRebalance(allocation).type() != Type.YES) {
                 logger.trace("skipping rebalance as it is disabled");
                 return;
             }
+            // 单个节点就不需要balance了
             if (nodes.size() < 2) { /* skip if we only have one node */
                 logger.trace("skipping rebalance as single node only");
                 return;
             }
-            // 基于权重值进行平衡
+            // 基于权重值进行平衡  可以理解为将某个index下的所有分片在相关node上做平衡
             balanceByWeights();
         }
 
@@ -556,15 +572,17 @@ public class BalancedShardsAllocator implements ShardsAllocator {
          * the threshold is set to {@code 1.0} to enforce gaining relocation
          * only, or in other words relocations that move the weight delta closer
          * to {@code 0.0}
-         * 也就是说随着节点的减少 es 是支持自动调配分片的  这跟kafka的消费者再均衡是一样的
+         * 以索引为单位 决定某个索引相关的所有节点下的分片应该怎样被重新分配
          */
         private void balanceByWeights() {
+            // 获取所有决策对象
             final AllocationDeciders deciders = allocation.deciders();
             final ModelNode[] modelNodes = sorter.modelNodes;
             final float[] weights = sorter.weights;
 
-            // 将每个索引在不同节点间权重的偏差值按大小关系排序后返回
+            // 按照索引权重偏差大小排序  偏差大就代表该index下的分片在集群中分布不均匀 需要进行balance
             for (String index : buildWeightOrderedIndices()) {
+                // 获取对应的索引元数据
                 IndexMetadata indexMetadata = metadata.index(index);
 
                 // find nodes that have a shard of this index or where shards of this index are allowed to be allocated to,
@@ -573,37 +591,36 @@ public class BalancedShardsAllocator implements ShardsAllocator {
                 for (int i = 0; i < modelNodes.length; i++) {
                     ModelNode modelNode = modelNodes[i];
 
-                    // 先找到这个索引能够分配到哪些node上
-                    if (modelNode.getIndex(index) != null
-                        || deciders.canAllocate(indexMetadata, modelNode.getRoutingNode(), allocation).type() != Type.NO) {
+                    // 如果当前节点本身就包含了某个index的分片 那么必然可以参与该index之后的 balance
+                    // 而通过deciders可以决定某个node之后是否可以参与某个index的balance  即使此时它可能没有该index的分片   这种比较合理
+                    if (modelNode.getIndex(index) != null || deciders.canAllocate(indexMetadata, modelNode.getRoutingNode(), allocation).type() != Type.NO) {
                         // swap nodes at position i and relevantNodes
-                        // 相当于吧有效的node 都移动到前面了 无关的node 移动到数组的后面 这样就不需要单独维护有效node的下标
                         modelNodes[i] = modelNodes[relevantNodes];
                         modelNodes[relevantNodes] = modelNode;
                         relevantNodes++;
                     }
                 }
 
-                // 代表该索引仅可分配到一个node上 无法进行rebalance
+                // 如果某index相关的分片仅能设置到一个node上 就不需要进行balance了
                 if (relevantNodes < 2) {
                     continue;
                 }
 
+                // 几个有关的node 都被排在了一起 这时以node为单位再进行一次排序
                 sorter.reset(index, 0, relevantNodes);
                 int lowIdx = 0;
                 int highIdx = relevantNodes - 1;
 
-                // 当判断的2个节点间的差值 小于阈值时 不再继续处理
                 while (true) {
-
-                    // 获取有关最高/最低权重的node
+                    // 分别获取当前index 在不同
                     final ModelNode minNode = modelNodes[lowIdx];
                     final ModelNode maxNode = modelNodes[highIdx];
                     advance_range:
                     if (maxNode.numShards(index) > 0) {
+                        // 获取权重的差值
                         final float delta = absDelta(weights[lowIdx], weights[highIdx]);
 
-                        // 代表2个节点间的权重差值 已经低于rebalance的 阈值了
+                        // 此时node间的偏差值已经不足最小balance的阈值了 此时balance已经不划算了  不再进行
                         if (lessThan(delta, threshold)) {
                             if (lowIdx > 0 && highIdx-1 > 0 // is there a chance for a higher delta?
                                 && (absDelta(weights[0], weights[highIdx-1]) > threshold) // check if we need to break at all
@@ -625,6 +642,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
                                         "  max_node [{}] weight: [{}]  delta: [{}]",
                                         index, maxNode.getNodeId(), weights[highIdx], minNode.getNodeId(), weights[lowIdx], delta);
                             }
+                            // 此时退出balance循环
                             break;
                         }
                         if (logger.isTraceEnabled()) {
@@ -632,7 +650,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
                                     maxNode.getNodeId(), weights[highIdx], minNode.getNodeId(), weights[lowIdx], delta);
                         }
 
-                        // 当差值小于 1 时 无法进行relocate
+                        // 这里偏差值有一个固定值 小于该值时 不经过continue
                         if (delta <= 1.0f) {
                             /*
                              * prevent relocations that only swap the weights of the two nodes. a relocation must bring us closer to the
@@ -645,14 +663,15 @@ public class BalancedShardsAllocator implements ShardsAllocator {
                             logger.trace("Couldn't find shard to relocate from node [{}] to node [{}]",
                                 maxNode.getNodeId(), minNode.getNodeId());
 
-                            // 这里尝试将权重最大的节点上某个分片移动到最小的分片上  每次仅移动一个分片
+                            // 这里进行移动 源分片切换成relocation后会设置到 minNode(ModelNode) 中  如果deciders返回限制状态 返回false
+                            // 一次只移动一个shard 然后会重新按照权重排序 这样分片就会尽可能的均匀了
                         } else if (tryRelocateShard(minNode, maxNode, index)) {
                             /*
                              * TODO we could be a bit smarter here, we don't need to fully sort necessarily
                              * we could just find the place to insert linearly but the win might be minor
                              * compared to the added complexity
+                             * 重新计算权重值 因为一旦分配
                              */
-                            // 这里为了尽可能的平衡 每当成功分配一次后 就将整个node数组按照权重重新排序 并且重置指针
                             weights[lowIdx] = sorter.weight(modelNodes[lowIdx]);
                             weights[highIdx] = sorter.weight(modelNodes[highIdx]);
                             // 将相关的node 按照权重重新排序
@@ -663,8 +682,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
                         }
                     }
 
-                    // 当allocation认为无法分配的情况 移动偏移量
-                    // 前2分支按照最小步调挪动   直到2个node 的权重差值已经小于阈值
+                    // 2个游标会不断接近 这样获取到的在node级别的权重也会不断减小 当小于阈值时 不再进行balance
                     if (lowIdx < highIdx - 1) {
                         /* Shrinking the window from MIN to MAX
                          * we can't move from any shard from the min node lets move on to the next node
@@ -697,12 +715,14 @@ public class BalancedShardsAllocator implements ShardsAllocator {
          * has no shards yet and global balance for the node is way below
          * average. To re-balance we need to move shards back eventually likely
          * to the nodes we relocated them from.
-         * 这里涉及到的是集群中所有的节点
+         * 按照索引的权重值进行排序
          */
         private String[] buildWeightOrderedIndices() {
+            // 获取此时集群中所有的索引信息
             final String[] indices = allocation.routingTable().indicesRouting().keys().toArray(String.class);
 
-            // 每个值对应某个索引此时在所有节点中 最大权重与最小权重的差值  通过这个值可以判断哪个索引是最需要平衡的
+            // 按照索引的排序顺序 将每个索引下 最大权重与最小权重的差值计算出来 并填充到数组中
+            // 通过检查这些偏差值就可以知道某个索引的分片分配是不合理的  进而决定哪些index需要进行balance
             final float[] deltas = new float[indices.length];
             for (int i = 0; i < deltas.length; i++) {
                 sorter.reset(indices[i]);
@@ -767,24 +787,25 @@ public class BalancedShardsAllocator implements ShardsAllocator {
             // Iterate over the started shards interleaving between nodes, and check if they can remain. In the presence of throttling
             // shard movements, the goal of this iteration order is to achieve a fairer movement of shards from the nodes that are
             // offloading the shards.
-            // 该对象可以遍历所有 node下所有分片
+
+            // 将所有节点下面的分片信息 平铺展示
             for (Iterator<ShardRouting> it = allocation.routingNodes().nodeInterleavedShardIterator(); it.hasNext(); ) {
                 ShardRouting shardRouting = it.next();
                 // 检测是否需要移动该分片
                 final MoveDecision moveDecision = decideMove(shardRouting);
 
-                // 代表需要移动
+                // 代表需要进行移动
                 if (moveDecision.isDecisionTaken() && moveDecision.forceMove()) {
                     final ModelNode sourceNode = nodes.get(shardRouting.currentNodeId());
                     final ModelNode targetNode = nodes.get(moveDecision.getTargetNode().getId());
-                    // 生成移动信息
+                    // 在ModelNode这层将路由信息移除
                     sourceNode.removeShard(shardRouting);
 
-                    // 这里将最新分片路由信息设置到 routingNodes中
+                    // t1: 对应更改成relocation的原分片  t2: 对应在 target 生成的init分片
                     Tuple<ShardRouting, ShardRouting> relocatingShards = routingNodes.relocateShard(shardRouting, targetNode.getNodeId(),
                         allocation.clusterInfo().getShardSize(shardRouting,
                                                               ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE), allocation.changes());
-                    // 将分片添加到 ModelNode中
+                    // 将新产生的分片添加到 ModelNode中
                     targetNode.addShard(relocatingShards.v2());
                     if (logger.isTraceEnabled()) {
                         logger.trace("Moved shard [{}] to node [{}]", shardRouting, targetNode.getRoutingNode());
@@ -808,46 +829,51 @@ public class BalancedShardsAllocator implements ShardsAllocator {
          *      {@link MoveDecision#getTargetNode} will return a non-null value, otherwise the assignedNodeId will be null.
          *   4. If the method is invoked in explain mode (e.g. from the cluster allocation explain APIs), then
          *      {@link MoveDecision#getNodeDecisions} will have a non-null value.
-         *      检测是否需要移动该分片
+         *      检测是否需要移动该分片    TODO 分片为什么要移动  比如在集群范围新增了一个node 它的负载很低 那么就有必要将一些分片转移上去 推测是处于这个理由
          */
         public MoveDecision decideMove(final ShardRouting shardRouting) {
-            // !!!只有已经启动中的分片 才存在移动的概念
+            // 移动仅针对此时正常运行的分片  init/relocation 这种将会被忽略
             if (shardRouting.started() == false) {
                 // we can only move started shards
                 return MoveDecision.NOT_TAKEN;
             }
 
+            // 先忽略DEBUG
             final boolean explain = allocation.debugDecision();
+            // ModelNode以index为单位存储了shard信息
             final ModelNode sourceNode = nodes.get(shardRouting.currentNodeId());
             assert sourceNode != null && sourceNode.containsShard(shardRouting);
-            // 找到有关该节点的所有分片
+
             RoutingNode routingNode = sourceNode.getRoutingNode();
             // 检测某个分片能否在某个节点上继续保留
             Decision canRemain = allocation.deciders().canRemain(shardRouting, routingNode, allocation);
-            // 代表不需要迁移
+            // 允许保留 也就是不需要移动
             if (canRemain.type() != Decision.Type.NO) {
                 return MoveDecision.stay(canRemain);
             }
 
-            // 在排序时已经考虑到 weight了
+            // 将modelNode 按照此时的index计算权重并进行排序 这样就可以知道移动到哪个节点是最合适的
             sorter.reset(shardRouting.getIndexName());
             /*
              * the sorter holds the minimum weight node first for the shards index.
              * We now walk through the nodes until we find a node to allocate the shard.
              * This is not guaranteed to be balanced after this operation we still try best effort to
              * allocate on the minimal eligible node.
-             * 找到目标分片最适合被移动到的节点
+             * 下面寻找最合适的节点
              */
             Type bestDecision = Type.NO;
             RoutingNode targetNode = null;
+            // TODO 先忽略 debug相关的
             final List<NodeAllocationResult> nodeExplanationMap = explain ? new ArrayList<>() : null;
             int weightRanking = 0;
             for (ModelNode currentNode : sorter.modelNodes) {
+                // 跳过本节点的处理
                 if (currentNode != sourceNode) {
                     RoutingNode target = currentNode.getRoutingNode();
                     // don't use canRebalance as we want hard filtering rules to apply. See #17698
-                    // 检测该分片能否分配该这个node上
+                    // 检测能否分配到这个节点上
                     Decision allocationDecision = allocation.deciders().canAllocate(shardRouting, target, allocation);
+                    // TODO
                     if (explain) {
                         nodeExplanationMap.add(new NodeAllocationResult(
                             currentNode.getRoutingNode().node(), allocationDecision, ++weightRanking));
@@ -855,6 +881,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
                     // TODO maybe we can respect throttling here too?
                     if (allocationDecision.type().higherThan(bestDecision)) {
                         bestDecision = allocationDecision.type();
+                        // 找到匹配的node后退出循环
                         if (bestDecision == Type.YES) {
                             targetNode = target;
                             if (explain == false) {
@@ -880,11 +907,14 @@ public class BalancedShardsAllocator implements ShardsAllocator {
          * a shadow shard in the state {@link ShardRoutingState#INITIALIZING}
          * on the target node which we respect during the allocation / balancing
          * process. In short, this method recreates the status-quo in the cluster.
-         * 根据当前所有node 的分片信息构建一个 ModelNode map  注意这里只处理已经分配好的
+         * 将routingNodes 转换成 Map<String, ModelNode>
+         *
          */
         private Map<String, ModelNode> buildModelFromAssigned() {
             Map<String, ModelNode> nodes = new HashMap<>();
             for (RoutingNode rn : routingNodes) {
+
+                // 通过该node下面所有的shard 初始化modelNode对象
                 ModelNode node = new ModelNode(rn);
                 nodes.put(rn.nodeId(), node);
                 // 将每个node下的分片填充到 modelNode中
@@ -914,6 +944,8 @@ public class BalancedShardsAllocator implements ShardsAllocator {
             if (logger.isTraceEnabled()) {
                 logger.trace("Start allocating unassigned shards");
             }
+
+            // TODO 如果是通过 allocationService调用 本对象的allocate()方法 那么此时所有分片都应该已经分配完了
             if (unassigned.isEmpty()) {
                 return;
             }
@@ -1200,15 +1232,16 @@ public class BalancedShardsAllocator implements ShardsAllocator {
          * simulation model as well as on the cluster.
          * @param minNode 此时该索引对应的权重最小的node
          * @param maxNode 索引对应的权重最大的node
+         *                某个index下面的部分分片 将会从maxNode转移到minNode
          */
         private boolean tryRelocateShard(ModelNode minNode, ModelNode maxNode, String idx) {
 
-            // 首先要求这个node 上已经存在这个索引  否则无法分配
+            // 此时该节点上必然有属于该index的分片 否则无法进行转移
             final ModelIndex index = maxNode.getIndex(idx);
             if (index != null) {
                 logger.trace("Try relocating shard of [{}] from [{}] to [{}]", idx, maxNode.getNodeId(), minNode.getNodeId());
 
-                // 将这个node下此时所有启动中的分片排序  TODO 为什么只能rebalance启动中的
+                // 获取此时所有start状态的分片 只有这些分片可以参与移动
                 final Iterable<ShardRouting> shardRoutings = StreamSupport.stream(index.spliterator(), false)
                     .filter(ShardRouting::started) // cannot rebalance unassigned, initializing or relocating shards anyway
                     .filter(maxNode::containsShard)
@@ -1216,14 +1249,15 @@ public class BalancedShardsAllocator implements ShardsAllocator {
                     ::iterator;
 
                 final AllocationDeciders deciders = allocation.deciders();
-                // 这里尝试将权重高的分片移动
+
+                // 开始处理分片 当处理一定数量后应该就可以停止balance了 并且这个数值应该小于全部的分片数量
                 for (ShardRouting shard : shardRoutings) {
-                    // 先判断这个分片能否rebalance
+                    // 首先通过deciders判断这个分片能否进行重分配  无法进行rebalance的跳过
                     final Decision rebalanceDecision = deciders.canRebalance(shard, allocation);
                     if (rebalanceDecision.type() == Type.NO) {
                         continue;
                     }
-                    // 之后判断该分片能否分配到权重小的节点上
+                    // 之后判断该分片能否分配到权重小的节点上  这里应该就要考虑到如果目标节点已经拥有相同shardId的分片就进行relocation
                     final Decision allocationDecision = deciders.canAllocate(shard, minNode.getRoutingNode(), allocation);
                     if (allocationDecision.type() == Type.NO) {
                         continue;
@@ -1232,24 +1266,28 @@ public class BalancedShardsAllocator implements ShardsAllocator {
                     // 将结果整合
                     final Decision decision = new Decision.Multi().add(allocationDecision).add(rebalanceDecision);
 
-                    // 这里代表已经允许移动分片了  所以从权重最大的节点中移除这个分片
+                    // 这里代表已经允许移动分片了  所以从权重较大的节点中移除这个分片
                     maxNode.removeShard(shard);
 
                     // 获取这个分片预估的大小
                     long shardSize = allocation.clusterInfo().getShardSize(shard, ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE);
 
-                    // 迁移到权重小的节点
+
+                    // 代表允许进行rebalance
                     if (decision.type() == Type.YES) {
                         /* only allocate on the cluster if we are not throttled */
                         logger.debug("Relocate [{}] from [{}] to [{}]", shard, maxNode.getNodeId(), minNode.getNodeId());
-                        // 有关YES的 都会加入到 routingNodes中
+                        // ModelNode 对于balance的分片的移动规则与 RoutingNode不同   RoutingNode 会同时存在一个sourceShard 和 一个targetShard
+                        // 而ModelNode 则是一进一出 全局的shard数量不变
+                        // TODO 这里为什么不是加入 v2啊
                         minNode.addShard(routingNodes.relocateShard(shard, minNode.getNodeId(), shardSize, allocation.changes()).v1());
                         return true;
                     } else {
                         /* allocate on the model even if throttled */
+                        // 代表决策结果是此时处于限流阶段
                         logger.debug("Simulate relocation of [{}] from [{}] to [{}]", shard, maxNode.getNodeId(), minNode.getNodeId());
                         assert decision.type() == Type.THROTTLE;
-                        // 被限制的不会直接加入到 routingNodes中
+                        // 被限制的不会直接加入到 routingNodes中  这个加入的规则跟move不一样   TODO move和rebalance是不一样的场景吗???  但是都是将start的分片修改成了relocation
                         minNode.addShard(shard.relocate(minNode.getNodeId(), shardSize));
                         return false;
                     }
@@ -1261,6 +1299,11 @@ public class BalancedShardsAllocator implements ShardsAllocator {
 
     }
 
+    /**
+     * 负责提供访问 RoutingNode下所有分片的api
+     * 分层是这样的  node -> index -> shard
+     *         对应  modelNode -> modelIndex -> shardRouting
+     */
     static class ModelNode implements Iterable<ModelIndex> {
 
         /**
@@ -1269,7 +1312,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         private final Map<String, ModelIndex> indices = new HashMap<>();
 
         /**
-         * 记录该node下总计存储了多少分片  而分片具体存储在 ModelIndex中
+         * 记录该node下总计存储了多少分片 为每个modelIndex下的分片总和
          */
         private int numShards = 0;
         private final RoutingNode routingNode;
@@ -1316,6 +1359,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
          * @param shard
          */
         public void addShard(ShardRouting shard) {
+            // 通过shard.index 定位到具体的 modelIndex
             ModelIndex index = indices.get(shard.getIndexName());
             if (index == null) {
                 index = new ModelIndex(shard.getIndexName());
@@ -1361,12 +1405,16 @@ public class BalancedShardsAllocator implements ShardsAllocator {
     }
 
     /**
-     * 在 ModelNode中使用  对应一个索引
+     * 对应一个索引
      */
     static final class ModelIndex implements Iterable<ShardRouting> {
+
+        /**
+         * IndexId
+         */
         private final String id;
         /**
-         * 属于该索引的某个分片
+         * 该所有的所有分片 其中可能有primary分片 也有replica 但是它们的shardId都是不同的 因为在一个node上不会出现多个shardId相同的分片
          */
         private final Set<ShardRouting> shards = new HashSet<>(4); // expect few shards of same index to be allocated on same node
         private int highestPrimary = -1;
@@ -1433,7 +1481,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
     static final class NodeSorter extends IntroSorter {
 
         /**
-         * 内部包含该节点上所有的分片
+         * 以node为单位进行排序
          */
         final ModelNode[] modelNodes;
         /*
@@ -1441,7 +1489,15 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         * 每个节点有自己的权重值
         */
         final float[] weights;
+
+        /**
+         * 该函数负责计算每个节点的权重值
+         */
         private final WeightFunction function;
+
+        /**
+         * 此时的排序顺序权重计算是基于哪个index
+         */
         private String index;
         private final Balancer balancer;
         private float pivotWeight;
@@ -1465,10 +1521,19 @@ public class BalancedShardsAllocator implements ShardsAllocator {
             sort(from, to);
         }
 
+        /**
+         * 每当传入不同的index时 可以为这组node进行一次排序
+         * @param index
+         */
         public void reset(String index) {
             reset(index, 0, modelNodes.length);
         }
 
+        /**
+         * 根据对应的索引 node 计算其权重值
+         * @param node
+         * @return
+         */
         public float weight(ModelNode node) {
             return function.weight(balancer, node, index);
         }
@@ -1498,6 +1563,10 @@ public class BalancedShardsAllocator implements ShardsAllocator {
             return Float.compare(pivotWeight, weights[j]);
         }
 
+        /**
+         * 计算最大/最小权重间的差值
+         * @return
+         */
         public float delta() {
             return weights[weights.length - 1] - weights[0];
         }

@@ -236,6 +236,10 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
     private final String message;
     private final Exception failure;
     private final int failedAllocations;
+
+    /**
+     * 记录对应的shard在哪些节点上分配失败了
+     */
     private final Set<String> failedNodeIds;
     /**
      * 此时处于分配的哪个阶段

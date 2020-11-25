@@ -180,6 +180,7 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         // 当此时存在非活跃状态的分片时   应该就代表它们可能正在进行数据恢复
         if (allocation.routingNodes().hasInactiveShards()) {
             // cancel existing recoveries if we have a better match
+            // 当某个shard存在更好的候选node时 关闭掉之前的恢复操作
             replicaShardAllocator.processExistingRecoveries(allocation);
         }
     }
@@ -387,7 +388,6 @@ public class GatewayAllocator implements ExistingShardsAllocator {
             // explicitely type lister, some IDEs (Eclipse) are not able to correctly infer the function type
             Lister<BaseNodesResponse<NodeStoreFilesMetadata>, NodeStoreFilesMetadata> lister = this::listStoreFilesMetadata;
 
-            // 这套模板就是通过
             AsyncShardFetch<NodeStoreFilesMetadata> fetch = asyncFetchStore.computeIfAbsent(shard.shardId(),
                     shardId -> new InternalAsyncFetch<>(logger, "shard_store", shard.shardId(),
                         IndexMetadata.INDEX_DATA_PATH_SETTING.get(allocation.metadata().index(shard.index()).getSettings()), lister));
@@ -400,7 +400,7 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         }
 
         /**
-         * 定义拉取数据的逻辑
+         * 拉取逻辑会转发到这个方法
          * @param shardId
          * @param customDataPath
          * @param nodes

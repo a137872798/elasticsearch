@@ -154,8 +154,8 @@ public class AllocationService {
 
     /**
      * 根据 RoutingAllocation的最新数据 更新ClusterState
-     * @param oldState
-     * @param allocation
+     * @param oldState   之前的集群状态
+     * @param allocation   如果某些shard发生了状态的变化是可以通过allocation 观测到的
      * @param reason
      * @return
      */
@@ -173,7 +173,7 @@ public class AllocationService {
     }
 
     /**
-     * 更新此时的集群对象
+     * 通过allocation内的信息修改集群状态
      * @param oldState
      * @param allocation
      * @return
@@ -181,7 +181,7 @@ public class AllocationService {
     private ClusterState buildResult(ClusterState oldState, RoutingAllocation allocation) {
         final RoutingTable oldRoutingTable = oldState.routingTable();
         final RoutingNodes newRoutingNodes = allocation.routingNodes();
-        // 通过此时最新的 RoutingNodes 反向生成最新的路由表
+        // 更新路由表信息
         final RoutingTable newRoutingTable = new RoutingTable.Builder().updateNodes(oldRoutingTable.version(), newRoutingNodes).build();
 
         // allocation 本身会记录所有分片的变化  这时根据这些变化的分片 去更新metadata
@@ -494,10 +494,11 @@ public class AllocationService {
         RoutingAllocation allocation = new RoutingAllocation(allocationDeciders, routingNodes, fixedClusterState,
             clusterInfoService.getClusterInfo(), currentNanoTime());
         reroute(allocation);
-        // 代表没有副本发生变化
+        // 代表没有副本发生变化 直接返回原state
         if (fixedClusterState == clusterState && allocation.routingNodesChanged() == false) {
             return clusterState;
         }
+        // 代表集群中分片的分配状态发生了变化
         return buildResultAndLogHealthChange(clusterState, allocation, reason);
     }
 
@@ -537,7 +538,7 @@ public class AllocationService {
 
         // 针对这些未分配的副本进行重分配
         allocateExistingUnassignedShards(allocation);  // try to allocate existing shard copies first
-        // 这里为所有分片进行重分配
+        // 实际上这里只是做了一些balance工作 就是将集群下某个index对应的所有分片在node级别做平衡
         shardsAllocator.allocate(allocation);
         assert RoutingNodes.assertShardStats(allocation.routingNodes());
     }
@@ -564,11 +565,12 @@ public class AllocationService {
             }
         }
 
-        // 在完成了primary的分配后  开始replicate的分配前 执行的钩子
+        // 在完成了primary的分配后  开始replicate的分配前 执行的钩子  这里是寻找某些shard是否被分配在了不合适的node (考核的标准就是在该node上与 primary所在的node数据同步率是否太小， 如果是的话会取消本次的恢复操作)
         for (final ExistingShardsAllocator existingShardsAllocator : existingShardsAllocators.values()) {
             existingShardsAllocator.afterPrimariesBeforeReplicas(allocation);
         }
 
+        // 开始为副本进行分配  逻辑与 主分片不同
         final RoutingNodes.UnassignedShards.UnassignedIterator replicaIterator = allocation.routingNodes().unassigned().iterator();
         while (replicaIterator.hasNext()) {
             final ShardRouting shardRouting = replicaIterator.next();

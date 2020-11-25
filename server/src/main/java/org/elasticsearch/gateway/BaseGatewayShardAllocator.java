@@ -53,14 +53,14 @@ public abstract class BaseGatewayShardAllocator {
      * @param allocation the allocation state container object
      * @param unassignedAllocationHandler handles the allocation of the current shard
      *
-     *                                    将某个unassigned的主分片分配到一个合适的位置
+     *                                    将某个unassigned的分片分配到一个合适的位置  主分片和副本的分配策略有所不同
      */
     public void allocateUnassigned(ShardRouting shardRouting, RoutingAllocation allocation,
                                    ExistingShardsAllocator.UnassignedAllocationHandler unassignedAllocationHandler) {
         // allocateUnassignedDecision 决定分配的结果
         final AllocateUnassignedDecision allocateUnassignedDecision = makeAllocationDecision(shardRouting, allocation, logger);
 
-        // 如果 处理没有产生结果 直接返回
+        // notToken 代表校验没有通过  直接静默处理了
         if (allocateUnassignedDecision.isDecisionTaken() == false) {
             // no decision was taken by this allocator
             return;

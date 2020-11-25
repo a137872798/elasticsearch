@@ -423,6 +423,12 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
             }
         }
 
+        /**
+         *
+         * @param version
+         * @param routingNodes  通过内部的节点信息更新路由表
+         * @return
+         */
         @SuppressWarnings("unchecked")
         public Builder updateNodes(long version, RoutingNodes routingNodes) {
             // this is being called without pre initializing the routing table, so we must copy over the version as well
@@ -432,6 +438,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
             for (RoutingNode routingNode : routingNodes) {
                 for (ShardRouting shardRoutingEntry : routingNode) {
                     // every relocating shard has a double entry, ignore the target one.
+                    // 这种分片是 在relocation过程中针对 target节点生成的 shardRouting  这种会被忽略  TODO 那么意义是什么??? 他不会在routingTable中显示出来
                     if (shardRoutingEntry.initializing() && shardRoutingEntry.relocatingNodeId() != null)
                         continue;
 
@@ -439,8 +446,10 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
                 }
             }
 
+            // 将之前ignore的取出来重新加入 ignore是当要处理某个unassigned时 还没有从集群相关节点拉取到足够的元数据(采用异步方式 那么这些分片会暂时存放在ignored)
             Iterable<ShardRouting> shardRoutingEntries = Iterables.concat(routingNodes.unassigned(), routingNodes.unassigned().ignored());
 
+            // 将unassigned分片重新加入
             for (ShardRouting shardRoutingEntry : shardRoutingEntries) {
                 addShard(indexRoutingTableBuilders, shardRoutingEntry);
             }
@@ -451,6 +460,11 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
             return this;
         }
 
+        /**
+         * 将某个分片加入到 索引级别的路由表中 这里就是最简单的容器操作
+         * @param indexRoutingTableBuilders
+         * @param shardRoutingEntry
+         */
         private static void addShard(final Map<String, IndexRoutingTable.Builder> indexRoutingTableBuilders,
                 final ShardRouting shardRoutingEntry) {
             Index index = shardRoutingEntry.index();

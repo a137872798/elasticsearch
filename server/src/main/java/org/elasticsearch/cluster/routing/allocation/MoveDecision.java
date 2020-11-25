@@ -34,7 +34,7 @@ import java.util.Objects;
 /**
  * Represents a decision to move a started shard, either because it is no longer allowed to remain on its current node
  * or because moving it to another node will form a better cluster balance.
- * 描述有关某个分片将被怎样移动的结果
+ * 描述某个分片是否应该被移动的结果
  */
 public final class MoveDecision extends AbstractAllocationDecision {
     /** a constant representing no decision taken */
@@ -47,12 +47,25 @@ public final class MoveDecision extends AbstractAllocationDecision {
 
     @Nullable
     AllocationDecision allocationDecision;
+
+    /**
+     * 该决策代表结果 而moveDecision 在决策结果之上还需要一些其他的描述信息
+     */
     @Nullable
     private final Decision canRemainDecision;
     @Nullable
     private final Decision clusterRebalanceDecision;
     private final int currentNodeRanking;
 
+    /**
+     *
+     * @param canRemainDecision 是否需要move
+     * @param clusterRebalanceDecision
+     * @param allocationDecision 是否找到了合适的节点
+     * @param assignedNode  目标节点
+     * @param nodeDecisions
+     * @param currentNodeRanking  默认为0
+     */
     private MoveDecision(Decision canRemainDecision, Decision clusterRebalanceDecision, AllocationDecision allocationDecision,
                          DiscoveryNode assignedNode, List<NodeAllocationResult> nodeDecisions, int currentNodeRanking) {
         super(assignedNode, nodeDecisions);
@@ -82,6 +95,8 @@ public final class MoveDecision extends AbstractAllocationDecision {
     /**
      * Creates a move decision for the shard being able to remain on its current node, so the shard won't
      * be forced to move to another node.
+     * @param canRemainDecision 通过一组deciders对象生成的决策结果
+     * 生成了一个不需要移动的decision
      */
     public static MoveDecision stay(Decision canRemainDecision) {
         if (canRemainDecision != null) {
@@ -95,10 +110,10 @@ public final class MoveDecision extends AbstractAllocationDecision {
     /**
      * Creates a move decision for the shard not being allowed to remain on its current node.
      *
-     * @param canRemainDecision the decision for whether the shard is allowed to remain on its current node
-     * @param allocationDecision the {@link AllocationDecision} for moving the shard to another node
-     * @param assignedNode the node where the shard should move to     移动的目标节点
-     * @param nodeDecisions the node-level decisions that comprised the final decision, non-null iff explain is true   针对每个参考节点结果
+     * @param canRemainDecision the decision for whether the shard is allowed to remain on its current node       true代表不需要move
+     * @param allocationDecision the {@link AllocationDecision} for moving the shard to another node    是否找到了合适的node
+     * @param assignedNode the node where the shard should move to                                      将会移动到哪个node
+     * @param nodeDecisions the node-level decisions that comprised the final decision, non-null iff explain is true    debug信息 忽略
      * @return the {@link MoveDecision} for moving the shard to another node
      */
     public static MoveDecision cannotRemain(Decision canRemainDecision, AllocationDecision allocationDecision, DiscoveryNode assignedNode,
@@ -107,6 +122,7 @@ public final class MoveDecision extends AbstractAllocationDecision {
         assert canRemainDecision.type() != Type.YES : "create decision with MoveDecision#stay instead";
         if (nodeDecisions == null && allocationDecision == AllocationDecision.NO) {
             // the final decision is NO (no node to move the shard to) and we are not in explain mode, return a cached version
+            // 这个cached的意思实际上就是返回常量  并不是真的使用了什么缓存
             return CACHED_CANNOT_MOVE_DECISION;
         } else {
             assert ((assignedNode == null) == (allocationDecision != AllocationDecision.YES));

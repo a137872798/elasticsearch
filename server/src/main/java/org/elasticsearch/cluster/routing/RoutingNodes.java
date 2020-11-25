@@ -144,10 +144,10 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         // also fill replicaSet information
         // 当前集群下所有索引
         for (ObjectCursor<IndexRoutingTable> indexRoutingTable : routingTable.indicesRouting().values()) {
-            // 遍历每个分片 再下一级则是副本
+            // 遍历每个分片 再下一级则是 primary/replica
             for (IndexShardRoutingTable indexShard : indexRoutingTable.value) {
                 assert indexShard.primary != null;
-                // 遍历每个副本
+
                 for (ShardRouting shard : indexShard) {
                     // to get all the shards belonging to an index, including the replicas,
                     // we define a replica set and keep track of it. A replica set is identified
@@ -539,7 +539,9 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * Relocate a shard to another node, adding the target initializing
      * shard as well as assigning it.
      *
+     * @param startedShard 原分片信息
      * @param nodeId  移动到哪个目标节点
+     * @param expectedShardSize 推荐的分片数量
      * @return pair of source relocating and target initializing shards.
      * 移动某个分片
      */
@@ -552,6 +554,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
         // 源分片的 currentNodeId, relocationId  与target的正好相反
         ShardRouting source = startedShard.relocate(nodeId, expectedShardSize);
+        // 获取重定向后的targetNode对应的分片
         ShardRouting target = source.getTargetRelocatingShard();
 
         // 用source 替换 startedShard
@@ -560,7 +563,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         node(target.currentNodeId()).add(target);
         // 将新分片设置到 assignedShards 中
         assignedShardsAdd(target);
-        // TODO
+        // 因为 target处于 init状态 所以加入到待恢复的容器中
         addRecovery(target);
         // 触发相关钩子
         changes.relocationStarted(startedShard, target);
@@ -651,7 +654,6 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * @param failedShard 分配失败的分片
      * @param unassignedInfo 分配失败的信息
      * @param indexMetadata 本次分配失败的分片对应的索引描述信息
-     * 标记某个分片处理失败  TODO 还需要梳理
      */
     public void failShard(Logger logger, ShardRouting failedShard, UnassignedInfo unassignedInfo, IndexMetadata indexMetadata,
                           RoutingChangesObserver routingChangesObserver) {
@@ -935,7 +937,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     }
 
     /**
-     * 更新旧分片
+     * 使用newShard 替换oldShard
      * @param oldShard
      * @param newShard
      */
@@ -1007,7 +1009,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         private final List<ShardRouting> unassigned;
 
         /**
-         * 某些分片将不会参与分配 此时会存储到这个list中
+         * 某些分片会通过异步方式处理 就会先存入到这个列表中
          */
         private final List<ShardRouting> ignored;
 
@@ -1136,7 +1138,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             public ShardRouting initialize(String nodeId, @Nullable String existingAllocationId, long expectedShardSize,
                                            RoutingChangesObserver routingChangesObserver) {
                 nodes.ensureMutable();
-                // 从迭代器中移除
+                // 从迭代器中移除  这个操作也会间接影响到 unassigned
                 innerRemove();
                 // 切换到init状态
                 return nodes.initializeShard(current, nodeId, existingAllocationId, expectedShardSize, routingChangesObserver);
@@ -1155,7 +1157,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             @Override
             public void removeAndIgnore(AllocationStatus attempt, RoutingChangesObserver changes) {
                 nodes.ensureMutable();
-                // 迭代器操作
+                // 迭代器操作 这里会间接从unassigned中移除current
                 innerRemove();
                 ignoreShard(current, attempt, changes);
             }

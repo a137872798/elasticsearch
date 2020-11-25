@@ -585,6 +585,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
         /**
          * Adds a new shard routing (makes a copy of it), with reference data used from the index shard routing table
          * if it needs to be created.
+         * 将某个分片加入到容器中
          */
         public Builder addShard(ShardRouting shard) {
             IndexShardRoutingTable indexShard = shards.get(shard.id());

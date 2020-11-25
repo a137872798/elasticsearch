@@ -133,11 +133,14 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
         long startTimeNS = System.nanoTime();
         boolean exists = false;
         try {
+            // 首先直接通过 indicesService 来定位到对应分片
             IndexService indexService = indicesService.indexService(shardId.getIndex());
             if (indexService != null) {
                 IndexShard indexShard = indexService.getShardOrNull(shardId.id());
                 if (indexShard != null) {
                     try {
+                        // 这里获取快照元数据 续约信息 和分片id   TODO 为什么会需要续约的概念啊
+                        // 快照元数据 就是lucene目录下 相关信息的文件元数据
                         final StoreFilesMetadata storeFilesMetadata = new StoreFilesMetadata(shardId,
                             indexShard.snapshotStoreMetadata(), indexShard.getPeerRecoveryRetentionLeases());
                         exists = true;
@@ -151,6 +154,8 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
                     }
                 }
             }
+
+            // 无法通过indicesService 直接定位到元数据时 通过明确的数据路径查找数据
             final String customDataPath;
             if (request.getCustomDataPath() != null) {
                 customDataPath = request.getCustomDataPath();
@@ -159,6 +164,8 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
                 if (indexService != null) {
                     customDataPath = indexService.getIndexSettings().customDataPath();
                 } else {
+
+                    // 通过自定义路径查找数据
                     IndexMetadata metadata = clusterService.state().metadata().index(shardId.getIndex());
                     if (metadata != null) {
                         customDataPath = new IndexSettings(metadata, settings).customDataPath();
@@ -168,6 +175,7 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
                     }
                 }
             }
+            // 找到当前分片在 env下的路径
             final ShardPath shardPath = ShardPath.loadShardPath(logger, nodeEnv, shardId, customDataPath);
             if (shardPath == null) {
                 return new StoreFilesMetadata(shardId, Store.MetadataSnapshot.EMPTY, Collections.emptyList());
@@ -176,6 +184,7 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
             // 1) a shard is being constructed, which means the master will not use a copy of this replica
             // 2) A shard is shutting down and has not cleared it's content within lock timeout. In this case the master may not
             //    reuse local resources.
+            // 也就是无法直接借助 indexShard的数据
             final Store.MetadataSnapshot metadataSnapshot =
                 Store.readMetadataSnapshot(shardPath.resolveIndex(), shardId, nodeEnv::shardLock, logger);
             // We use peer recovery retention leases from the primary for allocating replicas. We should always have retention leases when
@@ -204,6 +213,10 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
          * 内部可以获取到某个时刻下store内部最新的lucene.segment_N对应的文件
          */
         private final Store.MetadataSnapshot metadataSnapshot;
+
+        /**
+         * 所有续约信息
+         */
         private final List<RetentionLease> peerRecoveryRetentionLeases;
 
         public StoreFilesMetadata(ShardId shardId, Store.MetadataSnapshot metadataSnapshot,
@@ -255,10 +268,13 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
 
         /**
          * Returns the retaining sequence number of the peer recovery retention lease for a given node if exists; otherwise, returns -1.
+         * 从使用场景看 好像只有primary分片对应的store会被访问  内部记录了该shard下所有副本在节点上的偏移量信息
          */
         public long getPeerRecoveryRetentionLeaseRetainingSeqNo(DiscoveryNode node) {
             assert node != null;
+            // 将nodeId 转换成续约id
             final String retentionLeaseId = ReplicationTracker.getPeerRecoveryRetentionLeaseId(node.getId());
+            // 找到匹配的续约对象 并获取seqNo
             return peerRecoveryRetentionLeases.stream().filter(lease -> lease.id().equals(retentionLeaseId))
                 .mapToLong(RetentionLease::retainingSequenceNumber).findFirst().orElse(-1L);
         }
