@@ -71,6 +71,7 @@ import static org.elasticsearch.cluster.routing.allocation.DiskThresholdSettings
  *
  * <code>cluster.routing.allocation.disk.threshold_enabled</code> is used to
  * enable or disable this decider. It defaults to true (enabled).
+ * 通过磁盘此时承载能力决定是否允许分片或者rebalance
  */
 public class DiskThresholdDecider extends AllocationDecider {
 
@@ -82,6 +83,10 @@ public class DiskThresholdDecider extends AllocationDecider {
         Setting.boolSetting("cluster.routing.allocation.disk.watermark.enable_for_single_data_node", false, Setting.Property.NodeScope);
 
     private final DiskThresholdSettings diskThresholdSettings;
+
+    /**
+     * 是否采用单数据节点 默认为false
+     */
     private final boolean enableForSingleDataNode;
 
     public DiskThresholdDecider(Settings settings, ClusterSettings clusterSettings) {
@@ -133,8 +138,16 @@ public class DiskThresholdDecider extends AllocationDecider {
     }
 
 
+    /**
+     * 检测分片是否能分配在该节点上
+     * @param shardRouting
+     * @param node
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
+        // 这个对象描述的是整个集群的状态信息  在leader节点就可以监控所有节点此时磁盘的使用情况
         ClusterInfo clusterInfo = allocation.clusterInfo();
         ImmutableOpenMap<String, DiskUsage> usages = clusterInfo.getNodeMostAvailableDiskUsages();
         final Decision decision = earlyTerminate(allocation, usages);

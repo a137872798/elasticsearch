@@ -736,11 +736,12 @@ public class RestoreService implements ClusterStateApplier {
     }
 
     /**
-     * 记录某个分片此时的恢复状态
+     * 记录在reroute过程中 哪些分片发生了变化 并在reroute流程结束后 针对这些分片进行数据恢复
      */
     public static class RestoreInProgressUpdater extends RoutingChangesObserver.AbstractRoutingChangesObserver {
         // Map of RestoreUUID to a of changes to the shards' restore statuses
-        // key是每个恢复源的id   ShardRestoreStatus 对应此时主分片的恢复状态   只有主分片才有恢复的概念么???
+
+        // key1：SnapshotRecoverySource.uuid key2：shardId value：恢复状态(比如在哪个节点上进行恢复，此时执行到恢复的什么阶段)
         private final Map<String, Map<ShardId, ShardRestoreStatus>> shardChanges = new HashMap<>();
 
         @Override
@@ -749,7 +750,7 @@ public class RestoreService implements ClusterStateApplier {
             // 某个主分片由初始状态变化为 启动状态时
             if (initializingShard.primary()) {
                 RecoverySource recoverySource = initializingShard.recoverySource();
-                // 如果要求分片从快照中恢复数据  这里直接插入一个success的status对象
+                // 如果要求分片从快照中恢复数据  这里直接插入一个success的status对象   TODO 什么意思啊  主分片不需要从快照恢复数据吗
                 if (recoverySource.getType() == RecoverySource.Type.SNAPSHOT) {
                     changes(recoverySource).put(
                         initializingShard.shardId(),
@@ -765,9 +766,9 @@ public class RestoreService implements ClusterStateApplier {
          */
         @Override
         public void shardFailed(ShardRouting failedShard, UnassignedInfo unassignedInfo) {
-            // 当主分片在初始阶段启动时失败了
+            // 只有主分片在启动时 失败需要处理
             if (failedShard.primary() && failedShard.initializing()) {
-                // 如果是基于快照模式
+                // 同样只有快照模式才进行处理  记录一个失败状态
                 RecoverySource recoverySource = failedShard.recoverySource();
                 if (recoverySource.getType() == RecoverySource.Type.SNAPSHOT) {
                     // mark restore entry for this shard as failed when it's due to a file corruption. There is no need wait on retries
@@ -816,32 +817,45 @@ public class RestoreService implements ClusterStateApplier {
         /**
          * Helper method that creates update entry for the given recovery source's restore uuid
          * if such an entry does not exist yet.
+         * 获取某个shardId相关的 描述恢复状态的对象
          */
         private Map<ShardId, ShardRestoreStatus> changes(RecoverySource recoverySource) {
             assert recoverySource.getType() == RecoverySource.Type.SNAPSHOT;
             return shardChanges.computeIfAbsent(((SnapshotRecoverySource) recoverySource).restoreUUID(), k -> new HashMap<>());
         }
 
+        /**
+         * 处理之前监听到的变化   Restore只针对恢复方式为 SNAPSHOT 的
+         * @param oldRestore  针对恢复状态进行更新
+         * @return
+         */
         public RestoreInProgress applyChanges(final RestoreInProgress oldRestore) {
             if (shardChanges.isEmpty() == false) {
                 RestoreInProgress.Builder builder = new RestoreInProgress.Builder();
+                // 每个entry 好像就是一次恢复操作  而 RestoreInProgress好像包含了多次恢复???
                 for (RestoreInProgress.Entry entry : oldRestore) {
                     Map<ShardId, ShardRestoreStatus> updates = shardChanges.get(entry.uuid());
                     ImmutableOpenMap<ShardId, ShardRestoreStatus> shardStates = entry.shards();
                     if (updates != null && updates.isEmpty() == false) {
                         ImmutableOpenMap.Builder<ShardId, ShardRestoreStatus> shardsBuilder = ImmutableOpenMap.builder(shardStates);
+                        // 把 shardChanges内的数据都插入到builder中
                         for (Map.Entry<ShardId, ShardRestoreStatus> shard : updates.entrySet()) {
                             ShardId shardId = shard.getKey();
                             ShardRestoreStatus status = shardStates.get(shardId);
+
+                            // 之前oldRestore内部的status 如果未设置 或者之前的status处于未完成状态 那么允许被当前最新的 shardChanges更新
                             if (status == null || status.state().completed() == false) {
                                 shardsBuilder.put(shardId, shard.getValue());
                             }
                         }
 
+                        // 此时内部某些shardId 相关的status可能被修改成了 completed状态
                         ImmutableOpenMap<ShardId, ShardRestoreStatus> shards = shardsBuilder.build();
+                        // 根据当前所有结果 返回一个状态
                         RestoreInProgress.State newState = overallState(RestoreInProgress.State.STARTED, shards);
                         builder.add(new RestoreInProgress.Entry(entry.uuid(), entry.snapshot(), newState, entry.indices(), shards));
                     } else {
+                        // 如果oldRestore中的某个entry 没有被记录到本次发生变化的数据容器中 原样保存
                         builder.add(entry);
                     }
                 }
@@ -935,13 +949,21 @@ public class RestoreService implements ClusterStateApplier {
         }
     }
 
+    /**
+     * 根据当前所有恢复状态 返回一个总结果  比如所有都成功完成就返回SUCCESS 有一个是FAILURE 就返回 FAILURE 有一个是未完成状态就返回nonCompletedState
+     * @param nonCompletedState   当某些状态处于未完成时 返回 nonCompletedState
+     * @param shards
+     * @return
+     */
     private static RestoreInProgress.State overallState(RestoreInProgress.State nonCompletedState,
                                                         ImmutableOpenMap<ShardId, RestoreInProgress.ShardRestoreStatus> shards) {
         boolean hasFailed = false;
+        // 只要有某个状态处于未完成 则返回 nonCompletedState
         for (ObjectCursor<RestoreInProgress.ShardRestoreStatus> status : shards.values()) {
             if (!status.value.state().completed()) {
                 return nonCompletedState;
             }
+            // failure 属于 completed  所以不会走上面的分支
             if (status.value.state() == RestoreInProgress.State.FAILURE) {
                 hasFailed = true;
             }

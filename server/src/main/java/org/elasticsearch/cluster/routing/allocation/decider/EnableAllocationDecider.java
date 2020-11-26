@@ -76,7 +76,13 @@ public class EnableAllocationDecider extends AllocationDecider {
         new Setting<>("index.routing.rebalance.enable", Rebalance.ALL.toString(), Rebalance::parse,
             Property.Dynamic, Property.IndexScope);
 
+    /**
+     * 默认是ALL
+     */
     private volatile Rebalance enableRebalance;
+    /**
+     * 默认是ALL
+     */
     private volatile Allocation enableAllocation;
 
     public EnableAllocationDecider(Settings settings, ClusterSettings clusterSettings) {
@@ -99,6 +105,12 @@ public class EnableAllocationDecider extends AllocationDecider {
         return canAllocate(shardRouting, allocation);
     }
 
+    /**
+     * 检测能否分配某个 unassigned的分片
+     * @param shardRouting
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingAllocation allocation) {
         if (allocation.ignoreDisable()) {
@@ -106,19 +118,24 @@ public class EnableAllocationDecider extends AllocationDecider {
                 "explicitly ignoring any disabling of allocation due to manual allocation commands via the reroute API");
         }
 
+        // 获取索引相关的元数据信息
         final IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shardRouting.index());
         final Allocation enable;
         final boolean usedIndexSetting;
+
+        // 获取索引相关的 Allocation 配置信息
         if (INDEX_ROUTING_ALLOCATION_ENABLE_SETTING.exists(indexMetadata.getSettings())) {
             enable = INDEX_ROUTING_ALLOCATION_ENABLE_SETTING.get(indexMetadata.getSettings());
             usedIndexSetting = true;
         } else {
             enable = this.enableAllocation;
+            // 代表使用的是全局配置
             usedIndexSetting = false;
         }
         switch (enable) {
             case ALL:
                 return allocation.decision(Decision.YES, NAME, "all allocations are allowed");
+                // 代表不允许为任何shard 进行分配
             case NONE:
                 return allocation.decision(Decision.NO, NAME, "no allocations are allowed due to %s", setting(enable, usedIndexSetting));
             case NEW_PRIMARIES:
@@ -141,12 +158,18 @@ public class EnableAllocationDecider extends AllocationDecider {
         }
     }
 
+    /**
+     * 检测是否适合进行rebalance
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canRebalance(RoutingAllocation allocation) {
         if (allocation.ignoreDisable()) {
             return allocation.decision(Decision.YES, NAME, "allocation is explicitly ignoring any disabling of rebalancing");
         }
 
+        // 只要某个索引级别存在配置就允许rebalance
         if (enableRebalance == Rebalance.NONE) {
             for (IndexMetadata indexMetadata : allocation.metadata()) {
                 if (INDEX_ROUTING_REBALANCE_ENABLE_SETTING.exists(indexMetadata.getSettings())
@@ -157,15 +180,23 @@ public class EnableAllocationDecider extends AllocationDecider {
             return allocation.decision(Decision.NO, NAME, "no rebalancing is allowed due to %s", setting(enableRebalance, false));
         }
 
+        // rebalance在全局下总是允许
         return allocation.decision(Decision.YES, NAME, "rebalancing is not globally disabled");
     }
 
+    /**
+     * 检测某个分片是否允许 rebalance
+     * @param shardRouting 本次待决策的分片信息
+     * @param allocation 当前集群下所有分片的分配情况
+     * @return
+     */
     @Override
     public Decision canRebalance(ShardRouting shardRouting, RoutingAllocation allocation) {
         if (allocation.ignoreDisable()) {
             return allocation.decision(Decision.YES, NAME, "allocation is explicitly ignoring any disabling of rebalancing");
         }
 
+        // 获取分片对应index级别的配置 并根据枚举类型 以及分片的类型来判断是否支持rebalance
         Settings indexSettings = allocation.metadata().getIndexSafe(shardRouting.index()).getSettings();
         final Rebalance enable;
         final boolean usedIndexSetting;

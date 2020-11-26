@@ -51,6 +51,11 @@ public class ConcurrentRebalanceAllocationDecider extends AllocationDecider {
             Property.Dynamic, Property.NodeScope);
     private volatile int clusterConcurrentRebalance;
 
+    /**
+     * rebalance 是可以并发执行的么
+     * @param settings
+     * @param clusterSettings
+     */
     public ConcurrentRebalanceAllocationDecider(Settings settings, ClusterSettings clusterSettings) {
         this.clusterConcurrentRebalance = CLUSTER_ROUTING_ALLOCATION_CLUSTER_CONCURRENT_REBALANCE_SETTING.get(settings);
         logger.debug("using [cluster_concurrent_rebalance] with [{}]", clusterConcurrentRebalance);
@@ -66,13 +71,21 @@ public class ConcurrentRebalanceAllocationDecider extends AllocationDecider {
     public Decision canRebalance(ShardRouting shardRouting, RoutingAllocation allocation) {
         return canRebalance(allocation);
     }
-    
+
+    /**
+     * 检测当前集群中所有分片的状态是否允许进行rebalance
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canRebalance(RoutingAllocation allocation) {
+        // 当没有设置并发度相关的参数时 返回true
         if (clusterConcurrentRebalance == -1) {
             return allocation.decision(Decision.YES, NAME, "unlimited concurrent rebalances are allowed");
         }
+        // 此时有多少分片处于 relocation 状态
         int relocatingShards = allocation.routingNodes().getRelocatingShardCount();
+        // 当此时有多个分片处于relocation 状态 超过了clusterConcurrentRebalance时 就需要对rebalance进行限制
         if (relocatingShards >= clusterConcurrentRebalance) {
             return allocation.decision(Decision.THROTTLE, NAME,
                     "reached the limit of concurrently rebalancing shards [%d], cluster setting [%s=%d]",
@@ -80,6 +93,7 @@ public class ConcurrentRebalanceAllocationDecider extends AllocationDecider {
                     CLUSTER_ROUTING_ALLOCATION_CLUSTER_CONCURRENT_REBALANCE_SETTING.getKey(),
                     clusterConcurrentRebalance);
         }
+        // 当relocation数量没有达到并发度上限时 允许继续进行rebalance
         return allocation.decision(Decision.YES, NAME,
                 "below threshold [%d] for concurrent rebalances, current rebalance shard count [%d]",
                 clusterConcurrentRebalance, relocatingShards);

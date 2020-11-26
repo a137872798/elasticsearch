@@ -197,27 +197,44 @@ public class ClusterModule extends AbstractModule {
     // TODO: this is public so allocation benchmark can access the default deciders...can we do that in another way?
     /**
      * Return a new {@link AllocationDecider} instance with builtin deciders as well as those from plugins.
-     * 这里添加了一系列的  decider
-     * */
+     * @param clusterPlugins 支持通过插件系统拓展decider  TODO 目前只看ES内置的决策对象
+     * 这里添加了一系列的  decider  这些对象决定了 某个shard应该分配到哪个节点  是否允许进行balance等
+     */
     public static Collection<AllocationDecider> createAllocationDeciders(Settings settings, ClusterSettings clusterSettings,
                                                                          List<ClusterPlugin> clusterPlugins) {
         // collect deciders by class so that we can detect duplicates
         Map<Class, AllocationDecider> deciders = new LinkedHashMap<>();
+        // 通过UnassignedInfo内部的失败次数 限定重试次数
         addAllocationDecider(deciders, new MaxRetryAllocationDecider());
+        // TODO 跟RESIZE 索引有关 虽然不知道是干啥的
         addAllocationDecider(deciders, new ResizeAllocationDecider());
+        // 在检测副本能否正常分配前 必须确保primary 处于active状态
         addAllocationDecider(deciders, new ReplicaAfterPrimaryActiveAllocationDecider());
+        // 在进行rebalance前 必须确保该shardId 下所有primary replica 都处于active状态
         addAllocationDecider(deciders, new RebalanceOnlyWhenActiveAllocationDecider());
+        // 要不全部primary 处于active 状态 要不所有shard(primary replica) 都处于active状态
         addAllocationDecider(deciders, new ClusterRebalanceAllocationDecider(settings, clusterSettings));
+        // 允许有部分分片处于 relocation的状态 也可以进行rebalance
         addAllocationDecider(deciders, new ConcurrentRebalanceAllocationDecider(settings, clusterSettings));
+        // 通过配置项决定能否进行 allocation/rebalance
         addAllocationDecider(deciders, new EnableAllocationDecider(settings, clusterSettings));
+        // 通过版本号来决定是否允许 allocation/rebalance
         addAllocationDecider(deciders, new NodeVersionAllocationDecider());
+        // 检测相关节点上匹配的索引是否正在执行快照  是的话返回throttle
         addAllocationDecider(deciders, new SnapshotInProgressAllocationDecider());
+        // 检测是否处于恢复状态 并进行限制    快照和 restore好像是匹配的 也就是基于快照进行恢复
         addAllocationDecider(deciders, new RestoreInProgressAllocationDecider());
+        // 通过一组自定义的过滤器进行处理
         addAllocationDecider(deciders, new FilterAllocationDecider(settings, clusterSettings));
+        // 应该就时通过这个对象来进行去重了 因为在一个node上 同一个shardId 对应的shard只允许出现一次
         addAllocationDecider(deciders, new SameShardAllocationDecider(settings, clusterSettings));
+        // 基于当前节点的磁盘负载情况  TODO 磁盘使用率的先不细看了 对架构本身没有侵入性
         addAllocationDecider(deciders, new DiskThresholdDecider(settings, clusterSettings));
+        // 该对象会判断是否满足限流条件
         addAllocationDecider(deciders, new ThrottlingAllocationDecider(settings, clusterSettings));
+        // 有一个限制值 当node/index 级别的分片超过时 返回NO 否则返回YES
         addAllocationDecider(deciders, new ShardsLimitAllocationDecider(settings, clusterSettings));
+        // 通过一些自定义配置进行处理 TODO 不是很重要 先忽略
         addAllocationDecider(deciders, new AwarenessAllocationDecider(settings, clusterSettings));
 
         clusterPlugins.stream()

@@ -46,6 +46,7 @@ import static java.util.Collections.emptySet;
  * of shards and holds the {@link AllocationDeciders} which are responsible
  *  for the current routing state.
  * 这个对象以集群为单位
+ * 并且每个对象仅对应一个reroute流程  使用完即丢弃
  */
 public class RoutingAllocation {
 
@@ -89,6 +90,9 @@ public class RoutingAllocation {
      */
     private Map<ShardId, Set<String>> ignoredShardToNodes = null;
 
+    /**
+     * 在 EnableAllocationDecider中使用
+     */
     private boolean ignoreDisable = false;
 
     private DebugMode debugDecision = DebugMode.OFF;
@@ -112,7 +116,7 @@ public class RoutingAllocation {
      */
     private final RoutingNodesChangedObserver nodesChangedObserver = new RoutingNodesChangedObserver();
     /**
-     * 该对象监控每个分片此时的恢复状态
+     * 也是记录分片的变化 不过主要是用于数据恢复
      */
     private final RestoreInProgressUpdater restoreInProgressUpdater = new RestoreInProgressUpdater();
 
@@ -288,7 +292,7 @@ public class RoutingAllocation {
 
     /**
      * Returns updated {@link Metadata} based on the changes that were made to the routing nodes
-     * 使用此时最新的分片路由信息更新元数据
+     * 使用新的路由表信息 去更新metadata
      */
     public Metadata updateMetadataWithRoutingChanges(RoutingTable newRoutingTable) {
         return indexMetadataUpdater.applyChanges(metadata, newRoutingTable);
@@ -296,7 +300,6 @@ public class RoutingAllocation {
 
     /**
      * Returns updated {@link RestoreInProgress} based on the changes that were made to the routing nodes
-     * TODO 先忽略有关恢复数据的
      */
     public RestoreInProgress updateRestoreInfoWithRoutingChanges(RestoreInProgress restoreInProgress) {
         return restoreInProgressUpdater.applyChanges(restoreInProgress);

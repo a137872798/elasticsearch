@@ -76,6 +76,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
 
     /**
      * 描述未分配原因 和 当前分配状态的对象
+     * 比如这个shard可能分配失败 那么失败信息就会被记录在info内 之后decider就可以根据这个info做一些处理
      */
     private final UnassignedInfo unassignedInfo;
 

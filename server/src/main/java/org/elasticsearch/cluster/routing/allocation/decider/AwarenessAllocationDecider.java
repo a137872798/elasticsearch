@@ -76,6 +76,7 @@ import static java.util.Collections.emptyList;
  * <pre>
  * node.zone: zone1
  * </pre>
+ * 反正也是基于什么配置项  本身不会直接与架构耦合
  */
 public class AwarenessAllocationDecider extends AllocationDecider {
 
@@ -89,6 +90,9 @@ public class AwarenessAllocationDecider extends AllocationDecider {
 
     private volatile List<String> awarenessAttributes;
 
+    /**
+     * 某些 shard 会被强制处理
+     */
     private volatile Map<String, List<String>> forcedAwarenessAttributes;
 
     public AwarenessAllocationDecider(Settings settings, ClusterSettings clusterSettings) {
@@ -115,6 +119,13 @@ public class AwarenessAllocationDecider extends AllocationDecider {
         this.awarenessAttributes = awarenessAttributes;
     }
 
+    /**
+     * 检测某个分片能否分配到某个node上
+     * @param shardRouting
+     * @param node
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
         return underCapacity(shardRouting, node, allocation, true);
@@ -125,17 +136,28 @@ public class AwarenessAllocationDecider extends AllocationDecider {
         return underCapacity(shardRouting, node, allocation, false);
     }
 
+    /**
+     * @param shardRouting
+     * @param node
+     * @param allocation
+     * @param moveToNode
+     * @return
+     */
     private Decision underCapacity(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation, boolean moveToNode) {
+        // 没有加特殊属性 直接返回yes
         if (awarenessAttributes.isEmpty()) {
             return allocation.decision(Decision.YES, NAME,
                 "allocation awareness is not enabled, set cluster setting [%s] to enable it",
                 CLUSTER_ROUTING_ALLOCATION_AWARENESS_ATTRIBUTE_SETTING.getKey());
         }
 
+        // 获取索引元数据
         IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shardRouting.index());
+        // 这个索引下合适的分片总数
         int shardCount = indexMetadata.getNumberOfReplicas() + 1; // 1 for primary
         for (String awarenessAttribute : awarenessAttributes) {
             // the node the shard exists on must be associated with an awareness attribute
+            // 要求这些特殊配置必须都存在于node中
             if (node.node().getAttributes().containsKey(awarenessAttribute) == false) {
                 return allocation.decision(Decision.NO, NAME,
                     "node does not contain the awareness attribute [%s]; required attributes cluster setting [%s=%s]",
@@ -144,6 +166,7 @@ public class AwarenessAllocationDecider extends AllocationDecider {
             }
 
             // build attr_value -> nodes map
+            // 将所有node中的匹配的value取出来
             ObjectIntHashMap<String> nodesPerAttribute = allocation.routingNodes().nodesPerAttributesCounts(awarenessAttribute);
 
             // build the count of shards per attribute value

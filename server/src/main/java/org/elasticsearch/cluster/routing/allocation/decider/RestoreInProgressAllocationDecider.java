@@ -38,9 +38,16 @@ public class RestoreInProgressAllocationDecider extends AllocationDecider {
         return canAllocate(shardRouting, allocation);
     }
 
+    /**
+     * 判断能否为某个分片进行分配
+     * @param shardRouting
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(final ShardRouting shardRouting, final RoutingAllocation allocation) {
         final RecoverySource recoverySource = shardRouting.recoverySource();
+        // 非快照模式直接返回
         if (recoverySource == null || recoverySource.getType() != RecoverySource.Type.SNAPSHOT) {
             return allocation.decision(Decision.YES, NAME, "ignored as shard is not being recovered from a snapshot");
         }
@@ -48,6 +55,7 @@ public class RestoreInProgressAllocationDecider extends AllocationDecider {
         RecoverySource.SnapshotRecoverySource source = (RecoverySource.SnapshotRecoverySource) recoverySource;
         final RestoreInProgress restoresInProgress = allocation.custom(RestoreInProgress.TYPE);
 
+        // 未完成时返回true  TODO 为什么恢复时反而允许分配
         if (restoresInProgress != null) {
             RestoreInProgress.Entry restoreInProgress = restoresInProgress.get(source.restoreUUID());
             if (restoreInProgress != null) {
@@ -59,6 +67,8 @@ public class RestoreInProgressAllocationDecider extends AllocationDecider {
                 }
             }
         }
+
+        // 当采用的recoverySource 为 SNAPSHOT 并且 没有找到匹配的restoreInProcess 或者 已经完成  就不允许执行allocate
         return allocation.decision(Decision.NO, NAME, "shard has failed to be restored from the snapshot [%s] - " +
             "manually close or delete the index [%s] in order to retry to restore the snapshot again or use the reroute API to force the " +
             "allocation of an empty primary shard. Details: [%s]",

@@ -24,11 +24,18 @@ import org.elasticsearch.cluster.routing.allocation.RoutingAllocation;
 
 /**
  * Only allow rebalancing when all shards are active within the shard replication group.
+ * 检测某个分片此时是否需要进行 balance
  */
 public class RebalanceOnlyWhenActiveAllocationDecider extends AllocationDecider {
 
     public static final String NAME = "rebalance_only_when_active";
 
+    /**
+     * 当该shardId 相关的所有 primary/replica 都处于激活状态 才支持进行balance
+     * @param shardRouting 本次待决策的分片信息
+     * @param allocation 当前集群下所有分片的分配情况
+     * @return
+     */
     @Override
     public Decision canRebalance(ShardRouting shardRouting, RoutingAllocation allocation) {
         if (!allocation.routingNodes().allReplicasActive(shardRouting.shardId(), allocation.metadata())) {

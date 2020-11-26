@@ -32,7 +32,6 @@ import org.elasticsearch.common.settings.Setting;
  * the setting for {@code index.allocation.max_retry} is raised. The default value is {@code 5}.
  * Note: This allocation decider also allows allocation of repeatedly failing shards when the {@code /_cluster/reroute?retry_failed=true}
  * API is manually invoked. This allows single retries without raising the limits.
- *
  */
 public class MaxRetryAllocationDecider extends AllocationDecider {
 
@@ -41,26 +40,39 @@ public class MaxRetryAllocationDecider extends AllocationDecider {
 
     public static final String NAME = "max_retry";
 
+    /**
+     * 当shardRouting本身处于unassigned时 触发该方法
+     * @param shardRouting
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingAllocation allocation) {
         final UnassignedInfo unassignedInfo = shardRouting.unassignedInfo();
         final Decision decision;
+        // info对象内部会记录分配失败的次数
         if (unassignedInfo != null && unassignedInfo.getNumFailedAllocations() > 0) {
+            // 以index为单位会记录每个分片的最大重试次数
             final IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shardRouting.index());
             final int maxRetry = SETTING_ALLOCATION_MAX_RETRY.get(indexMetadata.getSettings());
+            // 超出最大重试次数 返回 NO  TODO 那么这个分配失败的副本最后会怎么样呢  被丢弃么
             if (unassignedInfo.getNumFailedAllocations() >= maxRetry) {
                 decision = allocation.decision(Decision.NO, NAME, "shard has exceeded the maximum number of retries [%d] on " +
                     "failed allocation attempts - manually call [/_cluster/reroute?retry_failed=true] to retry, [%s]",
                     maxRetry, unassignedInfo.toString());
             } else {
+                // 未达到最大次数时 还是返回YES
                 decision = allocation.decision(Decision.YES, NAME, "shard has failed allocating [%d] times but [%d] retries are allowed",
                     unassignedInfo.getNumFailedAllocations(), maxRetry);
             }
         } else {
+            // 如果之前没有失败过 总是可以进行分配
             decision = allocation.decision(Decision.YES, NAME, "shard has no previous failures");
         }
         return decision;
     }
+
+    // 其余2个方法都会转发到需要判断失败次数的canAllocate方法上
 
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {

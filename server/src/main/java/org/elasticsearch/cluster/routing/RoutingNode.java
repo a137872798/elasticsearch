@@ -58,7 +58,7 @@ public class RoutingNode implements Iterable<ShardRouting> {
     private final LinkedHashSet<ShardRouting> initializingShards;
 
     /**
-     * 该节点此时正在参与重分配的分片
+     * 存储即将被转出的分片 相应的 在target RoutingNode上会增加一个init节点
      */
     private final LinkedHashSet<ShardRouting> relocatingShards;
 
@@ -248,9 +248,11 @@ public class RoutingNode implements Iterable<ShardRouting> {
      * Determine the shards with a specific state
      * @param states set of states which should be listed
      * @return List of shards
+     * 找到当前节点下某种状态的所有分片
      */
     public List<ShardRouting> shardsWithState(ShardRoutingState... states) {
         if (states.length == 1) {
+            // 只有一种状态时 可以直接使用之前存储的list
             if (states[0] == ShardRoutingState.INITIALIZING) {
                 return new ArrayList<>(initializingShards);
             } else if (states[0] == ShardRoutingState.RELOCATING) {

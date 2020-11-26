@@ -431,9 +431,12 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
     /**
      * Returns <code>true</code> iff all replicas are active for the given shard routing. Otherwise <code>false</code>
+     * 检测该分片下的所有副本是否都处于激活状态
      */
     public boolean allReplicasActive(ShardId shardId, Metadata metadata) {
+        // 获取该shardId 对应的所有已经分配完成的副本
         final List<ShardRouting> shards = assignedShards(shardId);
+        // 因为shards 应该是 primary + replica 所以 当数量不足要求时返回false
         if (shards.isEmpty() || shards.size() < metadata.getIndexSafe(shardId.getIndex()).getNumberOfReplicas() + 1) {
             return false; // if we are empty nothing is active if we have less than total at least one is unassigned
         }

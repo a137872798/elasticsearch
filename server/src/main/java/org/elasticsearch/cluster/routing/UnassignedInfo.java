@@ -235,6 +235,10 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
     private final boolean delayed; // if allocation of this shard is delayed due to INDEX_DELAYED_NODE_LEFT_TIMEOUT_SETTING
     private final String message;
     private final Exception failure;
+
+    /**
+     * 分配失败的次数
+     */
     private final int failedAllocations;
 
     /**

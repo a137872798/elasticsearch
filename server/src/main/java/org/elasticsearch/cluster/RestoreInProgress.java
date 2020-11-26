@@ -40,8 +40,7 @@ import java.util.Objects;
 
 /**
  * Meta data about restore processes that are currently executing
- * 该对象维护所有实体此时恢复的进程
- * 实际上就是一组bean对象
+ * 记录当前恢复操作相关的数据
  */
 public class RestoreInProgress extends AbstractNamedDiffable<Custom> implements Custom, Iterable<RestoreInProgress.Entry> {
 
@@ -119,7 +118,7 @@ public class RestoreInProgress extends AbstractNamedDiffable<Custom> implements 
 
     /**
      * Restore metadata
-     * 描述某个数据分片恢复的进程
+     * 对应某次恢复信息
      */
     public static class Entry {
         private final String uuid;
@@ -129,19 +128,23 @@ public class RestoreInProgress extends AbstractNamedDiffable<Custom> implements 
          */
         private final Snapshot snapshot;
         /**
-         * 每个实体都对应一组分片的恢复状态
+         * 每个index都被分成多个shardId 这里存储了每个分片的恢复情况
          */
         private final ImmutableOpenMap<ShardId, ShardRestoreStatus> shards;
+
+        /**
+         * 本次恢复涉及到的所有索引
+         */
         private final List<String> indices;
 
         /**
          * Creates new restore metadata
          *
-         * @param uuid       uuid of the restore
-         * @param snapshot   snapshot
-         * @param state      current state of the restore process
-         * @param indices    list of indices being restored
-         * @param shards     map of shards being restored to their current restore status
+         * @param uuid       uuid of the restore  restoreUUID
+         * @param snapshot   snapshot  对应的快照
+         * @param state      current state of the restore process  此时所有shardId 恢复状态的总和
+         * @param indices    list of indices being restored  本次涉及到的所有索引
+         * @param shards     map of shards being restored to their current restore status  本次涉及到的所有分片
          */
         public Entry(String uuid, Snapshot snapshot, State state, List<String> indices,
             ImmutableOpenMap<ShardId, ShardRestoreStatus> shards) {
@@ -350,6 +353,7 @@ public class RestoreInProgress extends AbstractNamedDiffable<Custom> implements 
 
     /**
      * Shard restore process state
+     * 描述此时恢复的进程状态
      */
     public enum State {
         /**

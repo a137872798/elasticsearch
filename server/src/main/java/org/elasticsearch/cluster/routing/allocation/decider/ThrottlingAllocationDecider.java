@@ -115,14 +115,24 @@ public class ThrottlingAllocationDecider extends AllocationDecider {
         this.primariesInitialRecoveries = primariesInitialRecoveries;
     }
 
+    /**
+     * 检测某个分片能否分配到某个node上
+     * @param shardRouting
+     * @param node
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
+
+        // 本次处理的是一个未分配的主分片
         if (shardRouting.primary() && shardRouting.unassigned()) {
             assert initializingShard(shardRouting, node.nodeId()).recoverySource().getType() != RecoverySource.Type.PEER;
             // primary is unassigned, means we are going to do recovery from store, snapshot or local shards
             // count *just the primaries* currently doing recovery on the node and check against primariesInitialRecoveries
 
             int primariesInRecovery = 0;
+            // 找到此时所有处于init状态的主分片 如果很多 就代表之后的一段时间内系统负载会很高
             for (ShardRouting shard : node.shardsWithState(ShardRoutingState.INITIALIZING)) {
                 // when a primary shard is INITIALIZING, it can be because of *initial recovery* or *relocation from another node*
                 // we only count initial recoveries here, so we need to make sure that relocating node is null
@@ -130,6 +140,7 @@ public class ThrottlingAllocationDecider extends AllocationDecider {
                     primariesInRecovery++;
                 }
             }
+            // 当超过限制值时 返回Throttle
             if (primariesInRecovery >= primariesInitialRecoveries) {
                 // TODO: Should index creation not be throttled for primary shards?
                 return allocation.decision(THROTTLE, NAME,
@@ -144,6 +155,7 @@ public class ThrottlingAllocationDecider extends AllocationDecider {
             assert initializingShard(shardRouting, node.nodeId()).recoverySource().getType() == RecoverySource.Type.PEER;
 
             // Allocating a shard to this node will increase the incoming recoveries
+            // 代表此时需要进行数据恢复的分片数量 如果超过了限定值 返回throttle
             int currentInRecoveries = allocation.routingNodes().getIncomingRecoveries(node.nodeId());
             if (currentInRecoveries >= concurrentIncomingRecoveries) {
                 return allocation.decision(THROTTLE, NAME,
@@ -152,11 +164,15 @@ public class ThrottlingAllocationDecider extends AllocationDecider {
                     concurrentIncomingRecoveries,
                     CLUSTER_ROUTING_ALLOCATION_NODE_CONCURRENT_RECOVERIES_SETTING.getKey());
             } else {
+                // 当此时待恢复的数据分片没有达到限制值时 也要确保此时主分片处于active状态  (在其他decider中已经考虑了这点 不过不同decider间应该是无感知的)
+
                 // search for corresponding recovery source (= primary shard) and check number of outgoing recoveries on that node
                 ShardRouting primaryShard = allocation.routingNodes().activePrimary(shardRouting.shardId());
                 if (primaryShard == null) {
                     return allocation.decision(Decision.NO, NAME, "primary shard for this replica is not yet active");
                 }
+
+                // outgoing 是代表primary会向外输出数据
                 int primaryNodeOutRecoveries = allocation.routingNodes().getOutgoingRecoveries(primaryShard.currentNodeId());
                 if (primaryNodeOutRecoveries >= concurrentOutgoingRecoveries) {
                     return allocation.decision(THROTTLE, NAME,

@@ -66,14 +66,25 @@ public class SameShardAllocationDecider extends AllocationDecider {
         this.sameHost = sameHost;
     }
 
+
+    /**
+     * 检测某个分片是否允许分配到目标节点上
+     * @param shardRouting
+     * @param node
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
         Iterable<ShardRouting> assignedShards = allocation.routingNodes().assignedShards(shardRouting.shardId());
+        // 检测该shardId 对应的分片是否已经出现在了该node上
         Decision decision = decideSameNode(shardRouting, node, allocation, assignedShards);
+        // 默认是false 就直接使用这个结果
         if (decision.type() == Decision.Type.NO || sameHost == false) {
             // if its already a NO decision looking at the node, or we aren't configured to look at the host, return the decision
             return decision;
         }
+        // TODO 下面先忽略
         if (node.node() != null) {
             for (RoutingNode checkNode : allocation.routingNodes()) {
                 if (checkNode.node() == null) {
@@ -115,9 +126,18 @@ public class SameShardAllocationDecider extends AllocationDecider {
         return decideSameNode(shardRouting, node, allocation, assignedShards);
     }
 
+    /**
+     * 检测该shardId下的分片是否已经出现在该node上了
+     * @param shardRouting  本次要分配的某个分片
+     * @param node    本次尝试分配的目标节点
+     * @param allocation
+     * @param assignedShards  该shardId 下已经分配了多少分片
+     * @return
+     */
     private Decision decideSameNode(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation,
                                     Iterable<ShardRouting> assignedShards) {
         for (ShardRouting assignedShard : assignedShards) {
+            // 代表该节点上已经分配过了 返回NO
             if (node.nodeId().equals(assignedShard.currentNodeId())) {
                 if (assignedShard.isSameAllocation(shardRouting)) {
                     return allocation.decision(Decision.NO, NAME,

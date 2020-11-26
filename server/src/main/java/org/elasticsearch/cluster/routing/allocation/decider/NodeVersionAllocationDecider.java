@@ -37,10 +37,18 @@ public class NodeVersionAllocationDecider extends AllocationDecider {
 
     public static final String NAME = "node_version";
 
+    /**
+     * 检测能否分配
+     * @param shardRouting
+     * @param node
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
         if (shardRouting.primary()) {
             if (shardRouting.currentNodeId() == null) {
+                // 如果恢复源是快照  检测节点版本是否兼容
                 if (shardRouting.recoverySource() != null && shardRouting.recoverySource().getType() == RecoverySource.Type.SNAPSHOT) {
                     // restoring from a snapshot - check that the node can handle the version
                     return isVersionCompatible((SnapshotRecoverySource)shardRouting.recoverySource(), node, allocation);

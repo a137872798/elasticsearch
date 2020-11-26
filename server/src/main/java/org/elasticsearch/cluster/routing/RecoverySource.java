@@ -158,6 +158,7 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
     public static final class ExistingStoreRecoverySource extends RecoverySource {
         /**
          * Special allocation id that shard has during initialization on allocate_stale_primary
+         * 当采用的恢复方式为  FORCE_STALE_PRIMARY_INSTANCE 时 分片的allocationId 会自动变成这个
          */
         public static final String FORCED_ALLOCATION_ID = "_forced_allocation_";
 

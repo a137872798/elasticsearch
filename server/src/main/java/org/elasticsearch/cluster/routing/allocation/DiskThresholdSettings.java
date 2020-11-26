@@ -36,6 +36,7 @@ import java.util.Map;
 
 /**
  * A container to keep settings for disk thresholds up to date with cluster setting changes.
+ * 从配置中还原有关磁盘承载的配置
  */
 public class DiskThresholdSettings {
     public static final Setting<Boolean> CLUSTER_ROUTING_ALLOCATION_DISK_THRESHOLD_ENABLED_SETTING =

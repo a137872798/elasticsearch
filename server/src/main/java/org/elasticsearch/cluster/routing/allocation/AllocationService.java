@@ -181,10 +181,10 @@ public class AllocationService {
     private ClusterState buildResult(ClusterState oldState, RoutingAllocation allocation) {
         final RoutingTable oldRoutingTable = oldState.routingTable();
         final RoutingNodes newRoutingNodes = allocation.routingNodes();
-        // 更新路由表信息
+        // 因为在之前的reroute中 某些分片可能从unassigned状态变成了init状态  有些分片则从start状态变成了 relocation状态
         final RoutingTable newRoutingTable = new RoutingTable.Builder().updateNodes(oldRoutingTable.version(), newRoutingNodes).build();
 
-        // allocation 本身会记录所有分片的变化  这时根据这些变化的分片 去更新metadata
+        // 使用新的路由表 更新metadata  在之前reroute使得一些分片发生变化时 allocation对象内部有一个监听器会记录这些变化的信息 这时用那些更新信息来更新 metadata 主要就是更新primaryVersion 以及 in-sync
         final Metadata newMetadata = allocation.updateMetadataWithRoutingChanges(newRoutingTable);
         assert newRoutingTable.validate(newMetadata); // validates the routing table is coherent with the cluster state metadata
 
@@ -193,9 +193,9 @@ public class AllocationService {
             .routingTable(newRoutingTable)
             .metadata(newMetadata);
 
-        // 使用 restoreInProgressUpdater 处理之前监听到的各种分片变化  TODO 先忽略
         final RestoreInProgress restoreInProgress = allocation.custom(RestoreInProgress.TYPE);
         if (restoreInProgress != null) {
+            // 更新 restoreInProgress
             RestoreInProgress updatedRestoreInProgress = allocation.updateRestoreInfoWithRoutingChanges(restoreInProgress);
             if (updatedRestoreInProgress != restoreInProgress) {
                 ImmutableOpenMap.Builder<String, ClusterState.Custom> customsBuilder = ImmutableOpenMap.builder(allocation.getCustoms());

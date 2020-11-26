@@ -351,6 +351,9 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
         return true;
     }
 
+    /**
+     * 对应某个shard的快照信息
+     */
     public static class ShardSnapshotStatus {
         private final ShardState state;
         private final String nodeId;

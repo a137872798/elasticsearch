@@ -50,11 +50,15 @@ import java.util.function.BiPredicate;
  * Note: Reducing the number of shards per node via the index update API can
  * trigger relocation and significant additional load on the clusters nodes.
  * </p>
+ * 针对分片数量做限制
  */
 public class ShardsLimitAllocationDecider extends AllocationDecider {
 
     public static final String NAME = "shards_limit";
 
+    /**
+     * 集群内总分片数量  默认是不做限制
+     */
     private volatile int clusterShardLimit;
 
     /**
@@ -96,26 +100,40 @@ public class ShardsLimitAllocationDecider extends AllocationDecider {
 
     }
 
+    /**
+     * 检测集群内总shard数量是否超过了 limit
+     * @param shardRouting
+     * @param node
+     * @param allocation
+     * @param decider  判断用的函数
+     * @return
+     */
     private Decision doDecide(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation,
                               BiPredicate<Integer, Integer> decider) {
         IndexMetadata indexMd = allocation.metadata().getIndexSafe(shardRouting.index());
+
+        // 获取索引级别的分片限制数量
         final int indexShardLimit = INDEX_TOTAL_SHARDS_PER_NODE_SETTING.get(indexMd.getSettings(), settings);
         // Capture the limit here in case it changes during this method's
         // execution
         final int clusterShardLimit = this.clusterShardLimit;
 
+        // 不做限制 直接返回
         if (indexShardLimit <= 0 && clusterShardLimit <= 0) {
             return allocation.decision(Decision.YES, NAME, "total shard limits are disabled: [index: %d, cluster: %d] <= 0",
                     indexShardLimit, clusterShardLimit);
         }
 
+        // 获取此时处于这个节点的所有分片
         final int nodeShardCount = node.numberOfOwningShards();
 
+        // 当在node级别超出限制时 返回NO
         if (clusterShardLimit > 0 && decider.test(nodeShardCount, clusterShardLimit)) {
             return allocation.decision(Decision.NO, NAME,
                 "too many shards [%d] allocated to this node, cluster setting [%s=%d]",
                 nodeShardCount, CLUSTER_TOTAL_SHARDS_PER_NODE_SETTING.getKey(), clusterShardLimit);
         }
+        // 如果针对索引级别的分片数量超过上限也返回NO
         if (indexShardLimit > 0) {
             final int indexShardCount = node.numberOfOwningShardsForIndex(shardRouting.index());
             if (decider.test(indexShardCount, indexShardLimit)) {
@@ -129,6 +147,12 @@ public class ShardsLimitAllocationDecider extends AllocationDecider {
             nodeShardCount, indexShardLimit, clusterShardLimit);
     }
 
+    /**
+     * 套路类似
+     * @param node
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(RoutingNode node, RoutingAllocation allocation) {
         // Only checks the node-level limit, not the index-level

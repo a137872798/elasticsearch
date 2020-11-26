@@ -454,6 +454,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
                 addShard(indexRoutingTableBuilders, shardRoutingEntry);
             }
 
+            // 将index级别的数据存储到路由表中
             for (IndexRoutingTable.Builder indexBuilder : indexRoutingTableBuilders.values()) {
                 add(indexBuilder);
             }

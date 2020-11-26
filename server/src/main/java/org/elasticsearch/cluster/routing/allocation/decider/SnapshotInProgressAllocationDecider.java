@@ -29,6 +29,7 @@ import org.elasticsearch.cluster.routing.allocation.RoutingAllocation;
 /**
  * This {@link org.elasticsearch.cluster.routing.allocation.decider.AllocationDecider} prevents shards that
  * are currently been snapshotted to be moved to other nodes.
+ * TODO MOVE 和 ALLOCATION 的区别是什么???
  */
 public class SnapshotInProgressAllocationDecider extends AllocationDecider {
 
@@ -55,23 +56,35 @@ public class SnapshotInProgressAllocationDecider extends AllocationDecider {
         return canMove(shardRouting, allocation);
     }
 
+    /**
+     * 检测是否可以移动
+     *
+     * @param shardRouting
+     * @param allocation
+     * @return
+     */
     private Decision canMove(ShardRouting shardRouting, RoutingAllocation allocation) {
         if (shardRouting.primary()) {
             // Only primary shards are snapshotted
 
+            // 除了快照外 还有一个 RestoreInProgress
             SnapshotsInProgress snapshotsInProgress = allocation.custom(SnapshotsInProgress.TYPE);
+
+            // 在主分片中 必须要确保快照操作处于暂停状态 才可以move
             if (snapshotsInProgress == null || snapshotsInProgress.entries().isEmpty()) {
                 // Snapshots are not running
                 return allocation.decision(Decision.YES, NAME, "no snapshots are currently running");
             }
 
+            // 通过index进行匹配  匹配失败的可以正常move
             for (SnapshotsInProgress.Entry snapshot : snapshotsInProgress.entries()) {
                 SnapshotsInProgress.ShardSnapshotStatus shardSnapshotStatus = snapshot.shards().get(shardRouting.shardId());
+                // node 匹配 且 快照处于未完成状态 返回 Throttle
                 if (shardSnapshotStatus != null && !shardSnapshotStatus.state().completed() && shardSnapshotStatus.nodeId() != null &&
-                        shardSnapshotStatus.nodeId().equals(shardRouting.currentNodeId())) {
+                    shardSnapshotStatus.nodeId().equals(shardRouting.currentNodeId())) {
                     if (logger.isTraceEnabled()) {
                         logger.trace("Preventing snapshotted shard [{}] from being moved away from node [{}]",
-                                shardRouting.shardId(), shardSnapshotStatus.nodeId());
+                            shardRouting.shardId(), shardSnapshotStatus.nodeId());
                     }
                     return allocation.decision(Decision.THROTTLE, NAME,
                         "waiting for snapshotting of shard [%s] to complete on this node [%s]",
@@ -79,6 +92,7 @@ public class SnapshotInProgressAllocationDecider extends AllocationDecider {
                 }
             }
         }
+        // 副本总是可以move
         return allocation.decision(Decision.YES, NAME, "the shard is not being snapshotted");
     }
 

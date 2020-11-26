@@ -332,7 +332,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     private final ImmutableOpenMap<String, DiffableStringMap> customData;
 
     /**
-     * 该索引下所有分片id 对应的分配者id
+     * key 对应shardId  value 对应此时在in-sync集合中的所有分片对应的分配者id
      */
     private final ImmutableOpenIntMap<Set<String>> inSyncAllocationIds;
 
@@ -1032,6 +1032,12 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             return inSyncAllocationIds.get(shardId);
         }
 
+        /**
+         * 覆盖更新   比如某个primary重启 那么会重置更新in-sync
+         * @param shardId
+         * @param allocationIds
+         * @return
+         */
         public Builder putInSyncAllocationIds(int shardId, Set<String> allocationIds) {
             inSyncAllocationIds.put(shardId, new HashSet<>(allocationIds));
             return this;
@@ -1537,7 +1543,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * Returns the source shard ID to split the given target shard off
      * @param shardId the id of the target shard to split into
      * @param sourceIndexMetadata the source index metadata
-     * @param numTargetShards the total number of shards in the target index
+     * @param numTargetShards the total number of shards in the target index   这个值应该超过SourceIndexMetadata的NumberOfShards
      * @return a the source shard ID to split off from
      */
     public static ShardId selectSplitShard(int shardId, IndexMetadata sourceIndexMetadata, int numTargetShards) {
@@ -1546,6 +1552,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             throw new IllegalArgumentException("the number of target shards (" + numTargetShards + ") must be greater than the shard id: "
                 + shardId);
         }
+        // 生成一个路由因子
         final int routingFactor = getRoutingFactor(numSourceShards, numTargetShards);
         assertSplitMetadata(numSourceShards, numTargetShards, sourceIndexMetadata);
         return new ShardId(sourceIndexMetadata.getIndex(), shardId/routingFactor);
@@ -1553,9 +1560,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
     /**
      * Returns the source shard ID to clone the given target shard off
-     * @param shardId the id of the target shard to clone into
-     * @param sourceIndexMetadata the source index metadata
-     * @param numTargetShards the total number of shards in the target index
+     * @param shardId the id of the target shard to clone into                  本次处理的分片对应的 shardId
+     * @param sourceIndexMetadata the source index metadata                     先假设是 RESIZE 对应索引元数据
+     * @param numTargetShards the total number of shards in the target index    本次shardId相关的index的分片数量
      * @return a the source shard ID to clone from
      */
     public static ShardId selectCloneShard(int shardId, IndexMetadata sourceIndexMetadata, int numTargetShards) {
@@ -1634,8 +1641,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * {@link org.elasticsearch.cluster.routing.OperationRouting#generateShardId(IndexMetadata, String, String)} to guarantee consistent
      * hashing / routing of documents even if the number of shards changed (ie. a shrunk index).
      *
-     * @param sourceNumberOfShards the total number of shards in the source index
-     * @param targetNumberOfShards the total number of shards in the target index
+     * @param sourceNumberOfShards the total number of shards in the source index       RESIZE 索引的分片数
+     * @param targetNumberOfShards the total number of shards in the target index       本次要处理的索引的分片数
      * @return the routing factor for and shrunk index with the given number of target shards.
      * @throws IllegalArgumentException if the number of source shards is less than the number of target shards or if the source shards
      * are not divisible by the number of target shards.
@@ -1643,6 +1650,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     public static int getRoutingFactor(int sourceNumberOfShards, int targetNumberOfShards) {
         final int factor;
         if (sourceNumberOfShards < targetNumberOfShards) { // split
+            // 一个超过1的值
             factor = targetNumberOfShards / sourceNumberOfShards;
             if (factor * sourceNumberOfShards != targetNumberOfShards || factor <= 1) {
                 throw new IllegalArgumentException("the number of source shards [" + sourceNumberOfShards + "] must be a " +

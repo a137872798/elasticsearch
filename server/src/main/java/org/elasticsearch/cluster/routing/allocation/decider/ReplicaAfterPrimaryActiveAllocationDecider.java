@@ -35,6 +35,12 @@ public class ReplicaAfterPrimaryActiveAllocationDecider extends AllocationDecide
         return canAllocate(shardRouting, allocation);
     }
 
+    /**
+     * 当某个副本想要进行分配前 必须确保primary处于active状态
+     * @param shardRouting
+     * @param allocation
+     * @return
+     */
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingAllocation allocation) {
         if (shardRouting.primary()) {
