@@ -34,6 +34,7 @@ import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
 /**
  * Creates a new snapshot
+ * 创建快照的请求
  */
 public class RestCreateSnapshotAction extends BaseRestHandler {
 

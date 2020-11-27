@@ -174,9 +174,17 @@ public class SnapshotDeletionsInProgress extends AbstractNamedDiffable<Custom> i
 
     /**
      * A class representing a snapshot deletion request entry in the cluster state.
+     * 描述单次删除操作包含的所有快照数据
      */
     public static final class Entry implements Writeable, RepositoryOperation {
+
+        /**
+         * 本次涉及到的所有快照
+         */
         private final List<SnapshotId> snapshots;
+        /**
+         * 这些快照属于哪个 repository 也就是每次删除操作都是针对某个仓库
+         */
         private final String repoName;
         private final long startTime;
         private final long repositoryStateId;

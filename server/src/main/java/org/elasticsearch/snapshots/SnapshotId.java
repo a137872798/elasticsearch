@@ -40,7 +40,7 @@ public final class SnapshotId implements Comparable<SnapshotId>, Writeable, ToXC
     private final String name;
 
     /**
-     * 这个才是作为id的体现 其他都是附加字段
+     * 每个快照会对应一个唯一id
      */
     private final String uuid;
 

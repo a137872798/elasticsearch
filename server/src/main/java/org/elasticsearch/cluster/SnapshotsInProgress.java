@@ -103,7 +103,7 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
         private final List<IndexId> indices;
 
         /**
-         * 什么时候生成这种 waiting索引
+         * key: indexName  value: 该所有下哪些primary分片处于 init/relocation状态  这个状态下无法直接生成快照 需要等待集群变化
          */
         private final ImmutableOpenMap<String, List<ShardId>> waitingIndices;
         private final long startTime;
@@ -116,6 +116,20 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
         @Nullable private final Map<String, Object> userMetadata;
         @Nullable private final String failure;
 
+        /**
+         *
+         * @param snapshot
+         * @param includeGlobalState
+         * @param partial
+         * @param state  相当于内部所有分片的总状态
+         * @param indices
+         * @param startTime
+         * @param repositoryStateId
+         * @param shards
+         * @param failure
+         * @param userMetadata
+         * @param version
+         */
         public Entry(Snapshot snapshot, boolean includeGlobalState, boolean partial, State state, List<IndexId> indices,
                      long startTime, long repositoryStateId, ImmutableOpenMap<ShardId, ShardSnapshotStatus> shards,
                      String failure, Map<String, Object> userMetadata, Version version) {
@@ -130,6 +144,7 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
                 this.waitingIndices = ImmutableOpenMap.of();
             } else {
                 this.shards = shards;
+                // 找到状态是 waiting的  这些分片此刻正处于 init/relocation 状态 所以此时还不能生成快照
                 this.waitingIndices = findWaitingIndices(shards);
                 assert assertShardsConsistent(state, indices, shards);
             }
@@ -152,6 +167,19 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
             return true;
         }
 
+        /**
+         * 代表此时针对某些索引生成了一个快照对象
+         * @param snapshot  描述该快照相关的 repository,snapshotId 等等
+         * @param includeGlobalState
+         * @param partial
+         * @param state
+         * @param indices
+         * @param startTime
+         * @param repositoryStateId
+         * @param shards
+         * @param userMetadata
+         * @param version
+         */
         public Entry(Snapshot snapshot, boolean includeGlobalState, boolean partial, State state, List<IndexId> indices,
                      long startTime, long repositoryStateId, ImmutableOpenMap<ShardId, ShardSnapshotStatus> shards,
                      Map<String, Object> userMetadata, Version version) {
@@ -159,6 +187,16 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
                 version);
         }
 
+        /**
+         *
+         * @param entry
+         * @param state
+         * @param indices
+         * @param repositoryStateId
+         * @param shards 本次创建Entry对象时 携带了每个shardId 对应的状态信息 这个信息是通过
+         * @param version
+         * @param failure
+         */
         public Entry(Entry entry, State state, List<IndexId> indices, long repositoryStateId,
                      ImmutableOpenMap<ShardId, ShardSnapshotStatus> shards, Version version, String failure) {
             this(entry.snapshot, entry.includeGlobalState, entry.partial, state, indices, entry.startTime, repositoryStateId, shards,
@@ -318,6 +356,11 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
             return false;
         }
 
+        /**
+         * 从传入的所有快照状态中找到waiting的 并存储到列表中
+         * @param shards
+         * @return
+         */
         private ImmutableOpenMap<String, List<ShardId>> findWaitingIndices(ImmutableOpenMap<ShardId, ShardSnapshotStatus> shards) {
             Map<String, List<ShardId>> waitingIndicesMap = new HashMap<>();
             for (ObjectObjectCursor<ShardId, ShardSnapshotStatus> entry : shards) {
@@ -341,6 +384,7 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
      *
      * @param shards list of shard statuses
      * @return true if all shards have completed (either successfully or failed), false otherwise
+     * 此时是否所有快照都已经完成
      */
     public static boolean completed(ObjectContainer<ShardSnapshotStatus> shards) {
         for (ObjectCursor<ShardSnapshotStatus> status : shards) {
@@ -358,6 +402,9 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
         private final ShardState state;
         private final String nodeId;
 
+        /**
+         * 该分片的gen
+         */
         @Nullable
         private final String generation;
 

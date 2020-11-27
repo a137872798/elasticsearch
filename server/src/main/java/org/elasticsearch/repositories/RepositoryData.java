@@ -92,7 +92,7 @@ public final class RepositoryData {
     private final Map<String, IndexId> indices;
     /**
      * The snapshots that each index belongs to.
-     * 记录每个索引下的有快照
+     * 管理每个索引下面生成的快照
      */
     private final Map<IndexId, List<SnapshotId>> indexSnapshots;
 
@@ -193,7 +193,8 @@ public final class RepositoryData {
         return indexSnapshots.entrySet().stream()
             .filter(entry -> {
                 final Collection<SnapshotId> existingIds = entry.getValue();
-                // TODO 这种情况是啥意思
+                // 代表这个索引下所有的分片都要被删除
+                // TODO ???
                 if (snapshotIds.containsAll(existingIds)) {
                     return existingIds.size() > snapshotIds.size();
                 }
@@ -264,15 +265,15 @@ public final class RepositoryData {
     /**
      * Remove snapshots and remove any indices that no longer exist in the repository due to the deletion of the snapshots.
      *
-     * @param snapshots               Snapshot ids to remove    避免这些快照继续被访问
+     * @param snapshots               Snapshot ids to remove    本次被删除的快照
      * @param updatedShardGenerations Shard generations that changed as a result of removing the snapshot.
      *                                The {@code String[]} passed for each {@link IndexId} contains the new shard generation id for each
-     *                                changed shard indexed by its shardId
-     *                                某次删除操作中涉及到了哪个 indexId shardId 并且相关的gen是多少  (删除操作是选择生成一个新文件 而不是修改原文件内容)
+     *                                changed shard indexed by its shardId     每次相关的所有分片 并且因为删除快照而生成的新的gen
+     *
      */
     public RepositoryData removeSnapshots(final Collection<SnapshotId> snapshots, final ShardGenerations updatedShardGenerations) {
 
-        // 此时需要保留的快照
+        // 将本次删除的快照id移除
         Map<String, SnapshotId> newSnapshotIds = snapshotIds.values().stream().filter(Predicate.not(snapshots::contains))
             .collect(Collectors.toMap(SnapshotId::getUUID, Function.identity()));
         if (newSnapshotIds.size() != snapshotIds.size() - snapshots.size()) {
@@ -364,6 +365,7 @@ public final class RepositoryData {
     /**
      * Resolve the given index names to index ids, creating new index ids for
      * new indices in the repository.
+     * 将一组索引包装成 indexId 后返回  如果indexName之前已经存在 复用indexId 否则创建一个新的indexId
      */
     public List<IndexId> resolveNewIndices(final List<String> indicesToResolve) {
         List<IndexId> snapshotIndices = new ArrayList<>();

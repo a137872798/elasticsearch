@@ -38,6 +38,8 @@ import java.io.IOException;
 
 /**
  * Transport action for create snapshot operation
+ * 创建快照的操作  这个也要求必须在leader节点上执行吗
+ * 快照本身是存储在 Repository内部的
  */
 public class TransportCreateSnapshotAction extends TransportMasterNodeAction<CreateSnapshotRequest, CreateSnapshotResponse> {
     private final SnapshotsService snapshotsService;
@@ -61,6 +63,12 @@ public class TransportCreateSnapshotAction extends TransportMasterNodeAction<Cre
         return new CreateSnapshotResponse(in);
     }
 
+    /**
+     * 创建快照的 block级别是 METADATA_READ
+     * @param request
+     * @param state
+     * @return
+     */
     @Override
     protected ClusterBlockException checkBlock(CreateSnapshotRequest request, ClusterState state) {
         // We only check metadata block, as we want to snapshot closed indices (which have a read block)
@@ -74,9 +82,11 @@ public class TransportCreateSnapshotAction extends TransportMasterNodeAction<Cre
     @Override
     protected void masterOperation(Task task, final CreateSnapshotRequest request, ClusterState state,
                                    final ActionListener<CreateSnapshotResponse> listener) {
+        // 本次请求只会在处理完毕时才收到响应结果
         if (request.waitForCompletion()) {
             snapshotsService.executeSnapshot(request, ActionListener.map(listener, CreateSnapshotResponse::new));
         } else {
+            // 当成功创建快照任务后 就会触发回调
             snapshotsService.createSnapshot(request, ActionListener.map(listener, snapshot -> new CreateSnapshotResponse()));
         }
     }

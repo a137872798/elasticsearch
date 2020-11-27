@@ -148,7 +148,7 @@ public class TransportClusterUpdateSettingsAction extends
                     // We're about to send a second update task, so we need to check if we're still the elected master
                     // For example the minimum_master_node could have been breached and we're no longer elected master,
                     // so we should *not* execute the reroute.
-                    // 当本节点不再是 leader后 不需要处理重路由了  但是本次配置应该已经更新成功了(比如 updateSettingsAcked为true)
+                    // 当本节点不再是 leader后 已经没有职责处理重路由了  但是本次配置不一定失败(比如 updateSettingsAcked为true)
                     if (!clusterService.state().nodes().isLocalNodeElectedMaster()) {
                         logger.debug("Skipping reroute after cluster update settings, because node is no longer master");
                         listener.onResponse(new ClusterUpdateSettingsResponse(updateSettingsAcked, updater.getTransientUpdates(),
@@ -191,6 +191,13 @@ public class TransportClusterUpdateSettingsAction extends
                                 listener.onFailure(new ElasticsearchException("reroute after update settings failed", e));
                             }
 
+                            /**
+                             * 当配置更新后 尝试进行重路由 并将最新的集群状态发布到集群中  在reroute中可能某些shard的分配信息已经发生了变化
+                             * 比如从 unassigned 变成了 init etc..
+                             * TODO 此时还没有看到数据的恢复 同步 等等
+                             * @param currentState
+                             * @return
+                             */
                             @Override
                             public ClusterState execute(final ClusterState currentState) {
                                 // now, reroute in case things that require it changed (e.g. number of replicas)

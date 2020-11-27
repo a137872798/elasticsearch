@@ -55,7 +55,7 @@ public class BlobStoreIndexShardSnapshots implements Iterable<SnapshotFiles>, To
     private final Map<String, List<FileInfo>> physicalFiles;
 
     /**
-     * 使用一组此时可用的快照文件进行初始化
+     * 使用一组快照相关的文件进行初始化
      * @param shardSnapshots
      */
     public BlobStoreIndexShardSnapshots(List<SnapshotFiles> shardSnapshots) {

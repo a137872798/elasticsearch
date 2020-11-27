@@ -95,6 +95,7 @@ public class ClusterChangedEvent {
     /**
      * Returns <code>true</code> iff the routing table has changed for the given index.
      * Note that this is an object reference equality test, not an equals test.
+     * 本次该index对应的路由信息是否发生了变化
      */
     public boolean indexRoutingTableChanged(String index) {
         Objects.requireNonNull(index, "index must not be null");
