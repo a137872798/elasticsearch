@@ -37,6 +37,7 @@ import static org.elasticsearch.rest.RestRequest.Method.GET;
 
 /**
  * Returns repository information
+ * 获取当前集群中所有的repository信息
  */
 public class RestGetRepositoriesAction extends BaseRestHandler {
 

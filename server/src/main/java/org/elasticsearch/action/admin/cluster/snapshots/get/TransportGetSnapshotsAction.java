@@ -73,6 +73,7 @@ import static java.util.Collections.unmodifiableList;
 
 /**
  * Transport Action for get snapshots operation
+ * 从leader节点上获取指定的快照信息
  */
 public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSnapshotsRequest, GetSnapshotsResponse> {
 
@@ -109,14 +110,25 @@ public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSn
                                    final ActionListener<GetSnapshotsResponse> listener) {
         final String[] repositories = request.repositories();
         final SnapshotsInProgress snapshotsInProgress = state.custom(SnapshotsInProgress.TYPE);
+        // 先往本地节点发起请求 会走localChannel 不通过网络请求   先获取所有 repository信息
         transportService.sendChildRequest(transportService.getLocalNode(), GetRepositoriesAction.NAME,
             new GetRepositoriesRequest(repositories), task, TransportRequestOptions.EMPTY,
             new ActionListenerResponseHandler<>(
+                // 在这里处理 repositories的结果
                 ActionListener.wrap(response -> getMultipleReposSnapshotInfo(snapshotsInProgress, response.repositories(),
                     request.snapshots(), request.ignoreUnavailable(), request.verbose(), listener), listener::onFailure),
                 GetRepositoriesResponse::new));
     }
 
+    /**
+     *
+     * @param snapshotsInProgress  当前clusterState下的 快照描述信息
+     * @param repos    当前集群下所有repository对应的元数据
+     * @param snapshots  本次要获取的快照信息对应的id
+     * @param ignoreUnavailable   是否忽略不可用的快照
+     * @param verbose    是否要获取详细信息
+     * @param listener
+     */
     private void getMultipleReposSnapshotInfo(@Nullable SnapshotsInProgress snapshotsInProgress, List<RepositoryMetadata> repos,
                                               String[] snapshots, boolean ignoreUnavailable, boolean verbose,
                                               ActionListener<GetSnapshotsResponse> listener) {
@@ -133,6 +145,7 @@ public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSn
                         }), repos.size());
 
         // run concurrently for all repos on GENERIC thread pool
+        // 以repository为维度 并发执行任务
         for (final RepositoryMetadata repo : repos) {
             final String repoName = repo.name();
             threadPool.generic().execute(ActionRunnable.wrap(
@@ -147,10 +160,22 @@ public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSn
         }
     }
 
+    /**
+     * 从每个repository下获取相关的快照信息
+     * @param snapshotsInProgress
+     * @param repo
+     * @param snapshots
+     * @param ignoreUnavailable
+     * @param verbose
+     * @param listener
+     */
     private void getSingleRepoSnapshotInfo(@Nullable SnapshotsInProgress snapshotsInProgress, String repo, String[] snapshots,
                                            boolean ignoreUnavailable, boolean verbose, ActionListener<List<SnapshotInfo>> listener) {
         final Map<String, SnapshotId> allSnapshotIds = new HashMap<>();
+        // 这个是存储当前所有快照的
         final List<SnapshotInfo> currentSnapshots = new ArrayList<>();
+
+        // 遍历该repository下所有的快照
         for (SnapshotInfo snapshotInfo : sortedCurrentSnapshots(snapshotsInProgress, repo)) {
             SnapshotId snapshotId = snapshotInfo.snapshotId();
             allSnapshotIds.put(snapshotId.getName(), snapshotId);
@@ -158,9 +183,12 @@ public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSn
         }
 
         final StepListener<RepositoryData> repositoryDataListener = new StepListener<>();
+        // 如果只需要获取当前所有快照信息  应该是这样的 snapshot.Entry内部的快照不一定已经写入到 repositoryData中了
+        // 如果只需要获取此时最新的信息 那么直接从内存中获取就可以 也就是snapshot.Entry 的数据 所以触发监听器时 没有传入 repositoryData
         if (isCurrentSnapshotsOnly(snapshots)) {
             repositoryDataListener.onResponse(null);
         } else {
+            // 不止 "_current" 那么还需要其他快照信息  为了数据尽可能完整 就需要从磁盘读取上一次持久化的repositoryData
             repositoriesService.getRepositoryData(repo, repositoryDataListener);
         }
 
@@ -175,9 +203,11 @@ public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSn
      * @param snapshotsInProgress snapshots in progress in the cluster state
      * @param repositoryName repository name
      * @return list of snapshots
+     * 获取所有关联的快照信息
      */
     private static List<SnapshotInfo> sortedCurrentSnapshots(@Nullable SnapshotsInProgress snapshotsInProgress, String repositoryName) {
         List<SnapshotInfo> snapshotList = new ArrayList<>();
+        // 找到repository下所有的快照信息
         List<SnapshotsInProgress.Entry> entries =
             SnapshotsService.currentSnapshots(snapshotsInProgress, repositoryName, Collections.emptyList());
         for (SnapshotsInProgress.Entry entry : entries) {
@@ -188,9 +218,23 @@ public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSn
     }
 
 
+    /**
+     * 从当前所有快照数据中 返回指定的快照信息
+     * @param snapshotsInProgress
+     * @param repo   此时指定的repository
+     * @param snapshots    指定的快照
+     * @param ignoreUnavailable
+     * @param verbose
+     * @param allSnapshotIds
+     * @param currentSnapshots
+     * @param repositoryData  此时最新的仓库元数据  如果没有传入 就代表仅获取 current的快照
+     * @return
+     */
     private List<SnapshotInfo> loadSnapshotInfos(@Nullable SnapshotsInProgress snapshotsInProgress, String repo, String[] snapshots,
                                                  boolean ignoreUnavailable, boolean verbose, Map<String, SnapshotId> allSnapshotIds,
                                                  List<SnapshotInfo> currentSnapshots, @Nullable RepositoryData repositoryData) {
+
+        // 磁盘中存储的数据会加入到另一个容器中
         if (repositoryData != null) {
             for (SnapshotId snapshotId : repositoryData.getSnapshotIds()) {
                 allSnapshotIds.put(snapshotId.getName(), snapshotId);
@@ -198,10 +242,12 @@ public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSn
         }
 
         final Set<SnapshotId> toResolve = new HashSet<>();
+        // 如果是 _current 将所有的快照id设置到 toResolve中
         if (isAllSnapshots(snapshots)) {
             toResolve.addAll(allSnapshotIds.values());
         } else {
             for (String snapshotOrPattern : snapshots) {
+                // 当需要获取current的快照  就将 current容器中的所有快照插入
                 if (GetSnapshotsRequest.CURRENT_SNAPSHOT.equalsIgnoreCase(snapshotOrPattern)) {
                     toResolve.addAll(currentSnapshots.stream().map(SnapshotInfo::snapshotId).collect(Collectors.toList()));
                 } else if (Regex.isSimpleMatchPattern(snapshotOrPattern) == false) {

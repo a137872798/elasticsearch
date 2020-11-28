@@ -248,7 +248,7 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
      *
      * @param request  unregister repository request
      * @param listener unregister repository listener
-     *                 注销某个存储实例
+     *                 将某个repository 从clusterState中移除
      */
     public void unregisterRepository(final DeleteRepositoryRequest request, final ActionListener<ClusterStateUpdateResponse> listener) {
         clusterService.submitStateUpdateTask("delete_repository [" + request.name() + "]",
@@ -270,6 +270,8 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                     Metadata.Builder mdBuilder = Metadata.builder(currentState.metadata());
                     RepositoriesMetadata repositories = metadata.custom(RepositoriesMetadata.TYPE);
                     if (repositories != null && repositories.repositories().size() > 0) {
+
+                        // 代表需要保留的repository
                         List<RepositoryMetadata> repositoriesMetadata = new ArrayList<>(repositories.repositories().size());
                         boolean changed = false;
                         for (RepositoryMetadata repositoryMetadata : repositories.repositories()) {
@@ -287,14 +289,19 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                             return ClusterState.builder(currentState).metadata(mdBuilder).build();
                         }
                     }
-                    // 如果传入的是* 不进行处理
+                    // 代表没有找到准备删除的 repository  如果本次没有明确指定 那么不做处理
                     if (Regex.isMatchAllPattern(request.name())) { // we use a wildcard so we don't barf if it's not present.
                         return currentState;
                     }
-                    // 如果向注销的存储并没有存在于  clusterState中 抛出异常
+                    // 代表指定的repository没有存在于clusterState中 抛出异常
                     throw new RepositoryMissingException(request.name());
                 }
 
+                /**
+                 * 只有 data/master 节点需要响应结果
+                 * @param discoveryNode a node
+                 * @return
+                 */
                 @Override
                 public boolean mustAck(DiscoveryNode discoveryNode) {
                     // repository was created on both master and data nodes

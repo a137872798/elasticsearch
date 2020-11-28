@@ -79,6 +79,14 @@ public class TransportCreateSnapshotAction extends TransportMasterNodeAction<Cre
         return null;
     }
 
+    /**
+     * 这里就是创建了一个 snapshot.Entry 存储到 clusterState中 并且根据当下所有shard的情况 设置对应的state的状态   但是并没有看到快照真正执行的逻辑 应该是有某个地方在检测
+     * 并等待直到所有shard state都处于 started 后才真正开始快照任务吧
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     */
     @Override
     protected void masterOperation(Task task, final CreateSnapshotRequest request, ClusterState state,
                                    final ActionListener<CreateSnapshotResponse> listener) {

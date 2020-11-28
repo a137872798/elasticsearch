@@ -34,6 +34,7 @@ import static org.elasticsearch.rest.RestRequest.Method.GET;
 
 /**
  * Returns information about snapshot
+ * 获取快照的请求
  */
 public class RestGetSnapshotsAction extends BaseRestHandler {
 

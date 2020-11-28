@@ -27,6 +27,9 @@ import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.transport.TransportService;
 
+/**
+ * 该请求没有要求必须在leader节点上
+ */
 public class TransportGetScriptLanguageAction extends HandledTransportAction<GetScriptLanguageRequest, GetScriptLanguageResponse> {
     private final ScriptService scriptService;
 

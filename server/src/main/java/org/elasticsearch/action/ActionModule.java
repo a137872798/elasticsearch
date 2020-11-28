@@ -529,12 +529,16 @@ public class ActionModule extends AbstractModule {
         actions.register(ClusterSearchShardsAction.INSTANCE, TransportClusterSearchShardsAction.class);
         actions.register(PendingClusterTasksAction.INSTANCE, TransportPendingClusterTasksAction.class);
         actions.register(PutRepositoryAction.INSTANCE, TransportPutRepositoryAction.class);
+        // 获取clusterState中的所有repository信息
         actions.register(GetRepositoriesAction.INSTANCE, TransportGetRepositoriesAction.class);
+        // 删除某个仓库的请求
         actions.register(DeleteRepositoryAction.INSTANCE, TransportDeleteRepositoryAction.class);
         actions.register(VerifyRepositoryAction.INSTANCE, TransportVerifyRepositoryAction.class);
         // 清理某个仓库的数据
         actions.register(CleanupRepositoryAction.INSTANCE, TransportCleanupRepositoryAction.class);
+        // 获取快照的请求
         actions.register(GetSnapshotsAction.INSTANCE, TransportGetSnapshotsAction.class);
+        // 删除某个快照
         actions.register(DeleteSnapshotAction.INSTANCE, TransportDeleteSnapshotAction.class);
         // 生成某个快照
         actions.register(CreateSnapshotAction.INSTANCE, TransportCreateSnapshotAction.class);
@@ -603,8 +607,11 @@ public class ActionModule extends AbstractModule {
         //Indexed scripts
         actions.register(PutStoredScriptAction.INSTANCE, TransportPutStoredScriptAction.class);
         actions.register(GetStoredScriptAction.INSTANCE, TransportGetStoredScriptAction.class);
+        // 删除某个存储的脚本
         actions.register(DeleteStoredScriptAction.INSTANCE, TransportDeleteStoredScriptAction.class);
+        // 获取脚本上下文的请求
         actions.register(GetScriptContextAction.INSTANCE, TransportGetScriptContextAction.class);
+        // 获取脚本服务使用的语言  这个语言不是指编程语言
         actions.register(GetScriptLanguageAction.INSTANCE, TransportGetScriptLanguageAction.class);
 
         actions.register(FieldCapabilitiesAction.INSTANCE, TransportFieldCapabilitiesAction.class);

@@ -31,6 +31,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取当前的脚本上下文
+ */
 public class RestGetScriptContextAction extends BaseRestHandler {
 
     @Override

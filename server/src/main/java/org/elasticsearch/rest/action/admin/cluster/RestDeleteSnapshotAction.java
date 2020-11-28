@@ -34,6 +34,7 @@ import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 
 /**
  * Deletes a snapshot
+ * 删除某个快照
  */
 public class RestDeleteSnapshotAction extends BaseRestHandler {
 

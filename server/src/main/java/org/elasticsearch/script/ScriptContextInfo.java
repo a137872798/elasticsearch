@@ -44,18 +44,33 @@ import java.util.stream.Collectors;
 
 import static org.elasticsearch.common.xcontent.ConstructingObjectParser.constructorArg;
 
+/**
+ * 有关脚本上下文的核心信息
+ */
 public class ScriptContextInfo implements ToXContentObject, Writeable {
     public final String name;
+
+    /**
+     * ScriptContext 内部class的execute方法抽取出来后生成的对象
+     */
     public final ScriptMethodInfo execute;
+    /**
+     * 所有getXXX方法
+     */
     public final Set<ScriptMethodInfo> getters;
 
     private static final String NAME_FIELD = "name";
     private static final String METHODS_FIELD = "methods";
 
-    // ScriptService constructor
+    /**
+     *
+     * @param name
+     * @param clazz  ScriptContext 内部的核心类
+     */
     ScriptContextInfo(String name, Class<?> clazz) {
         this.name = name;
         this.execute = ScriptMethodInfo.executeFromContext(clazz);
+        // 找到所有get方法
         this.getters = Collections.unmodifiableSet(ScriptMethodInfo.gettersFromContext(clazz));
     }
 
@@ -176,8 +191,15 @@ public class ScriptContextInfo implements ToXContentObject, Writeable {
         return builder.endArray().endObject();
     }
 
+    /**
+     * 通过抽取 ScriptContext 内部核心class的 execute方法信息 生成该对象
+     */
     public static class ScriptMethodInfo implements ToXContentObject, Writeable {
         public final String name, returnType;
+
+        /**
+         * 包含了该方法内部参数的类型 以及名称
+         */
         public final List<ParameterInfo> parameters;
 
         static final String RETURN_TYPE_FIELD = "return_type";
@@ -305,8 +327,14 @@ public class ScriptContextInfo implements ToXContentObject, Writeable {
             }
         }
 
+        /**
+         * 从class 中抽取method信息 并包装成methodInfo对象
+         * @param clazz
+         * @return
+         */
         static ScriptMethodInfo executeFromContext(Class<?> clazz) {
             Method execute = null;
+            // 找到 execute方法
             String name = "execute";
 
             // See ScriptContext.findMethod
@@ -326,6 +354,7 @@ public class ScriptContextInfo implements ToXContentObject, Writeable {
             Class<?> returnTypeClazz = execute.getReturnType();
             String returnType = returnTypeClazz.getTypeName();
 
+            // 抽取参数信息 并包装成 info 对象
             Class<?>[] parameterTypes = execute.getParameterTypes();
             List<ParameterInfo> parameters = new ArrayList<>();
             if (parameterTypes.length > 0) {
@@ -366,6 +395,11 @@ public class ScriptContextInfo implements ToXContentObject, Writeable {
             return new ScriptMethodInfo(name, returnType, parameters);
         }
 
+        /**
+         * 找到所有getXXX方法
+         * @param clazz
+         * @return
+         */
         static Set<ScriptMethodInfo> gettersFromContext(Class<?> clazz) {
             // See ScriptClassInfo(PainlessLookup painlessLookup, Class<?> baseClass)
             HashSet<ScriptMethodInfo> getters = new HashSet<>();

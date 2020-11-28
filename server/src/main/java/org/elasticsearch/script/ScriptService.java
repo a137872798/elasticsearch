@@ -152,7 +152,7 @@ public class ScriptService implements Closeable, ClusterStateApplier {
         Setting.listSetting("script.allowed_contexts", Collections.emptyList(), Function.identity(), Setting.Property.NodeScope);
 
     /**
-     * 支持解析的脚本类型
+     * 对应 ScriptType
      */
     private final Set<String> typesAllowed;
     private final Set<String> contextsAllowed;
@@ -530,6 +530,12 @@ public class ScriptService implements Closeable, ClusterStateApplier {
         });
     }
 
+    /**
+     * 删除某些存储的脚本
+     * @param clusterService
+     * @param request
+     * @param listener
+     */
     public void deleteStoredScript(ClusterService clusterService, DeleteStoredScriptRequest request,
                                    ActionListener<AcknowledgedResponse> listener) {
         clusterService.submitStateUpdateTask("delete-script-" + request.id(),
@@ -561,14 +567,23 @@ public class ScriptService implements Closeable, ClusterStateApplier {
         }
     }
 
+    /**
+     * 获取脚本服务当前所有上下文信息
+     * @return
+     */
     public Set<ScriptContextInfo> getContextInfos() {
         Set<ScriptContextInfo> infos = new HashSet<ScriptContextInfo>(contexts.size());
         for (ScriptContext<?> context : contexts.values()) {
+            // 抽取context的核心信息 生成contextInfo 对象
             infos.add(new ScriptContextInfo(context.name, context.instanceClazz));
         }
         return infos;
     }
 
+    /**
+     * 获取脚本服务使用的语言类型
+     * @return
+     */
     public ScriptLanguagesInfo getScriptLanguages() {
         Set<String> types = typesAllowed;
         if (types == null) {

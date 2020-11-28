@@ -39,9 +39,13 @@ import java.io.IOException;
 
 /**
  * Transport action for unregister repository operation
+ * 仅支持在leader节点上执行任务  删除clusterState中的某个repository数据
  */
 public class TransportDeleteRepositoryAction extends TransportMasterNodeAction<DeleteRepositoryRequest, AcknowledgedResponse> {
 
+    /**
+     * 存储服务
+     */
     private final RepositoriesService repositoriesService;
 
     @Inject

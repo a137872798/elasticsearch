@@ -33,6 +33,7 @@ import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 
 /**
  * Unregisters a repository
+ * 删除某个repository的请求
  */
 public class RestDeleteRepositoryAction extends BaseRestHandler {
 

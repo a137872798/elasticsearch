@@ -28,8 +28,14 @@ import java.io.IOException;
 
 import static org.elasticsearch.action.ValidateActions.addValidationError;
 
+/**
+ * 删除脚本的请求
+ */
 public class DeleteStoredScriptRequest extends AcknowledgedRequest<DeleteStoredScriptRequest> {
 
+    /**
+     * 每个脚本有自己的id
+     */
     private String id;
 
     public DeleteStoredScriptRequest(StreamInput in) throws IOException {

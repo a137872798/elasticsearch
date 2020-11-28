@@ -56,6 +56,7 @@ import java.lang.reflect.Method;
  * For example, to check if a variable {@code doc} is used, a method {@code boolean needsDoc()} should be added.
  * If the variable name starts with an underscore, for example, {@code _score}, the needs method would
  * be {@code boolean needs_score()}.
+ * 脚本上下文 看到的都是实例 实例类 等等信息
  */
 public final class ScriptContext<FactoryType> {
 

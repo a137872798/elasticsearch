@@ -47,6 +47,8 @@ import java.util.Set;
 
 /**
  * Transport action for get repositories operation
+ * 获取此时所有repository信息
+ * 该任务并非一定要在leader节点执行 如果req中携带了 local=true  则可以在当前节点执行
  */
 public class TransportGetRepositoriesAction extends TransportMasterNodeReadAction<GetRepositoriesRequest, GetRepositoriesResponse> {
 
@@ -73,6 +75,13 @@ public class TransportGetRepositoriesAction extends TransportMasterNodeReadActio
         return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA_READ);
     }
 
+    /**
+     * 处理获取repository信息的请求
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     */
     @Override
     protected void masterOperation(Task task, final GetRepositoriesRequest request, ClusterState state,
                                    final ActionListener<GetRepositoriesResponse> listener) {
@@ -85,6 +94,7 @@ public class TransportGetRepositoriesAction extends TransportMasterNodeReadActio
                 listener.onResponse(new GetRepositoriesResponse(new RepositoriesMetadata(Collections.emptyList())));
             }
         } else {
+            // 这里不涉及clusterState的更新
             if (repositories != null) {
                 Set<String> repositoriesToGet = new LinkedHashSet<>(); // to keep insertion order
                 for (String repositoryOrPattern : request.repositories()) {

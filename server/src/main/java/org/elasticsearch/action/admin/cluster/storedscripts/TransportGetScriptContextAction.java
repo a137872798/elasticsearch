@@ -29,6 +29,9 @@ import org.elasticsearch.transport.TransportService;
 
 import java.util.Set;
 
+/**
+ * 获取脚本上下文请求
+ */
 public class TransportGetScriptContextAction extends HandledTransportAction<GetScriptContextRequest, GetScriptContextResponse> {
 
     private final ScriptService scriptService;
@@ -41,6 +44,7 @@ public class TransportGetScriptContextAction extends HandledTransportAction<GetS
 
     @Override
     protected void doExecute(Task task, GetScriptContextRequest request, ActionListener<GetScriptContextResponse> listener) {
+        // 将此时所有 scriptContext 内部的class的相关信息抽取出来 并返回
         Set<ScriptContextInfo> contexts = scriptService.getContextInfos();
         listener.onResponse(new GetScriptContextResponse(contexts));
     }

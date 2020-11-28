@@ -29,6 +29,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 
+/**
+ *
+ */
 public class RestDeleteStoredScriptAction extends BaseRestHandler {
 
     @Override

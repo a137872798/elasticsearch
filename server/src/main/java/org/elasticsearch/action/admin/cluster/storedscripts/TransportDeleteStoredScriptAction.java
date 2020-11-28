@@ -37,8 +37,14 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 删除某个存储的脚本
+ */
 public class TransportDeleteStoredScriptAction extends TransportMasterNodeAction<DeleteStoredScriptRequest, AcknowledgedResponse> {
 
+    /**
+     * 脚本服务
+     */
     private final ScriptService scriptService;
 
     @Inject

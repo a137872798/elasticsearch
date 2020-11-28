@@ -45,6 +45,7 @@ import java.util.Map;
 /**
  * {@link ScriptMetadata} is used to store user-defined scripts
  * as part of the {@link ClusterState} using only an id as the key.
+ * 存储了有关脚本信息的元数据
  */
 public final class ScriptMetadata implements Metadata.Custom, Writeable, ToXContentFragment {
 
@@ -148,6 +149,7 @@ public final class ScriptMetadata implements Metadata.Custom, Writeable, ToXCont
     /**
      * Convenience method to build and return a new
      * {@link ScriptMetadata} deleting the specified stored script.
+     * 从之前的元数据中清理id为XXX的某个脚本后 重新构建并返回
      */
     static ScriptMetadata deleteStoredScript(ScriptMetadata previous, String id) {
         Builder builder = new ScriptMetadata.Builder(previous);

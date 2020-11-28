@@ -677,6 +677,9 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
         INIT((byte) 0, false, false),
         SUCCESS((byte) 2, true, false),
         FAILED((byte) 3, true, true),
+        /**
+         * 代表对应的快照任务被强制关闭了
+         */
         ABORTED((byte) 4, false, true),
         MISSING((byte) 5, true, true),
         WAITING((byte) 6, false, false);
