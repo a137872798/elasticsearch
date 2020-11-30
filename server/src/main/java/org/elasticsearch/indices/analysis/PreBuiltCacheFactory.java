@@ -26,6 +26,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * 预建的缓存工厂
+ */
 public class PreBuiltCacheFactory {
 
     /**
@@ -84,6 +87,8 @@ public class PreBuiltCacheFactory {
             return model == null ? Collections.emptySet() : Collections.singleton(model);
         }
     }
+
+    // 分别以 ES.VERSION/LUCENE.VERSION 作为缓存键的缓存对象
 
     /**
      * This cache contains one version for each elasticsearch version object

@@ -37,6 +37,10 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 插入一个新的脚本  只在leader节点执行
+ * 脚本服务都是只要在leader节点处理就可以吗
+ */
 public class TransportPutStoredScriptAction extends TransportMasterNodeAction<PutStoredScriptRequest, AcknowledgedResponse> {
 
     private final ScriptService scriptService;

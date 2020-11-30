@@ -32,6 +32,9 @@ import java.util.List;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 分析某个index下的文本信息
+ */
 public class RestAnalyzeAction extends BaseRestHandler {
 
     public static class Fields {

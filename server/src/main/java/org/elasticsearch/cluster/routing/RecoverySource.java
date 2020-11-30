@@ -252,6 +252,10 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
          * 快照对象主要就是存在一个仓库属性 以及一个 snapshotId 属性
          */
         private final Snapshot snapshot;
+
+        /**
+         * 代表本次会恢复哪个index
+         */
         private final IndexId index;
         private final Version version;
 

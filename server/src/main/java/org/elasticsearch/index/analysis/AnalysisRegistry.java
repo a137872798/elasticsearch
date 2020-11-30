@@ -53,6 +53,7 @@ import static java.util.Collections.unmodifiableMap;
 /**
  * An internal registry for tokenizer, token filter, char filter and analyzer.
  * This class exists per node and allows to create per-index {@link IndexAnalyzers} via {@link #build(IndexSettings)}
+ * 内部将各个组件拆分开 可以根据用户的需要 组合出分词器
  */
 public final class AnalysisRegistry implements Closeable {
     public static final String INDEX_ANALYSIS_CHAR_FILTER = "index.analysis.char_filter";
@@ -73,6 +74,20 @@ public final class AnalysisRegistry implements Closeable {
     private final Map<String, AnalysisProvider<AnalyzerProvider<?>>> analyzers;
     private final Map<String, AnalysisProvider<AnalyzerProvider<?>>> normalizers;
 
+    /**
+     *
+     * @param environment
+     * @param charFilters
+     * @param tokenFilters
+     * @param tokenizers
+     * @param analyzers
+     * @param normalizers
+     * 某些组件可能是在生成其他组件前执行的
+     * @param preConfiguredCharFilters
+     * @param preConfiguredTokenFilters
+     * @param preConfiguredTokenizers
+     * @param preConfiguredAnalyzers
+     */
     public AnalysisRegistry(Environment environment,
                             Map<String, AnalysisProvider<CharFilterFactory>> charFilters,
                             Map<String, AnalysisProvider<TokenFilterFactory>> tokenFilters,
@@ -110,6 +125,18 @@ public final class AnalysisRegistry implements Closeable {
         Settings.EMPTY
     );
 
+    /**
+     * 获取组装后的工厂
+     * @param settings
+     * @param nod
+     * @param componentType
+     * @param globalComponentProvider
+     * @param prebuiltComponentProvider
+     * @param indexComponentProvider
+     * @param <T>
+     * @return
+     * @throws IOException
+     */
     private <T> T getComponentFactory(IndexSettings settings, NameOrDefinition nod,
                                       String componentType,
                                       Function<String, AnalysisProvider<T>> globalComponentProvider,
@@ -216,6 +243,7 @@ public final class AnalysisRegistry implements Closeable {
      * Creates a custom analyzer from a collection of {@link NameOrDefinition} specifications for each component
      *
      * Callers are responsible for closing the returned Analyzer
+     * 由外部指定的参数封装一个分词器对象
      */
     public NamedAnalyzer buildCustomAnalyzer(IndexSettings indexSettings, boolean normalizer, NameOrDefinition tokenizer,
                                              List<NameOrDefinition> charFilters, List<NameOrDefinition> tokenFilters) throws IOException {
@@ -462,6 +490,9 @@ public final class AnalysisRegistry implements Closeable {
         return type;
     }
 
+    /**
+     * 某些相关的组件属于 prebuilt
+     */
     private static class PrebuiltAnalysis implements Closeable {
 
         final Map<String, AnalysisProvider<AnalyzerProvider<?>>> analyzerProviderFactories;
@@ -469,6 +500,13 @@ public final class AnalysisRegistry implements Closeable {
         final Map<String, ? extends AnalysisProvider<TokenizerFactory>> preConfiguredTokenizers;
         final Map<String, ? extends AnalysisProvider<CharFilterFactory>> preConfiguredCharFilterFactories;
 
+        /**
+         * 将前置项封装成 一个Prebuilt对象
+         * @param preConfiguredCharFilters
+         * @param preConfiguredTokenFilters
+         * @param preConfiguredTokenizers
+         * @param preConfiguredAnalyzers
+         */
         private PrebuiltAnalysis(
                 Map<String, PreConfiguredCharFilter> preConfiguredCharFilters,
                 Map<String, PreConfiguredTokenFilter> preConfiguredTokenFilters,

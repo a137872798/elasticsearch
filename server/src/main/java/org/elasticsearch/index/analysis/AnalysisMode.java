@@ -77,6 +77,7 @@ public enum AnalysisMode {
      * <li>ALL.merge(SEARCH_TIME) == SEARCH_TIME</li>
      * <li>INDEX_TIME.merge(SEARCH_TIME) throws an {@link IllegalStateException}</li>
      * </ul>
+     * 可以看到在merge中 不允许同时出现 IndexTime/SearchTime
      */
     public abstract AnalysisMode merge(AnalysisMode other);
 }

@@ -39,6 +39,7 @@ import java.io.IOException;
 
 /**
  * Transport action for register repository operation
+ * 添加一个新的仓库
  */
 public class TransportPutRepositoryAction extends TransportMasterNodeAction<PutRepositoryRequest, AcknowledgedResponse> {
 

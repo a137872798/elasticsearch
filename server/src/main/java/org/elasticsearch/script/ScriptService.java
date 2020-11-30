@@ -152,11 +152,14 @@ public class ScriptService implements Closeable, ClusterStateApplier {
         Setting.listSetting("script.allowed_contexts", Collections.emptyList(), Function.identity(), Setting.Property.NodeScope);
 
     /**
-     * 对应 ScriptType
+     * 允许插入的脚本类型 如果为null 代表对插入的类型不做限制     分为inline/stored
      */
     private final Set<String> typesAllowed;
     private final Set<String> contextsAllowed;
 
+    /**
+     * key: language  总计有哪些语言 又是做什么的
+     */
     private final Map<String, ScriptEngine> engines;
     private final Map<String, ScriptContext<?>> contexts;
 
@@ -476,13 +479,26 @@ public class ScriptService implements Closeable, ClusterStateApplier {
         return source;
     }
 
+    /**
+     * 新增一个类型为stored的脚本对象
+     * @param clusterService
+     * @param request
+     * @param listener
+     */
     public void putStoredScript(ClusterService clusterService, PutStoredScriptRequest request,
                                 ActionListener<AcknowledgedResponse> listener) {
+        // 插入的数据体长度不能超过 maxSize
         if (request.content().length() > maxSizeInBytes) {
             throw new IllegalArgumentException("exceeded max allowed stored script size in bytes [" + maxSizeInBytes + "] with size [" +
                 request.content().length() + "] for script [" + request.id() + "]");
         }
 
+        /**
+         * 可以理解成一个简单的bean对象  包含3个属性
+         * private final String lang;
+         * private final String source;
+         * private final Map<String, String> options;
+         */
         StoredScriptSource source = request.source();
 
         if (isLangSupported(source.getLang()) == false) {
@@ -490,19 +506,25 @@ public class ScriptService implements Closeable, ClusterStateApplier {
         }
 
         try {
+            // 通过 lang 找到匹配的引擎
             ScriptEngine scriptEngine = getEngine(source.getLang());
 
+            // 如果当前不支持使用stored类型 抛出异常
             if (isTypeEnabled(ScriptType.STORED) == false) {
                 throw new IllegalArgumentException(
                     "cannot put [" + ScriptType.STORED + "] script, [" + ScriptType.STORED + "] scripts are not enabled");
+                // 如果上下文为空 也会抛出异常
             } else if (isAnyContextEnabled() == false) {
                 throw new IllegalArgumentException(
                     "cannot put [" + ScriptType.STORED + "] script, no script contexts are enabled");
+                // 如果请求中携带了上下文信息 就进行编译
             } else if (request.context() != null) {
+                // 这个上下文对象中 就包含了类型/方法/参数 等信息
                 ScriptContext<?> context = contexts.get(request.context());
                 if (context == null) {
                     throw new IllegalArgumentException("Unknown context [" + request.context() + "]");
                 }
+                // TODO
                 scriptEngine.compile(request.id(), source.getSource(), context, Collections.emptyMap());
             }
         } catch (ScriptException good) {
@@ -511,6 +533,7 @@ public class ScriptService implements Closeable, ClusterStateApplier {
             throw new IllegalArgumentException("failed to parse/compile stored script [" + request.id() + "]", exception);
         }
 
+        // 将当前集群状态的 脚本服务更新后发布到集群
         clusterService.submitStateUpdateTask("put-script-" + request.id(),
             new AckedClusterStateUpdateTask<AcknowledgedResponse>(request, listener) {
 
@@ -557,6 +580,12 @@ public class ScriptService implements Closeable, ClusterStateApplier {
         });
     }
 
+    /**
+     * 获取此时存储的脚本   就是一个很简单的map操作
+     * @param state
+     * @param request
+     * @return
+     */
     public StoredScriptSource getStoredScript(ClusterState state, GetStoredScriptRequest request) {
         ScriptMetadata scriptMetadata = state.metadata().custom(ScriptMetadata.TYPE);
 

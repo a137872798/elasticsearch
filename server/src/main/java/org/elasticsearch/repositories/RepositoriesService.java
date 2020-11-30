@@ -136,8 +136,10 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
 
         // 当新的集群状态发布到其他节点后
         final ActionListener<ClusterStateUpdateResponse> registrationListener;
+
+        // 这里只是在包装监听器
+        // 代表需要检测请求
         if (request.verify()) {
-            // 当失败时 直接触发第一个监听器 成功时触发第二个参数 第二个参数内部包含了第一个参数
             registrationListener = ActionListener.delegateFailure(listener, (delegatedListener, clusterStateUpdateResponse) -> {
                 // 代表本次通知到了所有的节点
                 if (clusterStateUpdateResponse.isAcknowledged()) {
@@ -164,7 +166,7 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
             return;
         }
 
-        // submitStateUpdateTask 该方法会将集群状态改变后 并发布到集群中  只有当成功写入到超过半数的 候选节点后才算发布成功
+        // 到了这里才开始处理  也就是将添加了 repositoryMetadata 的 ClusterState 发布到集群中
         clusterService.submitStateUpdateTask("put_repository [" + request.name() + "]",
             // 这里的ack监听器 可以先放一下
             new AckedClusterStateUpdateTask<>(request, registrationListener) {
@@ -181,9 +183,8 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                  */
                 @Override
                 public ClusterState execute(ClusterState currentState) {
-                    // 确保该存储实例此时还没有进程在使用 TODO 为什么需要这层保证 ???
+                    // 确保此时该repository 还没有被使用
                     ensureRepositoryNotInUse(currentState, request.name());
-                    // 该对象内部维护了各种元数据  自定义的元数据将会存储在 .custom() 中
                     Metadata metadata = currentState.metadata();
                     Metadata.Builder mdBuilder = Metadata.builder(currentState.metadata());
                     // 获取存储层元数据
@@ -206,7 +207,7 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                                     // Previous version is the same as this one no update is needed.
                                     return currentState;
                                 }
-                                // 使用新的metadata 覆盖之前的数据
+                                // 直接添加新的元数据 而不是存储旧的元数据
                                 found = true;
                                 repositoriesMetadata.add(newRepositoryMetadata);
                             } else {

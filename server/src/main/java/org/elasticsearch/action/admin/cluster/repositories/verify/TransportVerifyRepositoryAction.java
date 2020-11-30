@@ -39,6 +39,7 @@ import java.io.IOException;
 
 /**
  * Transport action for verifying repository operation
+ * 检测某个仓库能否正常运行
  */
 public class TransportVerifyRepositoryAction extends
     TransportMasterNodeAction<VerifyRepositoryRequest, VerifyRepositoryResponse> {

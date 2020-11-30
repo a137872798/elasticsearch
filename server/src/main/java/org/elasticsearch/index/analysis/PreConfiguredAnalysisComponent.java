@@ -33,8 +33,17 @@ import java.io.IOException;
  */
 public abstract class PreConfiguredAnalysisComponent<T> implements AnalysisModule.AnalysisProvider<T> {
     protected final String name;
+
+    /**
+     * 缓存对象
+     */
     protected final PreBuiltCacheFactory.PreBuiltCache<T> cache;
 
+    /**
+     * 根据不同的缓存策略生成缓存工厂
+     * @param name
+     * @param cache
+     */
     protected PreConfiguredAnalysisComponent(String name, PreBuiltCacheFactory.CachingStrategy cache) {
         this.name = name;
         this.cache = PreBuiltCacheFactory.getCache(cache);
@@ -48,6 +57,7 @@ public abstract class PreConfiguredAnalysisComponent<T> implements AnalysisModul
     @Override
     public T get(IndexSettings indexSettings, Environment environment, String name, Settings settings) throws IOException {
         Version versionCreated = Version.indexCreated(settings);
+        // 标准的缓存操作
         synchronized (this) {
             T factory = cache.get(versionCreated);
             if (factory == null) {

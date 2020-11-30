@@ -975,7 +975,7 @@ public class MetadataCreateIndexService {
         final int numberOfShards = IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.get(settings);
         // 获取副本数量
         final int numberOfReplicas = IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.get(settings);
-        // 得到总的分片数 (包含副本)
+        // 得到总的分片数 (shardId数量 * (primary + replica))
         final int shardsToCreate = numberOfShards * (1 + numberOfReplicas);
 
         final Optional<String> shardLimit = IndicesService.checkShardLimit(shardsToCreate, clusterState);

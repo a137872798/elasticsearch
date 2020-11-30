@@ -498,11 +498,14 @@ public class ActionModule extends AbstractModule {
         // 在处理RestReq的时候 具体命令的Action 会被映射成 TransportAction   不同的 TransportAction包含不同的filter
 
         actions.register(MainAction.INSTANCE, TransportMainAction.class);
+        // 获取节点信息
         actions.register(NodesInfoAction.INSTANCE, TransportNodesInfoAction.class);
+        // 获取远端集群信息
         actions.register(RemoteInfoAction.INSTANCE, TransportRemoteInfoAction.class);
         actions.register(NodesStatsAction.INSTANCE, TransportNodesStatsAction.class);
         // 获取节点内存使用量的请求
         actions.register(NodesUsageAction.INSTANCE, TransportNodesUsageAction.class);
+        // 获取活跃线程的请求
         actions.register(NodesHotThreadsAction.INSTANCE, TransportNodesHotThreadsAction.class);
         // 按照条件搜索一组任务
         actions.register(ListTasksAction.INSTANCE, TransportListTasksAction.class);
@@ -527,12 +530,15 @@ public class ActionModule extends AbstractModule {
         actions.register(ClusterRerouteAction.INSTANCE, TransportClusterRerouteAction.class);
         // 查询指定index下所有的分片
         actions.register(ClusterSearchShardsAction.INSTANCE, TransportClusterSearchShardsAction.class);
+        // 获取当前所有 pending任务
         actions.register(PendingClusterTasksAction.INSTANCE, TransportPendingClusterTasksAction.class);
+        // 添加一个新的仓库
         actions.register(PutRepositoryAction.INSTANCE, TransportPutRepositoryAction.class);
         // 获取clusterState中的所有repository信息
         actions.register(GetRepositoriesAction.INSTANCE, TransportGetRepositoriesAction.class);
         // 删除某个仓库的请求
         actions.register(DeleteRepositoryAction.INSTANCE, TransportDeleteRepositoryAction.class);
+        // 检测某个仓库
         actions.register(VerifyRepositoryAction.INSTANCE, TransportVerifyRepositoryAction.class);
         // 清理某个仓库的数据
         actions.register(CleanupRepositoryAction.INSTANCE, TransportCleanupRepositoryAction.class);
@@ -542,7 +548,9 @@ public class ActionModule extends AbstractModule {
         actions.register(DeleteSnapshotAction.INSTANCE, TransportDeleteSnapshotAction.class);
         // 生成某个快照
         actions.register(CreateSnapshotAction.INSTANCE, TransportCreateSnapshotAction.class);
+        // 恢复某个快照
         actions.register(RestoreSnapshotAction.INSTANCE, TransportRestoreSnapshotAction.class);
+        // 获取当前快照的状态
         actions.register(SnapshotsStatusAction.INSTANCE, TransportSnapshotsStatusAction.class);
 
         actions.register(IndicesStatsAction.INSTANCE, TransportIndicesStatsAction.class);
@@ -561,6 +569,7 @@ public class ActionModule extends AbstractModule {
         actions.register(PutMappingAction.INSTANCE, TransportPutMappingAction.class);
         actions.register(IndicesAliasesAction.INSTANCE, TransportIndicesAliasesAction.class);
         actions.register(UpdateSettingsAction.INSTANCE, TransportUpdateSettingsAction.class);
+        // 分析某个索引下的数据
         actions.register(AnalyzeAction.INSTANCE, TransportAnalyzeAction.class);
         actions.register(PutIndexTemplateAction.INSTANCE, TransportPutIndexTemplateAction.class);
         actions.register(GetIndexTemplatesAction.INSTANCE, TransportGetIndexTemplatesAction.class);
@@ -605,7 +614,9 @@ public class ActionModule extends AbstractModule {
         actions.register(NodesReloadSecureSettingsAction.INSTANCE, TransportNodesReloadSecureSettingsAction.class);
 
         //Indexed scripts
+        // 插入一个新的脚本
         actions.register(PutStoredScriptAction.INSTANCE, TransportPutStoredScriptAction.class);
+        // 获取存储的脚本
         actions.register(GetStoredScriptAction.INSTANCE, TransportGetStoredScriptAction.class);
         // 删除某个存储的脚本
         actions.register(DeleteStoredScriptAction.INSTANCE, TransportDeleteStoredScriptAction.class);
@@ -644,6 +655,7 @@ public class ActionModule extends AbstractModule {
 
         // internal actions
         actions.register(GlobalCheckpointSyncAction.TYPE, GlobalCheckpointSyncAction.class);
+        // 以node为级别获取快照信息
         actions.register(TransportNodesSnapshotsStatus.TYPE, TransportNodesSnapshotsStatus.class);
         actions.register(TransportNodesListGatewayMetaState.TYPE, TransportNodesListGatewayMetaState.class);
         actions.register(TransportVerifyShardBeforeCloseAction.TYPE, TransportVerifyShardBeforeCloseAction.class);

@@ -38,6 +38,9 @@ import org.elasticsearch.transport.TransportService;
 import java.io.IOException;
 import java.util.List;
 
+/**
+ * 获取leader节点对应的线程池中 所有待执行的任务  该任务比非一定要在leader节点执行 通过在req对象中设置 local_read属性就可以在当前节点运行
+ */
 public class TransportPendingClusterTasksAction
         extends TransportMasterNodeReadAction<PendingClusterTasksRequest, PendingClusterTasksResponse> {
 

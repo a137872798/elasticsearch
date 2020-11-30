@@ -34,7 +34,7 @@ public abstract class AbstractIndexAnalyzerProvider<T extends Analyzer> extends 
     /**
      * Constructs a new analyzer component, with the index name and its settings and the analyzer name.
      *
-     * @param indexSettings the settings and the name of the index
+     * @param indexSettings the settings and the name of the index   父级构造函数会通过indexSettings中的配置 获取index
      * @param name          The analyzer name
      */
     public AbstractIndexAnalyzerProvider(IndexSettings indexSettings, String name, Settings settings) {
@@ -51,6 +51,11 @@ public abstract class AbstractIndexAnalyzerProvider<T extends Analyzer> extends 
         return this.name;
     }
 
+    /**
+     * 应该是分词器的解析范围
+     * 总共有3种范围  Index Indices Global 
+     * @return
+     */
     @Override
     public final AnalyzerScope scope() {
         return AnalyzerScope.INDEX;

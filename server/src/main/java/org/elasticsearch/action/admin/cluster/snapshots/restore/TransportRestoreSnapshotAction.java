@@ -38,6 +38,7 @@ import java.io.IOException;
 
 /**
  * Transport action for restore snapshot operation
+ * 恢复快照数据
  */
 public class TransportRestoreSnapshotAction extends TransportMasterNodeAction<RestoreSnapshotRequest, RestoreSnapshotResponse> {
     private final RestoreService restoreService;
@@ -80,7 +81,9 @@ public class TransportRestoreSnapshotAction extends TransportMasterNodeAction<Re
                                    final ActionListener<RestoreSnapshotResponse> listener) {
         restoreService.restoreSnapshot(request, ActionListener.delegateFailure(listener,
             (delegatedListener, restoreCompletionResponse) -> {
+                // restoreInfo 不为null 代表之前分片的快照生成都失败了 就不需要处理了
                 if (restoreCompletionResponse.getRestoreInfo() == null && request.waitForCompletion()) {
+                    // 在 ClusterService上追加一个监听器 当感知到恢复操作完成后 触发监听器 返回res给客户端
                     RestoreClusterStateListener.createAndRegisterListener(clusterService, restoreCompletionResponse, delegatedListener);
                 } else {
                     delegatedListener.onResponse(new RestoreSnapshotResponse(restoreCompletionResponse.getRestoreInfo()));

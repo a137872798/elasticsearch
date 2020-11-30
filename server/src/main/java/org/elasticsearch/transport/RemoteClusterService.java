@@ -345,6 +345,10 @@ public final class RemoteClusterService extends RemoteClusterAware implements Cl
         IOUtils.close(remoteClusters.values());
     }
 
+    /**
+     * 将远端集群的信息返回
+     * @return
+     */
     public Stream<RemoteConnectionInfo> getRemoteConnectionInfos() {
         return remoteClusters.values().stream().map(RemoteClusterConnection::getConnectionInfo);
     }

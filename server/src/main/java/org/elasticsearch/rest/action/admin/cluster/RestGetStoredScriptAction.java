@@ -29,6 +29,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取存储的脚本
+ */
 public class RestGetStoredScriptAction extends BaseRestHandler {
 
     @Override

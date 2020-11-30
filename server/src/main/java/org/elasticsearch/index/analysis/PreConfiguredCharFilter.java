@@ -30,6 +30,7 @@ import java.util.function.Function;
 
 /**
  * Provides pre-configured, shared {@link CharFilter}s.
+ * 预构建 char过滤器
  */
 public class PreConfiguredCharFilter extends PreConfiguredAnalysisComponent<CharFilterFactory> {
     /**
@@ -69,6 +70,13 @@ public class PreConfiguredCharFilter extends PreConfiguredAnalysisComponent<Char
     private final boolean useFilterForMultitermQueries;
     private final BiFunction<Reader, Version, Reader> create;
 
+    /**
+     * 这里就是简单的赋值操作
+     * @param name
+     * @param cache
+     * @param useFilterForMultitermQueries
+     * @param create
+     */
     protected PreConfiguredCharFilter(String name, CachingStrategy cache, boolean useFilterForMultitermQueries,
             BiFunction<Reader, org.elasticsearch.Version, Reader> create) {
         super(name, cache);
@@ -99,6 +107,12 @@ public class PreConfiguredCharFilter extends PreConfiguredAnalysisComponent<Char
             };
         }
         return new CharFilterFactory() {
+
+            /**
+             * 通过create对象包装 Reader
+             * @param reader
+             * @return
+             */
             @Override
             public Reader create(Reader reader) {
                 return create.apply(reader, version);

@@ -69,6 +69,7 @@ import java.util.TreeMap;
 
 /**
  * Transport action used to execute analyze requests
+ * 指定某个索引 并进行分词
  */
 public class TransportAnalyzeAction extends TransportSingleShardAction<AnalyzeAction.Request, AnalyzeAction.Response> {
 
@@ -103,24 +104,49 @@ public class TransportAnalyzeAction extends TransportSingleShardAction<AnalyzeAc
         return null;
     }
 
+    /**
+     * 通过req中的索引信息 获取分片迭代器
+     * @param state
+     * @param request
+     * @return
+     */
     @Override
     protected ShardsIterator shards(ClusterState state, InternalRequest request) {
         if (request.concreteIndex() == null) {
             // just execute locally....
             return null;
         }
+        // 这里仅分析还活跃的分片
         return state.routingTable().index(request.concreteIndex()).randomAllActiveShardsIt();
     }
 
+    /**
+     * 处理每个分片委托给该方法
+     * @param request
+     * @param shardId
+     * @return
+     * @throws IOException
+     */
     @Override
     protected AnalyzeAction.Response shardOperation(AnalyzeAction.Request request, ShardId shardId) throws IOException {
+        // 找到管理该分片的索引服务
         final IndexService indexService = getIndexService(shardId);
+        // 如果不存在则使用全局配置
         final int maxTokenCount = indexService == null ?
             IndexSettings.MAX_TOKEN_COUNT_SETTING.get(settings) : indexService.getIndexSettings().getMaxTokenCount();
 
         return analyze(request, indicesService.getAnalysis(), indexService, maxTokenCount);
     }
 
+    /**
+     *
+     * @param request
+     * @param analysisRegistry  该对象内部管理了所有的分词器
+     * @param indexService
+     * @param maxTokenCount  最大token数 应该是代表分析过程中会使用到多少token
+     * @return
+     * @throws IOException
+     */
     public static AnalyzeAction.Response analyze(AnalyzeAction.Request request, AnalysisRegistry analysisRegistry,
                                           IndexService indexService, int maxTokenCount) throws IOException {
 
@@ -128,6 +154,7 @@ public class TransportAnalyzeAction extends TransportSingleShardAction<AnalyzeAc
 
         // First, we check to see if the request requires a custom analyzer.  If so, then we
         // need to build it and then close it after use.
+        // 根据请求和配置 组装一个自定义的分词器
         try (Analyzer analyzer = buildCustomAnalyzer(request, analysisRegistry, settings)) {
             if (analyzer != null) {
                 return analyze(request, analyzer, maxTokenCount);
@@ -194,9 +221,18 @@ public class TransportAnalyzeAction extends TransportSingleShardAction<AnalyzeAc
         }
     }
 
+    /**
+     * 组装一个分词器
+     * @param request
+     * @param analysisRegistry
+     * @param indexSettings
+     * @return
+     * @throws IOException
+     */
     private static Analyzer buildCustomAnalyzer(AnalyzeAction.Request request, AnalysisRegistry analysisRegistry,
                                                 IndexSettings indexSettings) throws IOException {
         if (request.tokenizer() != null) {
+            // 通过req中指定的各种组件 生成一个分词器对象
             return analysisRegistry.buildCustomAnalyzer(indexSettings, false,
                 request.tokenizer(), request.charFilters(), request.tokenFilters());
         } else if (((request.tokenFilters() != null && request.tokenFilters().size() > 0)

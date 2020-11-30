@@ -138,6 +138,7 @@ public final class ScriptMetadata implements Metadata.Custom, Writeable, ToXCont
     /**
      * Convenience method to build and return a new
      * {@link ScriptMetadata} adding the specified stored script.
+     * 为当前scriptMetadata 插入一个新的元数据信息
      */
     static ScriptMetadata putStoredScript(ScriptMetadata previous, String id, StoredScriptSource source) {
         Builder builder = new Builder(previous);

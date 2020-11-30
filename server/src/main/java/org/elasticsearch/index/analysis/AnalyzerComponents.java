@@ -31,9 +31,13 @@ import java.util.Map;
  */
 public final class AnalyzerComponents {
 
+    // 该对象内部包含了各种组件
     private final TokenizerFactory tokenizerFactory;
     private final CharFilterFactory[] charFilters;
     private final TokenFilterFactory[] tokenFilters;
+    /**
+     * 这个分词模式是多个 tokenFilter共同处理的结果
+     */
     private final AnalysisMode analysisMode;
 
     AnalyzerComponents(TokenizerFactory tokenizerFactory, CharFilterFactory[] charFilters,
@@ -49,6 +53,17 @@ public final class AnalyzerComponents {
         this.analysisMode = mode;
     }
 
+    /**
+     *
+     * @param name
+     * @param analyzerSettings   从配置中获取本次使用的相关组件名 并将它们包装成 AnalyzerComponents对象
+     *
+     * 以下3个参数提供了加载的所有组件
+     * @param tokenizers
+     * @param charFilters
+     * @param tokenFilters
+     * @return
+     */
     static AnalyzerComponents createComponents(String name, Settings analyzerSettings, final Map<String, TokenizerFactory> tokenizers,
             final Map<String, CharFilterFactory> charFilters, final Map<String, TokenFilterFactory> tokenFilters) {
         String tokenizerName = analyzerSettings.get("tokenizer");

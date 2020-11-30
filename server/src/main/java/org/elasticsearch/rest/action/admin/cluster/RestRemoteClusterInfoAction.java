@@ -30,6 +30,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取远端集群服务信息
+ */
 public final class RestRemoteClusterInfoAction extends BaseRestHandler {
 
     @Override

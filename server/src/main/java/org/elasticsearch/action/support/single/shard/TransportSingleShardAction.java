@@ -58,6 +58,7 @@ import static org.elasticsearch.action.support.TransportActions.isShardNotAvaila
  * A base class for operations that need to perform a read operation on a single shard copy. If the operation fails,
  * the read operation can be performed on other shard copies. Concrete implementations can provide their own list
  * of candidate shards to try the read operation on.
+ * 以分片为单位处理数据
  */
 public abstract class TransportSingleShardAction<Request extends SingleShardRequest<Request>, Response extends ActionResponse>
         extends TransportAction<Request, Response> {
@@ -83,9 +84,12 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
         this.transportShardAction = actionName + "[s]";
         this.executor = executor;
 
+        // 该操作是否会产生一系列的子操作
         if (!isSubAction()) {
             transportService.registerRequestHandler(actionName, ThreadPool.Names.SAME, request, new TransportHandler());
         }
+
+        // 一般的请求是通过ShardTransportHandler 来处理的
         transportService.registerRequestHandler(transportShardAction, ThreadPool.Names.SAME, request, new ShardTransportHandler());
     }
 
@@ -98,15 +102,36 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
         return false;
     }
 
+    /**
+     * 处理请求的入口
+     * @param task
+     * @param request
+     * @param listener
+     */
     @Override
     protected void doExecute(Task task, Request request, ActionListener<Response> listener) {
         new AsyncSingleAction(request, listener).start();
     }
 
+    /**
+     * 请求处理委托给该方法
+     * @param request
+     * @param shardId
+     * @return
+     * @throws IOException
+     */
     protected abstract Response shardOperation(Request request, ShardId shardId) throws IOException;
 
+    /**
+     *
+     * @param request
+     * @param shardId
+     * @param listener
+     * @throws IOException
+     */
     protected void asyncShardOperation(Request request, ShardId shardId, ActionListener<Response> listener) throws IOException {
         threadPool.executor(getExecutor(request, shardId))
+            // () -> shardOperation 结果会触发监听器  也就是先产生处理完请求 之后才通过监听器处理结果
             .execute(ActionRunnable.supply(listener, () -> shardOperation(request, shardId)));
     }
 
@@ -133,9 +158,15 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
     @Nullable
     protected abstract ShardsIterator shards(ClusterState state, InternalRequest request);
 
+    /**
+     * 以shard为单位处理数据
+     */
     class AsyncSingleAction {
 
         private final ActionListener<Response> listener;
+        /**
+         * 某个索引下的分片迭代器
+         */
         private final ShardsIterator shardIt;
         private final InternalRequest internalRequest;
         private final DiscoveryNodes nodes;
@@ -149,6 +180,7 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
                 logger.trace("executing [{}] based on cluster state version [{}]", request, clusterState.version());
             }
             nodes = clusterState.nodes();
+            // 检测本次操作是否被阻塞  是的话返回异常信息
             ClusterBlockException blockException = checkGlobalBlock(clusterState);
             if (blockException != null) {
                 throw blockException;
@@ -156,6 +188,7 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
 
             String concreteSingleIndex;
             if (resolveIndex(request)) {
+                // 代表明确声明了 只应该返回一个索引信息 否则抛出异常
                 concreteSingleIndex = indexNameExpressionResolver.concreteSingleIndex(clusterState, request).getName();
             } else {
                 concreteSingleIndex = request.index();
@@ -163,15 +196,21 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
             this.internalRequest = new InternalRequest(request, concreteSingleIndex);
             resolveRequest(clusterState, internalRequest);
 
+            // 检测针对该index的操作是否被阻塞
             blockException = checkRequestBlock(clusterState, internalRequest);
             if (blockException != null) {
                 throw blockException;
             }
 
+            // 获取索引下面的所有分片  clusterState在集群中应该是同步到所有节点的 所以在任何节点获取到的数据应该是一样的
             this.shardIt = shards(clusterState, internalRequest);
         }
 
+        /**
+         * 处理每个分片
+         */
         public void start() {
+            // 当没有解析出concreteSingleIndex时 会走该分支
             if (shardIt == null) {
                 // just execute it on the local node
                 final Writeable.Reader<Response> reader = getResponseReader();
@@ -210,8 +249,13 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
             perform(e);
         }
 
+        /**
+         * 串行处理每个分片
+         * @param currentFailure
+         */
         private void perform(@Nullable final Exception currentFailure) {
             Exception lastFailure = this.lastFailure;
+            // 当前没有异常 或者出现了非分片原因导致的异常时   更新异常信息
             if (lastFailure == null || TransportActions.isReadOverrideException(currentFailure)) {
                 lastFailure = currentFailure;
                 this.lastFailure = currentFailure;
@@ -233,6 +277,7 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
             if (node == null) {
                 onFailure(shardRouting, new NoShardAvailableActionException(shardRouting.shardId()));
             } else {
+                // 设置当前正在处理的分片id
                 internalRequest.request().internalShardId = shardRouting.shardId();
                 if (logger.isTraceEnabled()) {
                     logger.trace(
@@ -243,6 +288,7 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
                     );
                 }
                 final Writeable.Reader<Response> reader = getResponseReader();
+                // 将请求发送到 当前要处理的shard对应的node上
                 transportService.sendRequest(node, transportShardAction, internalRequest.request(),
                     new TransportResponseHandler<Response>() {
 
@@ -270,15 +316,23 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
         }
     }
 
+    /**
+     * 当在传输层收到结果时触发函数
+     * 当subAction 为 false时 将该对象注册到响应处理器上
+     */
     private class TransportHandler implements TransportRequestHandler<Request> {
 
         @Override
         public void messageReceived(Request request, final TransportChannel channel, Task task) throws Exception {
             // if we have a local operation, execute it on a thread since we don't spawn
+            // 这个操作会创建一个新的AsyncSingleAction 并进行处理
             execute(task, request, new ChannelActionListener<>(channel, actionName, request));
         }
     }
 
+    /**
+     * 处理 shard相关的请求
+     */
     private class ShardTransportHandler implements TransportRequestHandler<Request> {
 
         @Override
@@ -286,6 +340,7 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
             if (logger.isTraceEnabled()) {
                 logger.trace("executing [{}] on shard [{}]", request, request.internalShardId);
             }
+            // 收到请求的第一个节点会获取所有相关的分片 然后遍历并将当前正在处理的分片标记在req内部
             asyncShardOperation(request, request.internalShardId, new ChannelActionListener<>(channel, transportShardAction, request));
         }
     }

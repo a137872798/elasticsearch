@@ -33,6 +33,7 @@ import static org.elasticsearch.rest.RestRequest.Method.POST;
 
 /**
  * Restores a snapshot
+ * 针对某个快照进行恢复
  */
 public class RestRestoreSnapshotAction extends BaseRestHandler {
 

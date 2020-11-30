@@ -35,6 +35,9 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * 包含描述信息 便于从factory中获取想要的组件
+ */
 public class NameOrDefinition implements Writeable, ToXContentFragment {
     // exactly one of these two members is not null
     public final String name;

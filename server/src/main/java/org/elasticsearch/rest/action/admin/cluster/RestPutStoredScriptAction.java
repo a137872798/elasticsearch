@@ -33,6 +33,9 @@ import java.util.List;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
+/**
+ * 发起一个存储新的脚本数据的请求
+ */
 public class RestPutStoredScriptAction extends BaseRestHandler {
 
     @Override

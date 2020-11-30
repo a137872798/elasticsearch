@@ -35,6 +35,9 @@ import java.util.Set;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取节点的描述信息
+ */
 public class RestNodesInfoAction extends BaseRestHandler {
     static final Set<String> ALLOWED_METRICS = NodesInfoRequest.Metric.allMetrics();
 

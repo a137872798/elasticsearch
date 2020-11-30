@@ -21,6 +21,9 @@ package org.elasticsearch.index.analysis;
 
 import java.io.Reader;
 
+/**
+ * 有关针对分词后的单词进行过滤的工厂  这里只是定义了最基础的接口
+ */
 public interface CharFilterFactory {
 
     String name();

@@ -92,7 +92,7 @@ import static org.elasticsearch.cluster.SnapshotsInProgress.completed;
 /**
  * This service runs on data and master nodes and controls currently snapshotted shards on these nodes. It is responsible for
  * starting and stopping shard level snapshots
- * 快照分片服务
+ * 该对象是管理本节点上每次生成的快照与哪些shard有关
  */
 public class SnapshotShardsService extends AbstractLifecycleComponent implements ClusterStateListener, IndexEventListener {
     private static final Logger logger = LogManager.getLogger(SnapshotShardsService.class);
@@ -239,6 +239,7 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
      *
      * @param snapshot  snapshot
      * @return map of shard id to snapshot status
+     * 简单的map操作
      */
     public Map<ShardId, IndexShardSnapshotStatus> currentSnapshotShards(Snapshot snapshot) {
         synchronized (shardSnapshots) {

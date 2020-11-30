@@ -31,6 +31,9 @@ import java.util.List;
 import static org.elasticsearch.client.Requests.verifyRepositoryRequest;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 针对某个repository进行检测
+ */
 public class RestVerifyRepositoryAction extends BaseRestHandler {
 
     @Override

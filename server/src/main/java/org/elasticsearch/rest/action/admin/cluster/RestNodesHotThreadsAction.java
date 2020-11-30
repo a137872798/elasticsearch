@@ -37,6 +37,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取当前活跃线程的请求
+ */
 public class RestNodesHotThreadsAction extends BaseRestHandler {
 
     @Override

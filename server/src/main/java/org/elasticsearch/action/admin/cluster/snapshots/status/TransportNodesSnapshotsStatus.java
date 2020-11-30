@@ -52,6 +52,8 @@ import static java.util.Collections.unmodifiableMap;
 
 /**
  * Transport action that collects snapshot shard statuses from data nodes
+ * 以节点为单位 获取快照信息
+ * 现在是站在某个node的角度去处理请求
  */
 public class TransportNodesSnapshotsStatus extends TransportNodesAction<TransportNodesSnapshotsStatus.Request,
                                                                         TransportNodesSnapshotsStatus.NodesSnapshotStatus,
@@ -87,17 +89,25 @@ public class TransportNodesSnapshotsStatus extends TransportNodesAction<Transpor
         return new NodesSnapshotStatus(clusterService.getClusterName(), responses, failures);
     }
 
+    /**
+     * 在当前节点上获取快照信息
+     * @param request
+     * @param task
+     * @return
+     */
     @Override
     protected NodeSnapshotStatus nodeOperation(NodeRequest request, Task task) {
         Map<Snapshot, Map<ShardId, SnapshotIndexShardStatus>> snapshotMapBuilder = new HashMap<>();
         try {
             final String nodeId = clusterService.localNode().getId();
             for (Snapshot snapshot : request.snapshots) {
+                // 因为快照是跟着shard走的 而某些shard可能没有出现在该节点 所以shardsStatus可能为空
                 Map<ShardId, IndexShardSnapshotStatus> shardsStatus = snapshotShardsService.currentSnapshotShards(snapshot);
                 if (shardsStatus == null) {
                     continue;
                 }
                 Map<ShardId, SnapshotIndexShardStatus> shardMapBuilder = new HashMap<>();
+                // 将 IndexShardSnapshotStatus转换成SnapshotIndexShardStatus
                 for (Map.Entry<ShardId, IndexShardSnapshotStatus> shardEntry : shardsStatus.entrySet()) {
                     final ShardId shardId = shardEntry.getKey();
 
@@ -105,6 +115,7 @@ public class TransportNodesSnapshotsStatus extends TransportNodesAction<Transpor
                     final IndexShardSnapshotStatus.Stage stage = lastSnapshotStatus.getStage();
 
                     String shardNodeId = null;
+                    // 只有还处于运行状态的快照才需要返回node信息
                     if (stage != IndexShardSnapshotStatus.Stage.DONE && stage != IndexShardSnapshotStatus.Stage.FAILURE) {
                         // Store node id for the snapshots that are currently running.
                         shardNodeId = nodeId;

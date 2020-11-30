@@ -420,7 +420,8 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         /**
          * Initializes a new empty index, to be restored from a snapshot
-         * 从快照中恢复数据
+         * 生成有关某个index 的路由信息 并标明数据恢复方式
+         * @param ignoreShards 本次是基于快照恢复的 但是该快照可能有某些分片的数据生成失败了
          */
         public Builder initializeAsNewRestore(IndexMetadata indexMetadata, SnapshotRecoverySource recoverySource, IntSet ignoreShards) {
             // 这里创建了一个未分配的新分片  并标明是从 restore中生成的
@@ -432,6 +433,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         /**
          * Initializes an existing index, to be restored from a snapshot
+         * @param indexMetadata 使用这个新的索引元数据去更新之前的元数据
          */
         public Builder initializeAsRestore(IndexMetadata indexMetadata, SnapshotRecoverySource recoverySource) {
             final UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.EXISTING_INDEX_RESTORED,
@@ -442,8 +444,8 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         /**
          * Initializes an index, to be restored from snapshot
-         * @param asNew  代表本次索引是否是新建的  如果是false 代表是从restore中产生的分片
-         * 指定了从快照中恢复数据
+         * @param asNew  本次索引是新生成的 还是原本就存在的
+         * 代表在通过快照restore时 产生了一个新的索引
          */
         private Builder initializeAsRestore(IndexMetadata indexMetadata, SnapshotRecoverySource recoverySource, IntSet ignoreShards,
                                             boolean asNew, UnassignedInfo unassignedInfo) {
@@ -452,17 +454,21 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
             if (!shards.isEmpty()) {
                 throw new IllegalStateException("trying to initialize an index with fresh shards, but already has shards created");
             }
+
+            // 插入 shard级别的数据
             for (int shardNumber = 0; shardNumber < indexMetadata.getNumberOfShards(); shardNumber++) {
                 ShardId shardId = new ShardId(index, shardNumber);
                 IndexShardRoutingTable.Builder indexShardRoutingBuilder = new IndexShardRoutingTable.Builder(shardId);
                 for (int i = 0; i <= indexMetadata.getNumberOfReplicas(); i++) {
                     boolean primary = i == 0;
-                    // 代表本次如果是新建的索引  需要考虑该分片是否需要被忽略 如果本忽略 则使用 EmptyStoreRecoverySource 否则使用快照恢复源
+                    // 代表本次如果是新建的索引   但是这个分片可能无法从快照中恢复数据 比如创建快照时失败了 那么就要指定别的 RecoverySource
                     if (asNew && ignoreShards.contains(shardNumber)) {
                         // This shards wasn't completely snapshotted - restore it as new shard
                         indexShardRoutingBuilder.addShard(ShardRouting.newUnassigned(shardId, primary,
+                            // 如果当前遍历到的是主分片 那么恢复源为空   副本分片指定从其他节点恢复数据    TODO 主分片都无法正常工作了 副本怎么恢复数据还有意义吗
                             primary ? EmptyStoreRecoverySource.INSTANCE : PeerRecoverySource.INSTANCE, unassignedInfo));
                     } else {
+                        // 主分片使用 快照进行恢复  其他分片采用PeerRecoverySource.INSTANCE
                         indexShardRoutingBuilder.addShard(ShardRouting.newUnassigned(shardId, primary,
                             primary ? recoverySource : PeerRecoverySource.INSTANCE, unassignedInfo));
                     }

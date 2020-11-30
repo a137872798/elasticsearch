@@ -649,7 +649,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         if ("_all".equals(repository)) {
             return snapshotsInProgress.entries();
         }
-        // 代表此时只有一个正在执行的快照任务
+        // 当前只有一个快照任务信息
         if (snapshotsInProgress.entries().size() == 1) {
             // Most likely scenario - one snapshot is currently running
             // Check this snapshot against the query

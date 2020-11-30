@@ -73,10 +73,16 @@ import java.util.stream.Collectors;
 
 import static java.util.Collections.unmodifiableMap;
 
+/**
+ * 获取快照的状态
+ */
 public class TransportSnapshotsStatusAction extends TransportMasterNodeAction<SnapshotsStatusRequest, SnapshotsStatusResponse> {
 
     private static final Logger logger = LogManager.getLogger(TransportSnapshotsStatusAction.class);
 
+    /**
+     * 快照本身是存储在 repository中的
+     */
     private final RepositoriesService repositoriesService;
 
     private final NodeClient client;
@@ -106,11 +112,21 @@ public class TransportSnapshotsStatusAction extends TransportMasterNodeAction<Sn
         return new SnapshotsStatusResponse(in);
     }
 
+    /**
+     * 当主节点接收到请求后开始处理
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     * @throws Exception
+     */
     @Override
     protected void masterOperation(Task task, final SnapshotsStatusRequest request,
                                    final ClusterState state,
                                    final ActionListener<SnapshotsStatusResponse> listener) throws Exception {
         final SnapshotsInProgress snapshotsInProgress = state.custom(SnapshotsInProgress.TYPE);
+
+        // 从 SnapshotsInProgress中找到匹配的所有快照   (不经过repositoryData 体现了current)
         List<SnapshotsInProgress.Entry> currentSnapshots =
             SnapshotsService.currentSnapshots(snapshotsInProgress, request.repository(), Arrays.asList(request.snapshots()));
         if (currentSnapshots.isEmpty()) {
@@ -118,6 +134,7 @@ public class TransportSnapshotsStatusAction extends TransportMasterNodeAction<Sn
             return;
         }
 
+        // 获取所有相关分片所在的node
         Set<String> nodesIds = new HashSet<>();
         for (SnapshotsInProgress.Entry entry : currentSnapshots) {
             for (ObjectCursor<SnapshotsInProgress.ShardSnapshotStatus> status : entry.shards().values()) {
@@ -142,11 +159,20 @@ public class TransportSnapshotsStatusAction extends TransportMasterNodeAction<Sn
                 ), listener::onFailure));
         } else {
             // We don't have any in-progress shards, just return current stats
+            // 没有找到任何分片 直接触发结果
             buildResponse(snapshotsInProgress, request, currentSnapshots, null, listener);
         }
 
     }
 
+    /**
+     * 开始处理快照信息并生成res对象
+     * @param snapshotsInProgress
+     * @param request
+     * @param currentSnapshotEntries
+     * @param nodeSnapshotStatuses
+     * @param listener
+     */
     private void buildResponse(@Nullable SnapshotsInProgress snapshotsInProgress, SnapshotsStatusRequest request,
                                List<SnapshotsInProgress.Entry> currentSnapshotEntries,
                                TransportNodesSnapshotsStatus.NodesSnapshotStatus nodeSnapshotStatuses,
@@ -155,6 +181,7 @@ public class TransportSnapshotsStatusAction extends TransportMasterNodeAction<Sn
         List<SnapshotStatus> builder = new ArrayList<>();
         Set<String> currentSnapshotNames = new HashSet<>();
         if (!currentSnapshotEntries.isEmpty()) {
+            // 将结果按照nodeId 分组
             Map<String, TransportNodesSnapshotsStatus.NodeSnapshotStatus> nodeSnapshotStatusMap;
             if (nodeSnapshotStatuses != null) {
                 nodeSnapshotStatusMap = nodeSnapshotStatuses.getNodesMap();
@@ -165,23 +192,29 @@ public class TransportSnapshotsStatusAction extends TransportMasterNodeAction<Sn
             for (SnapshotsInProgress.Entry entry : currentSnapshotEntries) {
                 currentSnapshotNames.add(entry.snapshot().getSnapshotId().getName());
                 List<SnapshotIndexShardStatus> shardStatusBuilder = new ArrayList<>();
+
+                // 这个是当前内存中记录的所有快照信息
                 for (ObjectObjectCursor<ShardId, SnapshotsInProgress.ShardSnapshotStatus> shardEntry : entry.shards()) {
                     SnapshotsInProgress.ShardSnapshotStatus status = shardEntry.value;
                     if (status.nodeId() != null) {
                         // We should have information about this shard from the shard:
+                        // 从对应的节点找到结果快照状态对象
                         TransportNodesSnapshotsStatus.NodeSnapshotStatus nodeStatus = nodeSnapshotStatusMap.get(status.nodeId());
                         if (nodeStatus != null) {
+                            // 每个节点通过 SnapshotShardsService 存储了多次快照的信息
                             Map<ShardId, SnapshotIndexShardStatus> shardStatues = nodeStatus.status().get(entry.snapshot());
                             if (shardStatues != null) {
                                 SnapshotIndexShardStatus shardStatus = shardStatues.get(shardEntry.key);
                                 if (shardStatus != null) {
                                     // We have full information about this shard
+                                    // 在node级别匹配成功后 加入到builder中
                                     shardStatusBuilder.add(shardStatus);
                                     continue;
                                 }
                             }
                         }
                     }
+                    // 可能有些分片还不确定在哪个node  当可以确定node时就代表快照工作进入到后面的阶段了
                     final SnapshotIndexShardStage stage;
                     switch (shardEntry.value.state()) {
                         case FAILED:
@@ -202,6 +235,7 @@ public class TransportSnapshotsStatusAction extends TransportMasterNodeAction<Sn
                     SnapshotIndexShardStatus shardStatus = new SnapshotIndexShardStatus(shardEntry.key, stage);
                     shardStatusBuilder.add(shardStatus);
                 }
+                // 将snapshot级别的分片数据都插入到这个builder中
                 builder.add(new SnapshotStatus(entry.snapshot(), entry.state(),
                     Collections.unmodifiableList(shardStatusBuilder), entry.includeGlobalState(), entry.startTime(),
                     Math.max(threadPool.absoluteTimeInMillis() - entry.startTime(), 0L)));
@@ -210,23 +244,38 @@ public class TransportSnapshotsStatusAction extends TransportMasterNodeAction<Sn
         // Now add snapshots on disk that are not currently running
         final String repositoryName = request.repository();
         if (Strings.hasText(repositoryName) && request.snapshots() != null && request.snapshots().length > 0) {
+            // 还要从repositoryData 中获取所有快照
             loadRepositoryData(snapshotsInProgress, request, builder, currentSnapshotNames, repositoryName, listener);
         } else {
             listener.onResponse(new SnapshotsStatusResponse(Collections.unmodifiableList(builder)));
         }
     }
 
+    /**
+     * 从持久层中加载快照数据
+     * @param snapshotsInProgress
+     * @param request
+     * @param builder
+     * @param currentSnapshotNames
+     * @param repositoryName
+     * @param listener
+     */
     private void loadRepositoryData(@Nullable SnapshotsInProgress snapshotsInProgress, SnapshotsStatusRequest request,
                                     List<SnapshotStatus> builder, Set<String> currentSnapshotNames, String repositoryName,
                                     ActionListener<SnapshotsStatusResponse> listener) {
         final Set<String> requestedSnapshotNames = Sets.newHashSet(request.snapshots());
         final StepListener<RepositoryData> repositoryDataListener = new StepListener<>();
         repositoriesService.getRepositoryData(repositoryName, repositoryDataListener);
+
+        // 当从磁盘中获取到repositoryData后触发监听器
         repositoryDataListener.whenComplete(repositoryData -> {
             final Map<String, SnapshotId> matchedSnapshotIds = repositoryData.getSnapshotIds().stream()
                 .filter(s -> requestedSnapshotNames.contains(s.getName()))
                 .collect(Collectors.toMap(SnapshotId::getName, Function.identity()));
+
+            // 遍历本次需要获取的所有快照数据
             for (final String snapshotName : request.snapshots()) {
+                // 代表对应的快照数据已经从entry加载了
                 if (currentSnapshotNames.contains(snapshotName)) {
                     // we've already found this snapshot in the current snapshot entries, so skip over
                     continue;
@@ -243,9 +292,13 @@ public class TransportSnapshotsStatusAction extends TransportMasterNodeAction<Sn
                         throw new SnapshotMissingException(repositoryName, snapshotName);
                     }
                 }
+                // 读取快照信息并包装成info对象
                 SnapshotInfo snapshotInfo = snapshot(snapshotsInProgress, repositoryName, snapshotId);
                 List<SnapshotIndexShardStatus> shardStatusBuilder = new ArrayList<>();
+
+                // 这里只展示完成的快照信息吗  不过既然已经持久化了 应该就是整个快照流程结束了
                 if (snapshotInfo.state().completed()) {
+                    // 转换成分片级别的数据
                     Map<ShardId, IndexShardSnapshotStatus> shardStatuses = snapshotShards(repositoryName, repositoryData, snapshotInfo);
                     for (Map.Entry<ShardId, IndexShardSnapshotStatus> shardStatus : shardStatuses.entrySet()) {
                         IndexShardSnapshotStatus.Copy lastSnapshotStatus = shardStatus.getValue().asCopy();
@@ -290,11 +343,13 @@ public class TransportSnapshotsStatusAction extends TransportMasterNodeAction<Sn
      * @throws SnapshotMissingException if snapshot is not found
      */
     private SnapshotInfo snapshot(@Nullable SnapshotsInProgress snapshotsInProgress, String repositoryName, SnapshotId snapshotId) {
+        // 先尝试从内存中加载
         List<SnapshotsInProgress.Entry> entries =
             SnapshotsService.currentSnapshots(snapshotsInProgress, repositoryName, Collections.singletonList(snapshotId.getName()));
         if (!entries.isEmpty()) {
             return new SnapshotInfo(entries.iterator().next());
         }
+        // 其次尝试从持久层加载
         return repositoriesService.repository(repositoryName).getSnapshotInfo(snapshotId);
     }
 
@@ -309,19 +364,24 @@ public class TransportSnapshotsStatusAction extends TransportMasterNodeAction<Sn
      * @param repositoryName  repository name
      * @param snapshotInfo    snapshot info
      * @return map of shard id to snapshot status
+     * 获取分片级别的数据
      */
     private Map<ShardId, IndexShardSnapshotStatus> snapshotShards(final String repositoryName,
                                                                  final RepositoryData repositoryData,
                                                                  final SnapshotInfo snapshotInfo) throws IOException {
         final Repository repository = repositoriesService.repository(repositoryName);
         final Map<ShardId, IndexShardSnapshotStatus> shardStatus = new HashMap<>();
+
+        // 遍历所有索引信息
         for (String index : snapshotInfo.indices()) {
             IndexId indexId = repositoryData.resolveIndexId(index);
             IndexMetadata indexMetadata = repository.getSnapshotIndexMetadata(snapshotInfo.snapshotId(), indexId);
             if (indexMetadata != null) {
+                // 此时该索引有多少分片 (多少个shardId)
                 int numberOfShards = indexMetadata.getNumberOfShards();
                 for (int i = 0; i < numberOfShards; i++) {
                     ShardId shardId = new ShardId(indexMetadata.getIndex(), i);
+                    // 如果有失败信息 就代表该index/shard下的快照生成失败了
                     SnapshotShardFailure shardFailure = findShardFailure(snapshotInfo.shardFailures(), shardId);
                     if (shardFailure != null) {
                         shardStatus.put(shardId, IndexShardSnapshotStatus.newFailed(shardFailure.reason()));

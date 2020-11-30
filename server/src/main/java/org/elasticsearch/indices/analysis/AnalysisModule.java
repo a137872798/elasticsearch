@@ -266,6 +266,7 @@ public final class AnalysisModule {
 
     /**
      * The basic factory interface for analysis components.
+     * 通过相关参数会装配一个工厂 并返回工厂
      */
     public interface AnalysisProvider<T> {
 

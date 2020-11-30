@@ -36,6 +36,9 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 获取存储的脚本
+ */
 public class TransportGetStoredScriptAction extends TransportMasterNodeReadAction<GetStoredScriptRequest,
         GetStoredScriptResponse> {
 

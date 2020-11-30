@@ -398,6 +398,11 @@ public class ClusterBlocks extends AbstractDiffable<ClusterBlocks> {
             return this;
         }
 
+        /**
+         * 增加一些阻塞信息 避免在针对该index进行一些耗时操作时 被意外的访问
+         * @param indexMetadata
+         * @return
+         */
         public Builder addBlocks(IndexMetadata indexMetadata) {
             String indexName = indexMetadata.getIndex().getName();
             if (indexMetadata.getState() == IndexMetadata.State.CLOSE) {

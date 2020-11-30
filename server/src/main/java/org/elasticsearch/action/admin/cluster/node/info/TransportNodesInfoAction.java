@@ -36,6 +36,9 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * 以node为单位 获取信息  就是基于数据统计功能展示节点当前信息
+ */
 public class TransportNodesInfoAction extends TransportNodesAction<NodesInfoRequest,
                                                                    NodesInfoResponse,
                                                                    TransportNodesInfoAction.NodeInfoRequest,

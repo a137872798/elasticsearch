@@ -580,7 +580,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
         }
 
         /**
-         *
+         * 将某个index 相关的路由信息插入到该对象中
          * @param indexMetadata
          * @param recoverySource  本次执行恢复操作相关的各种参数
          * @param ignoreShards  处理失败的分片

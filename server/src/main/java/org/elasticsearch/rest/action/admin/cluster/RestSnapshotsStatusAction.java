@@ -34,6 +34,7 @@ import static org.elasticsearch.rest.RestRequest.Method.GET;
 
 /**
  * Returns status of currently running snapshot
+ * 获取当前快照的运行状态
  */
 public class RestSnapshotsStatusAction extends BaseRestHandler {
 

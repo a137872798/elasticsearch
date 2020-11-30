@@ -622,6 +622,7 @@ public class MasterService extends AbstractLifecycleComponent {
 
     /**
      * Returns the tasks that are pending.
+     * 获取当前所有等待中的任务
      */
     public List<PendingClusterTask> pendingTasks() {
         return Arrays.stream(threadPoolExecutor.getPending()).map(pending -> {

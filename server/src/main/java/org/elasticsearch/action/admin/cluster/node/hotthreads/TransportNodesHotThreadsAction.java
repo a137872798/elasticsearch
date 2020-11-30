@@ -36,6 +36,10 @@ import org.elasticsearch.transport.TransportService;
 import java.io.IOException;
 import java.util.List;
 
+/**
+ * 获取当前活跃线程
+ * 以 node为单位
+ */
 public class TransportNodesHotThreadsAction extends TransportNodesAction<NodesHotThreadsRequest,
                                                                          NodesHotThreadsResponse,
                                                                          TransportNodesHotThreadsAction.NodeRequest,
@@ -64,6 +68,12 @@ public class TransportNodesHotThreadsAction extends TransportNodesAction<NodesHo
         return new NodeHotThreads(in);
     }
 
+    /**
+     * 获取当前节点的活跃线程信息 并填充到 NodeHotThreads 中
+     * @param request
+     * @param task
+     * @return
+     */
     @Override
     protected NodeHotThreads nodeOperation(NodeRequest request, Task task) {
         HotThreads hotThreads = new HotThreads()

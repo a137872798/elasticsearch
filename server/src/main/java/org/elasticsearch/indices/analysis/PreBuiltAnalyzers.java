@@ -97,6 +97,9 @@ public enum PreBuiltAnalyzers {
 
     protected abstract  Analyzer create(Version version);
 
+    /**
+     * 按照不同版本缓存分词器对象
+     */
     protected final PreBuiltCacheFactory.PreBuiltCache<Analyzer> cache;
 
     PreBuiltAnalyzers() {
@@ -111,6 +114,11 @@ public enum PreBuiltAnalyzers {
         return cache;
     }
 
+    /**
+     * 通过版本号 找到不同的分词器
+     * @param version
+     * @return
+     */
     public synchronized Analyzer getAnalyzer(Version version) {
         Analyzer analyzer = cache.get(version);
         if (analyzer == null) {

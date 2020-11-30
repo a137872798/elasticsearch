@@ -234,23 +234,25 @@ public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSn
                                                  boolean ignoreUnavailable, boolean verbose, Map<String, SnapshotId> allSnapshotIds,
                                                  List<SnapshotInfo> currentSnapshots, @Nullable RepositoryData repositoryData) {
 
-        // 磁盘中存储的数据会加入到另一个容器中
+        // 找到之前磁盘中存储的数据 并加入到all容器中
         if (repositoryData != null) {
             for (SnapshotId snapshotId : repositoryData.getSnapshotIds()) {
                 allSnapshotIds.put(snapshotId.getName(), snapshotId);
             }
         }
 
+        // 存储获取的快照结果
         final Set<SnapshotId> toResolve = new HashSet<>();
         // 如果是 _current 将所有的快照id设置到 toResolve中
         if (isAllSnapshots(snapshots)) {
             toResolve.addAll(allSnapshotIds.values());
         } else {
             for (String snapshotOrPattern : snapshots) {
-                // 当需要获取current的快照  就将 current容器中的所有快照插入
+                // 当出现 "_current" 时 就将此时还未刷盘的所有快照信息存储到容器中
                 if (GetSnapshotsRequest.CURRENT_SNAPSHOT.equalsIgnoreCase(snapshotOrPattern)) {
                     toResolve.addAll(currentSnapshots.stream().map(SnapshotInfo::snapshotId).collect(Collectors.toList()));
                 } else if (Regex.isSimpleMatchPattern(snapshotOrPattern) == false) {
+                    // 精准匹配/添加  如果相关快照不存在 需要抛出异常
                     if (allSnapshotIds.containsKey(snapshotOrPattern)) {
                         toResolve.add(allSnapshotIds.get(snapshotOrPattern));
                     } else if (ignoreUnavailable == false) {
@@ -271,6 +273,7 @@ public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSn
         }
 
         final List<SnapshotInfo> snapshotInfos;
+        // 代表要展示详细信息
         if (verbose) {
             snapshotInfos = snapshots(snapshotsInProgress, repo, new ArrayList<>(toResolve), ignoreUnavailable);
         } else {
@@ -302,6 +305,7 @@ public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSn
         final Set<SnapshotInfo> snapshotSet = new HashSet<>();
         final Set<SnapshotId> snapshotIdsToIterate = new HashSet<>(snapshotIds);
         // first, look at the snapshots in progress
+        // 根据快照id 找到匹配的entry
         final List<SnapshotsInProgress.Entry> entries = SnapshotsService.currentSnapshots(
             snapshotsInProgress, repositoryName, snapshotIdsToIterate.stream().map(SnapshotId::getName).collect(Collectors.toList()));
         for (SnapshotsInProgress.Entry entry : entries) {
@@ -310,6 +314,8 @@ public class TransportGetSnapshotsAction extends TransportMasterNodeAction<GetSn
         }
         // then, look in the repository
         final Repository repository = repositoriesService.repository(repositoryName);
+
+        // 遍历所有未找到的快照
         for (SnapshotId snapshotId : snapshotIdsToIterate) {
             try {
                 snapshotSet.add(repository.getSnapshotInfo(snapshotId));

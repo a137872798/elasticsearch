@@ -22,6 +22,9 @@ package org.elasticsearch.index.analysis;
 import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.IndexSettings;
 
+/**
+ * AbstractIndexComponent 定义了一个骨架 就是从 indexSettings获取indexName
+ */
 public abstract class AbstractCharFilterFactory extends AbstractIndexComponent implements CharFilterFactory {
 
     private final String name;

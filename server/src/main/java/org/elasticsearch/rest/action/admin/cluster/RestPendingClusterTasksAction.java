@@ -30,6 +30,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取每个节点此时正在执行的任务
+ */
 public class RestPendingClusterTasksAction extends BaseRestHandler {
 
     @Override
