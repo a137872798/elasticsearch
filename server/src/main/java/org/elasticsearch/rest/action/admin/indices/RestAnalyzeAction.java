@@ -33,7 +33,7 @@ import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
 /**
- * 分析某个index下的文本信息
+ * 使用某个node的分词器 对req.text 进行解析
  */
 public class RestAnalyzeAction extends BaseRestHandler {
 

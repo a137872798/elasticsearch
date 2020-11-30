@@ -32,6 +32,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 清除索引缓存的请求
+ */
 public class RestClearIndicesCacheAction extends BaseRestHandler {
 
     @Override

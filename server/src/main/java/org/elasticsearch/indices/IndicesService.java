@@ -1783,7 +1783,7 @@ public class IndicesService extends AbstractLifecycleComponent
      * @param queryCache
      * @param fieldDataCache
      * @param requestCache  3个boolean 参数分别代表是否要清除对应的缓存
-     *                如果这个分片还存在于这个node时 清除这个分片相关的缓存
+     *                处于某个shard相关的缓存
      */
     public void clearIndexShardCache(ShardId shardId, boolean queryCache, boolean fieldDataCache, boolean requestCache,
                                      String... fields) {

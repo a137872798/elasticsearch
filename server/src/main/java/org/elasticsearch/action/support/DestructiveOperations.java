@@ -26,6 +26,7 @@ import org.elasticsearch.common.settings.Settings;
 
 /**
  * Helper for dealing with destructive operations and wildcard usage.
+ * 检测某些可能具备破坏性的操作 比如close所有索引 这种就是不允许的
  */
 public final class DestructiveOperations {
 
@@ -34,6 +35,7 @@ public final class DestructiveOperations {
      */
     public static final Setting<Boolean> REQUIRES_NAME_SETTING =
         Setting.boolSetting("action.destructive_requires_name", false, Property.Dynamic, Property.NodeScope);
+    // 是否要进行检测
     private volatile boolean destructiveRequiresName;
 
     public DestructiveOperations(Settings settings, ClusterSettings clusterSettings) {
@@ -47,6 +49,7 @@ public final class DestructiveOperations {
 
     /**
      * Fail if there is wildcard usage in indices and the named is required for destructive operations.
+     * 为了避免执行 例如大范围的关闭索引等操作 需要对参数进行检测
      */
     public void failDestructive(String[] aliasesOrIndices) {
         if (!destructiveRequiresName) {
@@ -56,6 +59,7 @@ public final class DestructiveOperations {
         if (aliasesOrIndices == null || aliasesOrIndices.length == 0) {
             throw new IllegalArgumentException("Wildcard expressions or all indices are not allowed");
         } else if (aliasesOrIndices.length == 1) {
+            // 包含通配符 或者是特殊的索引标识 "_all"
             if (hasWildcardUsage(aliasesOrIndices[0])) {
                 throw new IllegalArgumentException("Wildcard expressions or all indices are not allowed");
             }

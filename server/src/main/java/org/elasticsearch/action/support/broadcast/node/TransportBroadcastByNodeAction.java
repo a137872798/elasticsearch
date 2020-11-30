@@ -72,6 +72,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  * @param <Request>              the underlying client request
  * @param <Response>             the response to the client request
  * @param <ShardOperationResult> per-shard operation results
+ *                              代表一个广播对象
  */
 public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRequest<Request>,
         Response extends BroadcastResponse,
@@ -220,6 +221,12 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
      */
     protected abstract ClusterBlockException checkRequestBlock(ClusterState state, Request request, String[] concreteIndices);
 
+    /**
+     * 处理的入口方法
+     * @param task
+     * @param request
+     * @param listener
+     */
     @Override
     protected void doExecute(Task task, Request request, ActionListener<Response> listener) {
         new AsyncAction(task, request, listener).start();
@@ -234,6 +241,10 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
         private final Map<String, List<ShardRouting>> nodeIds;
         private final AtomicReferenceArray<Object> responses;
         private final AtomicInteger counter = new AtomicInteger();
+
+        /**
+         * 本次索引下某些分片处于 unassigned状态 就会生成一个异常对象 并加入到列表中
+         */
         private List<NoShardAvailableActionException> unavailableShardExceptions = new ArrayList<>();
 
         protected AsyncAction(Task task, Request request, ActionListener<Response> listener) {
@@ -249,6 +260,7 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
                 throw globalBlockException;
             }
 
+            // 找到与req.indices匹配的所有索引
             String[] concreteIndices = indexNameExpressionResolver.concreteIndexNames(clusterState, request);
             ClusterBlockException requestBlockException = checkRequestBlock(clusterState, request, concreteIndices);
             if (requestBlockException != null) {
@@ -258,6 +270,7 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
             if (logger.isTraceEnabled()) {
                 logger.trace("resolving shards for [{}] based on cluster state version [{}]", actionName, clusterState.version());
             }
+            // 将这些indices下的所有分片解出来 生成shardItr
             ShardsIterator shardIt = shards(clusterState, request, concreteIndices);
             nodeIds = new HashMap<>();
 
@@ -273,8 +286,10 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
                     if (!nodeIds.containsKey(nodeId)) {
                         nodeIds.put(nodeId, new ArrayList<>());
                     }
+                    // 将相关的分片按照node进行分组
                     nodeIds.get(nodeId).add(shard);
                 } else {
+                    // 当某个分片未分配时 就生成一个对应的exception对象
                     unavailableShardExceptions.add(
                             new NoShardAvailableActionException(
                                     shard.shardId(),
@@ -287,6 +302,7 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
             responses = new AtomicReferenceArray<>(nodeIds.size());
         }
 
+        // 因为是广播模式 就往所有节点发送请求
         public void start() {
             if (nodeIds.size() == 0) {
                 try {
@@ -304,6 +320,11 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
             }
         }
 
+        /**
+         * @param node  本次要往哪个节点发送请求
+         * @param shards   本次要在该节点上处理哪些shard
+         * @param nodeIndex  对应的res填充的下标是多少
+         */
         private void sendNodeRequest(final DiscoveryNode node, List<ShardRouting> shards, final int nodeIndex) {
             try {
                 NodeRequest nodeRequest = new NodeRequest(node.getId(), request, shards);
@@ -336,6 +357,12 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
             }
         }
 
+        /**
+         * 当接受到某个节点的响应结果后填充到对应的槽中
+         * @param node
+         * @param nodeIndex
+         * @param response
+         */
         protected void onNodeResponse(DiscoveryNode node, int nodeIndex, NodeResponse response) {
             if (logger.isTraceEnabled()) {
                 logger.trace("received response for [{}] from node [{}]", actionName, node.getId());
@@ -367,6 +394,9 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
             }
         }
 
+        /**
+         * 当所有相关的node都返回结果时触发该方法
+         */
         protected void onCompletion() {
             Response response = null;
             try {
@@ -385,14 +415,20 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
         }
     }
 
+    /**
+     * 其他节点收到请求时 通过该对象来处理
+     */
     class BroadcastByNodeTransportRequestHandler implements TransportRequestHandler<NodeRequest> {
         @Override
         public void messageReceived(final NodeRequest request, TransportChannel channel, Task task) throws Exception {
+            // 在该节点上要处理的所有分片
             List<ShardRouting> shards = request.getShards();
             final int totalShards = shards.size();
             if (logger.isTraceEnabled()) {
                 logger.trace("[{}] executing operation on [{}] shards", actionName, totalShards);
             }
+
+            // 以分片为单位处理请求 并将结果设置到 Object[]中
             final Object[] shardResultOrExceptions = new Object[totalShards];
 
             int shardIndex = -1;
@@ -403,6 +439,7 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
 
             List<BroadcastShardOperationFailedException> accumulatedExceptions = new ArrayList<>();
             List<ShardOperationResult> results = new ArrayList<>();
+            // 根据结果是否异常 拆分到2个list中
             for (int i = 0; i < totalShards; i++) {
                 if (shardResultOrExceptions[i] instanceof BroadcastShardOperationFailedException) {
                     accumulatedExceptions.add((BroadcastShardOperationFailedException) shardResultOrExceptions[i]);
@@ -414,6 +451,13 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
             channel.sendResponse(new NodeResponse(request.getNodeId(), totalShards, results, accumulatedExceptions));
         }
 
+        /**
+         *
+         * @param request
+         * @param shardResults 存储所有结果的数组
+         * @param shardIndex
+         * @param shardRouting
+         */
         private void onShardOperation(final NodeRequest request, final Object[] shardResults, final int shardIndex,
                                       final ShardRouting shardRouting) {
             try {

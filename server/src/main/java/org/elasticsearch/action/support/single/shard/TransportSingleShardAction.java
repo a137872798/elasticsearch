@@ -302,6 +302,10 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
                             return ThreadPool.Names.SAME;
                         }
 
+                        /**
+                         * 处理接收到的响应结果
+                         * @param response
+                         */
                         @Override
                         public void handleResponse(final Response response) {
                             listener.onResponse(response);

@@ -392,6 +392,9 @@ public class AnalyzeAction extends ActionType<AnalyzeAction.Response> {
         }
     }
 
+    /**
+     * 分词解析出来的每个 token
+     */
     public static class AnalyzeToken implements Writeable, ToXContentObject {
         private final String term;
         private final int startOffset;
@@ -678,6 +681,10 @@ public class AnalyzeAction extends ActionType<AnalyzeAction.Response> {
         }
     }
 
+
+    /**
+     * 代表某个 tokenStream 被 tokenFitler处理后的结果
+     */
     public static class AnalyzeTokenList implements Writeable, ToXContentObject {
         private final String name;
         private final AnalyzeToken[] tokens;
@@ -771,8 +778,19 @@ public class AnalyzeAction extends ActionType<AnalyzeAction.Response> {
         }
     }
 
+    /**
+     * 描述一组已经被 charFilter处理过的text
+     */
     public static class CharFilteredText implements Writeable, ToXContentObject {
+
+        /**
+         * 对应 charFitlerFactory.name
+         */
         private final String name;
+
+        /**
+         * 内部每个text 都已经被charFilter处理过
+         */
         private final String[] texts;
 
         static final String NAME = "name";

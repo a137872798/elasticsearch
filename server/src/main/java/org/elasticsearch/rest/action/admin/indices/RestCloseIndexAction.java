@@ -33,6 +33,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 关闭某些索引对象
+ */
 public class RestCloseIndexAction extends BaseRestHandler {
 
     @Override

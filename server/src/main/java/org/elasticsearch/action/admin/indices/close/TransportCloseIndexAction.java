@@ -48,6 +48,7 @@ import java.util.Collections;
 
 /**
  * Close index action
+ * 只能在leader节点执行
  */
 public class TransportCloseIndexAction extends TransportMasterNodeAction<CloseIndexRequest, CloseIndexResponse> {
 
@@ -87,8 +88,15 @@ public class TransportCloseIndexAction extends TransportMasterNodeAction<CloseIn
         return new CloseIndexResponse(in);
     }
 
+    /**
+     * 在交由父类的 AsyncSingleAction前 这里还有一段逻辑
+     * @param task
+     * @param request
+     * @param listener
+     */
     @Override
     protected void doExecute(Task task, CloseIndexRequest request, ActionListener<CloseIndexResponse> listener) {
+        // 在关闭相关索引前 需要检测是否可能引发一些破坏性操作 比如索引中携带通配符
         destructiveOperations.failDestructive(request.indices());
         if (closeIndexEnabled == false) {
             throw new IllegalStateException("closing indices is disabled - set [" + CLUSTER_INDICES_CLOSE_ENABLE_SETTING.getKey() +
@@ -103,6 +111,14 @@ public class TransportCloseIndexAction extends TransportMasterNodeAction<CloseIn
             indexNameExpressionResolver.concreteIndexNames(state, request));
     }
 
+    /**
+     * 在主节点处理请求
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     * @throws Exception
+     */
     @Override
     protected void masterOperation(final Task task,
                                    final CloseIndexRequest request,

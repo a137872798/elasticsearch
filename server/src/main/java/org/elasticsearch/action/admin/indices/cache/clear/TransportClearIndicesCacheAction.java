@@ -41,10 +41,14 @@ import java.util.List;
 
 /**
  * Indices clear cache action.
+ * 清除索引缓存
  */
 public class TransportClearIndicesCacheAction extends TransportBroadcastByNodeAction<ClearIndicesCacheRequest, ClearIndicesCacheResponse,
     TransportBroadcastByNodeAction.EmptyResult> {
 
+    /**
+     * 存储所有索引的服务对象
+     */
     private final IndicesService indicesService;
 
     @Inject
@@ -73,8 +77,15 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastByNodeAc
         return new ClearIndicesCacheRequest(in);
     }
 
+    /**
+     * 以 shard为单位处理请求
+     * @param request      the node-level request
+     * @param shardRouting the shard on which to execute the operation
+     * @return
+     */
     @Override
     protected EmptyResult shardOperation(ClearIndicesCacheRequest request, ShardRouting shardRouting) {
+        // 3个 cache参数代表是否要请求对应的缓存
         indicesService.clearIndexShardCache(shardRouting.shardId(), request.queryCache(), request.fieldDataCache(), request.requestCache(),
             request.fields());
         return EmptyResult.INSTANCE;
@@ -82,6 +93,7 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastByNodeAc
 
     /**
      * The refresh request works against *all* shards.
+     * @param concreteIndices 需要获取这些index下的所有分片
      */
     @Override
     protected ShardsIterator shards(ClusterState clusterState, ClearIndicesCacheRequest request, String[] concreteIndices) {

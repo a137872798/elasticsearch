@@ -36,6 +36,9 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+/**
+ * 分词器提供者工厂
+ */
 public class PreBuiltAnalyzerProviderFactory extends PreConfiguredAnalysisComponent<AnalyzerProvider<?>> implements Closeable {
 
     private final Function<Version, Analyzer> create;
@@ -43,8 +46,10 @@ public class PreBuiltAnalyzerProviderFactory extends PreConfiguredAnalysisCompon
 
     /**
      * This constructor only exists to expose analyzers defined in {@link PreBuiltAnalyzers} as {@link PreBuiltAnalyzerProviderFactory}.
+     * 可以通过枚举对象进行初始化
      */
     PreBuiltAnalyzerProviderFactory(String name, PreBuiltAnalyzers preBuiltAnalyzer) {
+        // PreBuiltAnalyzersDelegateCache 这个缓存对象实际上内部是通过枚举对象来获取分词器的
         super(name, new PreBuiltAnalyzersDelegateCache(name, preBuiltAnalyzer));
         this.create = preBuiltAnalyzer::getAnalyzer;
         Analyzer analyzer = preBuiltAnalyzer.getAnalyzer(Version.CURRENT);
@@ -95,6 +100,7 @@ public class PreBuiltAnalyzerProviderFactory extends PreConfiguredAnalysisCompon
      *
      *  This can be removed when all analyzers have been moved away from PreBuiltAnalyzers to
      *  PreBuiltAnalyzerProviderFactory either in server or analysis-common.
+     *  通过包装枚举对象可以获取对应的 分词器  在枚举中使用了缓存
      */
     static class PreBuiltAnalyzersDelegateCache implements PreBuiltCacheFactory.PreBuiltCache<AnalyzerProvider<?>> {
 

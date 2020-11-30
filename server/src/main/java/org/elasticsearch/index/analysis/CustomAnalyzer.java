@@ -25,6 +25,9 @@ import org.apache.lucene.analysis.Tokenizer;
 
 import java.io.Reader;
 
+/**
+ * 自定义分词器
+ */
 public final class CustomAnalyzer extends Analyzer implements AnalyzerComponentsProvider {
 
     private final AnalyzerComponents components;

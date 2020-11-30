@@ -129,6 +129,7 @@ public class MetadataIndexStateService {
      *
      * Closing indices is a 3 steps process: it first adds a write block to every indices to close, then waits for the operations on shards
      * to be terminated and finally closes the indices by moving their state to CLOSE.
+     * @param request  代表本次要关闭哪些索引
      */
     public void closeIndices(final CloseIndexClusterStateUpdateRequest request, final ActionListener<CloseIndexResponse> listener) {
         final Index[] concreteIndices = request.indices();
@@ -136,6 +137,7 @@ public class MetadataIndexStateService {
             throw new IllegalArgumentException("Index name is required");
         }
 
+        // 需要在集群范围发布 clusterState变化的请求
         clusterService.submitStateUpdateTask("add-block-index-to-close " + Arrays.toString(concreteIndices),
             new ClusterStateUpdateTask(Priority.URGENT) {
 
@@ -227,6 +229,7 @@ public class MetadataIndexStateService {
      * This step builds the list of indices to close (the ones explicitly requested that are not in CLOSE state) and adds a unique cluster
      * block (or reuses an existing one) to every index to close in the cluster state. After the cluster state is published, the shards
      * should start to reject writing operations and we can proceed with step 2.
+     * 为某些索引增加 block 避免这段期间index被操作
      */
     static ClusterState addIndexClosedBlocks(final Index[] indices, final Map<Index, ClusterBlock> blockedIndices,
                                              final ClusterState currentState) {
@@ -235,6 +238,7 @@ public class MetadataIndexStateService {
         final Set<Index> indicesToClose = new HashSet<>();
         for (Index index : indices) {
             final IndexMetadata indexMetadata = metadata.getSafe(index);
+            // 如果相关索引已经被关闭了只需要打印日志 否则加入到了列表中
             if (indexMetadata.getState() != IndexMetadata.State.CLOSE) {
                 indicesToClose.add(index);
             } else {

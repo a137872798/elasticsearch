@@ -33,6 +33,9 @@ import java.util.Objects;
  */
 public class NamedAnalyzer extends DelegatingAnalyzerWrapper {
 
+    /**
+     * 这个分词器会有一个名称属性
+     */
     private final String name;
     private final AnalyzerScope scope;
     private final Analyzer analyzer;
@@ -47,6 +50,13 @@ public class NamedAnalyzer extends DelegatingAnalyzerWrapper {
         this(name, scope, analyzer, Integer.MIN_VALUE);
     }
 
+    /**
+     * 将分词器与name 其他属性包装在一起
+     * @param name
+     * @param scope
+     * @param analyzer
+     * @param positionIncrementGap
+     */
     NamedAnalyzer(String name, AnalyzerScope scope, Analyzer analyzer, int positionIncrementGap) {
         super(ERROR_STRATEGY);
         this.name = name;

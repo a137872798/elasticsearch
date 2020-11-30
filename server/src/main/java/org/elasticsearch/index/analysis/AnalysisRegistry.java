@@ -126,9 +126,9 @@ public final class AnalysisRegistry implements Closeable {
     );
 
     /**
-     * 获取组装后的工厂
+     * 获取某个组件的工厂
      * @param settings
-     * @param nod
+     * @param nod   描述组件名称的对象
      * @param componentType
      * @param globalComponentProvider
      * @param prebuiltComponentProvider
@@ -155,6 +155,7 @@ public final class AnalysisRegistry implements Closeable {
             if (settings == null) {
                 settings = NO_INDEX_SETTINGS;
             }
+            // 当nod不为空 直接从工厂返回
             return factory.get(settings, environment, "__anonymous__" + type, nod.definition);
         }
         if (settings == null) {
@@ -247,6 +248,7 @@ public final class AnalysisRegistry implements Closeable {
      */
     public NamedAnalyzer buildCustomAnalyzer(IndexSettings indexSettings, boolean normalizer, NameOrDefinition tokenizer,
                                              List<NameOrDefinition> charFilters, List<NameOrDefinition> tokenFilters) throws IOException {
+        // 通过NameOrDefinition 获取对应的组件 并加入到list中
         TokenizerFactory tokenizerFactory
             = getComponentFactory(indexSettings, tokenizer, "tokenizer",
             this::getTokenizerProvider, prebuiltAnalysis::getTokenizerFactory, this::getTokenizerProvider);
@@ -261,6 +263,8 @@ public final class AnalysisRegistry implements Closeable {
         for (NameOrDefinition nod : tokenFilters) {
             TokenFilterFactory tff = getComponentFactory(indexSettings, nod, "filter",
                 this::getTokenFilterProvider, prebuiltAnalysis::getTokenFilterFactory, this::getTokenFilterProvider);
+
+            // 如果 normalizer标识为true 则返回的类型必须是相应类型
             if (normalizer && tff instanceof NormalizingTokenFilterFactory == false) {
                 throw new IllegalArgumentException("Custom normalizer may not use filter [" + tff.name() + "]");
             }
@@ -275,9 +279,11 @@ public final class AnalysisRegistry implements Closeable {
             tokenFilterFactories.add(tff);
         }
 
+        // 将相关参数组合起来 变成一个自定义分词器
         Analyzer analyzer = new CustomAnalyzer(tokenizerFactory,
             charFilterFactories.toArray(new CharFilterFactory[]{}),
             tokenFilterFactories.toArray(new TokenFilterFactory[]{}));
+        // 将该对象包装成一个工厂
         return produceAnalyzer("__custom__", new AnalyzerProvider<>() {
             @Override
             public String name() {
@@ -516,6 +522,7 @@ public final class AnalysisRegistry implements Closeable {
             Map<String, PreBuiltAnalyzerProviderFactory> analyzerProviderFactories = new HashMap<>();
             analyzerProviderFactories.putAll(preConfiguredAnalyzers);
             // Pre-build analyzers
+            // 将分词器枚举对象设置进去 作为内置的工厂
             for (PreBuiltAnalyzers preBuiltAnalyzerEnum : PreBuiltAnalyzers.values()) {
                 String name = preBuiltAnalyzerEnum.name().toLowerCase(Locale.ROOT);
                 analyzerProviderFactories.put(name, new PreBuiltAnalyzerProviderFactory(name, preBuiltAnalyzerEnum));
@@ -603,6 +610,15 @@ public final class AnalysisRegistry implements Closeable {
         return new IndexAnalyzers(analyzers, normalizers, whitespaceNormalizers);
     }
 
+    /**
+     * 将指定的provider包装
+     * @param name
+     * @param analyzerFactory
+     * @param tokenFilters
+     * @param charFilters
+     * @param tokenizers
+     * @return
+     */
     private static NamedAnalyzer produceAnalyzer(String name,
                                         AnalyzerProvider<?> analyzerFactory,
                                         Map<String, TokenFilterFactory> tokenFilters,
@@ -615,6 +631,7 @@ public final class AnalysisRegistry implements Closeable {
          * doesn't match here.
          */
         int overridePositionIncrementGap = TextFieldMapper.Defaults.POSITION_INCREMENT_GAP;
+        // TODO
         if (analyzerFactory instanceof CustomAnalyzerProvider) {
             ((CustomAnalyzerProvider) analyzerFactory).build(tokenizers, charFilters, tokenFilters);
             /*
@@ -639,6 +656,7 @@ public final class AnalysisRegistry implements Closeable {
                 analyzer = new NamedAnalyzer(analyzer, overridePositionIncrementGap);
             }
         } else {
+            // 将原本的分词器与其他参数包装在一起
             analyzer = new NamedAnalyzer(name, analyzerFactory.scope(), analyzerF, overridePositionIncrementGap);
         }
         checkVersions(analyzer);
