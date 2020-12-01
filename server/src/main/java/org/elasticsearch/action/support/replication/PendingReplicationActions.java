@@ -57,8 +57,8 @@ public class PendingReplicationActions implements Consumer<ReplicationGroup>, Re
     }
 
     /**
-     * 追加一个分配任务
-     * @param allocationId
+     * 为某个副本分片设置一个可重试的任务
+     * @param allocationId    allocationId 应该是能唯一定位到一个分片
      * @param replicationAction
      */
     public void addPendingAction(String allocationId, RetryableAction<?> replicationAction) {
@@ -66,12 +66,13 @@ public class PendingReplicationActions implements Consumer<ReplicationGroup>, Re
         if (ongoingActionsOnNode != null) {
             // 为该分配者 追加一个任务
             ongoingActionsOnNode.add(replicationAction);
+            // 代表此时出现了问题 以异常形式关闭action   TODO 应该不会出现这种情况
             if (onGoingReplicationActions.containsKey(allocationId) == false) {
                 replicationAction.cancel(new IndexShardClosedException(shardId,
                     "Replica unavailable - replica could have left ReplicationGroup or IndexShard might have closed"));
             }
         } else {
-            // 当往某个allocation 追加新的任务前 必须先确保allocation已经加入到map中 否则无法直接分配 replication任务
+            // TODO 为什么能确保之前肯定已经有pending任务了呢 ???
             replicationAction.cancel(new IndexShardClosedException(shardId,
                 "Replica unavailable - replica could have left ReplicationGroup or IndexShard might have closed"));
         }

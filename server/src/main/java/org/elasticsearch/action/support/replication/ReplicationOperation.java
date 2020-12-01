@@ -185,6 +185,8 @@ public class ReplicationOperation<
             final PendingReplicationActions pendingReplicationActions = primary.getPendingReplicationActions();
             // 将不可用的分片标记成过期状态
             markUnavailableShardsAsStale(replicaRequest, replicationGroup);
+
+            // 开始在副本上进行处理
             performOnReplicas(replicaRequest, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, replicationGroup, pendingReplicationActions);
         }
 
@@ -224,28 +226,48 @@ public class ReplicationOperation<
         for (String allocationId : replicationGroup.getUnavailableInSyncShards()) {
             // 增加一个此时正在运行的任务
             pendingActions.incrementAndGet();
-            // 将其他副本标记成无效状态
+            // 将其他副本标记成无效状态 这个动作会发往 leader节点 并对这些分片进行关闭
             replicasProxy.markShardCopyAsStaleIfNeeded(replicaRequest.shardId(), allocationId, primaryTerm,
+                // decPendingAndFinishIfNeeded 对冲刚才增加的pendingActions
                 ActionListener.wrap(r -> decPendingAndFinishIfNeeded(), ReplicationOperation.this::onNoLongerPrimary));
         }
     }
 
+    /**
+     * 在副本上处理请求
+     * @param replicaRequest  本次传入的请求对象
+     * @param globalCheckpoint   全局检查点
+     * @param maxSeqNoOfUpdatesOrDeletes    当前处理的最大序列号
+     * @param replicationGroup   副本组
+     * @param pendingReplicationActions
+     */
     private void performOnReplicas(final ReplicaRequest replicaRequest, final long globalCheckpoint,
                                    final long maxSeqNoOfUpdatesOrDeletes, final ReplicationGroup replicationGroup,
                                    final PendingReplicationActions pendingReplicationActions) {
         // for total stats, add number of unassigned shards and
         // number of initializing shards that are not ready yet to receive operations (recovery has not opened engine yet on the target)
+        // 如果有些副本组被标记成需要跳过 增加跳过的数值
         totalShards.addAndGet(replicationGroup.getSkippedShards().size());
 
         final ShardRouting primaryRouting = primary.routingEntry();
 
+        // 对应每个副本信息
         for (final ShardRouting shard : replicationGroup.getReplicationTargets()) {
+            // TODO allocationId 会出现一致的情况吗 ???
             if (shard.isSameAllocation(primaryRouting) == false) {
                 performOnReplica(shard, replicaRequest, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, pendingReplicationActions);
             }
         }
     }
 
+    /**
+     * 处理某个副本
+     * @param shard  副本对应的分片
+     * @param replicaRequest   本次发起的原请求
+     * @param globalCheckpoint     当前持久化的全局检查点
+     * @param maxSeqNoOfUpdatesOrDeletes    持久化的序列号
+     * @param pendingReplicationActions
+     */
     private void performOnReplica(final ShardRouting shard, final ReplicaRequest replicaRequest,
                                   final long globalCheckpoint, final long maxSeqNoOfUpdatesOrDeletes,
                                   final PendingReplicationActions pendingReplicationActions) {
@@ -287,10 +309,17 @@ public class ReplicationOperation<
             }
         };
 
+        // 获取当前分片的分配id
         final String allocationId = shard.allocationId().getId();
+
+        // 对应一个可以进行重试的模板
         final RetryableAction<ReplicaResponse> replicationAction = new RetryableAction<>(logger, threadPool, initialRetryBackoffBound,
                 retryTimeout, replicationListener) {
 
+            /**
+             * 在副本上处理请求
+             * @param listener
+             */
             @Override
             public void tryAction(ActionListener<ReplicaResponse> listener) {
                 replicasProxy.performOn(shard, replicaRequest, primaryTerm, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, listener);
@@ -311,7 +340,9 @@ public class ReplicationOperation<
             }
         };
 
+        // 将该任务添加到管理副本操作的 actions对象中
         pendingReplicationActions.addPendingAction(allocationId, replicationAction);
+        // 执行副本任务
         replicationAction.run();
     }
 

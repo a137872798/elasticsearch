@@ -457,6 +457,10 @@ public class ShardStateAction {
             return allocationService.applyFailedShards(currentState, failedShards, staleShards);
         }
 
+        /**
+         * 将状态变化的事件发布到集群中
+         * @param clusterChangedEvent the change event for this cluster state change, containing
+         */
         @Override
         public void clusterStatePublished(ClusterChangedEvent clusterChangedEvent) {
             int numberOfUnassignedShards = clusterChangedEvent.state().getRoutingNodes().unassigned().size();
@@ -466,6 +470,7 @@ public class ShardStateAction {
                 // assign it again, even if that means putting it back on the node on which it previously failed:
                 final String reason = String.format(Locale.ROOT, "[%d] unassigned shards after failing shards", numberOfUnassignedShards);
                 logger.trace("{}, scheduling a reroute", reason);
+                // 执行重路由 并监听结果
                 rerouteService.reroute(reason, Priority.NORMAL, ActionListener.wrap(
                     r -> logger.trace("{}, reroute completed", reason),
                     e -> logger.debug(new ParameterizedMessage("{}, reroute failed", reason), e)));

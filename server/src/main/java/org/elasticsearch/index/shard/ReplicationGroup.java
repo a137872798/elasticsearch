@@ -46,6 +46,9 @@ public class ReplicationGroup {
      */
     private final Set<String> unavailableInSyncShards; // derived from the other fields
     private final List<ShardRouting> replicationTargets; // derived from the other fields
+    /**
+     * 代表某些分片不需要被处理 需要跳过
+     */
     private final List<ShardRouting> skippedShards; // derived from the other fields
 
     /**

@@ -544,6 +544,12 @@ public abstract class TransportReplicationAction<
         }
     }
 
+    /**
+     * 当接收到一个处理副本的请求时 转发给该方法处理
+     * @param replicaRequest
+     * @param channel
+     * @param task
+     */
     protected void handleReplicaRequest(final ConcreteReplicaRequest<ReplicaRequest> replicaRequest,
                                         final TransportChannel channel, final Task task) {
         new AsyncReplicaAction(
@@ -562,6 +568,9 @@ public abstract class TransportReplicationAction<
         }
     }
 
+    /**
+     * 处理副本时 使用该对象
+     */
     private final class AsyncReplicaAction extends AbstractRunnable implements ActionListener<Releasable> {
         private final ActionListener<ReplicaResponse> onCompletionListener;
         private final IndexShard replica;
@@ -1152,7 +1161,7 @@ public abstract class TransportReplicationAction<
     protected class ReplicasProxy implements ReplicationOperation.Replicas<ReplicaRequest> {
 
         /**
-         *
+         * 当需要使用副本来处理请求时 会委托给该方法
          * @param replica                    the shard this request should be executed on
          * @param request
          * @param primaryTerm                the primary term
@@ -1169,8 +1178,11 @@ public abstract class TransportReplicationAction<
                 final long globalCheckpoint,
                 final long maxSeqNoOfUpdatesOrDeletes,
                 final ActionListener<ReplicationOperation.ReplicaResponse> listener) {
+
+            // 获取副本所在的节点  本次请求将会发往该节点进行处理
             String nodeId = replica.currentNodeId();
             final DiscoveryNode node = clusterService.state().nodes().get(nodeId);
+            // 当没有在集群服务中找到该node时 以异常形式触发监听器
             if (node == null) {
                 listener.onFailure(new NoNodeAvailableException("unknown node [" + nodeId + "]"));
                 return;
@@ -1179,6 +1191,7 @@ public abstract class TransportReplicationAction<
                 request, replica.allocationId().getId(), primaryTerm, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes);
             final ActionListenerResponseHandler<ReplicaResponse> handler = new ActionListenerResponseHandler<>(listener,
                 ReplicaResponse::new);
+            // 交由副本对应的 transportHandler 处理请求
             transportService.sendRequest(node, transportReplicaAction, replicaRequest, transportOptions, handler);
         }
 
