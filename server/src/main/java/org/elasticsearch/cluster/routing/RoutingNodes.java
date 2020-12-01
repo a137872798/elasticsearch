@@ -689,6 +689,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                         UnassignedInfo primaryFailedUnassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.PRIMARY_FAILED,
                             "primary failed while replica initializing", null, 0, unassignedInfo.getUnassignedTimeInNanos(),
                             unassignedInfo.getUnassignedTimeInMillis(), false, AllocationStatus.NO_ATTEMPT, Collections.emptySet());
+                        // 将该分片无效化
                         failShard(logger, replicaShard, primaryFailedUnassignedInfo, indexMetadata, routingChangesObserver);
                     }
                 }
@@ -722,7 +723,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         // 如果当前分片处于初始状态
         if (failedShard.initializing()) {
 
-            // 代表这个分片是由于relocation 而产生的
+            // 该分片不是由于relocation 产生的
             if (failedShard.relocatingNodeId() == null) {
                 if (failedShard.primary()) {
                     // promote active replica to primary if active replica exists (only the case for shadow replicas)
@@ -730,10 +731,10 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                     unassignPrimaryAndPromoteActiveReplicaIfExists(failedShard, unassignedInfo, routingChangesObserver);
                 } else {
                     // initializing shard that is not relocation target, just move to unassigned
-                    // 如果只是普通的副本 直接转移到 unassigned
+                    // 如果只是普通的副本 将状态修改成 unassigned 并从 routingNodes中移除
                     moveToUnassigned(failedShard, unassignedInfo);
                 }
-            // 代表这是一个relocate 中的 target分片
+            // 代表这是一个relocate 中的 target分片  移除relocate的target分片 恢复原本的source分片
             } else {
                 // The shard is a target of a relocating shard. In that case we only need to remove the target shard and cancel the source
                 // relocation. No shard is left unassigned
@@ -804,6 +805,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         // failed initializing replica shards (and moved replica relocation source back to started)
         assert activeReplica.started() : "replica relocation should have been cancelled: " + activeReplica;
         promoteActiveReplicaShardToPrimary(activeReplica);
+        // 触发观察者对象
         routingChangesObserver.replicaPromoted(activeReplica);
     }
 
@@ -836,7 +838,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * Cancels a relocation of a shard that shard must relocating.
      *
      * @return the shard after cancelling relocation
-     * 某个正在重分配的分片 在target节点上的分片转换成start状态时 之前的relocating分片就要移除 就会触发该方法
+     * 取消某个relocation的分片
      */
     private ShardRouting cancelRelocation(ShardRouting shard) {
         relocatingShards--;
@@ -867,6 +869,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     /**
      * Cancels the give shard from the Routing nodes internal statistics and cancels
      * the relocation if the shard is relocating.
+     * 将某个分片从当前节点下移除
      */
     private void remove(ShardRouting shard) {
         assert shard.unassigned() == false : "only assigned shards can be removed here (" + shard + ")";

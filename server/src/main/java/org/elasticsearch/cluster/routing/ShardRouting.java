@@ -437,7 +437,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     /**
      * Cancel relocation of a shard. The shards state must be set
      * to <code>RELOCATING</code>.
-     * 代表从relocating的状态结束   TODO 这里又转换回了 started状态  难道 relocating指的是副本拷贝么
+     * 将某个正在relocate的分片取消转移 变回started状态
      */
     public ShardRouting cancelRelocation() {
         assert state == ShardRoutingState.RELOCATING : this;

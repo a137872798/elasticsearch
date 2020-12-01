@@ -291,20 +291,21 @@ public class AllocationService {
                     allocation.removeAllocationId(failedShard);
                 }
                 logger.warn(new ParameterizedMessage("failing shard [{}]", failedShardEntry), failedShardEntry.getFailure());
-                // 将该分片标记成失败
+                // 将该分片标记成失败 在内部会做一些状态的转换
                 routingNodes.failShard(logger, failedShard, unassignedInfo, indexMetadata, allocation.changes());
             } else {
                 logger.trace("{} shard routing failed in an earlier iteration (routing: {})", shardToFail.shardId(), shardToFail);
             }
         }
 
-        // TODO 先忽略
+        // 默认就是 GatewayAllocator   因为这些分片已经被关闭了 所以可以将拉取相关数据的请求从容器中移除
         for (final ExistingShardsAllocator allocator : existingShardsAllocators.values()) {
             allocator.applyFailedShards(failedShards, allocation);
         }
 
-        // 核心就是使用 ShardsAllocator 对所有分片进行分配 (涉及init relocation rebalance)
+        // 因为此时某些分片已经发生了变化 所以需要在集群内为这些分片重新分配节点 使得每个节点的负载合理
         reroute(allocation);
+        // 生成描述信息
         String failedShardsAsString
             = firstListElementsToCommaDelimitedString(failedShards, s -> s.getRoutingEntry().shardId().toString(), logger.isDebugEnabled());
         return buildResultAndLogHealthChange(clusterState, allocation, "shards failed [" + failedShardsAsString + "]");

@@ -431,8 +431,9 @@ public class ShardStateAction {
 
             ClusterState maybeUpdatedState = currentState;
             try {
-                // 根据这些失败/过期的分片  更新集群状态
+                // 根据这些失败/过期的分片  更新集群状态  其中会涉及到某些分片被剔除  以及更新集群内分片的分布情况
                 maybeUpdatedState = applyFailedShards(currentState, failedShardsToBeApplied, staleShardsToBeApplied);
+                // 这组任务都成功执行
                 batchResultBuilder.successes(tasksToBeApplied);
             } catch (Exception e) {
                 logger.warn(() -> new ParameterizedMessage("failed to apply failed shards {}", failedShardsToBeApplied), e);
@@ -441,6 +442,7 @@ public class ShardStateAction {
                 batchResultBuilder.failures(tasksToBeApplied, e);
             }
 
+            // 通过最新的集群状态来生成 ClusterTasksResult
             return batchResultBuilder.build(maybeUpdatedState);
         }
 
