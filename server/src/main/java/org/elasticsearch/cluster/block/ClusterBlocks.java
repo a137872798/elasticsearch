@@ -447,7 +447,12 @@ public class ClusterBlocks extends AbstractDiffable<ClusterBlocks> {
             return this;
         }
 
-
+        /**
+         * 将某个索引相关的block 插入到容器中
+         * @param index
+         * @param block
+         * @return
+         */
         public Builder addIndexBlock(String index, ClusterBlock block) {
             if (!indices.containsKey(index)) {
                 indices.put(index, new HashSet<>());

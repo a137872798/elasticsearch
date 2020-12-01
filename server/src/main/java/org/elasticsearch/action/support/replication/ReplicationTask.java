@@ -33,6 +33,7 @@ import static java.util.Objects.requireNonNull;
 
 /**
  * Task that tracks replication actions.
+ * 这是一个副本任务
  */
 public class ReplicationTask extends Task {
     private volatile String phase = "starting";

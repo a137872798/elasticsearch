@@ -117,6 +117,7 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
         REALLOCATED_REPLICA,
         /**
          * Unassigned as a result of a failed primary while the replica was initializing.
+         * 由于主分片失败 会导致相关处于init状态的副本也被关闭
          */
         PRIMARY_FAILED,
         /**

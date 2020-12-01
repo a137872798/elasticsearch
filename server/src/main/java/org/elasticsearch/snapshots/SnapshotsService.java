@@ -1799,6 +1799,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
 
     /**
      * Returns the indices that are currently being snapshotted (with partial == false) and that are contained in the indices-to-check set.
+     * @param indicesToCheck 将候选的索引中 正处于生成快照阶段的索引返回
+     *                       注意这个检测只针对 partial 为 false的快照
      */
     public static Set<Index> snapshottingIndices(final ClusterState currentState, final Set<Index> indicesToCheck) {
         final SnapshotsInProgress snapshots = currentState.custom(SnapshotsInProgress.TYPE);

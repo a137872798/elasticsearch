@@ -72,6 +72,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
 
+/**
+ * 对应一个获取分片状态的请求
+ */
 public class ShardStateAction {
 
     private static final Logger logger = LogManager.getLogger(ShardStateAction.class);
@@ -85,6 +88,7 @@ public class ShardStateAction {
 
     // a list of shards that failed during replication
     // we keep track of these shards in order to avoid sending duplicate failed shard requests for a single failing shard.
+    // 该对象会维护发往相关节点的监听器
     private final TransportRequestDeduplicator<FailedShardEntry> remoteFailedShardsDeduplicator = new TransportRequestDeduplicator<>();
 
     @Inject
@@ -94,6 +98,7 @@ public class ShardStateAction {
         this.clusterService = clusterService;
         this.threadPool = threadPool;
 
+        // 分片在启动和关闭 会注册不同的处理器
         transportService.registerRequestHandler(SHARD_STARTED_ACTION_NAME, ThreadPool.Names.SAME, StartedShardEntry::new,
             new ShardStartedTransportHandler(clusterService,
                 new ShardStartedClusterStateTaskExecutor(allocationService, rerouteService, logger),
@@ -104,17 +109,29 @@ public class ShardStateAction {
                 logger));
     }
 
+    /**
+     * 将某个请求发送到相关节点上
+     * @param actionName    本次操作的名称 用于匹配action对象
+     * @param currentState   当前集群状态
+     * @param request   发送的请求体
+     * @param listener   处理成功后触发的监听器
+     */
     private void sendShardAction(final String actionName, final ClusterState currentState,
                                  final TransportRequest request, final ActionListener<Void> listener) {
         ClusterStateObserver observer =
             new ClusterStateObserver(currentState, clusterService, null, logger, threadPool.getThreadContext());
+        // 获取leader节点 看来某个分片的相关操作都是发送到主控节点去处理的
         DiscoveryNode masterNode = currentState.nodes().getMasterNode();
+
+        // 检测leader节点是否发生变化的谓语
         Predicate<ClusterState> changePredicate = MasterNodeChangePredicate.build(currentState);
+        // 如果当前主节点未确定 比如还处于选举阶段 那么就需要等待 clusterState 发生变化
         if (masterNode == null) {
             logger.warn("no master known for action [{}] for shard entry [{}]", actionName, request);
             waitForNewMasterAndRetry(actionName, observer, request, listener, changePredicate);
         } else {
             logger.debug("sending [{}] to [{}] for shard entry [{}]", actionName, masterNode.getId(), request);
+            // 将请求发往leader 节点 将某个shard关闭    对应的传输层处理器为  ShardFailedTransportHandler
             transportService.sendRequest(masterNode,
                 actionName, request, new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
                     @Override
@@ -160,12 +177,15 @@ public class ShardStateAction {
      * @param message            the reason for the failure
      * @param failure            the underlying cause of the failure
      * @param listener           callback upon completion of the request
+     * 将某个分片标记成失败状态
      */
     public void remoteShardFailed(final ShardId shardId, String allocationId, long primaryTerm, boolean markAsStale, final String message,
                                   @Nullable final Exception failure, ActionListener<Void> listener) {
         assert primaryTerm > 0L : "primary term should be strictly positive";
         remoteFailedShardsDeduplicator.executeOnce(
+            // 将相关信息包装成 entry对象
             new FailedShardEntry(shardId, allocationId, primaryTerm, message, failure, markAsStale), listener,
+            // 回调对象 当该 failedShardEntry被首次加入到内部的管理容器时 会触发该回调
             (req, reqListener) -> sendShardAction(SHARD_FAILED_ACTION_NAME, clusterService.state(), req, reqListener));
     }
 
@@ -191,7 +211,14 @@ public class ShardStateAction {
         sendShardAction(SHARD_FAILED_ACTION_NAME, currentState, shardEntry, listener);
     }
 
-    // visible for testing
+    /**
+     * 等待leader节点发生变化
+     * @param actionName
+     * @param observer
+     * @param request
+     * @param listener
+     * @param changePredicate
+     */
     protected void waitForNewMasterAndRetry(String actionName, ClusterStateObserver observer,
                                             TransportRequest request, ActionListener<Void> listener,
                                             Predicate<ClusterState> changePredicate) {
@@ -201,6 +228,7 @@ public class ShardStateAction {
                 if (logger.isTraceEnabled()) {
                     logger.trace("new cluster state [{}] after waiting for master election for shard entry [{}]", state, request);
                 }
+                // 当确定了leader节点后 触发该函数
                 sendShardAction(actionName, state, request, listener);
             }
 
@@ -218,7 +246,16 @@ public class ShardStateAction {
         }, changePredicate);
     }
 
+    /**
+     * 当某个分片被标记成无效时 需要在leader节点进行处理
+     * 是这样 先找到shard.primary所在的node 发送请求 获取primary对应replicaGroup  找到在 unavailable容器中的分片 向leader节点发起关闭的请求
+     * 而该对象就是处理关闭请求的
+     */
     private static class ShardFailedTransportHandler implements TransportRequestHandler<FailedShardEntry> {
+
+        /**
+         * 集群服务对象
+         */
         private final ClusterService clusterService;
         private final ShardFailedClusterStateTaskExecutor shardFailedClusterStateTaskExecutor;
         private final Logger logger;
@@ -230,10 +267,19 @@ public class ShardStateAction {
             this.logger = logger;
         }
 
+        /**
+         * 接收到要关闭某个shard的请求
+         * @param request  本次的请求对象
+         * @param channel   使用的通道信息
+         * @param task   本次相关的任务信息
+         * @throws Exception
+         */
         @Override
         public void messageReceived(FailedShardEntry request, TransportChannel channel, Task task) throws Exception {
             logger.debug(() -> new ParameterizedMessage("{} received shard failed for {}",
                 request.shardId, request), request.failure);
+
+            // 提交一个集群更新的任务
             clusterService.submitStateUpdateTask(
                 "shard-failed",
                 request,
@@ -281,6 +327,9 @@ public class ShardStateAction {
         }
     }
 
+    /**
+     * 任务处理器对象  定义了如何处理更新任务
+     */
     public static class ShardFailedClusterStateTaskExecutor implements ClusterStateTaskExecutor<FailedShardEntry> {
         private final AllocationService allocationService;
         private final RerouteService rerouteService;
@@ -292,19 +341,34 @@ public class ShardStateAction {
             this.logger = logger;
         }
 
+        /**
+         * 当接收到任务后 开始处理请求
+         * @param currentState
+         * @param tasks
+         * @return
+         * @throws Exception
+         */
         @Override
         public ClusterTasksResult<FailedShardEntry> execute(ClusterState currentState, List<FailedShardEntry> tasks) throws Exception {
+
+            // 该对象用于处理某个集群状态更新的结果
             ClusterTasksResult.Builder<FailedShardEntry> batchResultBuilder = ClusterTasksResult.builder();
             List<FailedShardEntry> tasksToBeApplied = new ArrayList<>();
+
+            // 能够在路由表中找到的分片 就会被划分到这个列表中
             List<FailedShard> failedShardsToBeApplied = new ArrayList<>();
+
+            // 检测到未完成数据同步的分片存储到这个列表中
             List<StaleShard> staleShardsToBeApplied = new ArrayList<>();
 
+            // 遍历处理 分片失败任务
             for (FailedShardEntry task : tasks) {
                 IndexMetadata indexMetadata = currentState.metadata().index(task.shardId.getIndex());
                 if (indexMetadata == null) {
                     // tasks that correspond to non-existent indices are marked as successful
                     logger.debug("{} ignoring shard failed task [{}] (unknown index {})",
                         task.shardId, task, task.shardId.getIndex());
+                    // 当对应的索引元数据不存在时 静默处理 认为已经执行成功
                     batchResultBuilder.success(task);
                 } else {
                     // The primary term is 0 if the shard failed itself. It is > 0 if a write was done on a primary but was failed to be
@@ -315,6 +379,7 @@ public class ShardStateAction {
                     // We check here that the primary to which the write happened was not already failed in an earlier cluster state update.
                     // This prevents situations where a new primary has already been selected and replication failures from an old stale
                     // primary unnecessarily fail currently active shards.
+                    // 如果此时发起任务时 任期已经发生了变化了 也就是ABA 的问题 那么本次任务执行失败
                     if (task.primaryTerm > 0) {
                         long currentPrimaryTerm = indexMetadata.primaryTerm(task.shardId.id());
                         if (currentPrimaryTerm != task.primaryTerm) {
@@ -329,25 +394,34 @@ public class ShardStateAction {
                         }
                     }
 
+                    // 找到匹配的路由信息  路由表会在集群内所有节点做同步
                     ShardRouting matched = currentState.getRoutingTable().getByAllocationId(task.shardId, task.allocationId);
+
+                    // 当没有找到匹配信息时
                     if (matched == null) {
                         Set<String> inSyncAllocationIds = indexMetadata.inSyncAllocationIds(task.shardId.id());
                         // mark shard copies without routing entries that are in in-sync allocations set only as stale if the reason why
                         // they were failed is because a write made it into the primary but not to this copy (which corresponds to
                         // the check "primaryTerm > 0").
+                        // 应该是同步完成后的分片 才会进行分配 才会到路由表中  所以上面没有分配信息 就从同步队列中查找
                         if (task.primaryTerm > 0 && inSyncAllocationIds.contains(task.allocationId)) {
                             logger.debug("{} marking shard {} as stale (shard failed task: [{}])",
                                 task.shardId, task.allocationId, task);
+
+                            // 这种情况代表这个分片是一个过期的分片  也就是未完成数据同步的分片
                             tasksToBeApplied.add(task);
+                            // 将分片包装成 stale对象并存储到队列中
                             staleShardsToBeApplied.add(new StaleShard(task.shardId, task.allocationId));
                         } else {
                             // tasks that correspond to non-existent shards are marked as successful
                             logger.debug("{} ignoring shard failed task [{}] (shard does not exist anymore)", task.shardId, task);
+                            // 静默处理
                             batchResultBuilder.success(task);
                         }
                     } else {
                         // failing a shard also possibly marks it as stale (see IndexMetadataUpdater)
                         logger.debug("{} failing shard {} (shard failed task: [{}])", task.shardId, matched, task);
+                        // 如果在路由表中找到了这个分片 就标记成失败的分片
                         tasksToBeApplied.add(task);
                         failedShardsToBeApplied.add(new FailedShard(matched, task.message, task.failure, task.markAsStale));
                     }
@@ -357,6 +431,7 @@ public class ShardStateAction {
 
             ClusterState maybeUpdatedState = currentState;
             try {
+                // 根据这些失败/过期的分片  更新集群状态
                 maybeUpdatedState = applyFailedShards(currentState, failedShardsToBeApplied, staleShardsToBeApplied);
                 batchResultBuilder.successes(tasksToBeApplied);
             } catch (Exception e) {
@@ -369,7 +444,13 @@ public class ShardStateAction {
             return batchResultBuilder.build(maybeUpdatedState);
         }
 
-        // visible for testing
+        /**
+         * 某些分片此时被标记成无效分片了 可能其他相关分片会发生 reroute
+         * @param currentState
+         * @param failedShards
+         * @param staleShards
+         * @return
+         */
         ClusterState applyFailedShards(ClusterState currentState, List<FailedShard> failedShards, List<StaleShard> staleShards) {
             return allocationService.applyFailedShards(currentState, failedShards, staleShards);
         }
@@ -390,8 +471,18 @@ public class ShardStateAction {
         }
     }
 
+    /**
+     * 该请求代表某个分片被标记成了无效状态
+     */
     public static class FailedShardEntry extends TransportRequest {
+
+        /**
+         * 代表本次针对的分片
+         */
         final ShardId shardId;
+        /**
+         * 分片 + targetNode 对应一个唯一的allocationId
+         */
         final String allocationId;
         final long primaryTerm;
         final String message;

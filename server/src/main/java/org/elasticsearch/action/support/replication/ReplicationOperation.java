@@ -54,6 +54,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
 
+/**
+ * 发起了一些副本操作
+ * @param <Request>
+ * @param <ReplicaRequest>
+ * @param <PrimaryResultT>
+ */
 public class ReplicationOperation<
             Request extends ReplicationRequest<Request>,
             ReplicaRequest extends ReplicationRequest<ReplicaRequest>,
@@ -86,10 +92,26 @@ public class ReplicationOperation<
     // exposed for tests
     private final ActionListener<PrimaryResultT> resultListener;
 
+    /**
+     * 本次操作对应的结果
+     */
     private volatile PrimaryResultT primaryResult = null;
 
     private final List<ReplicationResponse.ShardInfo.Failure> shardReplicaFailures = Collections.synchronizedList(new ArrayList<>());
 
+    /**
+     *
+     * @param request
+     * @param primary  这是一个分片的包装对象
+     * @param listener  当操作完成后触发该监听器
+     * @param replicas
+     * @param logger
+     * @param threadPool
+     * @param opType
+     * @param primaryTerm
+     * @param initialRetryBackoffBound
+     * @param retryTimeout
+     */
     public ReplicationOperation(Request request, Primary<Request, ReplicaRequest, PrimaryResultT> primary,
                                 ActionListener<PrimaryResultT> listener,
                                 Replicas<ReplicaRequest> replicas,
@@ -107,10 +129,15 @@ public class ReplicationOperation<
         this.retryTimeout = retryTimeout;
     }
 
+    /**
+     * 开始处理请求
+     * @throws Exception
+     */
     public void execute() throws Exception {
         final String activeShardCountFailure = checkActiveShardCount();
         final ShardRouting primaryRouting = primary.routingEntry();
         final ShardId primaryId = primaryRouting.shardId();
+        // 代表当前分片数不足 无法正常执行任务
         if (activeShardCountFailure != null) {
             finishAsFailed(new UnavailableShardsException(primaryId,
                 "{} Timeout: [{}], request: [{}]", activeShardCountFailure, request.timeout(), request));
@@ -118,13 +145,21 @@ public class ReplicationOperation<
         }
 
         totalShards.incrementAndGet();
+        // 当整个流程结束后才会-1
         pendingActions.incrementAndGet(); // increase by 1 until we finish all primary coordination
+        // 当接收到结果时  使用handlePrimaryResult 进行处理
         primary.perform(request, ActionListener.wrap(this::handlePrimaryResult, resultListener::onFailure));
     }
 
+    /**
+     * 当处理主分片并产生了结果时  会先调用该方法
+     * @param primaryResult
+     */
     private void handlePrimaryResult(final PrimaryResultT primaryResult) {
         this.primaryResult = primaryResult;
         final ReplicaRequest replicaRequest = primaryResult.replicaRequest();
+
+        // 实际上就是本对象内部的 request 会携带过去
         if (replicaRequest != null) {
             if (logger.isTraceEnabled()) {
                 logger.trace("[{}] op [{}] completed on primary for request [{}]", primary.routingEntry().shardId(), opType, request);
@@ -136,25 +171,34 @@ public class ReplicationOperation<
             // is valid for this replication group. If we would sample in the reverse, the global checkpoint might be based on a subset
             // of the sampled replication group, and advanced further than what the given replication group would allow it to.
             // This would entail that some shards could learn about a global checkpoint that would be higher than its local checkpoint.
+            // 通过 tracker获取上一次同步的全局检查点    在本次操作完成后 会通过updateCheckPoints 更新tracker内部的检查点
             final long globalCheckpoint = primary.computedGlobalCheckpoint();
             // we have to capture the max_seq_no_of_updates after this request was completed on the primary to make sure the value of
             // max_seq_no_of_updates on replica when this request is executed is at least the value on the primary when it was executed
             // on.
+            // 获取最新的序列号 每次操作都会增加该值
             final long maxSeqNoOfUpdatesOrDeletes = primary.maxSeqNoOfUpdatesOrDeletes();
             assert maxSeqNoOfUpdatesOrDeletes != SequenceNumbers.UNASSIGNED_SEQ_NO : "seqno_of_updates still uninitialized";
+            // 获取该主分片相关的副本组
             final ReplicationGroup replicationGroup = primary.getReplicationGroup();
+            // TODO 这个是正在同步的副本的意思吗 ???
             final PendingReplicationActions pendingReplicationActions = primary.getPendingReplicationActions();
+            // 将不可用的分片标记成过期状态
             markUnavailableShardsAsStale(replicaRequest, replicationGroup);
             performOnReplicas(replicaRequest, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, replicationGroup, pendingReplicationActions);
         }
+
+        // 当有关 replica的处理完成时 才根据之前result触发监听器
         primaryResult.runPostReplicationActions(new ActionListener<>() {
 
             @Override
             public void onResponse(Void aVoid) {
                 successfulShards.incrementAndGet();
                 try {
+                    // 本地检查点和全局检查点都是会进行持久化的  这里主要是将最新的检查点 同步到 tracer对象中
                     updateCheckPoints(primary.routingEntry(), primary::localCheckpoint, primary::globalCheckpoint);
                 } finally {
+                    // 对 pending计数-1 当归0的时候 触发finish方法
                     decPendingAndFinishIfNeeded();
                 }
             }
@@ -169,10 +213,18 @@ public class ReplicationOperation<
         });
     }
 
+    /**
+     * 将不可用的分片标记成过期状态
+     * @param replicaRequest
+     * @param replicationGroup
+     */
     private void markUnavailableShardsAsStale(ReplicaRequest replicaRequest, ReplicationGroup replicationGroup) {
         // if inSyncAllocationIds contains allocation ids of shards that don't exist in RoutingTable, mark copies as stale
+        // 副本组中有2个列表一个是 存储 inSync容器中的任务   一个存储 unavailableInSyncShards容器中的任务
         for (String allocationId : replicationGroup.getUnavailableInSyncShards()) {
+            // 增加一个此时正在运行的任务
             pendingActions.incrementAndGet();
+            // 将其他副本标记成无效状态
             replicasProxy.markShardCopyAsStaleIfNeeded(replicaRequest.shardId(), allocationId, primaryTerm,
                 ActionListener.wrap(r -> decPendingAndFinishIfNeeded(), ReplicationOperation.this::onNoLongerPrimary));
         }
@@ -263,6 +315,12 @@ public class ReplicationOperation<
         replicationAction.run();
     }
 
+    /**
+     * 更新主分片的 全局检查点和本地检查点
+     * @param shard
+     * @param localCheckpointSupplier   将此时持久化的检查点同步到 tracer上
+     * @param globalCheckpointSupplier
+     */
     private void updateCheckPoints(ShardRouting shard, LongSupplier localCheckpointSupplier, LongSupplier globalCheckpointSupplier) {
         try {
             primary.updateLocalCheckpointForShard(shard.allocationId().getId(), localCheckpointSupplier.getAsLong());
@@ -301,17 +359,24 @@ public class ReplicationOperation<
     /**
      * Checks whether we can perform a write based on the required active shard count setting.
      * Returns **null* if OK to proceed, or a string describing the reason to stop
+     * 检测当前是否有足够的活跃分片
      */
     protected String checkActiveShardCount() {
+        // 获取该主分片的 shardId
         final ShardId shardId = primary.routingEntry().shardId();
+        // 代表本次请求需要等待直到多少分片才开始处理
         final ActiveShardCount waitForActiveShards = request.waitForActiveShards();
+        // 如果没有限制 返回null
         if (waitForActiveShards == ActiveShardCount.NONE) {
             return null;  // not waiting for any shards
         }
+        // 获取该分片此时所有副本的路由信息
         final IndexShardRoutingTable shardRoutingTable = primary.getReplicationGroup().getRoutingTable();
+        // 当满足要求时返回null
         if (waitForActiveShards.enoughShardsActive(shardRoutingTable)) {
             return null;
         } else {
+            // 当此时活跃分片数不足的时候 返回一个提示信息
             final String resolvedShards = waitForActiveShards == ActiveShardCount.ALL ? Integer.toString(shardRoutingTable.shards().size())
                                               : waitForActiveShards.toString();
             logger.trace("[{}] not enough active copies to meet shard count of [{}] (have {}, needed {}), scheduling a retry. op [{}], " +
@@ -322,6 +387,9 @@ public class ReplicationOperation<
         }
     }
 
+    /**
+     * 减少 pending的计数值 如果刚好归0了 触发finish
+     */
     private void decPendingAndFinishIfNeeded() {
         assert pendingActions.get() > 0 : "pending action count goes below 0 for request [" + request + "]";
         if (pendingActions.decrementAndGet() == 0) {
@@ -329,6 +397,9 @@ public class ReplicationOperation<
         }
     }
 
+    /**
+     * 代表本次任务已经执行完毕
+     */
     private void finish() {
         if (finished.compareAndSet(false, true)) {
             final ReplicationResponse.ShardInfo.Failure[] failuresArray;
@@ -339,6 +410,7 @@ public class ReplicationOperation<
                 shardReplicaFailures.toArray(failuresArray);
             }
             primaryResult.setShardInfo(new ReplicationResponse.ShardInfo(
+                    // 总计处理了多少分片 成功了多少分片 本次结果是否成功
                     totalShards.get(),
                     successfulShards.get(),
                     failuresArray
@@ -448,6 +520,7 @@ public class ReplicationOperation<
 
     /**
      * An encapsulation of an operation that will be executed on the replica shards, if present.
+     * 代表一个将会在副本执行的操作
      */
     public interface Replicas<RequestT extends ReplicationRequest<RequestT>> {
 

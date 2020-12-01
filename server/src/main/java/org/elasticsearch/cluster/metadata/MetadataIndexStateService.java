@@ -129,7 +129,7 @@ public class MetadataIndexStateService {
      *
      * Closing indices is a 3 steps process: it first adds a write block to every indices to close, then waits for the operations on shards
      * to be terminated and finally closes the indices by moving their state to CLOSE.
-     * @param request  代表本次要关闭哪些索引
+     * @param request  内部包含了一些关闭索引的操作
      */
     public void closeIndices(final CloseIndexClusterStateUpdateRequest request, final ActionListener<CloseIndexResponse> listener) {
         final Index[] concreteIndices = request.indices();
@@ -137,7 +137,7 @@ public class MetadataIndexStateService {
             throw new IllegalArgumentException("Index name is required");
         }
 
-        // 需要在集群范围发布 clusterState变化的请求
+        // 第一步 为即将被关闭的index 增加block  注意这些index不能处于恢复数据 或者生成快照的进程中 否则抛出异常
         clusterService.submitStateUpdateTask("add-block-index-to-close " + Arrays.toString(concreteIndices),
             new ClusterStateUpdateTask(Priority.URGENT) {
 
@@ -145,17 +145,20 @@ public class MetadataIndexStateService {
 
                 @Override
                 public ClusterState execute(final ClusterState currentState) {
+                    // 为这些即将关闭的索引 设置block 避免被意外使用
                     return addIndexClosedBlocks(concreteIndices, blockedIndices, currentState);
                 }
 
                 @Override
                 public void clusterStateProcessed(final String source, final ClusterState oldState, final ClusterState newState) {
+                    // 代表集群状态没有任何变化 可以直接触发监听器
                     if (oldState == newState) {
                         assert blockedIndices.isEmpty() : "List of blocked indices is not empty but cluster state wasn't changed";
                         listener.onResponse(new CloseIndexResponse(true, false, Collections.emptyList()));
                     } else {
                         assert blockedIndices.isEmpty() == false : "List of blocked indices is empty but cluster state was changed";
                         threadPool.executor(ThreadPool.Names.MANAGEMENT)
+                            // 只需要针对 本次被阻塞的index做处理 如果不包含在该列表中 就代表这个索引已经被关闭了
                             .execute(new WaitForClosedBlocksApplied(blockedIndices, request,
                                 ActionListener.wrap(verifyResults ->
                                     clusterService.submitStateUpdateTask("close-indices", new ClusterStateUpdateTask(Priority.URGENT) {
@@ -229,7 +232,8 @@ public class MetadataIndexStateService {
      * This step builds the list of indices to close (the ones explicitly requested that are not in CLOSE state) and adds a unique cluster
      * block (or reuses an existing one) to every index to close in the cluster state. After the cluster state is published, the shards
      * should start to reject writing operations and we can proceed with step 2.
-     * 为某些索引增加 block 避免这段期间index被操作
+     * @param blockedIndices 本次哪些index新增了block   会插入到该容器
+     * 该方法的主要目的就是为某些索引增加 block 避免这段期间index被操作
      */
     static ClusterState addIndexClosedBlocks(final Index[] indices, final Map<Index, ClusterBlock> blockedIndices,
                                              final ClusterState currentState) {
@@ -247,24 +251,31 @@ public class MetadataIndexStateService {
             }
         }
 
+        // 代表本次申请的索引都已经被关闭了 不需要做处理
         if (indicesToClose.isEmpty()) {
             return currentState;
         }
 
         // Check if index closing conflicts with any running restores
+        // 检测当前的关闭动作是否与某个恢复动作冲突了
+        // restoringIndices 代表这些索引此时正处于恢复状态 无法进行关闭
         Set<Index> restoringIndices = RestoreService.restoringIndices(currentState, indicesToClose);
         if (restoringIndices.isEmpty() == false) {
             throw new IllegalArgumentException("Cannot close indices that are being restored: " + restoringIndices);
         }
 
         // Check if index closing conflicts with any running snapshots
+        // 找到正在生成快照的索引 也无法关闭
         Set<Index> snapshottingIndices = SnapshotsService.snapshottingIndices(currentState, indicesToClose);
         if (snapshottingIndices.isEmpty() == false) {
             throw new SnapshotInProgressException("Cannot close indices that are being snapshotted: " + snapshottingIndices +
                 ". Try again after snapshot finishes or cancel the currently running snapshot.");
         }
 
+        // 现在应该是为 index建立相关的block
         final ClusterBlocks.Builder blocks = ClusterBlocks.builder().blocks(currentState.blocks());
+
+        // 路由表本身保持不变
         final RoutingTable.Builder routingTable = RoutingTable.builder(currentState.routingTable());
 
         for (Index index : indicesToClose) {
@@ -272,6 +283,7 @@ public class MetadataIndexStateService {
             final Set<ClusterBlock> clusterBlocks = currentState.blocks().indices().get(index.getName());
             if (clusterBlocks != null) {
                 for (ClusterBlock clusterBlock : clusterBlocks) {
+                    // 代表由于close生成的block 已经存在
                     if (clusterBlock.id() == INDEX_CLOSED_BLOCK_ID) {
                         // Reuse the existing index closed block
                         indexBlock = clusterBlock;
@@ -281,6 +293,7 @@ public class MetadataIndexStateService {
             }
             if (indexBlock == null) {
                 // Create a new index closed block
+                // 不存在就要创建一个新的 indexBlock
                 indexBlock = createIndexClosingBlock();
             }
             assert Strings.hasLength(indexBlock.uuid()) : "Closing block should have a UUID";
@@ -299,12 +312,26 @@ public class MetadataIndexStateService {
      * This step iterates over the indices previously blocked and sends a {@link TransportVerifyShardBeforeCloseAction} to each shard. If
      * this action succeed then the shard is considered to be ready for closing. When all shards of a given index are ready for closing,
      * the index is considered ready to be closed.
+     * 该对象会在index被关闭后 解除 block
      */
     class WaitForClosedBlocksApplied extends ActionRunnable<Map<Index, IndexResult>> {
 
+        /**
+         * 代表哪些index由于关闭产生了block  value即是对应的block块
+         */
         private final Map<Index, ClusterBlock> blockedIndices;
+
+        /**
+         * 这是一个关闭索引的请求
+         */
         private final CloseIndexClusterStateUpdateRequest request;
 
+        /**
+         *
+         * @param blockedIndices
+         * @param request
+         * @param listener
+         */
         private WaitForClosedBlocksApplied(final Map<Index, ClusterBlock> blockedIndices,
                                            final CloseIndexClusterStateUpdateRequest request,
                                            final ActionListener<Map<Index, IndexResult>> listener) {
@@ -331,10 +358,18 @@ public class MetadataIndexStateService {
             });
         }
 
+        /**
+         * 等待相关分片被关闭
+         * @param index  本次被关闭的索引
+         * @param closingBlock   该索引匹配的block
+         * @param state      当前集群状态
+         * @param onResponse   处理结果的监听器
+         */
         private void waitForShardsReadyForClosing(final Index index,
                                                   final ClusterBlock closingBlock,
                                                   final ClusterState state,
                                                   final Consumer<IndexResult> onResponse) {
+            // 如果索引在集群范围内已经无法被观测到了  就不需要处理了
             final IndexMetadata indexMetadata = state.metadata().index(index);
             if (indexMetadata == null) {
                 logger.debug("index {} has been blocked before closing and is now deleted, ignoring", index);
@@ -342,6 +377,7 @@ public class MetadataIndexStateService {
                 return;
             }
             final IndexRoutingTable indexRoutingTable = state.routingTable().index(index);
+            // 当索引状态已经被标记成CLOSE后 直接触发listener
             if (indexRoutingTable == null || indexMetadata.getState() == IndexMetadata.State.CLOSE) {
                 assert state.blocks().hasIndexBlock(index.getName(), INDEX_CLOSED_BLOCK);
                 logger.debug("index {} has been blocked before closing and is already closed, ignoring", index);
@@ -351,11 +387,14 @@ public class MetadataIndexStateService {
 
             final ImmutableOpenIntMap<IndexShardRoutingTable> shards = indexRoutingTable.getShards();
             final AtomicArray<ShardResult> results = new AtomicArray<>(shards.size());
+            // 按照分片数量创建倒计时对象
             final CountDown countDown = new CountDown(shards.size());
 
             for (IntObjectCursor<IndexShardRoutingTable> shard : shards) {
                 final IndexShardRoutingTable shardRoutingTable = shard.value;
                 final int shardId = shardRoutingTable.shardId().id();
+
+                // 在关闭每个shard前 先发送验证请求
                 sendVerifyShardBeforeCloseRequest(shardRoutingTable, closingBlock, new NotifyOnceListener<ReplicationResponse>() {
                     @Override
                     public void innerOnResponse(final ReplicationResponse replicationResponse) {
@@ -382,10 +421,18 @@ public class MetadataIndexStateService {
             }
         }
 
+        /**
+         * 在关闭某个分片前 先发送验证请求
+         * @param shardRoutingTable   某个分片的路由表
+         * @param closingBlock   该分片所属的index 本次创建的block
+         * @param listener   当处理完成后触发的监听器
+         */
         private void sendVerifyShardBeforeCloseRequest(final IndexShardRoutingTable shardRoutingTable,
                                                        final ClusterBlock closingBlock,
                                                        final ActionListener<ReplicationResponse> listener) {
+
             final ShardId shardId = shardRoutingTable.shardId();
+            // 如果该路由表的主分片还处于 未分配的状态  无法进行认证 直接触发监听器
             if (shardRoutingTable.primaryShard().unassigned()) {
                 logger.debug("primary shard {} is unassigned, ignoring", shardId);
                 final ReplicationResponse response = new ReplicationResponse();
@@ -394,6 +441,8 @@ public class MetadataIndexStateService {
                 return;
             }
             final TaskId parentTaskId = new TaskId(clusterService.localNode().getId(), request.taskId());
+
+            // 注意这里处于第1阶段  在处理时会先对分片数据进行刷盘
             final TransportVerifyShardBeforeCloseAction.ShardRequest shardRequest =
                 new TransportVerifyShardBeforeCloseAction.ShardRequest(shardId, closingBlock, true, parentTaskId);
             if (request.ackTimeout() != null) {
@@ -637,6 +686,7 @@ public class MetadataIndexStateService {
     /**
      * @return Generates a {@link ClusterBlock} that blocks read and write operations on soon-to-be-closed indices. The
      * cluster block is generated with the id value equals to {@link #INDEX_CLOSED_BLOCK_ID} and a unique UUID.
+     * 创建一个关于 index被close的block
      */
     public static ClusterBlock createIndexClosingBlock() {
         return new ClusterBlock(INDEX_CLOSED_BLOCK_ID, UUIDs.randomBase64UUID(), "index preparing to close. Reopen the index to allow " +

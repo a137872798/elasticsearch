@@ -1318,7 +1318,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         }
         // 更新之前的 state对象
         boolean increasedLocalCheckpoint = updateLocalCheckpoint(allocationId, cps, localCheckpoint);
-        // TODO 这个pending是什么
+        // 如果该allocationId 对应的分片还处于同步队列中  (应该是针对副本的概念 尚未与primary达成数据同步的分片)
         boolean pending = pendingInSync.contains(allocationId);
         // 代表已经追赶上全局检查点了   等下 那么全局检查点就不是所有节点一致了 因为还是有落后的节点 那么就是超半数同意 跟kafka一样???
         if (pending && cps.localCheckpoint >= getGlobalCheckpoint()) {

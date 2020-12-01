@@ -302,7 +302,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private final ReplicationTracker replicationTracker;
 
     /**
-     * 表明当前shard处于哪个node上
+     * 描述该分片的路由信息
      */
     protected volatile ShardRouting shardRouting;
 
@@ -2887,6 +2887,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Returns the current replication group for the shard.
      *
      * @return the replication group
+     * 获取该分片所有副本组成的 group
      */
     public ReplicationGroup getReplicationGroup() {
         assert assertPrimaryMode();
@@ -3355,6 +3356,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Acquire all primary operation permits. Once all permits are acquired, the provided ActionListener is called.
      * It is the responsibility of the caller to close the {@link Releasable}.
+     * 获取该分片的全部操作许可
      */
     public void acquireAllPrimaryOperationsPermits(final ActionListener<Releasable> onPermitAcquired, final TimeValue timeout) {
         verifyNotClosed();
@@ -3385,7 +3387,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 });
     }
 
+    /**
+     * 等待直到抢占该分片的操作权
+     * @param onPermitAcquired  当获取到操作权后触发
+     * @param timeout
+     * @param timeUnit
+     */
     private void asyncBlockOperations(ActionListener<Releasable> onPermitAcquired, long timeout, TimeUnit timeUnit) {
+        // 执行强制刷新 并在结束时释放计数器
         final Releasable forceRefreshes = refreshListeners.forceRefreshes();
         final ActionListener<Releasable> wrappedListener = ActionListener.wrap(r -> {
             forceRefreshes.close();
@@ -3395,6 +3404,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             onPermitAcquired.onFailure(e);
         });
         try {
+            // 发起一个阻塞操作 这样在直到 onPermitAcquired 手动释放之前 针对该分片的其他操作都会被阻塞
             indexShardOperationPermits.asyncBlockOperations(wrappedListener, timeout, timeUnit);
         } catch (Exception e) {
             forceRefreshes.close();

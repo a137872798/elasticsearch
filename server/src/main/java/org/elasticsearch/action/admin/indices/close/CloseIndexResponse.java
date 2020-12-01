@@ -86,10 +86,19 @@ public class CloseIndexResponse extends ShardsAcknowledgedResponse {
         return Strings.toString(this);
     }
 
+    /**
+     * 代表关闭某个索引的处理结果
+     */
     public static class IndexResult implements Writeable, ToXContentFragment {
 
+        /**
+         * 被关闭的索引信息
+         */
         private final Index index;
         private final @Nullable Exception exception;
+        /**
+         * 下面是以分片为单位的处理结果
+         */
         private final @Nullable ShardResult[] shards;
 
         public IndexResult(final Index index) {
@@ -181,6 +190,9 @@ public class CloseIndexResponse extends ShardsAcknowledgedResponse {
         }
     }
 
+    /**
+     * 代表关闭某个分片的处理结果
+     */
     public static class ShardResult implements Writeable, ToXContentFragment {
 
         private final int id;

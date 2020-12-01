@@ -229,7 +229,7 @@ public class RoutingAllocation {
     }
 
     /**
-     * 代表不会将某个分片分配到这些节点上
+     * 标记该shardId 下的所有分配不会被分配到这个node下
      * @param shardId
      * @param nodeId
      */
@@ -277,7 +277,7 @@ public class RoutingAllocation {
 
     /**
      * Remove the allocation id of the provided shard from the set of in-sync shard copies
-     * 将该分片的allocationId 加入到该分片对应的update对象的 remove容器中
+     * 将分片添加到一个之后会移除的队列中
      */
     public void removeAllocationId(ShardRouting shardRouting) {
         indexMetadataUpdater.removeAllocationId(shardRouting);

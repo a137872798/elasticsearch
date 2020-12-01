@@ -90,6 +90,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * The action samples cluster state on the receiving node to reroute to node with primary copy and on the
  * primary node to validate request before primary operation followed by sampling state again for resolving
  * nodes with replica copies to perform replication.
+ * 代表某个action的处理会传播到所有副本上
  */
 public abstract class TransportReplicationAction<
             Request extends ReplicationRequest<Request>,
@@ -115,6 +116,9 @@ public abstract class TransportReplicationAction<
     protected final ThreadPool threadPool;
     protected final TransportService transportService;
     protected final ClusterService clusterService;
+    /**
+     * 包含分片状态切换的处理器
+     */
     protected final ShardStateAction shardStateAction;
     protected final IndicesService indicesService;
     protected final TransportRequestOptions transportOptions;
@@ -160,6 +164,7 @@ public abstract class TransportReplicationAction<
 
         transportService.registerRequestHandler(actionName, ThreadPool.Names.SAME, requestReader, this::handleOperationRequest);
 
+        // 每个节点作为 作为管理shard的主分片/副本 实现不同的钩子方法
         transportService.registerRequestHandler(transportPrimaryAction, executor, forceExecutionOnPrimary, true,
             in -> new ConcreteShardRequest<>(requestReader, in), this::handlePrimaryRequest);
 
@@ -241,7 +246,16 @@ public abstract class TransportReplicationAction<
         return TransportRequestOptions.EMPTY;
     }
 
+    /**
+     * 检测该index 是否被设置了block
+     * @param state
+     * @param indexName
+     * @return
+     */
     private ClusterBlockException blockExceptions(final ClusterState state, final String indexName) {
+
+        // 默认情况下globalBlockLevel/indexBlockLevel 都是null 也就是不需要检测阻塞
+        // 比如closeIndex会为该index设置block 那么如果这里还需要检测 很可能就无法正常运行
         ClusterBlockLevel globalBlockLevel = globalBlockLevel();
         if (globalBlockLevel != null) {
             ClusterBlockException blockException = state.blocks().globalBlockedException(globalBlockLevel);
@@ -276,11 +290,20 @@ public abstract class TransportReplicationAction<
         execute(task, request, new ChannelActionListener<>(channel, actionName, request));
     }
 
+    /**
+     * 处理包装了 primaryState的请求
+     * @param request
+     * @param channel
+     * @param task
+     */
     protected void handlePrimaryRequest(final ConcreteShardRequest<Request> request, final TransportChannel channel, final Task task) {
         new AsyncPrimaryAction(
             request, new ChannelActionListener<>(channel, transportPrimaryAction, request), (ReplicationTask) task).run();
     }
 
+    /**
+     * 处理主分片
+     */
     class AsyncPrimaryAction extends AbstractRunnable {
         private final ActionListener<Response> onCompletionListener;
         private final ReplicationTask replicationTask;
@@ -293,10 +316,17 @@ public abstract class TransportReplicationAction<
             this.replicationTask = replicationTask;
         }
 
+        /**
+         * 处理主分片
+         * @throws Exception
+         */
         @Override
         protected void doRun() throws Exception {
+            // 本次处理的主分片对应的id
             final ShardId shardId = primaryRequest.getRequest().shardId();
+            // 从indexService中获取该分片相关的数据
             final IndexShard indexShard = getIndexShard(shardId);
+            // 获取该分片的路由信息
             final ShardRouting shardRouting = indexShard.routingEntry();
             // we may end up here if the cluster state used to route the primary is so stale that the underlying
             // index shard was replaced with a replica. For example - in a two node cluster, if the primary fails
@@ -304,20 +334,24 @@ public abstract class TransportReplicationAction<
             if (shardRouting.primary() == false) {
                 throw new ReplicationOperation.RetryOnPrimaryException(shardId, "actual shard is not a primary " + shardRouting);
             }
+            // 当 allocationId 不一致时代表发生了某种变化 不进行处理
             final String actualAllocationId = shardRouting.allocationId().getId();
             if (actualAllocationId.equals(primaryRequest.getTargetAllocationID()) == false) {
                 throw new ShardNotFoundException(shardId, "expected allocation id [{}] but found [{}]",
                     primaryRequest.getTargetAllocationID(), actualAllocationId);
             }
+            // 任期要求相同
             final long actualTerm = indexShard.getPendingPrimaryTerm();
             if (actualTerm != primaryRequest.getPrimaryTerm()) {
                 throw new ShardNotFoundException(shardId, "expected allocation id [{}] with term [{}] but found [{}]",
                     primaryRequest.getTargetAllocationID(), primaryRequest.getPrimaryTerm(), actualTerm);
             }
 
+            // 获取主分片的操作许可
             acquirePrimaryOperationPermit(
                     indexShard,
                     primaryRequest.getRequest(),
+                    // 当获取到操作权后 触发监听器
                     ActionListener.wrap(
                             releasable -> runWithPrimaryShardReference(new PrimaryShardReference(indexShard, releasable)),
                             e -> {
@@ -329,26 +363,37 @@ public abstract class TransportReplicationAction<
                             }));
         }
 
+        /**
+         * 开始处理主分片
+         * @param primaryShardReference
+         */
         void runWithPrimaryShardReference(final PrimaryShardReference primaryShardReference) {
             try {
                 final ClusterState clusterState = clusterService.state();
                 final IndexMetadata indexMetadata = clusterState.metadata().getIndexSafe(primaryShardReference.routingEntry().index());
 
+                // 检测当前index的相关操作是否被禁止 默认为null 子类通过自定义来隔离一些操作
                 final ClusterBlockException blockException = blockExceptions(clusterState, indexMetadata.getIndex().getName());
                 if (blockException != null) {
                     logger.trace("cluster is blocked, action failed on primary", blockException);
                     throw blockException;
                 }
 
+                // 如果该主分片完成了重定向
                 if (primaryShardReference.isRelocated()) {
+                    // 为了不再代理过程中阻塞其他对该分片的操作 提前释放许可证
                     primaryShardReference.close(); // release shard operation lock as soon as possible
+                    // 代表将主分片的处理委托给了另一个节点
                     setPhase(replicationTask, "primary_delegation");
                     // delegate primary phase to relocation target
                     // it is safe to execute primary phase on relocation target as there are no more in-flight operations where primary
                     // phase is executed on local shard and all subsequent operations are executed on relocation target as primary phase.
+
+                    // 获取主分片此时的路由信息
                     final ShardRouting primary = primaryShardReference.routingEntry();
                     assert primary.relocating() : "indexShard is marked as relocated but routing isn't" + primary;
                     final Writeable.Reader<Response> reader = TransportReplicationAction.this::newResponseInstance;
+                    // 将请求发往了重定向后的节点
                     DiscoveryNode relocatingNode = clusterState.nodes().get(primary.relocatingNodeId());
                     transportService.sendRequest(relocatingNode, transportPrimaryAction,
                         new ConcreteShardRequest<>(primaryRequest.getRequest(), primary.allocationId().getRelocationId(),
@@ -368,11 +413,16 @@ public abstract class TransportReplicationAction<
                             }
                         });
                 } else {
+                    // 在当前节点处理primary
                     setPhase(replicationTask, "primary");
 
+                    // 当在当前节点上根据 主分片处理完请求
                     final ActionListener<Response> responseListener = ActionListener.wrap(response -> {
+
+                        // 对结果进行适配  默认为NOOP
                         adaptResponse(response, primaryShardReference.indexShard);
 
+                        // 如果每次操作完成后 都需要同步全局检查点  TODO
                         if (syncGlobalCheckpointAfterOperation) {
                             try {
                                 primaryShardReference.indexShard.maybeSyncGlobalCheckpoint("post-operation");
@@ -389,6 +439,7 @@ public abstract class TransportReplicationAction<
                             }
                         }
 
+                        // 这个时候可以释放之前的许可证了
                         primaryShardReference.close(); // release shard operation lock before responding to caller
                         setPhase(replicationTask, "finished");
                         onCompletionListener.onResponse(response);
@@ -459,6 +510,10 @@ public abstract class TransportReplicationAction<
             }
         }
 
+        /**
+         * 当主分片处理完成后 触发监听器
+         * @param listener calllback that is invoked after post replication actions have completed
+         */
         @Override
         public void runPostReplicationActions(ActionListener<Void> listener) {
             if (finalFailure != null) {
@@ -625,7 +680,13 @@ public abstract class TransportReplicationAction<
     final class ReroutePhase extends AbstractRunnable {
         private final ActionListener<Response> listener;
         private final Request request;
+        /**
+         * parentTask
+         */
         private final ReplicationTask task;
+        /**
+         * 该对象会监听 clusterState的变化 并可以定制一些处理逻辑
+         */
         private final ClusterStateObserver observer;
         private final AtomicBoolean finished = new AtomicBoolean();
 
@@ -644,10 +705,17 @@ public abstract class TransportReplicationAction<
             finishWithUnexpectedFailure(e);
         }
 
+
+        /**
+         * doExecute 会转发到该方法
+         */
         @Override
         protected void doRun() {
+            // 将当前任务阶段设置成 routing
             setPhase(task, "routing");
+            // 获取此时的clusterState
             final ClusterState state = observer.setAndGetObservedState();
+            // 获取该 index相关的block 默认为null
             final ClusterBlockException blockException = blockExceptions(state, request.shardId().getIndexName());
             if (blockException != null) {
                 if (blockException.retryable()) {
@@ -657,6 +725,7 @@ public abstract class TransportReplicationAction<
                     finishAsFailed(blockException);
                 }
             } else {
+                // 先获取本次要处理的index 对应的元数据
                 final IndexMetadata indexMetadata = state.metadata().index(request.shardId().getIndex());
                 if (indexMetadata == null) {
                     // ensure that the cluster state on the node is at least as high as the node that decided that the index was there
@@ -674,11 +743,13 @@ public abstract class TransportReplicationAction<
                     }
                 }
 
+                // 如果索引已经被关闭了就不需要处理了
                 if (indexMetadata.getState() == IndexMetadata.State.CLOSE) {
                     finishAsFailed(new IndexClosedException(indexMetadata.getIndex()));
                     return;
                 }
 
+                // 如果在req中没有设置要等待直到多少分片处于活跃状态 那么就使用 indexMetadata内的数据
                 if (request.waitForActiveShards() == ActiveShardCount.DEFAULT) {
                     // if the wait for active shard count has not been set in the request,
                     // resolve it from the index settings
@@ -687,6 +758,9 @@ public abstract class TransportReplicationAction<
                 assert request.waitForActiveShards() != ActiveShardCount.DEFAULT :
                     "request waitForActiveShards must be set in resolveRequest";
 
+                // 这里都是在处理主分片啊
+
+                // 找到本次要处理的主分片路由信息 由于主分片不可用 需要等待clusterState变化
                 final ShardRouting primary = state.getRoutingTable().shardRoutingTable(request.shardId()).primaryShard();
                 if (primary == null || primary.active() == false) {
                     logger.trace("primary shard [{}] is not yet active, scheduling a retry: action [{}], request [{}], "
@@ -694,6 +768,8 @@ public abstract class TransportReplicationAction<
                     retryBecauseUnavailable(request.shardId(), "primary shard is not active");
                     return;
                 }
+
+                // 当此时节点信息还没有同步到 clusterState上 就进行重试
                 if (state.nodes().nodeExists(primary.currentNodeId()) == false) {
                     logger.trace("primary shard [{}] is assigned to an unknown node [{}], scheduling a retry: action [{}], request [{}], "
                         + "cluster state version [{}]", request.shardId(), primary.currentNodeId(), actionName, request, state.version());
@@ -701,6 +777,8 @@ public abstract class TransportReplicationAction<
                     return;
                 }
                 final DiscoveryNode node = state.nodes().get(primary.currentNodeId());
+
+                // 在本地/远端节点 处理
                 if (primary.currentNodeId().equals(state.nodes().getLocalNodeId())) {
                     performLocalAction(state, primary, node, indexMetadata);
                 } else {
@@ -709,6 +787,13 @@ public abstract class TransportReplicationAction<
             }
         }
 
+        /**
+         * 在本地处理请求
+         * @param state     当前集群状态
+         * @param primary   目标shard对应的主分片
+         * @param node      主分片所在的节点
+         * @param indexMetadata
+         */
         private void performLocalAction(ClusterState state, ShardRouting primary, DiscoveryNode node, IndexMetadata indexMetadata) {
             setPhase(task, "waiting_on_primary");
             if (logger.isTraceEnabled()) {
@@ -741,6 +826,13 @@ public abstract class TransportReplicationAction<
             performAction(node, actionName, false, request);
         }
 
+        /**
+         * 处理某个分片
+         * @param node
+         * @param action
+         * @param isPrimaryAction
+         * @param requestToPerform
+         */
         private void performAction(final DiscoveryNode node, final String action, final boolean isPrimaryAction,
                                    final TransportRequest requestToPerform) {
             transportService.sendRequest(node, action, requestToPerform, transportOptions, new TransportResponseHandler<Response>() {
@@ -755,6 +847,10 @@ public abstract class TransportReplicationAction<
                     return ThreadPool.Names.SAME;
                 }
 
+                /**
+                 * 当发往某个节点处理 primary的请求产生结果时
+                 * @param response
+                 */
                 @Override
                 public void handleResponse(Response response) {
                     finishOnSuccess(response);
@@ -782,6 +878,10 @@ public abstract class TransportReplicationAction<
             });
         }
 
+        /**
+         * 当此时clusterState 不满足条件 需要等待变化  并使用observer监听
+         * @param failure
+         */
         void retry(Exception failure) {
             assert failure != null;
             if (observer.isTimedOut()) {
@@ -832,6 +932,10 @@ public abstract class TransportReplicationAction<
             }
         }
 
+        /**
+         * 当请求被处理完 收到结果时 触发该方法
+         * @param response
+         */
         void finishOnSuccess(Response response) {
             if (finished.compareAndSet(false, true)) {
                 setPhase(task, "finished");
@@ -852,6 +956,7 @@ public abstract class TransportReplicationAction<
     /**
      * Executes the logic for acquiring one or more operation permit on a primary shard. The default is to acquire a single permit but this
      * method can be overridden to acquire more.
+     * 获取主分片的操作许可
      */
     protected void acquirePrimaryOperationPermit(final IndexShard primary,
                                                  final Request request,
@@ -872,6 +977,9 @@ public abstract class TransportReplicationAction<
         replica.acquireReplicaOperationPermit(primaryTerm, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, onAcquired, executor, request);
     }
 
+    /**
+     * 将分片 与释放使用权的 releasable包装在一起
+     */
     class PrimaryShardReference implements Releasable,
             ReplicationOperation.Primary<Request, ReplicaRequest, PrimaryResult<ReplicaRequest, Response>> {
 
@@ -883,6 +991,9 @@ public abstract class TransportReplicationAction<
             this.operationLock = operationLock;
         }
 
+        /**
+         * 本对象使用完成后 释放使用许可
+         */
         @Override
         public void close() {
             operationLock.close();
@@ -905,6 +1016,11 @@ public abstract class TransportReplicationAction<
             }
         }
 
+        /**
+         * 要处理某个分片时 会在集群中找到对应的node 并转发请求  当该shard的活跃分片数(primary+replica) 达到要求时 才可以正常处理  也就是委托给该方法
+         * @param request the request to perform
+         * @param listener result listener 当处理完成时 触发监听器
+         */
         @Override
         public void perform(Request request, ActionListener<PrimaryResult<ReplicaRequest, Response>> listener) {
             if (Assertions.ENABLED) {
@@ -918,6 +1034,11 @@ public abstract class TransportReplicationAction<
             shardOperationOnPrimary(request, indexShard, listener);
         }
 
+        /**
+         * 更新某个分片的本地检查点
+         * @param allocationId allocation ID of the shard corresponding to the supplied local checkpoint
+         * @param checkpoint the *local* checkpoint for the shard
+         */
         @Override
         public void updateLocalCheckpointForShard(String allocationId, long checkpoint) {
             indexShard.updateLocalCheckpointForShard(allocationId, checkpoint);
@@ -927,6 +1048,8 @@ public abstract class TransportReplicationAction<
         public void updateGlobalCheckpointForShard(final String allocationId, final long globalCheckpoint) {
             indexShard.updateGlobalCheckpointForShard(allocationId, globalCheckpoint);
         }
+
+        // 本地检查点 或者全局检查点 都是通过indexShard 获取的
 
         @Override
         public long localCheckpoint() {
@@ -938,6 +1061,10 @@ public abstract class TransportReplicationAction<
             return indexShard.getLastSyncedGlobalCheckpoint();
         }
 
+        /**
+         * 获取当前已知的全局检查点  通过tracker
+         * @return
+         */
         @Override
         public long computedGlobalCheckpoint() {
             return indexShard.getLastKnownGlobalCheckpoint();
@@ -948,6 +1075,10 @@ public abstract class TransportReplicationAction<
             return indexShard.getMaxSeqNoOfUpdatesOrDeletes();
         }
 
+        /**
+         * 获取该分片的所有副本组成的group
+         * @return
+         */
         @Override
         public ReplicationGroup getReplicationGroup() {
             return indexShard.getReplicationGroup();
@@ -1020,6 +1151,16 @@ public abstract class TransportReplicationAction<
      */
     protected class ReplicasProxy implements ReplicationOperation.Replicas<ReplicaRequest> {
 
+        /**
+         *
+         * @param replica                    the shard this request should be executed on
+         * @param request
+         * @param primaryTerm                the primary term
+         * @param globalCheckpoint           the global checkpoint on the primary
+         * @param maxSeqNoOfUpdatesOrDeletes the max seq_no of updates (index operations overwriting Lucene) or deletes on primary
+         *                                   after this replication was executed on it.
+         * @param listener                   callback for handling the response or failure
+         */
         @Override
         public void performOn(
                 final ShardRouting replica,

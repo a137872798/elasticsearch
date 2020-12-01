@@ -29,14 +29,14 @@ import java.util.Set;
 
 /**
  * Replication group for a shard. Used by a primary shard to coordinate replication and recoveries.
- * 复制组   应该是主从同步时使用的
+ * 某个分片下所有副本此时的状态
  */
 public class ReplicationGroup {
+
     /**
-     * 这里就涉及到路由表了
+     * 该索引相关的路由表
      */
     private final IndexShardRoutingTable routingTable;
-    // 什么是同步的和被追踪的 allocationIds???
     private final Set<String> inSyncAllocationIds;
     private final Set<String> trackedAllocationIds;
     private final long version;

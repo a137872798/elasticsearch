@@ -1058,6 +1058,8 @@ public class RestoreService implements ClusterStateApplier {
 
     /**
      * Returns the indices that are currently being restored and that are contained in the indices-to-check set.
+     * @param currentState 当前集群状态
+     * @param indicesToCheck 本次需要检测的索引
      */
     public static Set<Index> restoringIndices(final ClusterState currentState, final Set<Index> indicesToCheck) {
         final RestoreInProgress restore = currentState.custom(RestoreInProgress.TYPE);
@@ -1069,6 +1071,7 @@ public class RestoreService implements ClusterStateApplier {
         for (RestoreInProgress.Entry entry : restore) {
             for (ObjectObjectCursor<ShardId, RestoreInProgress.ShardRestoreStatus> shard : entry.shards()) {
                 Index index = shard.key.getIndex();
+                // 此时某个正在恢复的分片正好属于本次检查的某个索引
                 if (indicesToCheck.contains(index)
                     && shard.value.state().completed() == false
                     && currentState.getMetadata().index(index) != null) {
@@ -1076,6 +1079,7 @@ public class RestoreService implements ClusterStateApplier {
                 }
             }
         }
+        // 将正在恢复中的索引返回
         return indices;
     }
 

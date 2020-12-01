@@ -34,6 +34,9 @@ import java.util.function.BiConsumer;
  */
 public final class TransportRequestDeduplicator<T extends TransportRequest> {
 
+    /**
+     * 维护了某个请求体 与相关的监听器的映射关系
+     */
     private final ConcurrentMap<T, CompositeListener> requests = ConcurrentCollections.newConcurrentMap();
 
     /**
@@ -44,7 +47,8 @@ public final class TransportRequestDeduplicator<T extends TransportRequest> {
      * track of the given listener and invoke it when the listener passed to the callback on first invocation is completed.
      * @param request Request to deduplicate
      * @param listener Listener to invoke on request completion
-     * @param callback Callback to be invoked with request and completion listener the first time the request is added to the deduplicator
+     * @param callback Callback to be invoked with request and completion listener the first time the request is added to the deduplicator   如果是首次插入监听器会触发这个回调
+     *                 本次针对哪个副本所在的节点发起请求  在requests中设置结果监听器
      */
     public void executeOnce(T request, ActionListener<Void> listener, BiConsumer<T, ActionListener<Void>> callback) {
         ActionListener<Void> completionListener = requests.computeIfAbsent(request, CompositeListener::new).addListener(listener);
@@ -65,12 +69,18 @@ public final class TransportRequestDeduplicator<T extends TransportRequest> {
         return requests.size();
     }
 
+    /**
+     * 监听某个req的结果 可以往内部不断添加监听器
+     */
     private final class CompositeListener implements ActionListener<Void> {
 
         private final List<ActionListener<Void>> listeners = new ArrayList<>();
 
         private final T request;
 
+        /**
+         * 代表是否产生了结果
+         */
         private boolean isNotified;
         private Exception failure;
 
@@ -78,13 +88,22 @@ public final class TransportRequestDeduplicator<T extends TransportRequest> {
             this.request = request;
         }
 
+        /**
+         * 往内部追加监听器
+         * @param listener
+         * @return
+         */
         CompositeListener addListener(ActionListener<Void> listener) {
             synchronized (this) {
+                // 还没有产生结果 就是往列表中追加监听器
                 if (this.isNotified == false) {
                     listeners.add(listener);
+                    // 首次添加监听器会返回当前对象 如果本次不是第一次添加监听器了 就会返回null 使用方可以根据返回结果来做一些判断
                     return listeners.size() == 1 ? this : null;
                 }
             }
+            // 代表结果已经产生了 直接触发监听器
+
             if (failure != null) {
                 listener.onFailure(failure);
             } else {
@@ -93,18 +112,24 @@ public final class TransportRequestDeduplicator<T extends TransportRequest> {
             return null;
         }
 
+        /**
+         * 代表已经生成了结果
+         * @param failure
+         */
         private void onCompleted(Exception failure) {
             synchronized (this) {
                 this.failure = failure;
                 this.isNotified = true;
             }
             try {
+                // 批量触发一组监听器
                 if (failure == null) {
                     ActionListener.onResponse(listeners, null);
                 } else {
                     ActionListener.onFailure(listeners, failure);
                 }
             } finally {
+                // 在外层维护了针对每个副本的请求  当这个副本的请求完成时 从 requests中移除
                 requests.remove(request);
             }
         }

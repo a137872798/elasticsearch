@@ -304,7 +304,9 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
     /**
      * Removes allocation ids from the in-sync set for shard copies for which there is no routing entries in the routing table.
      * This method is called in AllocationService before any changes to the routing table are made.
-     * 移除掉某些已经过期的分片
+     * @param clusterState 当前集群状态信息
+     * @param staleShards 此时已经过期的分片
+     * 移除掉过期的分片
      */
     public static ClusterState removeStaleIdsWithoutRoutings(ClusterState clusterState, List<StaleShard> staleShards, Logger logger) {
         Metadata oldMetadata = clusterState.metadata();
@@ -321,12 +323,14 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             for (Map.Entry<ShardId, List<StaleShard>> shardEntry : indexEntry.getValue().stream().collect(
                 Collectors.groupingBy(staleShard -> staleShard.getShardId())).entrySet()) {
                 int shardNumber = shardEntry.getKey().getId();
-                // 找到这个分片id 对应的所有shard生成的 allocationId
+                // 找到某个shardId 对应的 primary + replica 的 allocationId
                 Set<String> oldInSyncAllocations = oldIndexMetadata.inSyncAllocationIds(shardNumber);
-                // 通过 allocationId 进行过滤   也就是说这个id相当于是标明唯一性的东西???
+
+                // 通过allocationId 来进行匹配
                 Set<String> idsToRemove = shardEntry.getValue().stream().map(e -> e.getAllocationId()).collect(Collectors.toSet());
                 assert idsToRemove.stream().allMatch(id -> oldRoutingTable.getByAllocationId(shardEntry.getKey(), id) == null) :
                     "removing stale ids: " + idsToRemove + ", some of which have still a routing entry: " + oldRoutingTable;
+                // 去差集 就是应当被保留的分片allocationId 集合
                 Set<String> remainingInSyncAllocations = Sets.difference(oldInSyncAllocations, idsToRemove);
                 assert remainingInSyncAllocations.isEmpty() == false : "Set of in-sync ids cannot become empty for shard " +
                     shardEntry.getKey() + " (before: " + oldInSyncAllocations + ", ids to remove: " + idsToRemove + ")";
@@ -381,6 +385,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
     /**
      * Remove allocation id of this shard from the set of in-sync shard copies
+     * 记录一组之后会移除的分片
      */
     void removeAllocationId(ShardRouting shardRouting) {
         if (shardRouting.active()) {

@@ -223,6 +223,9 @@ public class AllocationService {
      *
      * <p>
      * If the same instance of ClusterState is returned, then no change has been made.</p>
+     * @param clusterState 当前集群状态
+     * @param failedShards 本次被标记成失败的分片
+     * @param staleShards  本次过期的分片
      * 处理失败或者过期的分片
      */
     public ClusterState applyFailedShards(final ClusterState clusterState, final List<FailedShard> failedShards,
@@ -232,35 +235,42 @@ public class AllocationService {
         if (staleShards.isEmpty() && failedShards.isEmpty()) {
             return clusterState;
         }
-        // 移除掉过期分片  同时更新索引元数据  并更新 ClusterState中的metadata
+
+        // 从clusterState中移除掉 stale分片
         ClusterState tmpState = IndexMetadataUpdater.removeStaleIdsWithoutRoutings(clusterState, staleShards, logger);
 
-        // 此时的clusterState还不是最终结果  还需要剔除failed数据
+        // 将 clusterState转换成 RoutingNodes 此时还不是最终结果 还需要剔除 failedShard
         RoutingNodes routingNodes = getMutableRoutingNodes(tmpState);
         // shuffle the unassigned nodes, just so we won't have things like poison failed shards
         routingNodes.unassigned().shuffle();
         long currentNanoTime = currentNanoTime();
-        // 生成最新的 RoutingAllocation
+        // 该对象就是描述了当前集群内所有分片的分配状态
         RoutingAllocation allocation = new RoutingAllocation(allocationDeciders, routingNodes, tmpState,
             clusterInfoService.getClusterInfo(), currentNanoTime);
 
+        // 这里在遍历所有失败的分片
         for (FailedShard failedShardEntry : failedShards) {
+
+            // 获取该失败的分片的路由信息
             ShardRouting shardToFail = failedShardEntry.getRoutingEntry();
             // 获取分片相关的索引元数据
             IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shardToFail.shardId().getIndex());
 
-            // 因为尝试将分片分配到这个node失败了 所以设置一个 ignore的映射关系到容器中
+            // 因为这个分片无法分配到这个node上 将这个关系添加到内部的 ignore容器中
             allocation.addIgnoreShardForNode(shardToFail.shardId(), shardToFail.currentNodeId());
             // failing a primary also fails initializing replica shards, re-resolve ShardRouting
-            // 定位到失败的分片对象
+
             ShardRouting failedShard = routingNodes.getByAllocationId(shardToFail.shardId(), shardToFail.allocationId().getId());
             if (failedShard != null) {
+                // 在迭代过程中被修改
                 if (failedShard != shardToFail) {
                     logger.trace("{} shard routing modified in an earlier iteration (previous: {}, current: {})",
                         shardToFail.shardId(), shardToFail, failedShard);
                 }
-                // 获取失败次数
+                // 该分片在此前已经分配失败过多少次
                 int failedAllocations = failedShard.unassignedInfo() != null ? failedShard.unassignedInfo().getNumFailedAllocations() : 0;
+
+                // 记录该分片之前在哪些节点上分配失败了
                 final Set<String> failedNodeIds;
                 if (failedShard.unassignedInfo() != null) {
                     failedNodeIds = new HashSet<>(failedShard.unassignedInfo().getFailedNodeIds().size() + 1);
@@ -270,16 +280,18 @@ public class AllocationService {
                     failedNodeIds = Collections.emptySet();
                 }
                 String message = "failed shard on node [" + shardToFail.currentNodeId() + "]: " + failedShardEntry.getMessage();
+
+                // 更新 unassignedInfo 在原有的基础上增加了一个分配失败的node
                 UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.ALLOCATION_FAILED, message,
                     failedShardEntry.getFailure(), failedAllocations + 1, currentNanoTime, System.currentTimeMillis(), false,
                     AllocationStatus.NO_ATTEMPT, failedNodeIds);
 
-                // 如果失败的分片要标记成丢弃 就添加到 update对象中
+                // 当该分片被标记成失败时 是否需要从 insync容器中移除 如果是 则将分片设置到 update对象的一个removedAllocationIds容器中
                 if (failedShardEntry.markAsStale()) {
                     allocation.removeAllocationId(failedShard);
                 }
                 logger.warn(new ParameterizedMessage("failing shard [{}]", failedShardEntry), failedShardEntry.getFailure());
-                // 涉及到一大堆状态的转换 卧槽
+                // 将该分片标记成失败
                 routingNodes.failShard(logger, failedShard, unassignedInfo, indexMetadata, allocation.changes());
             } else {
                 logger.trace("{} shard routing failed in an earlier iteration (routing: {})", shardToFail.shardId(), shardToFail);
@@ -632,7 +644,7 @@ public class AllocationService {
 
     /**
      * Create a mutable {@link RoutingNodes}. This is a costly operation so this must only be called once!
-     * 将此时所有分片(副本) 的分配信息按照node为维度进行划分
+     * 根据当前集群状态生成一个新的 RoutingNodes  该对象是将分片以node为单位进行划分的
      */
     private RoutingNodes getMutableRoutingNodes(ClusterState clusterState) {
         return new RoutingNodes(clusterState, false);

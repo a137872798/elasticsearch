@@ -36,7 +36,7 @@ import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_WAIT_FOR_
 /**
  * A class whose instances represent a value for counting the number
  * of active shard copies for a given shard in an index.
- * 代表某个索引的分片数量
+ * 描述一个限制    比如某个操作至少要达到多少分片数 才能正常执行
  */
 public final class ActiveShardCount implements Writeable {
 
@@ -49,6 +49,9 @@ public final class ActiveShardCount implements Writeable {
     public static final ActiveShardCount NONE = new ActiveShardCount(0);
     public static final ActiveShardCount ONE = new ActiveShardCount(1);
 
+    /**
+     * 要求达到的分片数量
+     */
     private final int value;
 
     private ActiveShardCount(final int value) {
@@ -187,16 +190,21 @@ public final class ActiveShardCount implements Writeable {
     /**
      * Returns true iff the active shard count in the shard routing table is enough
      * to meet the required shard count represented by this instance.
+     * 检测是否有足够的分片去执行某个动作了
      */
     public boolean enoughShardsActive(final IndexShardRoutingTable shardRoutingTable) {
+        // 路由表中此时活跃分片数
         final int activeShardCount = shardRoutingTable.activeShards().size();
+        // 如果当前要求必须所有副本/primary 都处于一个活跃状态
         if (this == ActiveShardCount.ALL) {
             // adding 1 for the primary in addition to the total number of replicas,
             // which gives us the total number of shard copies
             return activeShardCount == shardRoutingTable.replicaShards().size() + 1;
+            // 默认情况只要分片大于0就可以
         } else if (this == ActiveShardCount.DEFAULT) {
             return activeShardCount >= 1;
         } else {
+            // 超过要求的数量
             return activeShardCount >= value;
         }
     }
