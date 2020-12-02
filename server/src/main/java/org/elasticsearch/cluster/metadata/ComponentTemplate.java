@@ -40,6 +40,8 @@ import java.util.Objects;
  * component template is expected to be valid on its own. For example, if a component template
  * contains a field "foo", it's expected to contain all the necessary settings/mappings/etc for the
  * "foo" field. These component templates make up the individual pieces composing an index template.
+ * 组件模板对象
+ * 实际上就是定义了 json格式的骨架
  */
 public class ComponentTemplate extends AbstractDiffable<ComponentTemplate> implements ToXContentObject {
     private static final ParseField TEMPLATE = new ParseField("template");

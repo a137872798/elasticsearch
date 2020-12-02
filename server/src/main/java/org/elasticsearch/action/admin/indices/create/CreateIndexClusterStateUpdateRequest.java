@@ -46,6 +46,9 @@ public class CreateIndexClusterStateUpdateRequest extends ClusterStateUpdateRequ
     private boolean copySettings;
     private Boolean preferV2Templates;
 
+    /**
+     * 创建索引的请求对象 也可以设置settings
+     */
     private Settings settings = Settings.Builder.EMPTY_SETTINGS;
 
     private String mappings = "{}";

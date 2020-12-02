@@ -764,24 +764,34 @@ public class MetadataIndexTemplateService {
 
     /**
      * Resolve the given v2 template into an ordered list of mappings
+     * @param state 当前集群状态
+     * @param templateName 最匹配的模板名
      */
     public static List<CompressedXContent> resolveMappings(final ClusterState state, final String templateName) {
+        // 从元数据中找到对应的模板
         final IndexTemplateV2 template = state.metadata().templatesV2().get(templateName);
         assert template != null : "attempted to resolve mappings for a template [" + templateName +
             "] that did not exist in the cluster state";
+        // 当模板没有找到时 返回一个空列表
         if (template == null) {
             return List.of();
         }
+        // 所有作为组件的template 会存储在metadata中
         final Map<String, ComponentTemplate> componentTemplates = state.metadata().componentTemplates();
         // TODO: more fine-grained merging of component template mappings, ie, merge fields as distint entities
+        // CompressedXContent 就是一组压缩的数据流
+        // 根据 IndexTemplate 内部声明的 componentTemplateNames 找到对应的组件对象 此时组件以数据流的形式存在
         List<CompressedXContent> mappings = template.composedOf().stream()
+            // 每个indexTemplate 内部有一组componentTemplate 这里是通过组件名找到组件
             .map(componentTemplates::get)
             .filter(Objects::nonNull)
+            // 获取 componentTemplate 内部包含的template
             .map(ComponentTemplate::template)
             .map(Template::mappings)
             .filter(Objects::nonNull)
             .collect(Collectors.toList());
         // Add the actual index template's mappings, since it takes the highest precedence
+        // 获取核心模板对应的数据流  也就是mappings
         Optional.ofNullable(template.template())
             .map(Template::mappings)
             .ifPresent(mappings::add);
@@ -803,6 +813,7 @@ public class MetadataIndexTemplateService {
 
     /**
      * Resolve the given v2 template into a collected {@link Settings} object
+     * 将V2Template的配置取出来 存入到settings中
      */
     public static Settings resolveSettings(final Metadata metadata, final String templateName) {
         final IndexTemplateV2 template = metadata.templatesV2().get(templateName);
@@ -814,8 +825,16 @@ public class MetadataIndexTemplateService {
         return resolveSettings(metadata, template);
     }
 
+    /**
+     * 解析模板
+     * @param metadata
+     * @param template
+     * @return
+     */
     private static Settings resolveSettings(Metadata metadata, IndexTemplateV2 template) {
         final Map<String, ComponentTemplate> componentTemplates = metadata.componentTemplates();
+
+        // 找到每个组件模板相关的配置项
         List<Settings> componentSettings = template.composedOf().stream()
             .map(componentTemplates::get)
             .filter(Objects::nonNull)
@@ -824,9 +843,11 @@ public class MetadataIndexTemplateService {
             .filter(Objects::nonNull)
             .collect(Collectors.toList());
 
+        // 将配置项都填充到 templateSettings中
         Settings.Builder templateSettings = Settings.builder();
         componentSettings.forEach(templateSettings::put);
         // Add the actual index template's settings to the end, since it takes the highest precedence.
+        // 最后将V2的核心模板配置也设置进去
         Optional.ofNullable(template.template())
             .map(Template::settings)
             .ifPresent(templateSettings::put);

@@ -113,12 +113,18 @@ public class MetadataCreateIndexService {
 
     public static final int MAX_INDEX_NAME_BYTES = 255;
 
+    /**
+     * 全局配置
+     */
     private final Settings settings;
     private final ClusterService clusterService;
     private final IndicesService indicesService;
     private final AllocationService allocationService;
     private final AliasValidator aliasValidator;
     private final Environment env;
+    /**
+     * 索引级别的配置
+     */
     private final IndexScopedSettings indexScopedSettings;
     private final ActiveShardsObserver activeShardsObserver;
     private final NamedXContentRegistry xContentRegistry;
@@ -178,7 +184,7 @@ public class MetadataCreateIndexService {
      * Validates (if this index has a dot-prefixed name) whether it follows the rules for dot-prefixed indices.
      * @param index The name of the index in question
      * @param state The current cluster state
-     * @param isHidden Whether or not this is a hidden index  当前索引是否是一个隐藏索引  什么玩意啊
+     * @param isHidden Whether or not this is a hidden index  当前索引是否是一个隐藏索引
      *                 检测索引中是否携带 "."
      */
     public void validateDotIndex(String index, ClusterState state, @Nullable Boolean isHidden) {
@@ -397,6 +403,7 @@ public class MetadataCreateIndexService {
      * @param request the create index request
      * @param silent a boolean for whether logging should be at a lower or higher level
      * @param sourceMetadata when recovering from an existing index, metadata that should be copied to the new index
+     *                       index的创建可能是借助了一个之前存在的indexMetadata
      * @param temporaryIndexMeta metadata for the new index built from templates, source metadata, and request settings
      * @param mappings a map of mappings for the new index
      * @param aliasSupplier a function that takes the real {@link IndexService} and returns a list of {@link AliasMetadata} aliases
@@ -404,6 +411,7 @@ public class MetadataCreateIndexService {
      * @param metadataTransformer if provided, a function that may alter cluster metadata in the same cluster state update that
      *                            creates the index
      * @return a new cluster state with the index added
+     * 在临时服务上创建索引
      */
     private ClusterState applyCreateIndexWithTemporaryService(final ClusterState currentState,
                                                               final CreateIndexClusterStateUpdateRequest request,
@@ -448,6 +456,11 @@ public class MetadataCreateIndexService {
     /**
      * Given a state and index settings calculated after applying templates, validate metadata for
      * the new index, returning an {@link IndexMetadata} for the new index
+     * @param aggregatedIndexSettings 此时已经整合了相关配置 以及填充了一些缺省值
+     * @param routingNumShards 应该是 shardid的数量
+     * @param request 本次创建index的请求对象
+     *
+     *                根据相关参数 构建本次index的元数据对象
      */
     private IndexMetadata buildAndValidateTemporaryIndexMetadata(final ClusterState currentState,
                                                                  final Settings aggregatedIndexSettings,
@@ -455,21 +468,26 @@ public class MetadataCreateIndexService {
                                                                  final int routingNumShards,
                                                                  final boolean preferV2Templates) {
 
+        // 判断当前index是否应该被隐藏  当使用dataStream创建index时 会默认设置成true
         final boolean isHiddenAfterTemplates = IndexMetadata.INDEX_HIDDEN_SETTING.get(aggregatedIndexSettings);
+        // 就是校验index是否包含 "." 先忽略
         validateDotIndex(request.index(), currentState, isHiddenAfterTemplates);
 
         // remove the setting it's temporary and is only relevant once we create the index
         final Settings.Builder settingsBuilder = Settings.builder().put(aggregatedIndexSettings);
+        // 这里将 routing_shards 的配置项移除掉了 又插入了 prefer_v2 配置
         settingsBuilder.remove(IndexMetadata.INDEX_NUMBER_OF_ROUTING_SHARDS_SETTING.getKey());
         settingsBuilder.put(IndexMetadata.PREFER_V2_TEMPLATES_SETTING.getKey(), preferV2Templates);
         final Settings indexSettings = settingsBuilder.build();
 
         final IndexMetadata.Builder tmpImdBuilder = IndexMetadata.builder(request.index());
+        // 相当于使用 IndexMetadata中的分片数来替代settings的分片数么
         tmpImdBuilder.setRoutingNumShards(routingNumShards);
         tmpImdBuilder.settings(indexSettings);
 
         // Set up everything, now locally create the index to see that things are ok, and apply
         IndexMetadata tempMetadata = tmpImdBuilder.build();
+        // 检测当前分片数是否会达到本次req要求的分片数
         validateActiveShardCount(request.waitForActiveShards(), tempMetadata);
 
         return tempMetadata;
@@ -504,6 +522,16 @@ public class MetadataCreateIndexService {
             templates.stream().map(IndexTemplateMetadata::getName).collect(toList()), metadataTransformer);
     }
 
+    /**
+     * 如果本次创建的index 最匹配的模板是 V2Template
+     * @param currentState
+     * @param request
+     * @param silent
+     * @param templateName
+     * @param metadataTransformer
+     * @return
+     * @throws Exception
+     */
     private ClusterState applyCreateIndexRequestWithV2Template(final ClusterState currentState,
                                                                final CreateIndexClusterStateUpdateRequest request,
                                                                final boolean silent,
@@ -512,16 +540,24 @@ public class MetadataCreateIndexService {
                                                                                     throws Exception {
         logger.info("applying create index request using v2 template [{}]", templateName);
 
+        // 将所有相关的mappings作为json格式字符串 转换成map对象后 进行合并返回
         final Map<String, Object> mappings = resolveV2Mappings(request.mappings(), currentState, templateName, xContentRegistry);
 
         final Settings aggregatedIndexSettings =
+            // 在通过template解析基础配置后 又增加了一组默认配置
             aggregateIndexSettings(currentState, request,
+                // 从模板中获取所有相关的配置
                 MetadataIndexTemplateService.resolveSettings(currentState.metadata(), templateName),
                 mappings, null, settings, indexScopedSettings);
+
+        // 获取当前总计会创建的shardId数量
         int routingNumShards = getIndexNumberOfRoutingShards(aggregatedIndexSettings, null);
+        // 为本次索引创建元数据
         IndexMetadata tmpImd = buildAndValidateTemporaryIndexMetadata(currentState, aggregatedIndexSettings, request, routingNumShards,
+            // req中会携带是否倾向于使用V2Template
             resolvePreferV2Templates(request));
 
+        // 开始创建索引
         return applyCreateIndexWithTemporaryService(currentState, request, silent, null, tmpImd, mappings,
             indexService -> resolveAndValidateAliases(request.index(), request.aliases(),
                 MetadataIndexTemplateService.resolveAliases(currentState.metadata(), templateName), currentState.metadata(), aliasValidator,
@@ -531,11 +567,23 @@ public class MetadataCreateIndexService {
             Collections.singletonList(templateName), metadataTransformer);
     }
 
+    /**
+     * 处理mappings 对象
+     * @param requestMappings   req中携带的mappings数据
+     * @param currentState
+     * @param templateName
+     * @param xContentRegistry
+     * @return
+     * @throws Exception
+     */
     public static Map<String, Object> resolveV2Mappings(final String requestMappings,
                                                         final ClusterState currentState,
                                                         final String templateName,
                                                         final NamedXContentRegistry xContentRegistry) throws Exception {
-        final Map<String, Object> mappings = Collections.unmodifiableMap(parseV2Mappings(requestMappings,
+        final Map<String, Object> mappings = Collections.unmodifiableMap(
+            // 将 请求体 indexTemplate 以及相关的 componentTemplate 都合并到一个map后 返回
+            parseV2Mappings(requestMappings,
+            // resolveMappings 会从元数据中找到 templateName对应的template对象 以及他需要的一组 componentTemplate 并抽取出名字返回
             MetadataIndexTemplateService.resolveMappings(currentState, templateName), xContentRegistry));
         return mappings;
     }
@@ -572,23 +620,34 @@ public class MetadataCreateIndexService {
      * The template mappings are applied in the order they are encountered in the list, with the
      * caveat that mapping fields are only merged at the top-level, meaning that field settings are
      * not merged, instead they replace any previous field definition.
+     * @param mappingsJson 请求体中携带的 mapping字符串
+     * @param templateMappings 从本次最合适的template中抽取出来了各种mapping  最后一个对应的IndexTemplate的主模板 其余都是componentTemplate
+     * @param xContentRegistry 这个工厂应该就是进行映射转换的地方
+     * 解析V2
      */
     @SuppressWarnings("unchecked")
     static Map<String, Object> parseV2Mappings(String mappingsJson, List<CompressedXContent> templateMappings,
                                                NamedXContentRegistry xContentRegistry) throws Exception {
+        // 将req中的json格式字符串转换成map对象
         Map<String, Object> requestMappings = MapperService.parseMapping(xContentRegistry, mappingsJson);
         // apply templates, merging the mappings into the request mapping if exists
         Map<String, Object> properties = new HashMap<>();
         Map<String, Object> nonProperties = new HashMap<>();
+
+        // 遍历本次模板中用到的数据结构
         for (CompressedXContent mapping : templateMappings) {
             if (mapping != null) {
+                // 解析json字符串 转换成map对象
                 Map<String, Object> templateMapping = MapperService.parseMapping(xContentRegistry, mapping.string());
+                // 代表是一个空的json 比如 {}
                 if (templateMapping.isEmpty()) {
                     // Someone provided an empty '{}' for mappings, which is okay, but to avoid
                     // tripping the below assertion, we can safely ignore it
                     continue;
                 }
                 assert templateMapping.size() == 1 : "expected exactly one mapping value, got: " + templateMapping;
+
+                // 获取"_doc" 属性 并且应该也是一个map对象
                 if (templateMapping.get(MapperService.SINGLE_MAPPING_NAME) instanceof Map == false) {
                     throw new IllegalStateException("invalid mapping definition, expected a single map underneath [" +
                         MapperService.SINGLE_MAPPING_NAME + "] but it was: [" + templateMapping + "]");
@@ -596,17 +655,24 @@ public class MetadataCreateIndexService {
 
                 Map<String, Object> innerTemplateMapping = (Map<String, Object>) templateMapping.get(MapperService.SINGLE_MAPPING_NAME);
                 Map<String, Object> innerTemplateNonProperties = new HashMap<>(innerTemplateMapping);
+                // _doc 下应该有 properties属性
                 Map<String, Object> maybeProperties = (Map<String, Object>) innerTemplateNonProperties.remove("properties");
 
+                // 看来每次都会将nonProperties 合并到innerTemplateNonProperties中 同时所有properties 会合并到另一个容器
                 XContentHelper.mergeDefaults(innerTemplateNonProperties, nonProperties);
+                // 赋值成 剔除 properties属性后的json对象
                 nonProperties = innerTemplateNonProperties;
 
+                // 如果当前json对象中 包含 properties属性
                 if (maybeProperties != null) {
+                    // 将maybeProperties 的合并到properties 中
                     properties = mergeIgnoringDots(properties, maybeProperties);
                 }
             }
         }
 
+        // 在上面完成了 非 properties的数据 以及 properties的数据合并 不过这时候应该只是一个模板 还没有填充任何数据吧
+        // 将请求体中的数据合并到模板中
         if (requestMappings.get(MapperService.SINGLE_MAPPING_NAME) != null) {
             Map<String, Object> innerRequestMappings = (Map<String, Object>) requestMappings.get(MapperService.SINGLE_MAPPING_NAME);
             Map<String, Object> innerRequestNonProperties = new HashMap<>(innerRequestMappings);
@@ -620,6 +686,7 @@ public class MetadataCreateIndexService {
             }
         }
 
+        // 重新插入 properties 并将最终的map返回
         Map<String, Object> finalMappings = new HashMap<>(nonProperties);
         finalMappings.put("properties", properties);
         return Collections.singletonMap(MapperService.SINGLE_MAPPING_NAME, finalMappings);
@@ -631,17 +698,25 @@ public class MetadataCreateIndexService {
      * a dot in it (ie, "foo.bar"), the keys are treated as only the prefix counting towards
      * equality. If the {@code second} map has a key such as "foo", all keys starting from "foo." in
      * the {@code first} map are discarded.
+     * 将 second的数据填充到 first中
      */
     static Map<String, Object> mergeIgnoringDots(Map<String, Object> first, Map<String, Object> second) {
         Objects.requireNonNull(first, "merging requires two non-null maps but the first map was null");
         Objects.requireNonNull(second, "merging requires two non-null maps but the second map was null");
         Map<String, Object> results = new HashMap<>(first);
+        // 只获取 second的前缀
         Set<String> prefixes = second.keySet().stream().map(MetadataCreateIndexService::prefix).collect(Collectors.toSet());
+        // 这里second 内的数据会覆盖 first的
         results.keySet().removeIf(k -> prefixes.contains(prefix(k)));
         results.putAll(second);
         return results;
     }
 
+    /**
+     * 如果字符串中携带了“.” 只获取前面的部分
+     * @param s
+     * @return
+     */
     private static String prefix(String s) {
         return s.split("\\.", 2)[0];
     }
@@ -689,39 +764,57 @@ public class MetadataCreateIndexService {
      * The template mappings are applied in the order they are encountered in the list (clients should make sure the lower index, closer
      * to the head of the list, templates have the highest {@link IndexTemplateMetadata#order()})
      *
+     * @param currentState 当前集群状态
+     * @param templateSettings  当前 IndexTemplate 以及相关的ComponentTemplate 的所有配置项
+     * @param mappings 从模板 以及req中抽取出来的json字符串 转换为map对象后 并合并产生的
+     * @param settings 当前对象在初始化时 传入的配置
+     * @param indexScopedSettings  索引范围的配置
      * @return the aggregated settings for the new index
+     *
      */
     static Settings aggregateIndexSettings(ClusterState currentState, CreateIndexClusterStateUpdateRequest request,
                                            Settings templateSettings, Map<String, Object> mappings,
                                            @Nullable IndexMetadata sourceMetadata, Settings settings,
                                            IndexScopedSettings indexScopedSettings) {
         Settings.Builder indexSettingsBuilder = Settings.builder();
+
+        // 默认为null  会将当前template中已经存在的所有 settings设置到builder中
         if (sourceMetadata == null) {
             indexSettingsBuilder.put(templateSettings);
         }
         // now, put the request settings, so they override templates
+        // 将请求中携带的settings也插入进去
         indexSettingsBuilder.put(request.settings());
+
+        // 这里是插入一些内置的配置
+
+        // 1.写入索引数据对应的lucene的版本号
         if (indexSettingsBuilder.get(IndexMetadata.SETTING_INDEX_VERSION_CREATED.getKey()) == null) {
             final DiscoveryNodes nodes = currentState.nodes();
             final Version createdVersion = Version.min(Version.CURRENT, nodes.getSmallestNonClientNodeVersion());
             indexSettingsBuilder.put(IndexMetadata.SETTING_INDEX_VERSION_CREATED.getKey(), createdVersion);
         }
+        // 2.该索引下有多少分片
         if (indexSettingsBuilder.get(SETTING_NUMBER_OF_SHARDS) == null) {
             indexSettingsBuilder.put(SETTING_NUMBER_OF_SHARDS, settings.getAsInt(SETTING_NUMBER_OF_SHARDS, 1));
         }
+        // 3.有多少副本  总计的分片数是 SETTING_NUMBER_OF_SHARDS*(1+SETTING_NUMBER_OF_REPLICAS)
         if (indexSettingsBuilder.get(SETTING_NUMBER_OF_REPLICAS) == null) {
             indexSettingsBuilder.put(SETTING_NUMBER_OF_REPLICAS, settings.getAsInt(SETTING_NUMBER_OF_REPLICAS, 1));
         }
+        // 4.是否开启自适应条件分片的功能
         if (settings.get(SETTING_AUTO_EXPAND_REPLICAS) != null && indexSettingsBuilder.get(SETTING_AUTO_EXPAND_REPLICAS) == null) {
             indexSettingsBuilder.put(SETTING_AUTO_EXPAND_REPLICAS, settings.get(SETTING_AUTO_EXPAND_REPLICAS));
         }
 
+        // 5.追加创建时间
         if (indexSettingsBuilder.get(SETTING_CREATION_DATE) == null) {
             indexSettingsBuilder.put(SETTING_CREATION_DATE, Instant.now().toEpochMilli());
         }
         indexSettingsBuilder.put(IndexMetadata.SETTING_INDEX_PROVIDED_NAME, request.getProvidedName());
         indexSettingsBuilder.put(SETTING_INDEX_UUID, UUIDs.randomBase64UUID());
 
+        // TODO
         if (sourceMetadata != null) {
             assert request.resizeType() != null;
             prepareResizeIndexSettings(
@@ -735,12 +828,15 @@ public class MetadataCreateIndexService {
                 indexScopedSettings);
         }
 
+        // 此时根据所有需要的配置已经生成了最新的配置项
         Settings indexSettings = indexSettingsBuilder.build();
         /*
          * We can not check the shard limit until we have applied templates, otherwise we do not know the actual number of shards
          * that will be used to create this index.
+         * 检测当前分片总数是否会超过上限
          */
         MetadataCreateIndexService.checkShardLimit(indexSettings, currentState);
+        // 当8.0的版本后必须要设置软删除
         if (IndexSettings.INDEX_SOFT_DELETES_SETTING.get(indexSettings) == false
             && IndexMetadata.SETTING_INDEX_VERSION_CREATED.get(indexSettings).onOrAfter(Version.V_8_0_0)) {
             throw new IllegalArgumentException("Creating indices with soft-deletes disabled is no longer supported. " +
@@ -753,8 +849,10 @@ public class MetadataCreateIndexService {
     /**
      * Calculates the number of routing shards based on the configured value in indexSettings or if recovering from another index
      * it will return the value configured for that index.
+     * 计算总计会创建多少shardId
      */
     static int getIndexNumberOfRoutingShards(Settings indexSettings, @Nullable IndexMetadata sourceMetadata) {
+        // 会创建多少 shardId
         final int numTargetShards = IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.get(indexSettings);
         final Version indexVersionCreated = IndexMetadata.SETTING_INDEX_VERSION_CREATED.get(indexSettings);
         final int routingNumShards;
@@ -762,11 +860,14 @@ public class MetadataCreateIndexService {
             // in this case we either have no index to recover from or
             // we have a source index with 1 shard and without an explicit split factor
             // or one that is valid in that case we can split into whatever and auto-generate a new factor.
+            // 如果在配置中声明了总计创建多少分片 直接使用这个分片数
             if (IndexMetadata.INDEX_NUMBER_OF_ROUTING_SHARDS_SETTING.exists(indexSettings)) {
                 routingNumShards = IndexMetadata.INDEX_NUMBER_OF_ROUTING_SHARDS_SETTING.get(indexSettings);
             } else {
+                // 进行计算
                 routingNumShards = calculateNumRoutingShards(numTargetShards, indexVersionCreated);
             }
+            // TODO
         } else {
             assert IndexMetadata.INDEX_NUMBER_OF_ROUTING_SHARDS_SETTING.exists(indexSettings) == false
                 : "index.number_of_routing_shards should not be present on the target index on resize";
@@ -943,10 +1044,17 @@ public class MetadataCreateIndexService {
         }
     }
 
+    /**
+     *
+     * @param waitForActiveShards  本次要求要达到多少分片数
+     * @param indexMetadata
+     */
     private static void validateActiveShardCount(ActiveShardCount waitForActiveShards, IndexMetadata indexMetadata) {
+        // 如果没有设置 使用元数据中存储的值
         if (waitForActiveShards == ActiveShardCount.DEFAULT) {
             waitForActiveShards = indexMetadata.getWaitForActiveShards();
         }
+        // 这个值必须小于 primary + replica
         if (waitForActiveShards.validate(indexMetadata.getNumberOfReplicas()) == false) {
             throw new IllegalArgumentException("invalid wait_for_active_shards[" + waitForActiveShards +
                 "]: cannot be greater than number of shard copies [" +
@@ -1198,8 +1306,10 @@ public class MetadataCreateIndexService {
      * Returns a default number of routing shards based on the number of shards of the index. The default number of routing shards will
      * allow any index to be split at least once and at most 10 times by a factor of two. The closer the number or shards gets to 1024
      * the less default split operations are supported
+     * 计算总计创建多少分片数
      */
     public static int calculateNumRoutingShards(int numShards, Version indexVersionCreated) {
+        // TODO
         if (indexVersionCreated.onOrAfter(Version.V_7_0_0)) {
             // only select this automatically for indices that are created on or after 7.0 this will prevent this new behaviour
             // until we have a fully upgraded cluster. Additionally it will make integratin testing easier since mixed clusters
@@ -1217,7 +1327,12 @@ public class MetadataCreateIndexService {
         }
     }
 
+    /**
+     * 进行有关事务日志持久化的配置项校验
+     * @param indexSettings
+     */
     public static void validateTranslogRetentionSettings(Settings indexSettings) {
+        // 当版本号在8.0之后 不再支持 retentionAge  retentionSize配置了
         if (IndexMetadata.SETTING_INDEX_VERSION_CREATED.get(indexSettings).onOrAfter(Version.V_8_0_0) &&
             (IndexSettings.INDEX_TRANSLOG_RETENTION_AGE_SETTING.exists(indexSettings)
                 || IndexSettings.INDEX_TRANSLOG_RETENTION_SIZE_SETTING.exists(indexSettings))) {
