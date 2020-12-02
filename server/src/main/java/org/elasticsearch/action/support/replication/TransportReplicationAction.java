@@ -307,6 +307,10 @@ public abstract class TransportReplicationAction<
     class AsyncPrimaryAction extends AbstractRunnable {
         private final ActionListener<Response> onCompletionListener;
         private final ReplicationTask replicationTask;
+
+        /**
+         * 该对象内部包裹了最原始的req对象 以及primary.allocationId
+         */
         private final ConcreteShardRequest<Request> primaryRequest;
 
         AsyncPrimaryAction(ConcreteShardRequest<Request> primaryRequest, ActionListener<Response> onCompletionListener,
@@ -347,7 +351,7 @@ public abstract class TransportReplicationAction<
                     primaryRequest.getTargetAllocationID(), primaryRequest.getPrimaryTerm(), actualTerm);
             }
 
-            // 获取主分片的操作许可
+            // 获取主分片的操作许可   默认情况下都是获取单个许可  与其他行为实际上并不是互斥的 只有当某些操作需要获取所有许可时 才会进行互斥
             acquirePrimaryOperationPermit(
                     indexShard,
                     primaryRequest.getRequest(),
@@ -379,7 +383,7 @@ public abstract class TransportReplicationAction<
                     throw blockException;
                 }
 
-                // 如果该主分片完成了重定向
+                // TODO 如果该主分片完成了重定向
                 if (primaryShardReference.isRelocated()) {
                     // 为了不再代理过程中阻塞其他对该分片的操作 提前释放许可证
                     primaryShardReference.close(); // release shard operation lock as soon as possible
@@ -416,13 +420,13 @@ public abstract class TransportReplicationAction<
                     // 在当前节点处理primary
                     setPhase(replicationTask, "primary");
 
-                    // 当在当前节点上根据 主分片处理完请求
+                    // 在相关分片上完成处理后触发监听器  在这个过程中 会将primary/replica 上的检查点记录到一个对象中
                     final ActionListener<Response> responseListener = ActionListener.wrap(response -> {
 
                         // 对结果进行适配  默认为NOOP
                         adaptResponse(response, primaryShardReference.indexShard);
 
-                        // 如果每次操作完成后 都需要同步全局检查点  TODO
+                        // 根据标识决定是否要同步全局检查点
                         if (syncGlobalCheckpointAfterOperation) {
                             try {
                                 primaryShardReference.indexShard.maybeSyncGlobalCheckpoint("post-operation");
@@ -445,7 +449,9 @@ public abstract class TransportReplicationAction<
                         onCompletionListener.onResponse(response);
                     }, e -> handleException(primaryShardReference, e));
 
+                    // 在这里完成 主分片/副本上的处理 并在最后触发监听器
                     new ReplicationOperation<>(primaryRequest.getRequest(), primaryShardReference,
+                        // 默认就是 ReplicationResponse
                         ActionListener.map(responseListener, result -> result.finalResponseIfSuccessful),
                         newReplicasProxy(), logger, threadPool, actionName, primaryRequest.getPrimaryTerm(), initialRetryBackoffBound,
                         retryTimeout)
@@ -546,6 +552,7 @@ public abstract class TransportReplicationAction<
 
     /**
      * 当接收到一个处理副本的请求时 转发给该方法处理
+     * 当产生结果时 通过channel 发送给primary所在的节点
      * @param replicaRequest
      * @param channel
      * @param task
@@ -581,6 +588,10 @@ public abstract class TransportReplicationAction<
         // important: we pass null as a timeout as failing a replica is
         // something we want to avoid at all costs
         private final ClusterStateObserver observer = new ClusterStateObserver(clusterService, null, logger, threadPool.getThreadContext());
+
+        /**
+         * 本次需要被处理的请求对象
+         */
         private final ConcreteReplicaRequest<ReplicaRequest> replicaRequest;
 
         AsyncReplicaAction(ConcreteReplicaRequest<ReplicaRequest> replicaRequest, ActionListener<ReplicaResponse> onCompletionListener,
@@ -590,24 +601,34 @@ public abstract class TransportReplicationAction<
             this.task = task;
             final ShardId shardId = replicaRequest.getRequest().shardId();
             assert shardId != null : "request shardId must be set";
+            // 从indexService中检索出这个 indexShard
             this.replica = getIndexShard(shardId);
         }
 
+        /**
+         * 当本对象对应的副本抢占到所有许可证后触发该方法
+         * @param releasable
+         */
         @Override
         public void onResponse(Releasable releasable) {
             try {
                 assert replica.getActiveOperationsCount() != 0 : "must perform shard operation under a permit";
+                // 当在副本上也完成了相关操作后
                 final ReplicaResult replicaResult = shardOperationOnReplica(replicaRequest.getRequest(), replica);
+                // 当某个副本完成了操作后 触发
                 replicaResult.runPostReplicaActions(
                     ActionListener.wrap(r -> {
                         final TransportReplicationAction.ReplicaResponse response =
                             new ReplicaResponse(replica.getLocalCheckpoint(), replica.getLastSyncedGlobalCheckpoint());
+
+                        // 释放之前抢占的所有许可证
                         releasable.close(); // release shard operation lock before responding to caller
                         if (logger.isTraceEnabled()) {
                             logger.trace("action [{}] completed on shard [{}] for request [{}]", transportReplicaAction,
                                 replicaRequest.getRequest().shardId(),
                                 replicaRequest.getRequest());
                         }
+                        // 到此全流程完成
                         setPhase(task, "finished");
                         onCompletionListener.onResponse(response);
                     }, e -> {
@@ -661,14 +682,23 @@ public abstract class TransportReplicationAction<
             onCompletionListener.onFailure(e);
         }
 
+        /**
+         * 开始在副本层面处理请求
+         * @throws Exception
+         */
         @Override
         protected void doRun() throws Exception {
+            // 将描述当前运行阶段的任务对象修改成 replica阶段
             setPhase(task, "replica");
+            // 获取本次要处理的分片的 allocationId
             final String actualAllocationId = this.replica.routingEntry().allocationId().getId();
+            // 当allocationId 不匹配时 抛出异常
             if (actualAllocationId.equals(replicaRequest.getTargetAllocationID()) == false) {
                 throw new ShardNotFoundException(this.replica.shardId(), "expected allocation id [{}] but found [{}]",
                     replicaRequest.getTargetAllocationID(), actualAllocationId);
             }
+
+            // 在操作副本时也需要获取许可证    当获取到副本的许可证后 触发自身作为listener监听的钩子
             acquireReplicaOperationPermit(replica, replicaRequest.getRequest(), this, replicaRequest.getPrimaryTerm(),
                 replicaRequest.getGlobalCheckpoint(), replicaRequest.getMaxSeqNoOfUpdatesOrDeletes());
         }
@@ -810,10 +840,18 @@ public abstract class TransportReplicationAction<
                     transportPrimaryAction, request.shardId(), request, state.version(), primary.currentNodeId());
             }
             performAction(node, transportPrimaryAction, true,
+                // 将主分片的 allocationId 取出来 和原始的req 包装成 ConcreteShardRequest对象
                 new ConcreteShardRequest<>(request, primary.allocationId().getId(), indexMetadata.primaryTerm(primary.id())));
         }
 
+        /**
+         * 当主分片不在本节点时
+         * @param state
+         * @param primary
+         * @param node
+         */
         private void performRemoteAction(ClusterState state, ShardRouting primary, DiscoveryNode node) {
+            // 检测当前集群状态中版本号 当小于req中的版本号 需要等待集群状态更新
             if (state.version() < request.routedBasedOnClusterVersion()) {
                 logger.trace("failed to find primary [{}] for request [{}] despite sender thinking it would be here. Local cluster state "
                         + "version [{}]] is older than on sending node (version [{}]), scheduling a retry...", request.shardId(), request,
@@ -825,6 +863,7 @@ public abstract class TransportReplicationAction<
                 // chasing the node with the active primary for a second hop requires that we are at least up-to-date with the current
                 // cluster state version this prevents redirect loops between two nodes when a primary was relocated and the relocation
                 // target is not aware that it is the active primary shard already.
+                // 如果当前设置的版本号小于集群当前版本号 就更改成集群的版本号
                 request.routedBasedOnClusterVersion(state.version());
             }
             if (logger.isTraceEnabled()) {
@@ -836,7 +875,6 @@ public abstract class TransportReplicationAction<
         }
 
         /**
-         * 处理某个分片
          * @param node
          * @param action
          * @param isPrimaryAction
@@ -857,7 +895,7 @@ public abstract class TransportReplicationAction<
                 }
 
                 /**
-                 * 当发往某个节点处理 primary的请求产生结果时
+                 * 当发往某个节点处理 primary的请求产生结果时  在处理的过程中可能会发现还需要将请求发往各个副本
                  * @param response
                  */
                 @Override
@@ -1046,6 +1084,7 @@ public abstract class TransportReplicationAction<
         /**
          * 更新某个分片的本地检查点
          * @param allocationId allocation ID of the shard corresponding to the supplied local checkpoint
+         *                     用于定位 某个副本 或者主分片
          * @param checkpoint the *local* checkpoint for the shard
          */
         @Override
@@ -1157,6 +1196,7 @@ public abstract class TransportReplicationAction<
      * interface that performs the actual {@code ReplicaRequest} on the replica
      * shards. It also encapsulates the logic required for failing the replica
      * if deemed necessary as well as marking it as stale when needed.
+     * 在主分片所在节点打算处理副本的相关操作时 会委托给该对象  副本代理对象 也就是通过副本来实现功能 并伪装成在本地处理
      */
     protected class ReplicasProxy implements ReplicationOperation.Replicas<ReplicaRequest> {
 
@@ -1187,6 +1227,7 @@ public abstract class TransportReplicationAction<
                 listener.onFailure(new NoNodeAvailableException("unknown node [" + nodeId + "]"));
                 return;
             }
+            // 这里初始化req对象时 使用的是副本的allocationId
             final ConcreteReplicaRequest<ReplicaRequest> replicaRequest = new ConcreteReplicaRequest<>(
                 request, replica.allocationId().getId(), primaryTerm, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes);
             final ActionListenerResponseHandler<ReplicaResponse> handler = new ActionListenerResponseHandler<>(listener,

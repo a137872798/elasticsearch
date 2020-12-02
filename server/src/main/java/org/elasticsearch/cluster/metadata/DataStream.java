@@ -113,6 +113,7 @@ public final class DataStream extends AbstractDiffable<DataStream> implements To
      * @param dataStreamName name of the data stream
      * @param generation generation of the data stream
      * @return backing index name
+     * 将数据流+gen转换成了一个indexName
      */
     public static String getBackingIndexName(String dataStreamName, long generation) {
         return String.format(Locale.ROOT, "%s-%06d", dataStreamName, generation);

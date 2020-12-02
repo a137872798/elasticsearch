@@ -50,6 +50,7 @@ import java.util.Objects;
 
 /**
  * 在某个shard 被关闭前 需要做认证工作
+ * TODO 只看到在phase1时 是对分片做刷盘操作 还没有找到体现认证的地方
  */
 public class TransportVerifyShardBeforeCloseAction extends TransportReplicationAction<
     TransportVerifyShardBeforeCloseAction.ShardRequest, TransportVerifyShardBeforeCloseAction.ShardRequest, ReplicationResponse> {
@@ -85,6 +86,15 @@ public class TransportVerifyShardBeforeCloseAction extends TransportReplicationA
         primary.acquireAllPrimaryOperationsPermits(onAcquired, request.timeout());
     }
 
+    /**
+     * 在操作副本时 也需要获取所有的许可证
+     * @param replica
+     * @param request
+     * @param onAcquired
+     * @param primaryTerm
+     * @param globalCheckpoint
+     * @param maxSeqNoOfUpdateOrDeletes
+     */
     @Override
     protected void acquireReplicaOperationPermit(final IndexShard replica,
                                                  final ShardRequest request,
@@ -112,6 +122,13 @@ public class TransportVerifyShardBeforeCloseAction extends TransportReplicationA
         });
     }
 
+    /**
+     * 当在该分片的副本上处理数据时 触发该方法
+     * @param shardRequest the request to the replica shard
+     * @param replica      the replica shard to perform the operation on
+     * @return
+     * @throws IOException
+     */
     @Override
     protected ReplicaResult shardOperationOnReplica(final ShardRequest shardRequest, final IndexShard replica) throws IOException {
         executeShardOperation(shardRequest, replica);
@@ -148,7 +165,9 @@ public class TransportVerifyShardBeforeCloseAction extends TransportReplicationA
             // 将分片的所有数据刷盘
             indexShard.sync();
         } else {
+            // 代表进入了第二阶段   这里是确保全局检查点 与 maxSeq相同
             indexShard.verifyShardBeforeIndexClosing();
+            // 将lucene内的数据刷盘
             indexShard.flush(new FlushRequest().force(true).waitIfOngoing(true));
             logger.trace("{} shard is ready for closing", shardId);
         }

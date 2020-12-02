@@ -55,6 +55,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
+/**
+ * 创建数据流的指令
+ */
 public class CreateDataStreamAction extends ActionType<AcknowledgedResponse> {
 
     private static final Logger logger = LogManager.getLogger(CreateDataStreamAction.class);
@@ -66,6 +69,10 @@ public class CreateDataStreamAction extends ActionType<AcknowledgedResponse> {
         super(NAME, AcknowledgedResponse::new);
     }
 
+    /**
+     * 创建数据流 只需要2个参数
+     * 一个代表名字  一个代表时间戳所在的fieldName
+     */
     public static class Request extends MasterNodeRequest<Request> {
 
         private final String name;
@@ -119,8 +126,15 @@ public class CreateDataStreamAction extends ActionType<AcknowledgedResponse> {
         }
     }
 
+    /**
+     * 处理创建数据流的指令
+     * 这个操作必须在leader节点执行
+     */
     public static class TransportAction extends TransportMasterNodeAction<Request, AcknowledgedResponse> {
 
+        /**
+         * 该服务负责创建index
+         */
         private final MetadataCreateIndexService metadataCreateIndexService;
 
         @Inject
@@ -141,6 +155,14 @@ public class CreateDataStreamAction extends ActionType<AcknowledgedResponse> {
             return new AcknowledgedResponse(in);
         }
 
+        /**
+         * 在主节点处理请求
+         * @param task
+         * @param request
+         * @param state
+         * @param listener
+         * @throws Exception
+         */
         @Override
         protected void masterOperation(Task task, Request request, ClusterState state,
                                        ActionListener<AcknowledgedResponse> listener) throws Exception {
@@ -157,6 +179,12 @@ public class CreateDataStreamAction extends ActionType<AcknowledgedResponse> {
                         listener.onFailure(e);
                     }
 
+                    /**
+                     * 在clusterState中 创建新的索引
+                     * @param currentState
+                     * @return
+                     * @throws Exception
+                     */
                     @Override
                     public ClusterState execute(ClusterState currentState) throws Exception {
                         return createDataStream(metadataCreateIndexService, currentState, request);
@@ -169,13 +197,23 @@ public class CreateDataStreamAction extends ActionType<AcknowledgedResponse> {
                 });
         }
 
+        /**
+         * 在当前clusterState下 创建一个数据流
+         * @param metadataCreateIndexService  通过该服务实现功能
+         * @param currentState
+         * @param request   内部包含name和时间戳fieldName
+         * @return
+         * @throws Exception
+         */
         static ClusterState createDataStream(MetadataCreateIndexService metadataCreateIndexService,
                                              ClusterState currentState,
                                              Request request) throws Exception {
+            // 禁止重复创建
             if (currentState.metadata().dataStreams().containsKey(request.name)) {
                 throw new IllegalArgumentException("data_stream [" + request.name + "] already exists");
             }
 
+            // 校验名称是否合法
             MetadataCreateIndexService.validateIndexOrAliasName(request.name,
                 (s1, s2) -> new IllegalArgumentException("data_stream [" + s1 + "] " + s2));
 
@@ -186,7 +224,9 @@ public class CreateDataStreamAction extends ActionType<AcknowledgedResponse> {
                 throw new IllegalArgumentException("data_stream [" + request.name + "] must not start with '.'");
             }
 
+            // 将数据流名称转换成 indexName
             String firstBackingIndexName = DataStream.getBackingIndexName(request.name, 1);
+            // 这个索引属于被 hidden 的索引
             CreateIndexClusterStateUpdateRequest createIndexRequest =
                 new CreateIndexClusterStateUpdateRequest("initialize_data_stream", firstBackingIndexName, firstBackingIndexName)
                 .settings(Settings.builder().put("index.hidden", true).build());

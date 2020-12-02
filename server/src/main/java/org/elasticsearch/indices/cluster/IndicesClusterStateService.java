@@ -274,7 +274,10 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         }
     }
 
-    // overrideable by tests
+    /**
+     * 某个分片的全局检查点同步 会转发到该方法
+     * @param shardId
+     */
     protected void updateGlobalCheckpointForShard(final ShardId shardId) {
         final ThreadContext threadContext = threadPool.getThreadContext();
         try (ThreadContext.StoredContext ignore = threadContext.stashContext()) {

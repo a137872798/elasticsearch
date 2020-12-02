@@ -43,6 +43,8 @@ import java.io.IOException;
  * Background global checkpoint sync action initiated when a shard goes inactive. This is needed because while we send the global checkpoint
  * on every replication operation, after the last operation completes the global checkpoint could advance but without a follow-up operation
  * the global checkpoint will never be synced to the replicas.
+ * 代表一个同步检查点的操作
+ * TransportReplicationAction 代表一个从主分片发起 并可能会传播到副本的操作
  */
 public class GlobalCheckpointSyncAction extends TransportReplicationAction<
         GlobalCheckpointSyncAction.Request,
@@ -80,24 +82,45 @@ public class GlobalCheckpointSyncAction extends TransportReplicationAction<
         return new ReplicationResponse(in);
     }
 
+    /**
+     * 当请求传递到主分片所在的节点时 最终会委托该方法执行任务
+     * @param request
+     * @param indexShard
+     * @param listener
+     */
     @Override
     protected void shardOperationOnPrimary(Request request, IndexShard indexShard,
                                            ActionListener<PrimaryResult<Request, ReplicationResponse>> listener) {
         ActionListener.completeWith(listener, () -> {
             maybeSyncTranslog(indexShard);
+            // 当result对象中指定了 request就代表需要将本次请求传播到所有的副本上
             return new PrimaryResult<>(request, new ReplicationResponse());
         });
     }
 
+    /**
+     * 当本节点作为副本所在的节点时 通过该方法进行处理 并产生结果
+     * @param request
+     * @param indexShard
+     * @return
+     * @throws Exception
+     */
     @Override
     protected ReplicaResult shardOperationOnReplica(final Request request, final IndexShard indexShard) throws Exception {
         maybeSyncTranslog(indexShard);
         return new ReplicaResult();
     }
 
+    /**
+     * @param indexShard
+     * @throws IOException
+     */
     private void maybeSyncTranslog(final IndexShard indexShard) throws IOException {
+        // 如果当前分片指定的持久化方式 确实是基于 req触发  且当前同步的全局检查点小于 当前已知的全局检查点 就可以进行同步
+        // 在其他的操作中就会更新 lastKnownGlobalCheckpoint
         if (indexShard.getTranslogDurability() == Translog.Durability.REQUEST &&
             indexShard.getLastSyncedGlobalCheckpoint() < indexShard.getLastKnownGlobalCheckpoint()) {
+            // 这个操作就是将事务日志刷盘
             indexShard.sync();
         }
     }

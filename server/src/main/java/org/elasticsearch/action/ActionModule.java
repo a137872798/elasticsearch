@@ -639,6 +639,7 @@ public class ActionModule extends AbstractModule {
 
         // Data streams:
         if (DATASTREAMS_FEATURE_ENABLED) {
+            // 创建一个数据流
             actions.register(CreateDataStreamAction.INSTANCE, CreateDataStreamAction.TransportAction.class);
             actions.register(DeleteDataStreamAction.INSTANCE, DeleteDataStreamAction.TransportAction.class);
             actions.register(GetDataStreamsAction.INSTANCE, GetDataStreamsAction.TransportAction.class);
@@ -656,10 +657,12 @@ public class ActionModule extends AbstractModule {
         actions.register(RetentionLeaseActions.Remove.INSTANCE, RetentionLeaseActions.Remove.TransportAction.class);
 
         // internal actions
+        // 针对某个分片 同步全局检查点
         actions.register(GlobalCheckpointSyncAction.TYPE, GlobalCheckpointSyncAction.class);
         // 以node为级别获取快照信息
         actions.register(TransportNodesSnapshotsStatus.TYPE, TransportNodesSnapshotsStatus.class);
         actions.register(TransportNodesListGatewayMetaState.TYPE, TransportNodesListGatewayMetaState.class);
+        // 在分片被关闭前 需要先做认证工作 TODO 目前没看到认证的逻辑 仅仅看到会在primary/replica 上进行刷盘
         actions.register(TransportVerifyShardBeforeCloseAction.TYPE, TransportVerifyShardBeforeCloseAction.class);
         // 代表从某个node上获取某个shard的元数据  比如该shard在该node上的 allocationId primary 等信息
         actions.register(TransportNodesListGatewayStartedShards.TYPE, TransportNodesListGatewayStartedShards.class);

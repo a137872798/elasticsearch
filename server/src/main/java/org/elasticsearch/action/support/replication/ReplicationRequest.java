@@ -43,6 +43,7 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
 /**
  * Requests that are run on a particular replica, first on the primary and then on the replicas like {@link IndexRequest} or
  * {@link TransportShardRefreshAction}.
+ * 代表一个从主分片发起 并会传播到所有副本的请求
  */
 public abstract class ReplicationRequest<Request extends ReplicationRequest<Request>> extends ActionRequest
         implements IndicesRequest {

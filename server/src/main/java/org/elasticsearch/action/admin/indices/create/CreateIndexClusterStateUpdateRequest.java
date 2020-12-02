@@ -34,6 +34,7 @@ import java.util.Set;
 
 /**
  * Cluster state update request that allows to create an index
+ * 生成一个 创建索引的请求 将会更新clusterState
  */
 public class CreateIndexClusterStateUpdateRequest extends ClusterStateUpdateRequest<CreateIndexClusterStateUpdateRequest> {
 
@@ -55,6 +56,12 @@ public class CreateIndexClusterStateUpdateRequest extends ClusterStateUpdateRequ
 
     private ActiveShardCount waitForActiveShards = ActiveShardCount.DEFAULT;
 
+    /**
+     *
+     * @param cause
+     * @param index  默认情况 index == providedName
+     * @param providedName
+     */
     public CreateIndexClusterStateUpdateRequest(String cause, String index, String providedName) {
         this.cause = cause;
         this.index = index;

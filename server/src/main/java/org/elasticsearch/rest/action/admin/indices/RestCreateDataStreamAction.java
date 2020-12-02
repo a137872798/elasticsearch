@@ -29,6 +29,9 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 创建数据流的操作
+ */
 public class RestCreateDataStreamAction extends BaseRestHandler {
 
     @Override

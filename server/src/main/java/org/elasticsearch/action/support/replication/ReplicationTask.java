@@ -44,6 +44,7 @@ public class ReplicationTask extends Task {
 
     /**
      * Set the current phase of the task.
+     * 设置这个会在 primary/replica 之间执行的任务此时执行的阶段
      */
     public void setPhase(String phase) {
         this.phase = phase;

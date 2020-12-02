@@ -19,6 +19,9 @@
 
 package org.elasticsearch.index.shard;
 
+import static org.elasticsearch.index.seqno.RetentionLeaseActions.RETAIN_ALL;
+import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
+
 import com.carrotsearch.hppc.ObjectLongMap;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
@@ -47,9 +50,6 @@ import org.elasticsearch.action.admin.indices.flush.FlushRequest;
 import org.elasticsearch.action.admin.indices.forcemerge.ForceMergeRequest;
 import org.elasticsearch.action.admin.indices.upgrade.post.UpgradeRequest;
 import org.elasticsearch.action.support.replication.PendingReplicationActions;
-import org.elasticsearch.index.bulk.stats.BulkOperationListener;
-import org.elasticsearch.index.bulk.stats.BulkStats;
-import org.elasticsearch.index.bulk.stats.ShardBulkStats;
 import org.elasticsearch.action.support.replication.ReplicationResponse;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.MappingMetadata;
@@ -86,6 +86,9 @@ import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.VersionType;
+import org.elasticsearch.index.bulk.stats.BulkOperationListener;
+import org.elasticsearch.index.bulk.stats.BulkStats;
+import org.elasticsearch.index.bulk.stats.ShardBulkStats;
 import org.elasticsearch.index.cache.IndexCache;
 import org.elasticsearch.index.cache.bitset.ShardBitsetFilterCache;
 import org.elasticsearch.index.cache.request.ShardRequestCache;
@@ -181,9 +184,6 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
-
-import static org.elasticsearch.index.seqno.RetentionLeaseActions.RETAIN_ALL;
-import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
 
 /**
  * 索引分片对象
@@ -414,50 +414,49 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private volatile boolean useRetentionLeasesInPeerRecovery;
 
     /**
-     *
-     * @param shardRouting  描述这个分片会被分配到哪个节点上
-     *                      这个属性是谁创建的 基于什么原则进行分配
+     * @param shardRouting            描述这个分片会被分配到哪个节点上
+     *                                这个属性是谁创建的 基于什么原则进行分配
      * @param indexSettings
-     * @param path 存储shard信息的路径
-     * @param store  好像就是读取有关 segment_N 文件的 还不清楚咋用
-     * @param indexSortSupplier  每个分片下面自然是存储了各种索引数据 这个sort是写入时的排序 还是查询时的排序???  在lucene中写入doc时 确实可以根据sort进行排序的
-     *                           TODO 在使用时再顺便复习一下lucene的写入流程吧
-     * @param indexCache  内部维护有关索引的所有缓存 根据维度 又分为 queryCache BitsetFilterCache
-     * @param mapperService   映射服务 还没搞明白怎么用的
-     * @param similarityService   打分服务先不看
-     * @param engineFactory  通过engine实现与lucene组件的对接
-     * @param indexEventListener  监听索引各个事件的监听器
+     * @param path                    存储shard信息的路径
+     * @param store                   好像就是读取有关 segment_N 文件的 还不清楚咋用
+     * @param indexSortSupplier       每个分片下面自然是存储了各种索引数据 这个sort是写入时的排序 还是查询时的排序???  在lucene中写入doc时 确实可以根据sort进行排序的
+     *                                TODO 在使用时再顺便复习一下lucene的写入流程吧
+     * @param indexCache              内部维护有关索引的所有缓存 根据维度 又分为 queryCache BitsetFilterCache
+     * @param mapperService           映射服务 还没搞明白怎么用的
+     * @param similarityService       打分服务先不看
+     * @param engineFactory           通过engine实现与lucene组件的对接
+     * @param indexEventListener      监听索引各个事件的监听器
      * @param indexReaderWrapper
      * @param threadPool
-     * @param bigArrays  该对象利用内存池 减少GC开销 内部可以分配各种数组
-     * @param warmer  暖机对象的意义就是提前将数据从磁盘加入到缓存中
-     * @param searchOperationListener  监听查询并执行相关逻辑
+     * @param bigArrays               该对象利用内存池 减少GC开销 内部可以分配各种数组
+     * @param warmer                  暖机对象的意义就是提前将数据从磁盘加入到缓存中
+     * @param searchOperationListener 监听查询并执行相关逻辑
      * @param listeners
      * @param globalCheckpointSyncer  TODO 全局检查点同步器 是啥???
-     * @param retentionLeaseSyncer   TODO 续约同步器
+     * @param retentionLeaseSyncer    TODO 续约同步器
      * @param circuitBreakerService
      * @throws IOException
      */
     public IndexShard(
-            final ShardRouting shardRouting,
-            final IndexSettings indexSettings,
-            final ShardPath path,
-            final Store store,
-            final Supplier<Sort> indexSortSupplier,
-            final IndexCache indexCache,
-            final MapperService mapperService,
-            final SimilarityService similarityService,
-            final @Nullable EngineFactory engineFactory,
-            final IndexEventListener indexEventListener,
-            final CheckedFunction<DirectoryReader, DirectoryReader, IOException> indexReaderWrapper,
-            final ThreadPool threadPool,
-            final BigArrays bigArrays,
-            final Engine.Warmer warmer,
-            final List<SearchOperationListener> searchOperationListener,
-            final List<IndexingOperationListener> listeners,
-            final Runnable globalCheckpointSyncer,
-            final RetentionLeaseSyncer retentionLeaseSyncer,
-            final CircuitBreakerService circuitBreakerService) throws IOException {
+        final ShardRouting shardRouting,
+        final IndexSettings indexSettings,
+        final ShardPath path,
+        final Store store,
+        final Supplier<Sort> indexSortSupplier,
+        final IndexCache indexCache,
+        final MapperService mapperService,
+        final SimilarityService similarityService,
+        final @Nullable EngineFactory engineFactory,
+        final IndexEventListener indexEventListener,
+        final CheckedFunction<DirectoryReader, DirectoryReader, IOException> indexReaderWrapper,
+        final ThreadPool threadPool,
+        final BigArrays bigArrays,
+        final Engine.Warmer warmer,
+        final List<SearchOperationListener> searchOperationListener,
+        final List<IndexingOperationListener> listeners,
+        final Runnable globalCheckpointSyncer,
+        final RetentionLeaseSyncer retentionLeaseSyncer,
+        final CircuitBreakerService circuitBreakerService) throws IOException {
         // 因为IndexShard 继承自 IndexShardComponent 所以将相关信息注册上去
         super(shardRouting.shardId(), indexSettings);
         assert shardRouting.initializing();
@@ -506,19 +505,19 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final long primaryTerm = indexSettings.getIndexMetadata().primaryTerm(shardId.id());
         this.pendingPrimaryTerm = primaryTerm;
         this.globalCheckpointListeners =
-                new GlobalCheckpointListeners(shardId, threadPool.scheduler(), logger);
+            new GlobalCheckpointListeners(shardId, threadPool.scheduler(), logger);
         this.pendingReplicationActions = new PendingReplicationActions(shardId, threadPool);
         this.replicationTracker = new ReplicationTracker(
-                shardId,
-                aId,
-                indexSettings,
-                primaryTerm,
-                UNASSIGNED_SEQ_NO,
-                globalCheckpointListeners::globalCheckpointUpdated,
-                threadPool::absoluteTimeInMillis,
-                (retentionLeases, listener) -> retentionLeaseSyncer.sync(shardId, aId, getPendingPrimaryTerm(), retentionLeases, listener),
-                this::getSafeCommitInfo,
-                pendingReplicationActions);
+            shardId,
+            aId,
+            indexSettings,
+            primaryTerm,
+            UNASSIGNED_SEQ_NO,
+            globalCheckpointListeners::globalCheckpointUpdated,
+            threadPool::absoluteTimeInMillis,
+            (retentionLeases, listener) -> retentionLeaseSyncer.sync(shardId, aId, getPendingPrimaryTerm(), retentionLeases, listener),
+            this::getSafeCommitInfo,
+            pendingReplicationActions);
 
         // the query cache is a node-level thing, however we want the most popular filters
         // to be computed on a per-shard basis
@@ -529,6 +528,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 public void onUse(Query query) {
 
                 }
+
                 @Override
                 public boolean shouldCache(Query query) {
                     return true;
@@ -608,7 +608,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return this.pendingPrimaryTerm;
     }
 
-    /** Returns the primary term that is currently being used to assign to operations */
+    /**
+     * Returns the primary term that is currently being used to assign to operations
+     * 当前发起操作的主分片任期是多少
+     */
     public long getOperationPrimaryTerm() {
         return replicationTracker.getOperationPrimaryTerm();
     }
@@ -629,6 +632,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * TODO 当理解了主从节点的分配规则后再看这个
      * 更新分片的状态    应该是在集群服务层 感知到分片的变化 更新本地分片   那么谁来发起更新
+     *
      * @param newRouting
      * @param newPrimaryTerm              当前主分片的 term 每个在集群中更替 主分片在集群中的位置 就会增加term
      * @param primaryReplicaSyncer        the primary-replica resync action to trigger when a term is increased on a primary
@@ -672,8 +676,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             if (state == IndexShardState.POST_RECOVERY && newRouting.active()) {
                 assert currentRouting.active() == false : "we are in POST_RECOVERY, but our shard routing is active " + currentRouting;
-                assert currentRouting.isRelocationTarget()  == false || currentRouting.primary() == false ||
-                        replicationTracker.isPrimaryMode() :
+                assert currentRouting.isRelocationTarget() == false || currentRouting.primary() == false ||
+                    replicationTracker.isPrimaryMode() :
                     "a primary relocation is completed by the master, but primary mode is not active " + currentRouting;
 
                 changeState(IndexShardState.STARTED, "global state is [" + newRouting.state() + "]");
@@ -734,7 +738,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                             shardStateUpdated.await();
                             assert pendingPrimaryTerm == newPrimaryTerm :
                                 "shard term changed on primary. expected [" + newPrimaryTerm + "] but was [" + pendingPrimaryTerm + "]" +
-                                ", current routing: " + currentRouting + ", new routing: " + newRouting;
+                                    ", current routing: " + currentRouting + ", new routing: " + newRouting;
                             assert getOperationPrimaryTerm() == newPrimaryTerm;
                             try {
                                 replicationTracker.activatePrimaryMode(getLocalCheckpoint());
@@ -749,7 +753,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                                  */
                                 final Engine engine = getEngine();
                                 engine.restoreLocalHistoryFromTranslog((resettingEngine, snapshot) ->
-                                    runTranslogRecovery(resettingEngine, snapshot, Engine.Operation.Origin.LOCAL_RESET, () -> {}));
+                                    runTranslogRecovery(resettingEngine, snapshot, Engine.Operation.Origin.LOCAL_RESET, () -> {
+                                    }));
                                 /* Rolling the translog generation is not strictly needed here (as we will never have collisions between
                                  * sequence numbers in a translog generation in a new primary as it takes the last known sequence number
                                  * as a starting point), but it simplifies reasoning about the relationship between primary terms and
@@ -817,8 +822,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Marks the shard as recovering based on a recovery state, fails with exception is recovering is not allowed to be set.
-     * @param recoveryState
-     * 将当前集群状态修改成恢复中
+     *
+     * @param recoveryState 将当前集群状态修改成恢复中
      */
     public IndexShardState markAsRecovering(String reason, RecoveryState recoveryState) throws IndexShardStartedException,
         IndexShardRelocatedException, IndexShardRecoveringException, IndexShardClosedException {
@@ -850,12 +855,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Completes the relocation. Operations are blocked and current operations are drained before changing state to relocated. The provided
      * {@link Runnable} is executed after all operations are successfully blocked.
      *
-     * @param consumer a {@link Runnable} that is executed after operations are blocked   整个relocate的流程都被
+     * @param consumer           a {@link Runnable} that is executed after operations are blocked   整个relocate的流程都被
+     * @param targetAllocationId 重定向选中的分配者id
+     *                           进行重定位
      * @throws IllegalIndexShardStateException if the shard is not relocating due to concurrent cancellation
      * @throws IllegalStateException           if the relocation target is no longer part of the replication group
      * @throws InterruptedException            if blocking operations is interrupted
-     * @param targetAllocationId  重定向选中的分配者id
-     * 进行重定位
      */
     public void relocated(final String targetAllocationId, final Consumer<ReplicationTracker.PrimaryContext> consumer)
         throws IllegalIndexShardStateException, IllegalStateException, InterruptedException {
@@ -869,7 +874,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 forceRefreshes.close();
                 // no shard operation permits are being held here, move state from started to relocated
                 assert indexShardOperationPermits.getActiveOperationsCount() == OPERATIONS_BLOCKED :
-                        "in-flight operations in progress while moving shard state to relocated";
+                    "in-flight operations in progress while moving shard state to relocated";
                 /*
                  * We should not invoke the runnable under the mutex as the expected implementation is to handoff the primary context via a
                  * network operation. Doing this under the mutex can implicitly block the cluster state update thread on network operations.
@@ -956,9 +961,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 在主分片上执行某种操作
+     *
      * @param version
-     * @param versionType  这个内外版本是什么意思???
-     * @param sourceToParse  一个可以解析的数据流
+     * @param versionType            这个内外版本是什么意思???
+     * @param sourceToParse          一个可以解析的数据流
      * @param ifSeqNo
      * @param ifPrimaryTerm
      * @param autoGeneratedTimestamp
@@ -976,7 +982,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     public Engine.IndexResult applyIndexOperationOnReplica(long seqNo, long opPrimaryTerm, long version, long autoGeneratedTimeStamp,
-        boolean isRetry, SourceToParse sourceToParse)
+                                                           boolean isRetry, SourceToParse sourceToParse)
         throws IOException {
         return applyIndexOperation(getEngine(), seqNo, opPrimaryTerm, version, null, UNASSIGNED_SEQ_NO, 0,
             autoGeneratedTimeStamp, isRetry, Engine.Operation.Origin.REPLICA, sourceToParse);
@@ -985,17 +991,18 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 执行某种 operation
+     *
      * @param engine
-     * @param seqNo  在处理主分片的请求时 不会从外部传入seqNo 而是自动分配
-     * @param opPrimaryTerm  从ReplicationTracker中获取当前主分片定义的任期
+     * @param seqNo                  在处理主分片的请求时 不会从外部传入seqNo 而是自动分配
+     * @param opPrimaryTerm          从ReplicationTracker中获取当前主分片定义的任期
      * @param version
-     * @param versionType   版本类型是啥
-     * @param ifSeqNo       代表要校验该operation对应的seqNo 和 term
+     * @param versionType            版本类型是啥
+     * @param ifSeqNo                代表要校验该operation对应的seqNo 和 term
      * @param ifPrimaryTerm
      * @param autoGeneratedTimeStamp
      * @param isRetry
-     * @param origin    代表本次请求是由谁发起的 可能是通过副本机制发起的   也可能是通过主分片发起的
-     * @param sourceToParse  该对象内部包含了待解析的原始数据流   在解析后可能会变成一个Operation吧
+     * @param origin                 代表本次请求是由谁发起的 可能是通过副本机制发起的   也可能是通过主分片发起的
+     * @param sourceToParse          该对象内部包含了待解析的原始数据流   在解析后可能会变成一个Operation吧
      * @return
      * @throws IOException
      */
@@ -1004,7 +1011,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                                                    long autoGeneratedTimeStamp, boolean isRetry, Engine.Operation.Origin origin,
                                                    SourceToParse sourceToParse) throws IOException {
         assert opPrimaryTerm <= getOperationPrimaryTerm()
-                : "op term [ " + opPrimaryTerm + " ] > shard term [" + getOperationPrimaryTerm() + "]";
+            : "op term [ " + opPrimaryTerm + " ] > shard term [" + getOperationPrimaryTerm() + "]";
 
         // 在执行写入操作前 需要先检测操作本身 与当前的状态是否是匹配的 不匹配的情况要抛出异常
         ensureWriteAllowed(origin);
@@ -1032,6 +1039,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 将sourceToParse 通过mapper对象进行转换 并依靠其余属性生成Index 对象
+     *
      * @param docMapper
      * @param source
      * @param seqNo
@@ -1065,6 +1073,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 将某个 index操作通过engine 进行写入
+     *
      * @param engine
      * @param index
      * @return
@@ -1108,6 +1117,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 基于传入的 seqNo term 生成一个 NOOP 对象
+     *
      * @param seqNo
      * @param opPrimaryTerm
      * @param reason
@@ -1120,6 +1130,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 将Noop对象写入事务文件/lucene中
+     *
      * @param engine
      * @param seqNo
      * @param opPrimaryTerm
@@ -1131,7 +1142,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private Engine.NoOpResult markSeqNoAsNoop(Engine engine, long seqNo, long opPrimaryTerm, String reason,
                                               Engine.Operation.Origin origin) throws IOException {
         assert opPrimaryTerm <= getOperationPrimaryTerm()
-                : "op term [ " + opPrimaryTerm + " ] > shard term [" + getOperationPrimaryTerm() + "]";
+            : "op term [ " + opPrimaryTerm + " ] > shard term [" + getOperationPrimaryTerm() + "]";
         long startTime = System.nanoTime();
         ensureWriteAllowed(origin);
         final Engine.NoOp noOp = new Engine.NoOp(seqNo, opPrimaryTerm, origin, startTime, reason);
@@ -1149,6 +1160,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 将某个异常信息包装成一个 result对象
+     *
      * @param e
      * @param version
      * @return
@@ -1163,6 +1175,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 生成一次删除操作 并通过engine 进行写入
+     *
      * @param version
      * @param id
      * @param versionType
@@ -1182,6 +1195,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * 在primary中进行操作 都是不设置seqNo 而通过engine自动生成
      * 而针对 replica操作 需要执行seqNo
+     *
      * @param seqNo
      * @param opPrimaryTerm
      * @param version
@@ -1197,6 +1211,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 处理删除操作
+     *
      * @param engine
      * @param seqNo
      * @param opPrimaryTerm
@@ -1213,7 +1228,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                                                      @Nullable VersionType versionType, long ifSeqNo, long ifPrimaryTerm,
                                                      Engine.Operation.Origin origin) throws IOException {
         assert opPrimaryTerm <= getOperationPrimaryTerm()
-                : "op term [ " + opPrimaryTerm + " ] > shard term [" + getOperationPrimaryTerm() + "]";
+            : "op term [ " + opPrimaryTerm + " ] > shard term [" + getOperationPrimaryTerm() + "]";
         ensureWriteAllowed(origin);
         final Term uid = new Term(IdFieldMapper.NAME, Uid.encodeId(id));
         final Engine.Delete delete = prepareDelete(id, uid, seqNo, opPrimaryTerm, version,
@@ -1223,6 +1238,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 将相关信息包装成 Delete对象
+     *
      * @param id
      * @param uid
      * @param seqNo
@@ -1235,8 +1251,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @return
      */
     private Engine.Delete prepareDelete(String id, Term uid, long seqNo, long primaryTerm, long version,
-                                               VersionType versionType, Engine.Operation.Origin origin,
-                                               long ifSeqNo, long ifPrimaryTerm) {
+                                        VersionType versionType, Engine.Operation.Origin origin,
+                                        long ifSeqNo, long ifPrimaryTerm) {
         long startTime = System.nanoTime();
         return new Engine.Delete(id, uid, seqNo, primaryTerm, version, versionType,
             origin, startTime, ifSeqNo, ifPrimaryTerm);
@@ -1244,6 +1260,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 执行删除操作并返回结果
+     *
      * @param engine
      * @param delete
      * @return
@@ -1268,6 +1285,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 发起一个get请求 实际上就是将数据包装成term 通过lucene查询结果
+     *
      * @param get
      * @return
      */
@@ -1449,6 +1467,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 强制触发merge 实际上也是委托给engine实现
+     *
      * @param forceMerge
      * @throws IOException
      */
@@ -1500,7 +1519,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * commit won't be freed until the commit / snapshot is closed.
      *
      * @param flushFirst <code>true</code> if the index should first be flushed to disk / a low level lucene commit should be executed
-     *              flushFirst 在执行前是否需要先刷盘
+     *                   flushFirst 在执行前是否需要先刷盘
      */
     public Engine.IndexCommitRef acquireLastIndexCommit(boolean flushFirst) throws EngineException {
         final IndexShardState state = this.state; // one time volatile read
@@ -1538,7 +1557,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @throws org.apache.lucene.index.IndexFormatTooNewException if the lucene index is too new to be opened.
      * @throws java.io.FileNotFoundException                      if one or more files referenced by a commit are not present.
      * @throws java.nio.file.NoSuchFileException                  if one or more files referenced by a commit are not present.
-     * store 用于获取lucene目录下 索引文件的检验和 长度 等等信息 会将它们包装成metadata数据
+     *                                                            store 用于获取lucene目录下 索引文件的检验和 长度 等等信息 会将它们包装成metadata数据
      */
     public Store.MetadataSnapshot snapshotStoreMetadata() throws IOException {
         assert Thread.holdsLock(mutex) == false : "snapshotting store metadata under mutex";
@@ -1591,6 +1610,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 通过 engine获取searcher对象 并进行包装
+     *
      * @param source
      * @param scope
      * @return
@@ -1606,6 +1626,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * 包装searcher对象
      * 包装函数是在初始化 IndexShard时传入的
+     *
      * @param searcher
      * @return
      */
@@ -1629,6 +1650,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 使用相关函数对searcher进行包装
+     *
      * @param engineSearcher
      * @param readerWrapper
      * @return
@@ -1696,6 +1718,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
         /**
          * 并不会关闭底层的文件句柄
+         *
          * @throws IOException
          */
         @Override
@@ -1712,6 +1735,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 当removeShard时 会调用该方法
+     *
      * @param reason
      * @param flushEngine
      * @throws IOException
@@ -1885,6 +1909,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 将该seq之前的数据清除
+     *
      * @param aboveSeqNo
      */
     public void trimOperationOfPreviousPrimaryTerms(long aboveSeqNo) {
@@ -1921,9 +1946,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * 挨个处理operation 并进行恢复
      * 恢复实际上就是重新发起一次写入啊
-     * @param engine 使用的引擎对象
+     *
+     * @param engine    使用的引擎对象
      * @param operation
-     * @param origin  发起本次操作的原因
+     * @param origin    发起本次操作的原因
      * @return
      * @throws IOException
      */
@@ -1946,7 +1972,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     new SourceToParse(shardId.getIndexName(), index.id(), index.source(),
                         XContentHelper.xContentType(index.source()), index.routing()));
                 break;
-                // 下面的流程和上面的类似
+            // 下面的流程和上面的类似
             case DELETE:
                 final Translog.Delete delete = (Translog.Delete) operation;
                 result = applyDeleteOperation(engine, delete.seqNo(), delete.primaryTerm(), delete.version(), delete.id(),
@@ -1965,6 +1991,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Replays translog operations from the provided translog {@code snapshot} to the current engine using the given {@code origin}.
      * The callback {@code onOperationRecovered} is notified after each translog operation is replayed successfully.
+     * @param onOperationRecovered 每当完成一次恢复操作的后置钩子
      * 通过事务日志文件进行恢复
      */
     int runTranslogRecovery(Engine engine, Translog.Snapshot snapshot, Engine.Operation.Origin origin,
@@ -1975,6 +2002,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         while ((operation = snapshot.next()) != null) {
             try {
                 logger.trace("[translog] recover op {}", operation);
+                // 通过事务日志的operation对象恢复数据
                 Engine.Result result = applyTranslogOperation(engine, operation, origin);
                 switch (result.getResultType()) {
                     case FAILURE:
@@ -2004,6 +2032,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 获取最新的事务日志文件对应的全局检查点 并进行更新
+     *
      * @throws IOException
      */
     private void loadGlobalCheckpointToReplicationTracker() throws IOException {
@@ -2051,6 +2080,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 开启引擎对象
+     *
      * @param globalCheckpointSupplier 获取全局检查点的函数
      * @throws IOException
      */
@@ -2108,6 +2138,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 当创建一个新的engine时 会创建一个新的事务文件 以及该文件对应的writer对象
+     *
      * @param newEngine
      */
     private void onNewEngine(Engine newEngine) {
@@ -2182,6 +2213,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * 是否允许读取
      * 也就是在读取数据前还要先判断条件是否允许
+     *
      * @throws IllegalIndexShardStateException
      */
     public void readAllowed() throws IllegalIndexShardStateException {
@@ -2193,14 +2225,17 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
-    /** returns true if the {@link IndexShardState} allows reading */
+    /**
+     * returns true if the {@link IndexShardState} allows reading
+     */
     public boolean isReadAllowed() {
         return readAllowedStates.contains(state);
     }
 
     /**
      * 确保此时是否能进行写入
-     * @param origin   主分片/副本
+     *
+     * @param origin 主分片/副本
      * @throws IllegalIndexShardStateException
      */
     private void ensureWriteAllowed(Engine.Operation.Origin origin) throws IllegalIndexShardStateException {
@@ -2248,6 +2283,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 确保此时 state 不属于closed状态
+     *
      * @param suppressed
      * @throws IllegalIndexShardStateException
      */
@@ -2286,6 +2322,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 增加一个处理分片失败的钩子
+     *
      * @param onShardFailure
      */
     public void addShardFailureCallback(Consumer<ShardFailure> onShardFailure) {
@@ -2337,13 +2374,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 从本地分片恢复数据   与从事务日志中恢复有什么不同???
+     *
      * @param mappingUpdateConsumer
-     * @param localShards  当前对象不就是indexShard吗  难道有一组跟当前对象存储一样数据的分片???
+     * @param localShards           当前对象不就是indexShard吗  难道有一组跟当前对象存储一样数据的分片???
      * @param listener
      * @throws IOException
      */
     void recoverFromLocalShards(Consumer<MappingMetadata> mappingUpdateConsumer, List<IndexShard> localShards,
-                                          ActionListener<Boolean> listener) throws IOException {
+                                ActionListener<Boolean> listener) throws IOException {
         assert shardRouting.primary() : "recover from local shards only makes sense if the shard is a primary shard";
         assert recoveryState.getRecoverySource().getType() == RecoverySource.Type.LOCAL_SHARDS : "invalid recovery type: " +
             recoveryState.getRecoverySource();
@@ -2371,6 +2409,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 这里实际上也会转发到 openEngineAndRecoverFromTranslog 也是从事务文件中恢复数据  TODO 为什么叫 fromStore???
+     *
      * @param listener
      */
     public void recoverFromStore(ActionListener<Boolean> listener) {
@@ -2384,6 +2423,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 从仓库中恢复数据
+     *
      * @param repository
      * @param listener
      */
@@ -2458,7 +2498,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * This method should be called after acquiring the retention lock; See {@link #acquireHistoryRetentionLock()}
      * TODO
      */
-    public boolean hasCompleteHistoryOperations(String reason, long startingSeqNo)  {
+    public boolean hasCompleteHistoryOperations(String reason, long startingSeqNo) {
         return getEngine().hasCompleteOperationHistory(reason, startingSeqNo);
     }
 
@@ -2483,7 +2523,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *                          This parameter should be only enabled when the entire requesting range is below the global checkpoint.
      */
     public Translog.Snapshot newChangesSnapshot(String source, long fromSeqNo,
-                                                    long toSeqNo, boolean requiredFullRange) throws IOException {
+                                                long toSeqNo, boolean requiredFullRange) throws IOException {
         return getEngine().newChangesSnapshot(source, mapperService, fromSeqNo, toSeqNo, requiredFullRange);
     }
 
@@ -2599,9 +2639,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *                                   只有当全局检查点达到指定的值时才会触发
      */
     public void addGlobalCheckpointListener(
-            final long waitingForGlobalCheckpoint,
-            final GlobalCheckpointListeners.GlobalCheckpointListener listener,
-            final TimeValue timeout) {
+        final long waitingForGlobalCheckpoint,
+        final GlobalCheckpointListeners.GlobalCheckpointListener listener,
+        final TimeValue timeout) {
         this.globalCheckpointListeners.add(waitingForGlobalCheckpoint, listener, timeout);
     }
 
@@ -2652,13 +2692,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param listener                the callback when the retention lease is successfully added and synced to replicas
      * @return the new retention lease
      * @throws IllegalArgumentException if the specified retention lease already exists
-     * 增加一个新的续约信息
+     *                                  增加一个新的续约信息
      */
     public RetentionLease addRetentionLease(
-            final String id,
-            final long retainingSequenceNumber,
-            final String source,
-            final ActionListener<ReplicationResponse> listener) {
+        final String id,
+        final long retainingSequenceNumber,
+        final String source,
+        final ActionListener<ReplicationResponse> listener) {
         Objects.requireNonNull(listener);
         assert assertPrimaryMode();
         verifyNotClosed();
@@ -2682,7 +2722,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param source                  the source of the retention lease
      * @return the renewed retention lease
      * @throws IllegalArgumentException if the specified retention lease does not exist
-     * 刷新某个续约对象的数据
+     *                                  刷新某个续约对象的数据
      */
     public RetentionLease renewRetentionLease(final String id, final long retainingSequenceNumber, final String source) {
         assert assertPrimaryMode();
@@ -2690,7 +2730,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         ensureSoftDeletesEnabled("retention leases");
         try (Closeable ignore = acquireHistoryRetentionLock()) {
             final long actualRetainingSequenceNumber =
-                    retainingSequenceNumber == RETAIN_ALL ? getMinRetainedSeqNo() : retainingSequenceNumber;
+                retainingSequenceNumber == RETAIN_ALL ? getMinRetainedSeqNo() : retainingSequenceNumber;
             return replicationTracker.renewRetentionLease(id, actualRetainingSequenceNumber, source);
         } catch (final IOException e) {
             throw new AssertionError(e);
@@ -2729,7 +2769,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @return the retention leases
      * @throws IOException if an I/O exception occurs reading the retention leases
-     * 从 state文件中加载数据流并转换成续约对象
+     *                     从 state文件中加载数据流并转换成续约对象
      */
     public RetentionLeases loadRetentionLeases() throws IOException {
         verifyNotClosed();
@@ -2765,16 +2805,17 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             // TODO 进行同步处理 还不清楚在做什么
             retentionLeaseSyncer.sync(
-                    shardId,
-                    shardRouting.allocationId().getId(),
-                    getPendingPrimaryTerm(),
-                    retentionLeases.v2(),
-                    ActionListener.wrap(
-                            r -> {},
-                            e -> logger.warn(new ParameterizedMessage(
-                                            "failed to sync retention leases [{}] after expiration check",
-                                            retentionLeases),
-                                    e)));
+                shardId,
+                shardRouting.allocationId().getId(),
+                getPendingPrimaryTerm(),
+                retentionLeases.v2(),
+                ActionListener.wrap(
+                    r -> {
+                    },
+                    e -> logger.warn(new ParameterizedMessage(
+                            "failed to sync retention leases [{}] after expiration check",
+                            retentionLeases),
+                        e)));
         } else {
             logger.trace("background syncing retention leases [{}] after expiration check", retentionLeases.v2());
             retentionLeaseSyncer.backgroundSync(
@@ -2786,8 +2827,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Called when the recovery process for a shard has opened the engine on the target shard. Ensures that the right data structures
      * have been set up locally to track local checkpoint information for the shard and that the shard is added to the replication group.
      *
-     * @param allocationId  the allocation ID of the shard for which recovery was initiated
-     *                      将某个CheckpointState.track 标识设置为true
+     * @param allocationId the allocation ID of the shard for which recovery was initiated
+     *                     将某个CheckpointState.track 标识设置为true
      */
     public void initiateTracking(final String allocationId) {
         assert assertPrimaryMode();
@@ -2854,6 +2895,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     public void maybeSyncGlobalCheckpoint(final String reason) {
         verifyNotClosed();
         assert shardRouting.primary() : "only call maybeSyncGlobalCheckpoint on primary shard";
+
+        // 只有主分片有权限执行该方法
         if (replicationTracker.isPrimaryMode() == false) {
             return;
         }
@@ -2862,6 +2905,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final SeqNoStats stats = getEngine().getSeqNoStats(replicationTracker.getGlobalCheckpoint());
         final boolean asyncDurability = indexSettings().getTranslogDurability() == Translog.Durability.ASYNC;
         if (stats.getMaxSeqNo() == stats.getGlobalCheckpoint() || asyncDurability) {
+
+            // 获取该shard下 所有primary/replica 的allocationId 集合
             final ObjectLongMap<String> globalCheckpoints = getInSyncGlobalCheckpoints();
             final long globalCheckpoint = replicationTracker.getGlobalCheckpoint();
             // async durability means that the local checkpoint might lag (as it is only advanced on fsync)
@@ -2873,11 +2918,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 (asyncDurability && (stats.getGlobalCheckpoint() < stats.getMaxSeqNo() || replicationTracker.pendingInSync()))
                     // check if the persisted global checkpoint
                     || StreamSupport
-                            .stream(globalCheckpoints.values().spliterator(), false)
-                            .anyMatch(v -> v.value < globalCheckpoint);
+                    .stream(globalCheckpoints.values().spliterator(), false)
+                    .anyMatch(v -> v.value < globalCheckpoint);
             // only sync if index is not closed and there is a shard lagging the primary
             if (syncNeeded && indexSettings.getIndexMetadata().getState() == IndexMetadata.State.OPEN) {
                 logger.trace("syncing global checkpoint for [{}]", reason);
+
+                // 实际上是 IndicesClusterStateService#updateGlobalCheckpointForShard
                 globalCheckpointSyncer.run();
             }
         }
@@ -2913,13 +2960,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Updates the global checkpoint on a replica shard after it has been updated by the primary.
      *
-     * @param globalCheckpoint the global checkpoint
+     * @param globalCheckpoint the global checkpoint    当前全局检查点
      * @param reason           the reason the global checkpoint was updated
      *                         当前节点作为副本触发更新全局检查点
      */
     public void updateGlobalCheckpointOnReplica(final long globalCheckpoint, final String reason) {
         assert assertReplicationTarget();
         final long localCheckpoint = getLocalCheckpoint();
+        // TODO 为什么全局检查点超过本地检查点就不需要再处理了
         if (globalCheckpoint > localCheckpoint) {
             /*
              * This can happen during recovery when the shard has started its engine but recovery is not finalized and is receiving global
@@ -3012,6 +3060,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 检查索引文件
+     *
      * @throws IOException
      */
     private void doCheckIndex() throws IOException {
@@ -3081,7 +3130,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 开始从某个地方恢复本节点数据
-     * @param recoveryState  描述恢复相关的状态 比如现在所处的阶段
+     *
+     * @param recoveryState         描述恢复相关的状态 比如现在所处的阶段
      * @param recoveryTargetService 当需要从其它节点获取数据时 会使用这个对象
      * @param recoveryListener
      * @param repositoriesService
@@ -3126,7 +3176,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         new RecoveryFailedException(recoveryState, null, e), true);
                 }
                 break;
-                // 从repository中恢复数据 暂时还不理解
+            // 从repository中恢复数据 暂时还不理解
             case SNAPSHOT:
                 final String repo = ((SnapshotRecoverySource) recoveryState.getRecoverySource()).snapshot().getRepository();
                 executeRecovery("from snapshot",
@@ -3180,7 +3230,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         // 标记成正在恢复中
         markAsRecovering(reason, recoveryState); // mark the shard as recovering on the cluster state thread
         threadPool.generic().execute(ActionRunnable.wrap(ActionListener.wrap(r -> {
-            // 这里声明了正常返回是一个BOOLEAN类型
+                // 这里声明了正常返回是一个BOOLEAN类型
                 if (r) {
                     recoveryListener.onRecoveryDone(recoveryState);
                 }
@@ -3206,6 +3256,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 根据相关信息生成续约对象 在远端节点从本节点上拉取恢复数据时会触发该函数
+     *
      * @param nodeId
      * @param listener
      * @return
@@ -3264,19 +3315,20 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 将元数据进行持久化
-     * @param shardPath  当前创建的分片的文件路径
+     *
+     * @param shardPath      当前创建的分片的文件路径
      * @param indexSettings
-     * @param newRouting  路由信息 表明这个shard此时被分配到哪个node  或者说此时的分配状态 比如是否在reallocate
-     * @param currentRouting  之前的路由信息  该对象在初始化时传入的routing 就是newRouting 而旧的routing就是null
+     * @param newRouting     路由信息 表明这个shard此时被分配到哪个node  或者说此时的分配状态 比如是否在reallocate
+     * @param currentRouting 之前的路由信息  该对象在初始化时传入的routing 就是newRouting 而旧的routing就是null
      * @param logger
      * @throws IOException
      */
     private static void persistMetadata(
-            final ShardPath shardPath,
-            final IndexSettings indexSettings,
-            final ShardRouting newRouting,
-            final @Nullable ShardRouting currentRouting,
-            final Logger logger) throws IOException {
+        final ShardPath shardPath,
+        final IndexSettings indexSettings,
+        final ShardRouting newRouting,
+        final @Nullable ShardRouting currentRouting,
+        final Logger logger) throws IOException {
         assert newRouting != null : "newRouting must not be null";
 
         // only persist metadata if routing information that is persisted in shard state metadata actually changed
@@ -3294,7 +3346,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             }
             logger.trace("{} writing shard state, reason [{}]", shardId, writeReason);
             final ShardStateMetadata newShardStateMetadata =
-                    new ShardStateMetadata(newRouting.primary(), indexSettings.getUUID(), newRouting.allocationId());
+                new ShardStateMetadata(newRouting.primary(), indexSettings.getUUID(), newRouting.allocationId());
             // 将最新的元数据信息写入到 shard对应的目录下
             // 这是文件存储的标准套路  类似于使用mysql存储数据  每个数据以一条记录的形式存在 而在基于文件系统做存储时 可以将每个记录/元数据/普通数据作为文件存储
             // 文件本身成为了一种标识   TODO 写入文件操作就不细看了 在ShardStateMetadata中已经定义了如何将字段转换成数据流
@@ -3311,6 +3363,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 通过全局检查点生成一个 engineConfig 对象
+     *
      * @param globalCheckpointSupplier
      * @return
      */
@@ -3324,15 +3377,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             }
         };
         return new EngineConfig(shardId, shardRouting.allocationId().getId(),
-                threadPool, indexSettings, warmer, store, indexSettings.getMergePolicy(),
-                mapperService != null ? mapperService.indexAnalyzer() : null,
-                similarityService.similarity(mapperService), codecService, shardEventListener,
-                indexCache != null ? indexCache.query() : null, cachingPolicy, translogConfig,
-                IndexingMemoryController.SHARD_INACTIVE_TIME_SETTING.get(indexSettings.getSettings()),
-                List.of(refreshListeners, refreshPendingLocationListener),
-                Collections.singletonList(new RefreshMetricUpdater(refreshMetric)),
-                indexSort, circuitBreakerService, globalCheckpointSupplier, replicationTracker::getRetentionLeases,
-                () -> getOperationPrimaryTerm(), tombstoneDocSupplier());
+            threadPool, indexSettings, warmer, store, indexSettings.getMergePolicy(),
+            mapperService != null ? mapperService.indexAnalyzer() : null,
+            similarityService.similarity(mapperService), codecService, shardEventListener,
+            indexCache != null ? indexCache.query() : null, cachingPolicy, translogConfig,
+            IndexingMemoryController.SHARD_INACTIVE_TIME_SETTING.get(indexSettings.getSettings()),
+            List.of(refreshListeners, refreshPendingLocationListener),
+            Collections.singletonList(new RefreshMetricUpdater(refreshMetric)),
+            indexSort, circuitBreakerService, globalCheckpointSupplier, replicationTracker::getRetentionLeases,
+            () -> getOperationPrimaryTerm(), tombstoneDocSupplier());
     }
 
     /**
@@ -3375,27 +3428,30 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      */
     private ActionListener<Releasable> wrapPrimaryOperationPermitListener(final ActionListener<Releasable> listener) {
         return ActionListener.delegateFailure(
-                listener,
-                (l, r) -> {
-                    // shard在当前节点必须是 primary分片才可以正常触发监听器
-                    if (replicationTracker.isPrimaryMode()) {
-                        l.onResponse(r);
-                    } else {
-                        r.close();
-                        l.onFailure(new ShardNotInPrimaryModeException(shardId, state));
-                    }
-                });
+            listener,
+            (l, r) -> {
+                // shard在当前节点必须是 primary分片才可以正常触发监听器
+                if (replicationTracker.isPrimaryMode()) {
+                    l.onResponse(r);
+                } else {
+                    r.close();
+                    l.onFailure(new ShardNotInPrimaryModeException(shardId, state));
+                }
+            });
     }
 
     /**
      * 等待直到抢占该分片的操作权
-     * @param onPermitAcquired  当获取到操作权后触发
+     *
+     * @param onPermitAcquired 当获取到操作权后触发
      * @param timeout
      * @param timeUnit
      */
     private void asyncBlockOperations(ActionListener<Releasable> onPermitAcquired, long timeout, TimeUnit timeUnit) {
         // 执行强制刷新 并在结束时释放计数器
         final Releasable forceRefreshes = refreshListeners.forceRefreshes();
+
+        // 当成功抢占所有许可证后 会触发该监听器  并将处理逻辑转接到 onPermitAcquired 上
         final ActionListener<Releasable> wrappedListener = ActionListener.wrap(r -> {
             forceRefreshes.close();
             onPermitAcquired.onResponse(r);
@@ -3418,28 +3474,36 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * try-with-resources closing the releasable after executing the runnable on successfully acquiring the permit, an otherwise calling
      * back the failure callback.
      *
-     * @param runnable the runnable to execute under permit    执行的函数
-     * @param onFailure the callback on failure   当出现异常时 触发该函数
+     * @param runnable        the runnable to execute under permit    执行的函数
+     * @param onFailure       the callback on failure   当出现异常时 触发该函数
      * @param executorOnDelay the executor to execute the runnable on if permit acquisition is blocked
-     * @param debugInfo debug info
+     * @param debugInfo       debug info
      */
     public void runUnderPrimaryPermit(
-            final Runnable runnable,
-            final Consumer<Exception> onFailure,
-            final String executorOnDelay,
-            final Object debugInfo) {
+        final Runnable runnable,
+        final Consumer<Exception> onFailure,
+        final String executorOnDelay,
+        final Object debugInfo) {
         verifyNotClosed();
         assert shardRouting.primary() : "runUnderPrimaryPermit should only be called on primary shard but was " + shardRouting;
         final ActionListener<Releasable> onPermitAcquired = ActionListener.wrap(
-                releasable -> {
-                    try (Releasable ignore = releasable) {
-                        runnable.run();
-                    }
-                },
-                onFailure);
+            releasable -> {
+                try (Releasable ignore = releasable) {
+                    runnable.run();
+                }
+            },
+            onFailure);
         acquirePrimaryOperationPermit(onPermitAcquired, executorOnDelay, debugInfo);
     }
 
+    /**
+     * 代表远端请求的主分片任期 与当前节点的主分片任期不一致
+     *
+     * @param newPrimaryTerm
+     * @param onBlocked
+     * @param combineWithAction
+     * @param <E>
+     */
     private <E extends Exception> void bumpPrimaryTerm(final long newPrimaryTerm,
                                                        final CheckedRunnable<E> onBlocked,
                                                        @Nullable ActionListener<Releasable> combineWithAction) {
@@ -3447,6 +3511,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         assert newPrimaryTerm > pendingPrimaryTerm || (newPrimaryTerm >= pendingPrimaryTerm && combineWithAction != null);
         assert getOperationPrimaryTerm() <= pendingPrimaryTerm;
         final CountDownLatch termUpdated = new CountDownLatch(1);
+
+        // 当抢占到这个分片的所有许可证后 会触发监听器
         asyncBlockOperations(new ActionListener<Releasable>() {
             @Override
             public void onFailure(final Exception e) {
@@ -3459,6 +3525,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 }
             }
 
+            /**
+             * 当该分片处理失败后 关闭底层的engine
+             * @param e
+             */
             private void innerFail(final Exception e) {
                 try {
                     failShard("exception during primary term transition", e);
@@ -3467,14 +3537,20 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 }
             }
 
+            /**
+             * 当正常接收到响应结果后触发该方法
+             * @param releasable
+             */
             @Override
             public void onResponse(final Releasable releasable) {
+                // 这里释放了之前抢占的所有许可证
                 final RunOnce releaseOnce = new RunOnce(releasable::close);
                 try {
                     assert getOperationPrimaryTerm() <= pendingPrimaryTerm;
                     termUpdated.await();
                     // indexShardOperationPermits doesn't guarantee that async submissions are executed
                     // in the order submitted. We need to guard against another term bump
+                    // 代表发起操作的任期此时还是落后于请求中的 主任期
                     if (getOperationPrimaryTerm() < newPrimaryTerm) {
                         replicationTracker.setOperationPrimaryTerm(newPrimaryTerm);
                         onBlocked.run();
@@ -3494,6 +3570,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 }
             }
         }, 30, TimeUnit.MINUTES);
+
+        // 更新当前节点维护的主分片任期
         pendingPrimaryTerm = newPrimaryTerm;
         termUpdated.countDown();
     }
@@ -3534,6 +3612,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *                                   after this replication request was executed on it (see {@link #getMaxSeqNoOfUpdatesOrDeletes()}
      * @param onPermitAcquired           the listener for permit acquisition
      * @param timeout                    the maximum time to wait for the in-flight operations block
+     *                                   获取当前分片的全部许可证  此时分片作为一个副本
      */
     public void acquireAllReplicaOperationsPermits(final long opPrimaryTerm,
                                                    final long globalCheckpoint,
@@ -3546,6 +3625,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         );
     }
 
+    /**
+     * 获取当前副本的所有许可证
+     *
+     * @param opPrimaryTerm                              请求体中携带的主分片任期
+     * @param globalCheckpoint                           当前的全局检查点
+     * @param maxSeqNoOfUpdatesOrDeletes
+     * @param onPermitAcquired
+     * @param allowCombineOperationWithPrimaryTermUpdate 默认为true  这里的含义更像是 是否要将操作放到 更新primaryTerm之后
+     * @param operationExecutor
+     */
     private void innerAcquireReplicaOperationPermit(final long opPrimaryTerm,
                                                     final long globalCheckpoint,
                                                     final long maxSeqNoOfUpdatesOrDeletes,
@@ -3584,6 +3673,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 }
             });
 
+        // 检测请求体中携带的主分片任期 是否超过了当前分片记录的任期
         if (requirePrimaryTermUpdate(opPrimaryTerm, allowCombineOperationWithPrimaryTermUpdate)) {
             synchronized (mutex) {
                 if (requirePrimaryTermUpdate(opPrimaryTerm, allowCombineOperationWithPrimaryTermUpdate)) {
@@ -3592,24 +3682,33 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     // Having a new primary term here means that the old primary failed and that there is a new primary, which again
                     // means that the master will fail this shard as all initializing shards are failed when a primary is selected
                     // We abort early here to prevent an ongoing recovery from the failed primary to mess with the global / local checkpoint
+                    // 如果当前分片的状态还不稳定  不允许在本地更新 primary的任期
                     if (shardState != IndexShardState.POST_RECOVERY &&
                         shardState != IndexShardState.STARTED) {
                         throw new IndexShardNotStartedException(shardId, shardState);
                     }
 
-                    bumpPrimaryTerm(opPrimaryTerm, () -> {
-                        updateGlobalCheckpointOnReplica(globalCheckpoint, "primary term transition");
-                        final long currentGlobalCheckpoint = getLastKnownGlobalCheckpoint();
-                        final long maxSeqNo = seqNoStats().getMaxSeqNo();
-                        logger.info("detected new primary with primary term [{}], global checkpoint [{}], max_seq_no [{}]",
-                            opPrimaryTerm, currentGlobalCheckpoint, maxSeqNo);
-                        if (currentGlobalCheckpoint < maxSeqNo) {
-                            resetEngineToGlobalCheckpoint();
-                        } else {
-                            getEngine().rollTranslogGeneration();
-                        }
-                    }, allowCombineOperationWithPrimaryTermUpdate ? operationListener : null);
+                    // 尝试更新主分片任期
+                    bumpPrimaryTerm(opPrimaryTerm,
+                        // 如果发现 operate的任期 比主分片任期小 那么触发该方法
+                        () -> {
+                            // 尝试更新全局检查点
+                            updateGlobalCheckpointOnReplica(globalCheckpoint, "primary term transition");
+                            // 获取当前的全局检查点
+                            final long currentGlobalCheckpoint = getLastKnownGlobalCheckpoint();
+                            final long maxSeqNo = seqNoStats().getMaxSeqNo();
+                            logger.info("detected new primary with primary term [{}], global checkpoint [{}], max_seq_no [{}]",
+                                opPrimaryTerm, currentGlobalCheckpoint, maxSeqNo);
+                            // 当此时的全局检查点 小于最大的序列号时 使用这个全局检查点去重置engine
+                            if (currentGlobalCheckpoint < maxSeqNo) {
+                                resetEngineToGlobalCheckpoint();
+                            } else {
+                                // 切换到下一个事务日志
+                                getEngine().rollTranslogGeneration();
+                            }
+                        }, allowCombineOperationWithPrimaryTermUpdate ? operationListener : null);
 
+                    // 如果指定了 在update后触发监听器  现在可以直接返回   并且之后在回调中会触发 operationListener
                     if (allowCombineOperationWithPrimaryTermUpdate) {
                         logger.debug("operation execution has been combined with primary term update");
                         return;
@@ -3619,6 +3718,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
         assert opPrimaryTerm <= pendingPrimaryTerm
             : "operation primary term [" + opPrimaryTerm + "] should be at most [" + pendingPrimaryTerm + "]";
+
+        // 实际上就是在触发监听器前抢占了所有的许可证
         operationExecutor.accept(operationListener);
     }
 
@@ -3640,7 +3741,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * @return a list of describing each permit that wasn't released yet. The description consist of the debugInfo supplied
-     *         when the permit was acquired plus a stack traces that was captured when the permit was request.
+     * when the permit was acquired plus a stack traces that was captured when the permit was request.
      */
     public List<String> getActiveOperations() {
         return indexShardOperationPermits.getActiveOperations();
@@ -3653,6 +3754,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 执行IO 写入逻辑
+     *
      * @param logger
      * @param threadContext
      * @param engineSupplier
@@ -3698,6 +3800,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 将事务日志刷盘
+     *
      * @throws IOException
      */
     public void sync() throws IOException {
@@ -3945,6 +4048,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Registers the given listener and invokes it once the shard is active again and all
      * pending refresh translog location has been refreshed. If there is no pending refresh location registered the listener will be
      * invoked immediately.
+     *
      * @param listener the listener to invoke once the pending refresh location is visible. The listener will be called with
      *                 <code>true</code> if the listener was registered to wait for a refresh.
      */
@@ -3966,7 +4070,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @param location the location to listen for
      * @param listener for the refresh. Called with true if registering the listener ran it out of slots and forced a refresh. Called with
-     *        false otherwise.
+     *                 false otherwise.
      */
     public void addRefreshListener(Translog.Location location, Consumer<Boolean> listener) {
         final boolean readAllowed;
@@ -4030,6 +4134,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             public ParsedDocument newDeleteTombstoneDoc(String id) {
                 return docMapper().getDocumentMapper().createDeleteTombstoneDoc(shardId.getIndexName(), id);
             }
+
             @Override
             public ParsedDocument newNoopTombstoneDoc(String reason) {
                 return noopDocumentMapper.createNoopTombstoneDoc(shardId.getIndexName(), reason);
@@ -4039,24 +4144,31 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Rollback the current engine to the safe commit, then replay local translog up to the global checkpoint.
+     * 重置引擎 回到全局检查点的位置
      */
     void resetEngineToGlobalCheckpoint() throws IOException {
         assert Thread.holdsLock(mutex) == false : "resetting engine under mutex";
         assert getActiveOperationsCount() == OPERATIONS_BLOCKED
             : "resetting engine without blocking operations; active operations are [" + getActiveOperations() + ']';
+        // 先对相关数据做持久化
         sync(); // persist the global checkpoint to disk
+        // 通过全局检查点找到对应的数据统计对象
         final SeqNoStats seqNoStats = seqNoStats();
+        // 获取事务日志的数据统计对象
         final TranslogStats translogStats = translogStats();
         // flush to make sure the latest commit, which will be opened by the read-only engine, includes all operations.
+        // 这里是针对 lucene中的数据进行刷盘
         flush(new FlushRequest().waitIfOngoing(true));
 
         SetOnce<Engine> newEngineReference = new SetOnce<>();
+        // 获取全局检查点
         final long globalCheckpoint = getLastKnownGlobalCheckpoint();
         assert globalCheckpoint == getLastSyncedGlobalCheckpoint();
         synchronized (engineMutex) {
             verifyNotClosed();
             // we must create both new read-only engine and new read-write engine under engineMutex to ensure snapshotStoreMetadata,
             // acquireXXXCommit and close works.
+            // 在这个时候 又创建了一个只读引擎对象
             final Engine readOnlyEngine =
                 new ReadOnlyEngine(newEngineConfig(replicationTracker), seqNoStats, translogStats, false, Function.identity(), true) {
                     @Override
@@ -4092,18 +4204,29 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         IOUtils.close(super::close, newEngine);
                     }
                 };
+            // 使用只读引擎替换之前的引擎对象  同时关闭之前的引擎
             IOUtils.close(currentEngineReference.getAndSet(readOnlyEngine));
+            // 重新创建引擎对象 并设置到currentEngineReference
             newEngineReference.set(engineFactory.newReadWriteEngine(newEngineConfig(replicationTracker)));
+            // 使用新创建的引擎对象的事务偏移量去覆盖当前的事务偏移量
             onNewEngine(newEngineReference.get());
         }
+
+        // 转发到runTranslogRecovery 进行数据恢复
         final Engine.TranslogRecoveryRunner translogRunner = (engine, snapshot) -> runTranslogRecovery(
-            engine, snapshot, Engine.Operation.Origin.LOCAL_RESET, () -> {
+            engine, snapshot, Engine.Operation.Origin.LOCAL_RESET,
+            // 每当恢复一个operation时触发的钩子
+            () -> {
                 // TODO: add a dedicate recovery stats for the reset translog
             });
+        // 新的引擎对象数据仅恢复到全局检查点的位置 这样就完成了替换  在此期间都是readOnlyEngine在起作用
         newEngineReference.get().recoverFromTranslog(translogRunner, globalCheckpoint);
+
+        // 将此时最新的数据加载进来 实际上就是加载之前恢复的数据
         newEngineReference.get().refresh("reset_engine");
         synchronized (engineMutex) {
             verifyNotClosed();
+            // 将新的引擎设置到 currentEngine中 同时关闭之前的 readOnlyEngine
             IOUtils.close(currentEngineReference.getAndSet(newEngineReference.get()));
             // We set active because we are now writing operations to the engine; this way,
             // if we go idle after some time and become inactive, we still give sync'd flush a chance to run.

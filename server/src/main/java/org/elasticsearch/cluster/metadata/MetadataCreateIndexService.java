@@ -311,16 +311,23 @@ public class MetadataCreateIndexService {
     /**
      * Handles the cluster state transition to a version that reflects the {@link CreateIndexClusterStateUpdateRequest}.
      * All the requested changes are firstly validated before mutating the {@link ClusterState}.
+     * @param currentState 当前集群状态
+     * @param request 申请创建索引的请求
+     * @param silent 是否静默处理
      */
     public ClusterState applyCreateIndexRequest(ClusterState currentState, CreateIndexClusterStateUpdateRequest request, boolean silent,
                                                 BiConsumer<Metadata.Builder, IndexMetadata> metadataTransformer) throws Exception {
         logger.trace("executing IndexCreationTask for [{}] against cluster state version [{}]", request, currentState.version());
 
+        // 校验indexName是否已经存在 以及配置项是否合法
         validate(request, currentState);
 
+        // 代表该index 会从哪个索引获取数据  (初始化数据的过程被称为 recover)
         final Index recoverFromIndex = request.recoverFrom();
+        // 如果指定了recoverFrom 使用该index的元数据
         final IndexMetadata sourceMetadata = recoverFromIndex == null ? null : currentState.metadata().getIndexSafe(recoverFromIndex);
 
+        // TODO
         if (sourceMetadata != null) {
             // If source metadata was provided, it means we're recovering from an existing index,
             // in which case templates don't apply, so create the index from the source metadata
@@ -329,10 +336,12 @@ public class MetadataCreateIndexService {
             // Hidden indices apply templates slightly differently (ignoring wildcard '*'
             // templates), so we need to check to see if the request is creating a hidden index
             // prior to resolving which templates it matches
+            // 当使用 DataStream 创建索引数据时  会设置hidden 为true
             final Boolean isHiddenFromRequest = IndexMetadata.INDEX_HIDDEN_SETTING.exists(request.settings()) ?
                 IndexMetadata.INDEX_HIDDEN_SETTING.get(request.settings()) : null;
 
             // Check to see if a v2 template matched
+            // 检测是否使用的是 V2版本的模板
             final String v2Template = MetadataIndexTemplateService.findV2Template(currentState.metadata(),
                 request.index(), isHiddenFromRequest == null ? false : isHiddenFromRequest);
             final boolean preferV2Templates = resolvePreferV2Templates(request);
@@ -367,6 +376,14 @@ public class MetadataCreateIndexService {
             IndexMetadata.PREFER_V2_TEMPLATES_SETTING.get(request.settings()) : request.preferV2Templates();
     }
 
+    /**
+     * 使用请求去更新 clusterState    是一个创建index的请求
+     * @param currentState
+     * @param request
+     * @param silent  是否静默处理
+     * @return
+     * @throws Exception
+     */
     public ClusterState applyCreateIndexRequest(ClusterState currentState, CreateIndexClusterStateUpdateRequest request,
                                                 boolean silent) throws Exception {
         return applyCreateIndexRequest(currentState, request, silent, null);

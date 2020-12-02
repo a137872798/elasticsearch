@@ -40,6 +40,7 @@ import java.util.Objects;
  * An index template is comprised of a set of index patterns, an optional template, and a list of
  * ids corresponding to component templates that should be composed in order when creating a new
  * index.
+ * 索引模板  插入的索引有自己的特殊结构
  */
 public class IndexTemplateV2 extends AbstractDiffable<IndexTemplateV2> implements ToXContentObject {
     private static final ParseField INDEX_PATTERNS = new ParseField("index_patterns");
@@ -67,6 +68,9 @@ public class IndexTemplateV2 extends AbstractDiffable<IndexTemplateV2> implement
         PARSER.declareObject(ConstructingObjectParser.optionalConstructorArg(), (p, c) -> p.map(), METADATA);
     }
 
+    /**
+     * 每个模板会有一组匹配规则
+     */
     private final List<String> indexPatterns;
     @Nullable
     private final Template template;

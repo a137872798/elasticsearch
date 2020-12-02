@@ -705,20 +705,29 @@ public class MetadataIndexTemplateService {
     /**
      * Return the name (id) of the highest matching index template for the given index name. In
      * the event that no templates are matched, {@code null} is returned.
+     * @param metadata 原始元数据
+     * @param indexName 本次要检测的索引名
+     * @param isHidden  是否是一个隐藏索引
+     * 检测是否使用的是 V2版本的模板
      */
     @Nullable
     public static String findV2Template(Metadata metadata, String indexName, boolean isHidden) {
+        //
         final Predicate<String> patternMatchPredicate = pattern -> Regex.simpleMatch(pattern, indexName);
         final Map<IndexTemplateV2, String> matchedTemplates = new HashMap<>();
+        // 看来一开始就会针对某些 index 设置相关的模板
         for (Map.Entry<String, IndexTemplateV2> entry : metadata.templatesV2().entrySet()) {
             final String name = entry.getKey();
             final IndexTemplateV2 template = entry.getValue();
+            // 非隐藏的索引
             if (isHidden == false) {
+                // 只要有任意一个模块与传入的index匹配 就添加到map中
                 final boolean matched = template.indexPatterns().stream().anyMatch(patternMatchPredicate);
                 if (matched) {
                     matchedTemplates.put(template, name);
                 }
             } else {
+                // 当前模板是否包含了 "*" 的匹配符
                 final boolean isNotMatchAllTemplate = template.indexPatterns().stream().noneMatch(Regex::isMatchAllPattern);
                 if (isNotMatchAllTemplate) {
                     if (template.indexPatterns().stream().anyMatch(patternMatchPredicate)) {

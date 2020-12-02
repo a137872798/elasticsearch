@@ -35,6 +35,7 @@ import static org.elasticsearch.rest.RestRequest.Method.POST;
 
 /**
  * 关闭某些索引对象
+ * 目前只是看到将index在 IndexMetadata/RoutingTable中修改成CLOSE 但是没有看到实际的关闭操作
  */
 public class RestCloseIndexAction extends BaseRestHandler {
 

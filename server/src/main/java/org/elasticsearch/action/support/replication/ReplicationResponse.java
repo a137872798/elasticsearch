@@ -43,7 +43,6 @@ import static org.elasticsearch.common.xcontent.XContentParserUtils.ensureExpect
 
 /**
  * Base class for write action responses.
- * 针对复制action 返回的结果
  */
 public class ReplicationResponse extends ActionResponse {
 

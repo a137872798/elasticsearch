@@ -270,6 +270,7 @@ public abstract class Engine implements Closeable {
      * Performs the pre-closing checks on the {@link Engine}.
      *
      * @throws IllegalStateException if the sanity checks failed
+     * 在分片要被关闭前 需要做认证工作
      */
     public void verifyEngineBeforeIndexClosing() throws IllegalStateException {
         // 获取此时的全局检查点

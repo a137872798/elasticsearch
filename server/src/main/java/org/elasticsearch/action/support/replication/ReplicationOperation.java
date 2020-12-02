@@ -275,14 +275,21 @@ public class ReplicationOperation<
             logger.trace("[{}] sending op [{}] to replica {} for request [{}]", shard.shardId(), opType, shard, replicaRequest);
         }
         totalShards.incrementAndGet();
+        // 增加这个就类似于 CountDown 的意图  增加计数 并在产生结果的回调中减少计数 这样就不会提前触发 最终的处理逻辑了  而是必须要等待所有副本返回结果后才处理
         pendingActions.incrementAndGet();
+
+
+        // 当相关副本成功处理 并返回结果后 触发该监听器
         final ActionListener<ReplicaResponse> replicationListener = new ActionListener<>() {
             @Override
             public void onResponse(ReplicaResponse response) {
+                // 每当成功处理一个分片后 增加成功数
                 successfulShards.incrementAndGet();
                 try {
+                    // 每个副本会将数据刷盘 同时返回此时最新的检查点  而 primary 则负责维护每个副本的检查点
                     updateCheckPoints(shard, response::localCheckpoint, response::globalCheckpoint);
                 } finally {
+                    // 对冲增加的 pendingActions
                     decPendingAndFinishIfNeeded();
                 }
             }
@@ -347,7 +354,8 @@ public class ReplicationOperation<
     }
 
     /**
-     * 更新主分片的 全局检查点和本地检查点
+     * 主分片所在节点会触发该方法  更新主分片此时的检查点
+     * 或者通过将请求发往每个副本 获取检查点并通过该对象维护
      * @param shard
      * @param localCheckpointSupplier   将此时持久化的检查点同步到 tracer上
      * @param globalCheckpointSupplier
