@@ -314,6 +314,7 @@ public class MetadataCreateIndexService {
      * @param currentState 当前集群状态
      * @param request 申请创建索引的请求
      * @param silent 是否静默处理
+     * @param metadataTransformer 可以为null
      */
     public ClusterState applyCreateIndexRequest(ClusterState currentState, CreateIndexClusterStateUpdateRequest request, boolean silent,
                                                 BiConsumer<Metadata.Builder, IndexMetadata> metadataTransformer) throws Exception {
@@ -341,14 +342,16 @@ public class MetadataCreateIndexService {
                 IndexMetadata.INDEX_HIDDEN_SETTING.get(request.settings()) : null;
 
             // Check to see if a v2 template matched
-            // 检测是否使用的是 V2版本的模板
+            // 通过索引名去匹配一个 V2Template对象   模板以键值对的形式存储在metadata中
             final String v2Template = MetadataIndexTemplateService.findV2Template(currentState.metadata(),
                 request.index(), isHiddenFromRequest == null ? false : isHiddenFromRequest);
+            // 从请求体中判断是否选择使用V2版本的模板
             final boolean preferV2Templates = resolvePreferV2Templates(request);
 
             if (v2Template != null && preferV2Templates) {
                 // If a v2 template was found, it takes precedence over all v1 templates, so create
                 // the index using that template and the request's specified settings
+                // 使用V2版本的模板进行处理 并返回最新的clusterState
                 return applyCreateIndexRequestWithV2Template(currentState, request, silent, v2Template, metadataTransformer);
             } else {
                 if (v2Template != null) {
@@ -371,6 +374,11 @@ public class MetadataCreateIndexService {
         }
     }
 
+    /**
+     * 从请求中判断是否倾向于使用 V2版本的模板
+     * @param request
+     * @return
+     */
     private static boolean resolvePreferV2Templates(CreateIndexClusterStateUpdateRequest request) {
         return request.preferV2Templates() == null ?
             IndexMetadata.PREFER_V2_TEMPLATES_SETTING.get(request.settings()) : request.preferV2Templates();
@@ -504,6 +512,16 @@ public class MetadataCreateIndexService {
             templates.stream().map(IndexTemplateMetadata::getName).collect(toList()), metadataTransformer);
     }
 
+    /**
+     * 使用V2版本的模板去修改clusterState
+     * @param currentState
+     * @param request
+     * @param silent
+     * @param templateName   最优匹配的V2模板名
+     * @param metadataTransformer  可以为空
+     * @return
+     * @throws Exception
+     */
     private ClusterState applyCreateIndexRequestWithV2Template(final ClusterState currentState,
                                                                final CreateIndexClusterStateUpdateRequest request,
                                                                final boolean silent,
@@ -531,12 +549,22 @@ public class MetadataCreateIndexService {
             Collections.singletonList(templateName), metadataTransformer);
     }
 
+    /**
+     *
+     * @param requestMappings   请求体中携带的映射字符串
+     * @param currentState    当前集群状态
+     * @param templateName
+     * @param xContentRegistry
+     * @return
+     * @throws Exception
+     */
     public static Map<String, Object> resolveV2Mappings(final String requestMappings,
                                                         final ClusterState currentState,
                                                         final String templateName,
                                                         final NamedXContentRegistry xContentRegistry) throws Exception {
-        final Map<String, Object> mappings = Collections.unmodifiableMap(parseV2Mappings(requestMappings,
-            MetadataIndexTemplateService.resolveMappings(currentState, templateName), xContentRegistry));
+        final Map<String, Object> mappings = Collections.unmodifiableMap(
+            parseV2Mappings(requestMappings, MetadataIndexTemplateService.resolveMappings(currentState, templateName), xContentRegistry)
+        );
         return mappings;
     }
 

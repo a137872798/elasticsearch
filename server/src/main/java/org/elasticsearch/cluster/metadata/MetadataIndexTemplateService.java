@@ -729,7 +729,9 @@ public class MetadataIndexTemplateService {
             } else {
                 // 当前模板是否包含了 "*" 的匹配符
                 final boolean isNotMatchAllTemplate = template.indexPatterns().stream().noneMatch(Regex::isMatchAllPattern);
+                // 要求必须都不包含 *
                 if (isNotMatchAllTemplate) {
+                    // 这时将满足谓语条件的插入到列表中
                     if (template.indexPatterns().stream().anyMatch(patternMatchPredicate)) {
                         matchedTemplates.put(template, name);
                     }
@@ -737,16 +739,19 @@ public class MetadataIndexTemplateService {
             }
         }
 
+        // 代表没有找到匹配的模板
         if (matchedTemplates.size() == 0) {
             return null;
         }
 
         final List<IndexTemplateV2> candidates = new ArrayList<>(matchedTemplates.keySet());
+        // 将模板按照优先级进行排序
         CollectionUtil.timSort(candidates, Comparator.comparing(IndexTemplateV2::priority,
             Comparator.nullsLast(Comparator.reverseOrder())));
 
         assert candidates.size() > 0 : "we should have returned early with no candidates";
         IndexTemplateV2 winner = candidates.get(0);
+        // 找到优先级最高的模板对应的名称
         String winnerName = matchedTemplates.get(winner);
 
         // if the winner template is a global template that specifies the `index.hidden` setting (which is not allowed, so it'd be due to
@@ -764,6 +769,7 @@ public class MetadataIndexTemplateService {
 
     /**
      * Resolve the given v2 template into an ordered list of mappings
+     * 通过一个
      */
     public static List<CompressedXContent> resolveMappings(final ClusterState state, final String templateName) {
         final IndexTemplateV2 template = state.metadata().templatesV2().get(templateName);
