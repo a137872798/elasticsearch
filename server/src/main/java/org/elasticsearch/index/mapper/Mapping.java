@@ -39,21 +39,30 @@ import static java.util.Collections.unmodifiableMap;
 /**
  * Wrapper around everything that defines a mapping, without references to
  * utility classes like MapperService, ...
- * 描述了将格式化数据解析的规则 比如什么key 对应的数据允许被解析 (通过Mapper.enabled 判断)
+ * 对应一次完整映射需要的各种参数
  */
 public final class Mapping implements ToXContentFragment {
 
     final Version indexCreated;
+    /**
+     * json结构体会被抽取属性 生成一个类似trie树结构的对象
+     */
     final RootObjectMapper root;
+    /**
+     * 在生成doc时 需要的一些元数据映射对象
+     */
     final MetadataFieldMapper[] metadataMappers;
     final Map<Class<? extends MetadataFieldMapper>, MetadataFieldMapper> metadataMappersMap;
+    /**
+     * 可能还会携带一些元数据信息
+     */
     final Map<String, Object> meta;
 
     /**
      *
      * @param indexCreated
-     * @param rootObjectMapper  每个docMapper 会对应一个 RootObjectMapper
-     * @param metadataMappers   doc下每个field会对应一个mapper
+     * @param rootObjectMapper
+     * @param metadataMappers
      * @param meta
      */
     public Mapping(Version indexCreated, RootObjectMapper rootObjectMapper,

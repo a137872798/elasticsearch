@@ -40,6 +40,7 @@ import static org.elasticsearch.index.query.AbstractQueryBuilder.parseInnerQuery
 /**
  * Validator for an alias, to be used before adding an alias to the index metadata
  * and make sure the alias is valid
+ * 别名校验器 用于检验别名是否合法
  */
 public class AliasValidator {
     /**

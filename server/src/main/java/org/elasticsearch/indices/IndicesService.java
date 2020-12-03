@@ -695,9 +695,9 @@ public class IndicesService extends AbstractLifecycleComponent
     }
 
     /**
-     * 这个方法应该只是检测能否正常使用 indexService吧
+     * 创建一个临时的indexService 通过传入的函数进行检测 并在检测完成后关闭indexService
      * @param indexMetadata
-     * @param indexServiceConsumer  该对象接收indexService 并返回给T 类型对象
+     * @param indexServiceConsumer
      * @param <T>
      * @param <E>
      * @return
@@ -707,10 +707,11 @@ public class IndicesService extends AbstractLifecycleComponent
     public <T, E extends Exception> T withTempIndexService(final IndexMetadata indexMetadata,
                                                            CheckedFunction<IndexService, T, E> indexServiceConsumer) throws IOException, E {
         final Index index = indexMetadata.getIndex();
+        // 不允许重复创建同名索引
         if (hasIndex(index)) {
             throw new ResourceAlreadyExistsException(index);
         }
-        // 创建了一个只要 create 就会抛出异常的监听器
+        // 创建了一个只要 创建shard/store 就会抛出异常的监听器
         List<IndexEventListener> finalListeners = List.of(
             // double check that shard is not created.
             new IndexEventListener() {
@@ -729,6 +730,7 @@ public class IndicesService extends AbstractLifecycleComponent
         );
 
         final IndexService indexService =
+            // 基于当前相关参数创建  indexService
             createIndexService(
                 CREATE_INDEX,
                 indexMetadata,
@@ -736,6 +738,8 @@ public class IndicesService extends AbstractLifecycleComponent
                 indicesFieldDataCache,
                 finalListeners,
                 indexingMemoryController);
+
+        // 创建成功后使用函数进行检测 并在结束后
         try (Closeable dummy = () -> indexService.close("temp", false)) {
             return indexServiceConsumer.apply(indexService);
         }
@@ -744,6 +748,7 @@ public class IndicesService extends AbstractLifecycleComponent
     /**
      * This creates a new IndexService without registering it
      * @param indexingOperationListeners  监控有关索引的操作 比如 indexingMemoryController 每当索引写入或者删除的时候 在内存中就会反映出变化
+     * @param builtInListeners 监听有关index的相关事件
      * 根据元数据信息 以及各种缓存对象创建 IndexService
      */
     private synchronized IndexService createIndexService(IndexService.IndexCreationContext indexCreationContext,
@@ -764,14 +769,21 @@ public class IndicesService extends AbstractLifecycleComponent
         // 先创建索引模块
         final IndexModule indexModule = new IndexModule(idxSettings, analysisRegistry, getEngineFactory(idxSettings),
             directoryFactories, () -> allowExpensiveQueries, indexNameExpressionResolver);
+
+        // 将该index相关的监听器插入到 IndexModel中
         for (IndexingOperationListener operationListener : indexingOperationListeners) {
             indexModule.addIndexOperationListener(operationListener);
         }
-        // 很多插件会监听索引模块 并作出相关处理
+
+        // 通过插件服务进行增强
         pluginsService.onIndexModule(indexModule);
+
+        // 将索引的事件监听器设置到 indexModel上
         for (IndexEventListener listener : builtInListeners) {
             indexModule.addIndexEventListener(listener);
         }
+
+        // 基于相关参数创建一个新的索引服务
         return indexModule.newIndexService(
             indexCreationContext,
             nodeEnv,

@@ -731,6 +731,10 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
         return this.templates;
     }
 
+    /**
+     * 从自定义数据中 获取组件模板
+     * @return
+     */
     public Map<String, ComponentTemplate> componentTemplates() {
         return Optional.ofNullable((ComponentTemplateMetadata) this.custom(ComponentTemplateMetadata.TYPE))
             .map(ComponentTemplateMetadata::componentTemplates)

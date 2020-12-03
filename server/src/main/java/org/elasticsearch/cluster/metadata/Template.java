@@ -70,6 +70,9 @@ public class Template extends AbstractDiffable<Template> implements ToXContentOb
         }, ALIASES);
     }
 
+    /**
+     * 每个最基础的模板可能会包含一些专有的配置
+     */
     @Nullable
     private final Settings settings;
     @Nullable

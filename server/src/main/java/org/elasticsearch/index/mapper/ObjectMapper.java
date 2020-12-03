@@ -61,14 +61,11 @@ public class ObjectMapper extends Mapper implements Cloneable {
     public enum Dynamic {
         TRUE,
         FALSE,
-        /**
-         * 严格的???
-         */
         STRICT
     }
 
     /**
-     * 仅仅是描述一种嵌套的状态 比如是否开启嵌套 是否包含parent/root
+     * 描述嵌套信息
      */
     public static class Nested {
 
@@ -110,7 +107,10 @@ public class ObjectMapper extends Mapper implements Cloneable {
     }
 
     /**
-     * 在每个mapper中 都有一个对应的builder对象 用于构建mapper
+     * 用于映射某个对象 是一个树形结构 因为到了每一层下级可能还有多个builder
+     * 比如
+     * xx.A
+     * xx.B   这样xx对应的builder内部就同时有2个子级builder 对应A/B
      * @param <T>
      * @param <Y>
      */
@@ -154,16 +154,24 @@ public class ObjectMapper extends Mapper implements Cloneable {
             return this.builder;
         }
 
+        /**
+         * 根据builder现有的数据 以及builder上下文 生成Mapper对象
+         * @param context  记录在构建构成中 嵌套时 当前层对应的name
+         * @return
+         */
         @Override
         @SuppressWarnings("unchecked")
         public Y build(BuilderContext context) {
-            // 套路都是一样的 在使用前都要在path上追加什么 之后在builder后 又将name移除
+            // 代表此时在构建的是 哪个name对应的数据体解析出来的builder
             context.path().add(name);
 
             Map<String, Mapper> mappers = new HashMap<>();
-            // 在解析数据流时 会将一些builder设置进去
+            // 仅迭代本级对应子级的所有builder对象 每个builder可能还有子级
             for (Mapper.Builder builder : mappersBuilders) {
+                // 这里就会发生迭代构建 并且会将正在构建的 name 追加到 context.path 上
                 Mapper mapper = builder.build(context);
+                // 同级的mapper.name 相同时 进行合并  跨级的不会相互影响
+                // 可能存在什么别名之类的概念吧
                 Mapper existing = mappers.get(mapper.simpleName());
                 if (existing != null) {
                     mapper = existing.merge(mapper);
@@ -171,6 +179,8 @@ public class ObjectMapper extends Mapper implements Cloneable {
                 // 通过builder构建mapper对象 并设置到容器中
                 mappers.put(mapper.simpleName(), mapper);
             }
+
+            // 最低层的builder会直接移除 插入的path 并且开始创建mapper对象
             context.path().remove();
 
             ObjectMapper objectMapper = createMapper(name, context.path().pathAsText(name), enabled, nested, dynamic,
@@ -179,27 +189,47 @@ public class ObjectMapper extends Mapper implements Cloneable {
             return (Y) objectMapper;
         }
 
+        /**
+         * 根据builder现有的信息 构建mapper对象
+         * @param name  当前解析的key
+         * @param fullPath  此时完整的解析路径
+         * @param enabled
+         * @param nested
+         * @param dynamic
+         * @param mappers 所有子级的mapper
+         * @param settings
+         * @return
+         */
         protected ObjectMapper createMapper(String name, String fullPath, boolean enabled, Nested nested, Dynamic dynamic,
                 Map<String, Mapper> mappers, @Nullable Settings settings) {
+            // 这里只是简单的属性填充 没有看到什么特殊点
             return new ObjectMapper(name, fullPath, enabled, nested, dynamic, mappers, settings);
         }
     }
 
-    /**
-     * 类型解析器的作用好像就是从 解析上下文中抽取相关信息 并生成builder对象 而通过builder对象 就可以创建Mapper了
-     */
     public static class TypeParser implements Mapper.TypeParser {
+
+        /**
+         * 当需要解析的数据体  type 为 object 时 会使用该对象进行解析 并且相关信息会抽取到 ObjectMapper.Builder中
+         * @param name 本次被解析的属性名
+         * @param node 这个属性对应的 数据体
+         * @param parserContext  包含了解析过程中需要的各种参数的上下文对象
+         * @return
+         * @throws MapperParsingException
+         */
         @Override
         @SuppressWarnings("rawtypes")
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
             ObjectMapper.Builder builder = new Builder(name);
-            // 从node中获取有关嵌套的信息 并设置到builder中
+
+            // 检测是否有描述嵌套的属性
             parseNested(name, node, builder);
             for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
                 Map.Entry<String, Object> entry = iterator.next();
                 String fieldName = entry.getKey();
                 Object fieldNode = entry.getValue();
-                // 返回true 代表是builder需要的属性 那么在设置完后就可以从迭代器中移除了  看来是有一个很大的数据流 从上往下传入到不同的builder中进行解析
+
+                // 嵌套解析 返回true 代表成功被消耗掉了 就从迭代器中移除 避免重复解析
                 if (parseObjectOrDocumentTypeProperties(fieldName, fieldNode, parserContext, builder)) {
                     iterator.remove();
                 }
@@ -208,9 +238,9 @@ public class ObjectMapper extends Mapper implements Cloneable {
         }
 
         /**
-         * 传入的 fieldName fieldNode 是在node 剔除掉无关参数后剩余的数据
-         * @param fieldName
-         * @param fieldNode
+         * 将描述属性的 field抽取出来 与用户自己写入的field隔离开
+         * @param fieldName  本次开始解析 _doc 下的哪个field(或者说字段)   每个field实际上就代表一种属性 比如 enable这种
+         * @param fieldNode   field对应的值 可能也是个map
          * @param parserContext 包含了解析过程中需要的参数
          * @param builder
          * @return
@@ -218,7 +248,6 @@ public class ObjectMapper extends Mapper implements Cloneable {
         @SuppressWarnings({"unchecked", "rawtypes"})
         protected static boolean parseObjectOrDocumentTypeProperties(String fieldName, Object fieldNode, ParserContext parserContext,
                                                                      ObjectMapper.Builder builder) {
-            // 设置dynamic 属性
             if (fieldName.equals("dynamic")) {
                 String value = fieldNode.toString();
                 if (value.equalsIgnoreCase("strict")) {
@@ -240,6 +269,7 @@ public class ObjectMapper extends Mapper implements Cloneable {
                     parseProperties(builder, (Map<String, Object>) fieldNode, parserContext);
                 }
                 return true;
+                // TODO 兼容性代码 忽略
             } else if (fieldName.equals("include_in_all")) {
                 deprecationLogger.deprecatedAndMaybeLog("include_in_all",
                     "[include_in_all] is deprecated, the _all field have been removed in this version");
@@ -250,6 +280,11 @@ public class ObjectMapper extends Mapper implements Cloneable {
 
         /**
          * 解析出有关嵌套的信息
+         * 对应的json格式是这样
+         * "name":{
+         *  "type":"object",
+         *   ...
+         * }
          * @param name
          * @param node 这个node好像是代表格式化数据解析后的结果 比如解析完json字符串后各个字段以及对应的值被设置到容器中  而不是分布式中节点的意思
          * @param builder
@@ -261,11 +296,11 @@ public class ObjectMapper extends Mapper implements Cloneable {
             boolean nestedIncludeInRoot = false;
             Object fieldNode = node.get("type");
             if (fieldNode!=null) {
+                // type 为 object/nested 都会使用ObjectMapper.TypeParser进行解析
+
                 String type = fieldNode.toString();
-                // 对象类型是不使用嵌套的
                 if (type.equals(CONTENT_TYPE)) {
                     builder.nested = Nested.NO;
-                // 当类型中声明了嵌套时 使用嵌套数据
                 } else if (type.equals(NESTED_CONTENT_TYPE)) {
                     nested = true;
                 } else {
@@ -283,6 +318,7 @@ public class ObjectMapper extends Mapper implements Cloneable {
                 nestedIncludeInRoot = XContentMapValues.nodeBooleanValue(fieldNode, name + ".include_in_root");
                 node.remove("include_in_root");
             }
+            // 如果是嵌套类型 根据 nestedIncludeInParent/nestedIncludeInRoot  创建一个嵌套对象
             if (nested) {
                 builder.nested = Nested.newNested(nestedIncludeInParent, nestedIncludeInRoot);
             }
@@ -290,7 +326,7 @@ public class ObjectMapper extends Mapper implements Cloneable {
         }
 
         /**
-         * 当某个node 对应的value为 properties时触发该方法
+         * 从json对象中 解析key为properties的对象
          * @param objBuilder
          * @param propsNode
          * @param parserContext
@@ -309,13 +345,16 @@ public class ObjectMapper extends Mapper implements Cloneable {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> propNode = (Map<String, Object>) entry.getValue();
                     String type;
+                    // properties 内部的属性如果是map对象 必须包含 type字段
                     Object typeNode = propNode.get("type");
                     if (typeNode != null) {
                         type = typeNode.toString();
                     } else {
                         // lets see if we can derive this...
+                        // 如果没有type 尝试进行推导   如果包含了properties 就认为是 object类型
                         if (propNode.get("properties") != null) {
                             type = ObjectMapper.CONTENT_TYPE;
+                            // 如果只包含一个 enabled属性 也认为是object  先不去理解
                         } else if (propNode.size() == 1 && propNode.get("enabled") != null) {
                             // if there is a single property with the enabled
                             // flag on it, make it an object
@@ -327,25 +366,30 @@ public class ObjectMapper extends Mapper implements Cloneable {
                         }
                     }
 
-                    // 生成不同的类型解析器
+                    // properties中有很多不同类型的属性 每种类型有专属的 TypeParser 对象     实际上是从DocumentMapperParser对象中查询
                     Mapper.TypeParser typeParser = parserContext.typeParser(type);
+                    // 这个类型没有对应的解析器 抛出异常
                     if (typeParser == null) {
                         throw new MapperParsingException("No handler for type [" + type + "] declared on field [" + fieldName + "]");
                     }
-                    // field 如果使用了多个"." 那么需要做拆分
+                    // field 如果使用了多个"." 只有最后一个才是真正的属性名
                     String[] fieldNameParts = fieldName.split("\\.");
                     String realFieldName = fieldNameParts[fieldNameParts.length - 1];
+
+                    // 在通过type匹配后 交由对应的typeParser
+                    // 之后会抽取属性信息 并返回一个builder对象
                     Mapper.Builder<?,?> fieldBuilder = typeParser.parse(realFieldName, propNode, parserContext);
                     for (int i = fieldNameParts.length - 2; i >= 0; --i) {
-                        // TODO 这一层层嵌套啥意思啊  builder0->builder1->builder2 每个builder中嵌套了 下一层的builder
+                        // 如果这个属性是 xx.xx.xx 这种格式 会构建一条链式结构
                         ObjectMapper.Builder<?, ?> intermediate = new ObjectMapper.Builder<>(fieldNameParts[i]);
                         intermediate.add(fieldBuilder);
                         fieldBuilder = intermediate;
                     }
-                    // 最后将这个层层嵌套的builder 设置到ObjectMapper.Builder 内部
+                    // 链接到最外层的builder上
                     objBuilder.add(fieldBuilder);
+                    // 将使用过的属性移除 避免后续重复解析
                     propNode.remove("type");
-                    // 要求propNode 内的参数在typeParser.parse 后都被使用完 否则抛出异常
+                    // 要求propNode 内的参数在通过 TypeParser处理后 必须用完
                     DocumentMapperParser.checkNoRemainingFields(fieldName, propNode, parserContext.indexVersionCreated());
                     iterator.remove();
                 } else if (isEmptyList) {
@@ -356,6 +400,7 @@ public class ObjectMapper extends Mapper implements Cloneable {
                 }
             }
 
+            // 在这时已经将properties的属性全部处理完了 相关信息会抽取到builder中 并构成一个树结构
             DocumentMapperParser.checkNoRemainingFields(propsNode, parserContext.indexVersionCreated(),
                     "DocType mapping definition has unsupported parameters: ");
 
@@ -521,6 +566,11 @@ public class ObjectMapper extends Mapper implements Cloneable {
         return true;
     }
 
+    /**
+     * 当子级出现了同名的mapper时 进行合并  要求类型必须相同
+     * @param mergeWith
+     * @return
+     */
     @Override
     public ObjectMapper merge(Mapper mergeWith) {
         if (!(mergeWith instanceof ObjectMapper)) {

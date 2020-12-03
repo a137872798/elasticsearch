@@ -73,7 +73,7 @@ import static java.util.Collections.emptyMap;
 import static java.util.Collections.unmodifiableMap;
 
 /**
- * 映射服务 应该就是管理如何将结构化数据与lucene连接起来的
+ * 映射服务  作为一个管理json字符串映射的门面对象 内部关联了各种映射需要的组件
  */
 public class MapperService extends AbstractIndexComponent implements Closeable {
 
@@ -88,7 +88,7 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
         MAPPING_UPDATE_PREFLIGHT,
         /**
          * Create or update a mapping.
-         * 创建/更新 映射对象
+         * 更新传入的mapping信息
          */
         MAPPING_UPDATE,
         /**
@@ -294,7 +294,17 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
         }
     }
 
+    /**
+     *
+     * @param type
+     * @param mappings  当创建索引时 在req中会携带一个json格式的字符串 需要处理的应该就是这个字符串解析后的数据
+     *                  解析完成后会变成一个map对象
+     * @param reason
+     * @throws IOException
+     */
     public void merge(String type, Map<String, Object> mappings, MergeReason reason) throws IOException {
+        // 这里是将 mappings又重新转换成 json结构体存储在 XContentBuilder对象中 方便随时对该结构体进行修改
+        // Strings.toString() 会将结构体变回 json字符串
         CompressedXContent content = new CompressedXContent(Strings.toString(XContentFactory.jsonBuilder().map(mappings)));
         internalMerge(type, content, reason);
     }
@@ -335,9 +345,10 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
     }
 
     /**
-     * 将内部的数据进行合并
+     * 将内部数据 与 传入的mappings进行合并
      * @param type
-     * @param mappings
+     * @param mappings  原本在创建index时 会传入一个json字符串 并且会和index匹配的template的mappings进行合并
+     *                  该属性就可以看作是合并后的结果
      * @param reason
      * @return
      */

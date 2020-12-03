@@ -362,6 +362,13 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         updateFsyncTaskIfNecessary();
     }
 
+    /**
+     * 如果本次生成 IndexService的业务场景是创建索引
+     * 会创建一个MapperService
+     * @param indexSettings
+     * @param indexCreationContext
+     * @return
+     */
     static boolean needsMapperService(IndexSettings indexSettings, IndexCreationContext indexCreationContext) {
         return false == (indexSettings.getIndexMetadata().getState() == IndexMetadata.State.CLOSE &&
             indexCreationContext == IndexCreationContext.CREATE_INDEX); // metadata verification needs a mapper service

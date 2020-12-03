@@ -93,6 +93,7 @@ public class XContentHelper {
 
     /**
      * Converts the given bytes into a map that is optionally ordered. The provided {@link XContentType} must be non-null.
+     * 将结构化字符串映射成对象
      */
     public static Tuple<XContentType, Map<String, Object>> convertToMap(BytesReference bytes, boolean ordered, XContentType xContentType)
         throws ElasticsearchParseException {
@@ -111,7 +112,9 @@ public class XContentHelper {
             }
             contentType = xContentType != null ? xContentType : XContentFactory.xContentType(input);
             try (InputStream stream = input) {
+                // 设置指定的映射类型 比如JSON
                 return new Tuple<>(Objects.requireNonNull(contentType),
+                    // 将数据流转换成map对象
                     convertToMap(XContentFactory.xContent(contentType), stream, ordered));
             }
         } catch (IOException e) {
@@ -136,6 +139,8 @@ public class XContentHelper {
     /**
      * Convert a string in some {@link XContent} format to a {@link Map}. Throws an {@link ElasticsearchParseException} if there is any
      * error. Note that unlike {@link #convertToMap(BytesReference, boolean)}, this doesn't automatically uncompress the input.
+     * @param xContent 该对象内部定义了数据转换的逻辑  在ES全局使用单例模式  可以创建parser对象 对数据流进行解析
+     * 将内容转换成map对象
      */
     public static Map<String, Object> convertToMap(XContent xContent, InputStream input, boolean ordered)
             throws ElasticsearchParseException {
@@ -239,20 +244,27 @@ public class XContentHelper {
     /**
      * Merges the defaults provided as the second parameter into the content of the first. Only does recursive merge
      * for inner maps.
+     * 将 defaults的数据合并到 content中
      */
     public static void mergeDefaults(Map<String, Object> content, Map<String, Object> defaults) {
+        // 遍历本次将要加入的数据
         for (Map.Entry<String, Object> defaultEntry : defaults.entrySet()) {
+            // 当出现了新的属性时 直接插入到content中
             if (!content.containsKey(defaultEntry.getKey())) {
                 // copy it over, it does not exists in the content
                 content.put(defaultEntry.getKey(), defaultEntry.getValue());
+            // 其余情况 如果都是普通元素 就没有合并的必要了 还会沿用content的数据 所以就不需要处理
             } else {
                 // in the content and in the default, only merge compound ones (maps)
+                // 当都是map时 需要做数据合并
                 if (content.get(defaultEntry.getKey()) instanceof Map && defaultEntry.getValue() instanceof Map) {
                     mergeDefaults((Map<String, Object>) content.get(defaultEntry.getKey()), (Map<String, Object>) defaultEntry.getValue());
+                    // 代表对list进行合并
                 } else if (content.get(defaultEntry.getKey()) instanceof List && defaultEntry.getValue() instanceof List) {
                     List<Object> defaultList = (List<Object>) defaultEntry.getValue();
                     List<Object> contentList = (List<Object>) content.get(defaultEntry.getKey());
 
+                    // 当list中所有值都是 map 并且每个map都只有一个键值对
                     if (allListValuesAreMapsOfOne(defaultList) && allListValuesAreMapsOfOne(contentList)) {
                         // all are in the form of [ {"key1" : {}}, {"key2" : {}} ], merge based on keys
                         Map<String, Map<String, Object>> processed = new LinkedHashMap<>();
@@ -263,19 +275,23 @@ public class XContentHelper {
                         }
                         for (Object o : defaultList) {
                             Map<String, Object> map = (Map<String, Object>) o;
+                            // 构造出与之前一样的情况 也就是 map与map的合并
                             Map.Entry<String, Object> entry = map.entrySet().iterator().next();
                             if (processed.containsKey(entry.getKey())) {
                                 mergeDefaults(processed.get(entry.getKey()), map);
                             } else {
                                 // put the default entries after the content ones.
+                                // 无冲突情况直接插入
                                 processed.put(entry.getKey(), map);
                             }
                         }
 
+                        // 使用新的list来覆盖之前的数据
                         content.put(defaultEntry.getKey(), new ArrayList<>(processed.values()));
                     } else {
                         // if both are lists, simply combine them, first the defaults, then the content
                         // just make sure not to add the same value twice
+                        // 可以看到defaultList的优先级更高
                         List<Object> mergedList = new ArrayList<>(defaultList);
 
                         for (Object o : contentList) {

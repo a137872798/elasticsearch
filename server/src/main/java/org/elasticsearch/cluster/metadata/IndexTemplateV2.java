@@ -74,6 +74,10 @@ public class IndexTemplateV2 extends AbstractDiffable<IndexTemplateV2> implement
     private final List<String> indexPatterns;
     @Nullable
     private final Template template;
+
+    /**
+     * 每个索引模板 会携带一组组件模板名  也是需要去 Metadata 中兑换匹配的一组 ComponentTemplate
+     */
     @Nullable
     private final List<String> componentTemplates;
     @Nullable

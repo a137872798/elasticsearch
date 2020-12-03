@@ -33,6 +33,8 @@ import java.util.TreeMap;
 
 /**
  * 动态模板
+ * 在创建index时 传入的json字符串 会被适配成 匹配的模板格式
+ * 而在其中可能会携带 动态模板属性
  */
 public class DynamicTemplate implements ToXContentObject {
 
@@ -158,6 +160,13 @@ public class DynamicTemplate implements ToXContentObject {
         public abstract String defaultMappingType();
     }
 
+    /**
+     * 根据相关参数生成一个动态模板
+     * @param name  模板名
+     * @param conf  动态模板需要的相关参数
+     * @return
+     * @throws MapperParsingException
+     */
     public static DynamicTemplate parse(String name, Map<String, Object> conf) throws MapperParsingException {
         String match = null;
         String pathMatch = null;
@@ -190,6 +199,7 @@ public class DynamicTemplate implements ToXContentObject {
             }
         }
 
+        // 最低限度的参数必须存在
         if (match == null && pathMatch == null && matchMappingType == null) {
             throw new MapperParsingException("template must have match, path_match or match_mapping_type set " + conf.toString());
         }

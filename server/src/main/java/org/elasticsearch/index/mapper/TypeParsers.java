@@ -172,21 +172,30 @@ public class TypeParsers {
     /**
      * Parse the {@code meta} key of the mapping.
      * 将相关信息抽取出来设置到builder中
+     * {
+     * "properties":{
+     *     "propertyA":{
+     *         "meta":{}
+     *     },
+     *     "propertyB":{}
+     *     }
+     * }
      */
     public static void parseMeta(FieldMapper.Builder<?,?> builder, String name, Map<String, Object> fieldNode) {
-        // 先找到描述元信息的对象  如果不存在直接返回
+        // 尝试获取某个属性项的 meta属性 并且一旦解析过了属性后 就要从原始数据中移除  避免之后重复处理
         Object metaObject = fieldNode.remove("meta");
         if (metaObject == null) {
             // no meta
             return;
         }
+        // meta属性必然是 map类型
         if (metaObject instanceof Map == false) {
             throw new MapperParsingException("[meta] must be an object, got " + metaObject.getClass().getSimpleName() +
                     "[" + metaObject + "] for field [" + name +"]");
         }
         @SuppressWarnings("unchecked")
         Map<String, ?> meta = (Map<String, ?>) metaObject;
-        // 元数据容量还有限制
+        // meta中不应该存储过多的属性
         if (meta.size() > 5) {
             throw new MapperParsingException("[meta] can't have more than 5 entries, but got " + meta.size() + " on field [" +
                     name + "]");
@@ -198,6 +207,7 @@ public class TypeParsers {
                         "] for field [" + name + "]");
             }
         }
+        // meta 必须是string类型
         for (Object value : meta.values()) {
             if (value instanceof String) {
                 String sValue = (String) value;
@@ -222,11 +232,17 @@ public class TypeParsers {
 
     /**
      * Parse common field attributes such as {@code doc_values} or {@code store}.
+     * @param builder 在解析field时 存储相关属性的builder对象
+     * @param name 本次被解析的属性名
+     * @param fieldNode  包含该属性相关的全部数据
+     * @param parserContext 包含解析过程中需要的各种信息的上下文对象
      * 将解析出来的参数填充到 builder中
      */
     public static void parseField(FieldMapper.Builder<?,?> builder, String name, Map<String, Object> fieldNode,
                                   Mapper.TypeParser.ParserContext parserContext) {
+        // 解析元数据信息   每个field都可以关联一个meta
         parseMeta(builder, name, fieldNode);
+        // 遍历某个field下的所有属性
         for (Iterator<Map.Entry<String, Object>> iterator = fieldNode.entrySet().iterator(); iterator.hasNext();) {
             Map.Entry<String, Object> entry = iterator.next();
             final String propName = entry.getKey();
@@ -238,6 +254,7 @@ public class TypeParsers {
                  */
                 throw new MapperParsingException("[" + propName + "] must not have a [null] value");
             }
+            // 当发现了内置的属性 设置到builder中 以及从当前待处理的所有field中移除
             if (propName.equals("store")) {
                 builder.store(XContentMapValues.nodeBooleanValue(propNode, name + ".store"));
                 iterator.remove();

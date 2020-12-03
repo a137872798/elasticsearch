@@ -246,7 +246,11 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
             }
         }
 
-        /** Set metadata on this field. */
+        /**
+         * Set metadata on this field.
+         * 在解析的过程中会尝试从数据体中抽取meta 并填充到builder对象中
+         * 每个field 都可以携带一个meta
+         */
         public T meta(Map<String, String> meta) {
             fieldType.setMeta(meta);
             return (T) this;

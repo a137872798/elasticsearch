@@ -96,7 +96,19 @@ public class BooleanFieldMapper extends FieldMapper {
         }
     }
 
+    /**
+     * 比如某个属性的 type是 boolean 类型 那么在解析 属性对应的数据体时 就会委托给该对象
+     */
     public static class TypeParser implements Mapper.TypeParser {
+
+        /**
+         *
+         * @param name 本次被解析的属性名
+         * @param node 这个属性对应的 数据体
+         * @param parserContext  包含了解析过程中需要的各种参数的上下文对象
+         * @return
+         * @throws MapperParsingException
+         */
         @Override
         public BooleanFieldMapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext)
                 throws MapperParsingException {

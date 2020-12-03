@@ -26,8 +26,7 @@ import org.elasticsearch.common.collect.CopyOnWriteHashMap;
 import java.util.Map;
 
 /**
- * 以field为单位 使用不同的analyzer 进行分析
- * 在lucene的默认实现中 是使用一个analyzer 对整个doc进行分词的 （迭代内部的field 并挨个使用analyzer进行分词）
+ * 代表能够通过name 找到匹配的analyzer
  */
 public final class FieldNameAnalyzer extends DelegatingAnalyzerWrapper {
 

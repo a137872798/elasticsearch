@@ -61,16 +61,16 @@ public class DocumentMapper implements ToXContentFragment {
 
     public static class Builder {
 
-        /**
-         * MetadataFieldMapper 主要在parse前后追加了2个钩子
-         */
         private Map<Class<? extends MetadataFieldMapper>, MetadataFieldMapper> metadataMappers = new LinkedHashMap<>();
 
         /**
-         * 一个特殊的ObjectMapper 对象
+         * 根级的结构转换成的映射对象 内部包含了很多mapper
          */
         private final RootObjectMapper rootObjectMapper;
 
+        /**
+         * 从传入的json结构体中 获取 key为 "_meta" 对应的数据 并设置到该字段上
+         */
         private Map<String, Object> meta;
 
         /**
@@ -79,8 +79,8 @@ public class DocumentMapper implements ToXContentFragment {
         private final Mapper.BuilderContext builderContext;
 
         /**
-         *
-         * @param builder
+         * 通过 RootObjectMapper.Builder对象来初始化  DocumentMapper.Builder 对象
+         * @param builder  在解析外部传入的json数据后 抽取了内置的一些属性后 会生成一个RootObjectMapper.Builder 对象
          * @param mapperService
          */
         public Builder(RootObjectMapper.Builder builder, MapperService mapperService) {
@@ -88,31 +88,33 @@ public class DocumentMapper implements ToXContentFragment {
             // 生成构建 DocumentMapper时使用的 builderContext
             this.builderContext = new Mapper.BuilderContext(indexSettings, new ContentPath(1));
 
-            // 构建RootObjectMapper 对象
+            // 根据之前抽取到builder中的一些默认属性 构建 mapper对象  在内部形成了类似 trie树的结构
             this.rootObjectMapper = builder.build(builderContext);
 
+            // 可以先简单理解成 _doc
             final String type = rootObjectMapper.name();
-            // 首次调用时  mapperService是没有documentMapper对象的
+
+            // 感觉内部存储的像是一个全局对象
             final DocumentMapper existingMapper = mapperService.documentMapper();
             final Version indexCreatedVersion = mapperService.getIndexSettings().getIndexVersionCreated();
 
-            // 映射服务内为每个field 存储了一个TypeParser对象 该对象可以构建出 builder对象 之后builder又可以生成Mapper
-            final Map<String, TypeParser> metadataMapperParsers =
+            // 获取所有元数据相关的parser
+            // 在解析过程中也会需要使用到TypeParser   但是是 Mapper.TypeParser 而不是 MetadataFieldMapper.TypeParser 这里是专门准备解析元数据
+            final Map<String, MetadataFieldMapper.TypeParser> metadataMapperParsers =
                 mapperService.mapperRegistry.getMetadataMapperParsers(indexCreatedVersion);
             for (Map.Entry<String, MetadataFieldMapper.TypeParser> entry : metadataMapperParsers.entrySet()) {
                 final String name = entry.getKey();
-                // 如果 mapperService之前已经存在 docMapper了 那么从之前的对象中获取mapper
+
+                // 如果存在全局对象 直接复用 否则使用默认值
                 final MetadataFieldMapper existingMetadataMapper = existingMapper == null
                         ? null
                         : (MetadataFieldMapper) existingMapper.mappers().getMapper(name);
                 final MetadataFieldMapper metadataMapper;
-                // 当不存在时 通过TypeParser生成Mapper对象
                 if (existingMetadataMapper == null) {
                     final TypeParser parser = entry.getValue();
-                    // 解析生成 mapper对象
+                    // 会生成一个默认的 元数据映射对象
                     metadataMapper = parser.getDefault(mapperService.documentMapperParser().parserContext());
                 } else {
-                    // 如果之前数据不为空 则复用
                     metadataMapper = existingMetadataMapper;
                 }
                 metadataMappers.put(metadataMapper.getClass(), metadataMapper);
@@ -136,8 +138,8 @@ public class DocumentMapper implements ToXContentFragment {
         }
 
         /**
-         * 在处理完数据流后 各种信息填充到docMapper.Builder后 生成docMapper对象
-         * @param mapperService  本次相关的 MapperService
+         * 在将各种信息从 json结构对象抽取到builder后 开始创建DocumentMapper对象
+         * @param mapperService
          * @return
          */
         public DocumentMapper build(MapperService mapperService) {
@@ -147,12 +149,16 @@ public class DocumentMapper implements ToXContentFragment {
                     rootObjectMapper,
                     metadataMappers.values().toArray(new MetadataFieldMapper[metadataMappers.values().size()]),
                     meta);
+            // 将相关信息包装成 DocumentMapper对象
             return new DocumentMapper(mapperService, mapping);
         }
     }
 
     private final MapperService mapperService;
 
+    /**
+     * 代表本次要映射的类型 比如 "_doc"  也就是 RootObjectMapper.name
+     */
     private final String type;
     private final Text typeText;
 
@@ -166,7 +172,7 @@ public class DocumentMapper implements ToXContentFragment {
     private final DocumentParser documentParser;
 
     /**
-     * 该对象好像也是存储field 与mapper的映射关系   该对象内部的mapper 都是fieldMapper
+     * 针对field 的映射逻辑都委托给该对象
      */
     private final DocumentFieldMappers fieldMappers;
 
@@ -177,41 +183,45 @@ public class DocumentMapper implements ToXContentFragment {
     private final MetadataFieldMapper[] noopTombstoneMetadataFieldMappers;
 
     /**
-     * @param mapperService
-     * @param mapping
+     * @param mapperService   存储了实现映射功能需要的各种组件
+     * @param mapping   存储了完成一次映射需要的各种信息
      */
     public DocumentMapper(MapperService mapperService, Mapping mapping) {
         this.mapperService = mapperService;
-        // 对应RootObjectMapper.fullPath
+        // 先简单认为是 "_doc"
         this.type = mapping.root().name();
         this.typeText = new Text(this.type);
         final IndexSettings indexSettings = mapperService.getIndexSettings();
         this.mapping = mapping;
-        // 将docMapperParser和本对象包装成 DocParser对象
-        // documentParser 对象负责解析结构化数据
+
+        // DocumentParser内定义了映射的步骤
         this.documentParser = new DocumentParser(indexSettings, mapperService.documentMapperParser(), this);
 
         // collect all the mappers for this type
         List<ObjectMapper> newObjectMappers = new ArrayList<>();
         List<FieldMapper> newFieldMappers = new ArrayList<>();
         List<FieldAliasMapper> newFieldAliasMappers = new ArrayList<>();
+        // 这个映射对象中 有关元数据的部分被提取到 newFieldMappers容器
         for (MetadataFieldMapper metadataMapper : this.mapping.metadataMappers) {
             if (metadataMapper instanceof FieldMapper) {
                 newFieldMappers.add(metadataMapper);
             }
         }
-        // 从root开始 将解析到的各种不同类型的mapper 设置到不同的容器中
+        // 将整个 trie树下的mapper对象 按照类型存储到不同的list中
         MapperUtils.collect(this.mapping.root,
             newObjectMappers, newFieldMappers, newFieldAliasMappers);
 
         // 该对象可以按照不同的field 获取到不同的analyzer
         final IndexAnalyzers indexAnalyzers = mapperService.getIndexAnalyzers();
+
+        // 将一些默认的分析器 与 fieldMapper对象整合成一个 以field为单位进行映射的对象
         this.fieldMappers = new DocumentFieldMappers(newFieldMappers,
                 newFieldAliasMappers,
                 indexAnalyzers.getDefaultIndexAnalyzer(),
                 indexAnalyzers.getDefaultSearchAnalyzer(),
                 indexAnalyzers.getDefaultSearchQuoteAnalyzer());
 
+        // 下面处理 关于 Object的映射对象
         Map<String, ObjectMapper> builder = new HashMap<>();
         for (ObjectMapper objectMapper : newObjectMappers) {
             ObjectMapper previous = builder.put(objectMapper.fullPath(), objectMapper);

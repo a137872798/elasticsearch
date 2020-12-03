@@ -83,7 +83,7 @@ public abstract class Mapper implements ToXContentFragment, Iterable<Mapper> {
     public interface TypeParser {
 
         /**
-         * 在解析过程中包含各种参数的上下文
+         * 在一次解析过程中记录各种信息的上下文对象
          */
         class ParserContext {
 
@@ -91,6 +91,10 @@ public abstract class Mapper implements ToXContentFragment, Iterable<Mapper> {
 
             private final MapperService mapperService;
 
+            /**
+             * 在解析过程种可能会使用到的  type解析器  某些properties 可能会携带 type字段 通过type字段去映射不同的parser对象
+             * 可能为了让解析这个动作有更多的控制机会 所以将其抽取成了一个parser对象吧
+             */
             private final Function<String, TypeParser> typeParsers;
 
             private final Version indexVersionCreated;
@@ -99,11 +103,11 @@ public abstract class Mapper implements ToXContentFragment, Iterable<Mapper> {
 
             /**
              * 构造函数只是设置了一些基础参数 没什么特殊的
-             * @param similarityLookupService
-             * @param mapperService
+             * @param similarityLookupService  用于提供一组打分对象
+             * @param mapperService   需要访问映射服务
              * @param typeParsers   根据传入的fieldName 可以找到对应的typeParser
              * @param indexVersionCreated
-             * @param queryShardContextSupplier
+             * @param queryShardContextSupplier  获取 QueryShardContext的对象
              */
             public ParserContext(Function<String, SimilarityProvider> similarityLookupService,
                                  MapperService mapperService, Function<String, TypeParser> typeParsers,
@@ -161,6 +165,14 @@ public abstract class Mapper implements ToXContentFragment, Iterable<Mapper> {
 
         }
 
+        /**
+         *
+         * @param name 本次被解析的属性名
+         * @param node 这个属性对应的 数据体
+         * @param parserContext  包含了解析过程中需要的各种参数的上下文对象
+         * @return
+         * @throws MapperParsingException
+         */
         Mapper.Builder<?,?> parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException;
     }
 

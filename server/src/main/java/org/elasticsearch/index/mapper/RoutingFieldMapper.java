@@ -44,6 +44,9 @@ public class RoutingFieldMapper extends MetadataFieldMapper {
     public static class Defaults {
         public static final String NAME = "_routing";
 
+        /**
+         * 有关存储路由信息的 field的默认属性 对应lucene内的 fieldType
+         */
         public static final MappedFieldType FIELD_TYPE = new RoutingFieldType();
 
         static {
@@ -80,9 +83,19 @@ public class RoutingFieldMapper extends MetadataFieldMapper {
     }
 
     public static class TypeParser implements MetadataFieldMapper.TypeParser {
+
+        /**
+         * 在解析 _doc 对应的数据体时 会经由该对象抽取相关属性
+         * @param name  本次被处理的fieldName
+         * @param node  对应的数据 是map类型
+         * @param parserContext
+         * @return
+         * @throws MapperParsingException
+         */
         @Override
         public MetadataFieldMapper.Builder<?,?> parse(String name, Map<String, Object> node,
                                                       ParserContext parserContext) throws MapperParsingException {
+            // 从映射服务中找到匹配的MappedFieldType 初始化builder对象
             Builder builder = new Builder(parserContext.mapperService().fieldType(NAME));
             for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
                 Map.Entry<String, Object> entry = iterator.next();
@@ -96,6 +109,11 @@ public class RoutingFieldMapper extends MetadataFieldMapper {
             return builder;
         }
 
+        /**
+         * 从解析上下文中 获取元数据字段(或者说内置字段)的 映射对象
+         * @param context
+         * @return
+         */
         @Override
         public MetadataFieldMapper getDefault(ParserContext context) {
             final Settings indexSettings = context.mapperService().getIndexSettings().getSettings();

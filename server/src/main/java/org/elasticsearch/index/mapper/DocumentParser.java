@@ -46,15 +46,14 @@ import java.util.List;
 
 /**
  * A parser for documents, given mappings from a DocumentMapper
- * doc解析器
- * TODO mapper内部的mapper是什么时候设置的  dynamic又是什么意思
+ * 决定了在映射过程中 怎么使用DocumentMapper
  */
 final class DocumentParser {
 
     private final IndexSettings indexSettings;
     private final DocumentMapperParser docMapperParser;
     /**
-     * 该对象维护了 各个Mapper之间的关系 (RootObjectMapper  FieldMapper 等等)
+     * 存储了完成一次映射需要的基础信息
      */
     private final DocumentMapper docMapper;
 
