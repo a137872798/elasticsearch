@@ -50,6 +50,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * Base class for requests that should be executed on all shards of an index or several indices.
  * This action sends shard requests to all primary shards of the indices and they are then replicated like write requests
+ * 会将请求以shard为单位进行拆分
  */
 public abstract class TransportBroadcastReplicationAction<Request extends BroadcastRequest<Request>, Response extends BroadcastResponse,
         ShardRequest extends ReplicationRequest<ShardRequest>, ShardResponse extends ReplicationResponse>
@@ -60,6 +61,18 @@ public abstract class TransportBroadcastReplicationAction<Request extends Broadc
     private final IndexNameExpressionResolver indexNameExpressionResolver;
     private final NodeClient client;
 
+
+    /**
+     *
+     * @param name 代表本次广播的action类型是什么
+     * @param requestReader
+     * @param clusterService
+     * @param transportService
+     * @param client
+     * @param actionFilters
+     * @param indexNameExpressionResolver
+     * @param replicatedBroadcastShardAction
+     */
     public TransportBroadcastReplicationAction(String name, Writeable.Reader<Request> requestReader, ClusterService clusterService,
                                                TransportService transportService, NodeClient client,
                                                ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver,
@@ -71,15 +84,27 @@ public abstract class TransportBroadcastReplicationAction<Request extends Broadc
         this.indexNameExpressionResolver = indexNameExpressionResolver;
     }
 
+
+    /**
+     * 当上层发起命令时 交由该方法处理
+     * @param task
+     * @param request
+     * @param listener
+     */
     @Override
     protected void doExecute(Task task, Request request, ActionListener<Response> listener) {
+        // 获取当前的集群状态
         final ClusterState clusterState = clusterService.state();
+        // 刷盘是以分片为单位的  这里先获取总计有多少shardId
         List<ShardId> shards = shards(request, clusterState);
         final CopyOnWriteArrayList<ShardResponse> shardsResponses = new CopyOnWriteArrayList<>();
+        // 如果没有可用的分片 就不需要处理了 直接触发监听器
         if (shards.size() == 0) {
             finishAndNotifyListener(listener, shardsResponses);
         }
         final CountDown responsesCountDown = new CountDown(shards.size());
+
+        // 开始以shard为单位 发送请求
         for (final ShardId shardId : shards) {
             ActionListener<ShardResponse> shardActionListener = new ActionListener<ShardResponse>() {
                 @Override
@@ -116,14 +141,23 @@ public abstract class TransportBroadcastReplicationAction<Request extends Broadc
         }
     }
 
+    /**
+     * 以 shard为单位 发送请求
+     * @param task
+     * @param request
+     * @param shardId
+     * @param shardActionListener
+     */
     protected void shardExecute(Task task, Request request, ShardId shardId, ActionListener<ShardResponse> shardActionListener) {
         ShardRequest shardRequest = newShardRequest(request, shardId);
         shardRequest.setParentTask(clusterService.localNode().getId(), task.getId());
+        // 注意这里没有指定node 实际上还是在本节点进行处理 那么交托的action 需要自己定位到目标分片所在的节点  (可以通过clusterState定位)
         client.executeLocally(replicatedBroadcastShardAction, shardRequest, shardActionListener);
     }
 
     /**
      * @return all shard ids the request should run on
+     * 将路由表中的 IndexShardRoutingTable信息的 shardId抽取出来 并返回
      */
     protected List<ShardId> shards(Request request, ClusterState clusterState) {
         List<ShardId> shardIds = new ArrayList<>();
@@ -144,6 +178,11 @@ public abstract class TransportBroadcastReplicationAction<Request extends Broadc
 
     protected abstract ShardRequest newShardRequest(Request request, ShardId shardId);
 
+    /**
+     * 触发监听器
+     * @param listener
+     * @param shardsResponses
+     */
     private void finishAndNotifyListener(ActionListener listener, CopyOnWriteArrayList<ShardResponse> shardsResponses) {
         logger.trace("{}: got all shard responses", actionName);
         int successfulShards = 0;

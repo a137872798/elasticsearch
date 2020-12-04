@@ -78,12 +78,15 @@ public class TransportGetAliasesAction extends TransportMasterNodeReadAction<Get
 
     /**
      * Fills alias result with empty entries for requested indices when no specific aliases were requested.
+     * 当找到别名后 还需要做处理
      */
     static ImmutableOpenMap<String, List<AliasMetadata>> postProcess(GetAliasesRequest request, String[] concreteIndices,
                                                                      ImmutableOpenMap<String, List<AliasMetadata>> aliases) {
+        // 代表不包含特殊的别名
         boolean noAliasesSpecified = request.getOriginalAliases() == null || request.getOriginalAliases().length == 0;
         ImmutableOpenMap.Builder<String, List<AliasMetadata>> mapBuilder = ImmutableOpenMap.builder(aliases);
         for (String index : concreteIndices) {
+            // 这里为不存在的index 插入空的 别名列表
             if (aliases.get(index) == null && noAliasesSpecified) {
                 List<AliasMetadata> previous = mapBuilder.put(index, Collections.emptyList());
                 assert previous == null;

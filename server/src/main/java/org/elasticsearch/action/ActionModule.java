@@ -580,6 +580,7 @@ public class ActionModule extends AbstractModule {
         actions.register(DeleteIndexTemplateAction.INSTANCE, TransportDeleteIndexTemplateAction.class);
         if (ITV2_FEATURE_ENABLED) {
             actions.register(PutComponentTemplateAction.INSTANCE, TransportPutComponentTemplateAction.class);
+            // 获取某个组件模板
             actions.register(GetComponentTemplateAction.INSTANCE, TransportGetComponentTemplateAction.class);
             // 删除某个componentTemplate
             actions.register(DeleteComponentTemplateAction.INSTANCE, TransportDeleteComponentTemplateAction.class);
@@ -593,6 +594,7 @@ public class ActionModule extends AbstractModule {
         actions.register(RefreshAction.INSTANCE, TransportRefreshAction.class);
         // 发起索引刷盘操作
         actions.register(FlushAction.INSTANCE, TransportFlushAction.class);
+        // 发起强制merge的操作
         actions.register(ForceMergeAction.INSTANCE, TransportForceMergeAction.class);
         actions.register(UpgradeAction.INSTANCE, TransportUpgradeAction.class);
         actions.register(UpgradeStatusAction.INSTANCE, TransportUpgradeStatusAction.class);
@@ -650,6 +652,7 @@ public class ActionModule extends AbstractModule {
             actions.register(CreateDataStreamAction.INSTANCE, CreateDataStreamAction.TransportAction.class);
             // 删除某个数据流
             actions.register(DeleteDataStreamAction.INSTANCE, DeleteDataStreamAction.TransportAction.class);
+            // 获取某个DataStream信息
             actions.register(GetDataStreamsAction.INSTANCE, GetDataStreamsAction.TransportAction.class);
         }
 
@@ -670,12 +673,13 @@ public class ActionModule extends AbstractModule {
         // 以node为级别获取快照信息
         actions.register(TransportNodesSnapshotsStatus.TYPE, TransportNodesSnapshotsStatus.class);
         actions.register(TransportNodesListGatewayMetaState.TYPE, TransportNodesListGatewayMetaState.class);
-        // 在分片被关闭前 需要先做认证工作 TODO 目前没看到认证的逻辑 仅仅看到会在primary/replica 上进行刷盘
+        // 在分片被关闭前 需要先做认证工作 实际上就是相关参数的持久化
         actions.register(TransportVerifyShardBeforeCloseAction.TYPE, TransportVerifyShardBeforeCloseAction.class);
         // 代表从某个node上获取某个shard的元数据  比如该shard在该node上的 allocationId primary 等信息
         actions.register(TransportNodesListGatewayStartedShards.TYPE, TransportNodesListGatewayStartedShards.class);
         // 获取node上有关某个shard的数据文件信息
         actions.register(TransportNodesListShardStoreMetadata.TYPE, TransportNodesListShardStoreMetadata.class);
+        // 当以shard为单位处理 flush请求时 使用这个action进行处理
         actions.register(TransportShardFlushAction.TYPE, TransportShardFlushAction.class);
         actions.register(TransportShardRefreshAction.TYPE, TransportShardRefreshAction.class);
 

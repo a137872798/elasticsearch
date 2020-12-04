@@ -41,6 +41,7 @@ import java.util.List;
 
 /**
  * ForceMerge index/indices action.
+ * 针对索引进行强制merge
  */
 public class TransportForceMergeAction
         extends TransportBroadcastByNodeAction<ForceMergeRequest, ForceMergeResponse, TransportBroadcastByNodeAction.EmptyResult> {
@@ -72,9 +73,17 @@ public class TransportForceMergeAction
         return new ForceMergeRequest(in);
     }
 
+    /**
+     * 在分片级别处理请求 (某个副本或者主分片)
+     * @param request      the node-level request
+     * @param shardRouting the shard on which to execute the operation
+     * @return
+     * @throws IOException
+     */
     @Override
     protected EmptyResult shardOperation(ForceMergeRequest request, ShardRouting shardRouting) throws IOException {
         IndexShard indexShard = indicesService.indexServiceSafe(shardRouting.shardId().getIndex()).getShard(shardRouting.shardId().id());
+        // 进行强制合并
         indexShard.forceMerge(request);
         return EmptyResult.INSTANCE;
     }
@@ -87,6 +96,12 @@ public class TransportForceMergeAction
         return clusterState.routingTable().allShards(concreteIndices);
     }
 
+    /**
+     * 如果存在阻止修改集群元数据的 block对象 不允许正常执行action
+     * @param state   the cluster state
+     * @param request the underlying request
+     * @return
+     */
     @Override
     protected ClusterBlockException checkGlobalBlock(ClusterState state, ForceMergeRequest request) {
         return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA_WRITE);

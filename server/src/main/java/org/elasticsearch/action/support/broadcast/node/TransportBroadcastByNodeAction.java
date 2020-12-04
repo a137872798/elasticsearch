@@ -72,7 +72,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  * @param <Request>              the underlying client request
  * @param <Response>             the response to the client request
  * @param <ShardOperationResult> per-shard operation results
- *                              代表一个广播对象
+ *                              会将请求拆解 发送到集群中所有节点上
  */
 public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRequest<Request>,
         Response extends BroadcastResponse,
@@ -112,6 +112,7 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
 
         transportNodeBroadcastAction = actionName + "[n]";
 
+        // 作为接收广播请求的节点 使用不同的action
         transportService.registerRequestHandler(transportNodeBroadcastAction, executor, false, canTripCircuitBreaker, NodeRequest::new,
             new BroadcastByNodeTransportRequestHandler());
     }
@@ -255,6 +256,7 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
             clusterState = clusterService.state();
             nodes = clusterState.nodes();
 
+            // 先检测操作是否会被block
             ClusterBlockException globalBlockException = checkGlobalBlock(clusterState, request);
             if (globalBlockException != null) {
                 throw globalBlockException;
@@ -274,6 +276,7 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
             ShardsIterator shardIt = shards(clusterState, request, concreteIndices);
             nodeIds = new HashMap<>();
 
+            // 将所有分片按照node 进行分组
             for (ShardRouting shard : shardIt) {
                 // send a request to the shard only if it is assigned to a node that is in the local node's cluster state
                 // a scenario in which a shard can be assigned but to a node that is not in the local node's cluster state
@@ -455,7 +458,7 @@ public abstract class TransportBroadcastByNodeAction<Request extends BroadcastRe
          *
          * @param request
          * @param shardResults 存储所有结果的数组
-         * @param shardIndex
+         * @param shardIndex  当前处理到第几个shard 生成的结果要回填到数组中
          * @param shardRouting
          */
         private void onShardOperation(final NodeRequest request, final Object[] shardResults, final int shardIndex,

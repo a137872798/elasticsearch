@@ -141,6 +141,9 @@ public class GetDataStreamsAction extends ActionType<GetDataStreamsAction.Respon
         }
     }
 
+    /**
+     * 获取某个 DataStream的信息
+     */
     public static class TransportAction extends TransportMasterNodeReadAction<Request, Response> {
 
         @Inject
@@ -165,6 +168,12 @@ public class GetDataStreamsAction extends ActionType<GetDataStreamsAction.Respon
             listener.onResponse(new Response(getDataStreams(state, request)));
         }
 
+        /**
+         * 根据req的参数信息 获取DataStream
+         * @param clusterState
+         * @param request
+         * @return
+         */
         static List<DataStream> getDataStreams(ClusterState clusterState, Request request) {
             Map<String, DataStream> dataStreams = clusterState.metadata().dataStreams();
 

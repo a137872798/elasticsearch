@@ -40,6 +40,9 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * 获取某个组件模板
+ */
 public class TransportGetComponentTemplateAction extends
     TransportMasterNodeReadAction<GetComponentTemplateAction.Request, GetComponentTemplateAction.Response> {
 

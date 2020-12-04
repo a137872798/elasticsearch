@@ -27,6 +27,9 @@ import org.elasticsearch.rest.action.RestToXContentListener;
 import java.io.IOException;
 import java.util.List;
 
+/**
+ * 获取某个 DataStream信息
+ */
 public class RestGetDataStreamsAction extends BaseRestHandler {
 
     @Override

@@ -423,25 +423,30 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
         ImmutableOpenMap.Builder<String, List<AliasMetadata>> mapBuilder = ImmutableOpenMap.builder();
         for (String index : concreteIndices) {
             IndexMetadata indexMetadata = indices.get(index);
+
+            // 以 index为单位 匹配成功的alias 都会存储到这个list中
             List<AliasMetadata> filteredValues = new ArrayList<>();
             // 这里遍历index下所有的 alias
             for (ObjectCursor<AliasMetadata> cursor : indexMetadata.getAliases().values()) {
                 AliasMetadata value = cursor.value;
+
+                // 代表已经匹配过了 如果patterns为空 直接认为已经匹配过
                 boolean matched = matchAllAliases;
                 String alias = value.alias();
                 for (int i = 0; i < patterns.length; i++) {
                     // 代表满足条件的会加入到返回结果中
                     if (include[i]) {
-                        // 代表
+                        // 代表需要匹配
                         if (matched == false) {
                             String pattern = patterns[i];
                             matched = ALL.equals(pattern) || Regex.simpleMatch(pattern, alias);
                         }
+                        // TODO 不纠结这里的逻辑
                     } else if (matched) {
                         matched = Regex.simpleMatch(patterns[i], alias) == false;
                     }
                 }
-                // 当未设置限制条件时
+                // 代表匹配成功  会加入到list中
                 if (matched) {
                     filteredValues.add(value);
                 }

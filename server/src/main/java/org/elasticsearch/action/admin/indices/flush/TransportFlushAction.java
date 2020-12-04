@@ -39,10 +39,19 @@ import java.util.List;
 public class TransportFlushAction
         extends TransportBroadcastReplicationAction<FlushRequest, FlushResponse, ShardFlushRequest, ReplicationResponse> {
 
+    /**
+     * 通过IOC 容器 注入相关参数
+     * @param clusterService
+     * @param transportService
+     * @param client
+     * @param actionFilters
+     * @param indexNameExpressionResolver
+     */
     @Inject
     public TransportFlushAction(ClusterService clusterService, TransportService transportService, NodeClient client,
                                 ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver) {
         super(FlushAction.NAME, FlushRequest::new, clusterService, transportService, client, actionFilters, indexNameExpressionResolver,
+            // 上层以分片为单位处理请求时对应的action类型
             TransportShardFlushAction.TYPE);
     }
 
@@ -51,6 +60,12 @@ public class TransportFlushAction
         return new ReplicationResponse();
     }
 
+    /**
+     * 发送以 shard为单位的刷盘请求
+     * @param request
+     * @param shardId
+     * @return
+     */
     @Override
     protected ShardFlushRequest newShardRequest(FlushRequest request, ShardId shardId) {
         return new ShardFlushRequest(request, shardId);

@@ -43,6 +43,11 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 以分片为单位进行刷盘操作
+ * 对应 TransportFlushAction 发起请求后 以shard为单位处理时使用的action
+ * 并且本对象继承自 TransportReplicationAction 也就是操作会先发送到 primary分片 之后再发送到所有replica上
+ */
 public class TransportShardFlushAction
         extends TransportReplicationAction<ShardFlushRequest, ShardFlushRequest, ReplicationResponse> {
 
@@ -64,16 +69,29 @@ public class TransportShardFlushAction
         return new ReplicationResponse(in);
     }
 
+    /**
+     * 当在primary分片处理请求时
+     * @param shardRequest the request to the primary shard
+     * @param primary      the primary shard to perform the operation on
+     * @param listener
+     */
     @Override
     protected void shardOperationOnPrimary(ShardFlushRequest shardRequest, IndexShard primary,
             ActionListener<PrimaryResult<ShardFlushRequest, ReplicationResponse>> listener) {
         ActionListener.completeWith(listener, () -> {
+            // 直接触发分片的刷盘
             primary.flush(shardRequest.getRequest());
             logger.trace("{} flush request executed on primary", primary.shardId());
             return new PrimaryResult<>(shardRequest, new ReplicationResponse());
         });
     }
 
+    /**
+     * 副本上也是执行一样的操作
+     * @param request
+     * @param replica      the replica shard to perform the operation on
+     * @return
+     */
     @Override
     protected ReplicaResult shardOperationOnReplica(ShardFlushRequest request, IndexShard replica) {
         replica.flush(request.getRequest());
