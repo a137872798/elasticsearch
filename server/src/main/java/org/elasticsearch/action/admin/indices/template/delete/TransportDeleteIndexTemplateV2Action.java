@@ -39,6 +39,9 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 删除V2版本的模板
+ */
 public class TransportDeleteIndexTemplateV2Action
     extends TransportMasterNodeAction<DeleteIndexTemplateV2Action.Request, AcknowledgedResponse> {
 

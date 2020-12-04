@@ -110,8 +110,14 @@ public class DeleteDataStreamAction extends ActionType<AcknowledgedResponse> {
         }
     }
 
+    /**
+     * 删除某个数据流
+     */
     public static class TransportAction extends TransportMasterNodeAction<Request, AcknowledgedResponse> {
 
+        /**
+         * 负责删除索引的逻辑被封装到单独的服务中
+         */
         private final MetadataDeleteIndexService deleteIndexService;
 
         @Inject
@@ -159,6 +165,13 @@ public class DeleteDataStreamAction extends ActionType<AcknowledgedResponse> {
             });
         }
 
+        /**
+         * 从ClusterState中移除某个DataStrem
+         * @param deleteIndexService
+         * @param currentState
+         * @param request
+         * @return
+         */
         static ClusterState removeDataStream(MetadataDeleteIndexService deleteIndexService, ClusterState currentState, Request request) {
             Set<String> dataStreams = new HashSet<>();
             for (String dataStreamName : currentState.metadata().dataStreams().keySet()) {
@@ -174,9 +187,12 @@ public class DeleteDataStreamAction extends ActionType<AcknowledgedResponse> {
                 }
                 throw new ResourceNotFoundException("data_streams matching [" + request.name + "] not found");
             }
+
+            // 本次要删除的 DataStream/Indices
             List<String> dataStreamsToRemove = new ArrayList<>();
             Set<Index> backingIndicesToRemove = new HashSet<>();
             for (String dataStreamName : dataStreams) {
+                // 找到每个数据流关联的索引 这些索引也需要被删除
                 DataStream dataStream = currentState.metadata().dataStreams().get(dataStreamName);
                 assert dataStream != null;
                 backingIndicesToRemove.addAll(dataStream.getIndices());
@@ -187,11 +203,14 @@ public class DeleteDataStreamAction extends ActionType<AcknowledgedResponse> {
             // (this to avoid data stream validation from failing when deleting an index that is part of a data stream
             // without updating the data stream)
             // TODO: change order when delete index api also updates the data stream the index to be removed is member of
+            // 在这里先移除了 DataStream 并更新了metadata 那么在 metadata内部的lookup容器中 就没有这个dataStream相关的信息了 所属的index也就不会设置parent属性
             Metadata.Builder metadata = Metadata.builder(currentState.metadata());
             for (String ds : dataStreamsToRemove) {
                 logger.info("removing data stream [{}]", ds);
+                // 移除DataStream很简单 只要普通的map操作就可以
                 metadata.removeDataStream(ds);
             }
+            // 删除index 还会涉及到 mapping routingTable等的变化
             currentState = ClusterState.builder(currentState).metadata(metadata).build();
             return deleteIndexService.deleteIndices(currentState, backingIndicesToRemove);
         }

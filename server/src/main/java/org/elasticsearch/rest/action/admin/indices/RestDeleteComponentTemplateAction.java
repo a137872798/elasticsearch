@@ -30,6 +30,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 
+/**
+ * 删除某个 componentTemplate的请求
+ */
 public class RestDeleteComponentTemplateAction extends BaseRestHandler {
 
     @Override

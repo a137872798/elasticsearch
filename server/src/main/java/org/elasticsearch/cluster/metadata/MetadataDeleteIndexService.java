@@ -66,6 +66,11 @@ public class MetadataDeleteIndexService {
         this.allocationService = allocationService;
     }
 
+    /**
+     * 发起一个删除index的请求  会在cluster中提交更新任务
+     * @param request
+     * @param listener
+     */
     public void deleteIndices(final DeleteIndexClusterStateUpdateRequest request,
             final ActionListener<ClusterStateUpdateResponse> listener) {
         if (request.indices() == null || request.indices().length == 0) {
@@ -89,14 +94,24 @@ public class MetadataDeleteIndexService {
 
     /**
      * Delete some indices from the cluster state.
+     * @param indices 本次需要删除的index
+     * 从ClusterState中删除某些index
      */
     public ClusterState deleteIndices(ClusterState currentState, Set<Index> indices) {
         final Metadata meta = currentState.metadata();
+
+        // 包含本次要删除的所有index
         final Set<Index> indicesToDelete = new HashSet<>();
+
+        // 如果本次删除的index 有关联的
         final Map<Index, DataStream> backingIndices = new HashMap<>();
         for (Index index : indices) {
             IndexMetadata im = meta.getIndexSafe(index);
+            // 在通过删除dataStream 间接删除index的场景 是不会找到parent的
+            // 因为在外层时 一旦删除dataStream 立即重建了 Metadata 这样lookup内的数据也会重建 原本挂载在dataStream下的index 就不会设置parent属性
             IndexAbstraction.DataStream parent = meta.getIndicesLookup().get(im.getIndex().getName()).getParentDataStream();
+            // 如果在删除时 还绑定了 dataStream 那么删除粒度会不同
+            // 也就是不能直接删除 dataStream下的某个writerIndex  比如通过删除dataStream来达成目的
             if (parent != null) {
                 if (parent.getWriteIndex().equals(im)) {
                     throw new IllegalArgumentException("index [" + index.getName() + "] is the write index for data stream [" +
@@ -110,6 +125,7 @@ public class MetadataDeleteIndexService {
 
         // Check if index deletion conflicts with any running snapshots
         Set<Index> snapshottingIndices = SnapshotsService.snapshottingIndices(currentState, indicesToDelete);
+        // 如果某些索引正在生成快照  此时无法进行删除
         if (snapshottingIndices.isEmpty() == false) {
             throw new SnapshotInProgressException("Cannot delete indices that are being snapshotted: " + snapshottingIndices +
                 ". Try again after snapshot finishes or cancel the currently running snapshot.");
@@ -119,20 +135,26 @@ public class MetadataDeleteIndexService {
         Metadata.Builder metadataBuilder = Metadata.builder(meta);
         ClusterBlocks.Builder clusterBlocksBuilder = ClusterBlocks.builder().blocks(currentState.blocks());
 
+        // 找到metadata下描述 索引墓地的对象
         final IndexGraveyard.Builder graveyardBuilder = IndexGraveyard.builder(metadataBuilder.indexGraveyard());
+
+        // 此时已经存放了有关多少个index 的墓碑信息
         final int previousGraveyardSize = graveyardBuilder.tombstones().size();
         for (final Index index : indices) {
             String indexName = index.getName();
             logger.info("{} deleting index", index);
+            // 从相关的元数据中移除index信息
             routingTableBuilder.remove(indexName);
             clusterBlocksBuilder.removeIndexBlocks(indexName);
             metadataBuilder.remove(indexName);
+            // 找到dataStream 删除子索引
             if (backingIndices.containsKey(index)) {
                 DataStream parent = backingIndices.get(index);
                 metadataBuilder.put(parent.removeBackingIndex(index));
             }
         }
         // add tombstones to the cluster state for each deleted index
+        // 本次被删除的索引会加入到 索引墓地中
         final IndexGraveyard currentGraveyard = graveyardBuilder.addTombstones(indices).build(settings);
         metadataBuilder.indexGraveyard(currentGraveyard); // the new graveyard set on the metadata
         logger.trace("{} tombstones purged from the cluster state. Previous tombstone size: {}. Current tombstone size: {}.",
@@ -145,6 +167,7 @@ public class MetadataDeleteIndexService {
         ImmutableOpenMap<String, ClusterState.Custom> customs = currentState.getCustoms();
         final RestoreInProgress restoreInProgress = currentState.custom(RestoreInProgress.TYPE);
         if (restoreInProgress != null) {
+            // 由于某些 index 被删除  要更新 restoreInProgress  (这些index对应的shard的恢复结果会设置成 failure)
             RestoreInProgress updatedRestoreInProgress = RestoreService.updateRestoreStateWithDeletedIndices(restoreInProgress, indices);
             if (updatedRestoreInProgress != restoreInProgress) {
                 ImmutableOpenMap.Builder<String, ClusterState.Custom> builder = ImmutableOpenMap.builder(customs);
@@ -153,6 +176,7 @@ public class MetadataDeleteIndexService {
             }
         }
 
+        // 因为路由表发生了变化 所以要进行reroute
         return allocationService.reroute(
                 ClusterState.builder(currentState)
                     .routingTable(routingTableBuilder.build())

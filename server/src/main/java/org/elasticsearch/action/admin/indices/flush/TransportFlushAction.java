@@ -34,6 +34,7 @@ import java.util.List;
 
 /**
  * Flush Action.
+ * 发起刷盘操作
  */
 public class TransportFlushAction
         extends TransportBroadcastReplicationAction<FlushRequest, FlushResponse, ShardFlushRequest, ReplicationResponse> {

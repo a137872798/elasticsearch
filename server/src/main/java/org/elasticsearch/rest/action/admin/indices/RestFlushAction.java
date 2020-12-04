@@ -33,6 +33,9 @@ import java.util.List;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 对所有索引 或者某个索引发起刷盘操作
+ */
 public class RestFlushAction extends BaseRestHandler {
 
     @Override

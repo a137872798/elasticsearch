@@ -38,6 +38,9 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * 获取别名信息
+ */
 public class TransportGetAliasesAction extends TransportMasterNodeReadAction<GetAliasesRequest, GetAliasesResponse> {
 
     @Inject
@@ -68,6 +71,7 @@ public class TransportGetAliasesAction extends TransportMasterNodeReadAction<Get
     @Override
     protected void masterOperation(Task task, GetAliasesRequest request, ClusterState state, ActionListener<GetAliasesResponse> listener) {
         String[] concreteIndices = indexNameExpressionResolver.concreteIndexNames(state, request);
+        // 从metadata中找到索引信息并返回
         ImmutableOpenMap<String, List<AliasMetadata>> aliases = state.metadata().findAliases(request, concreteIndices);
         listener.onResponse(new GetAliasesResponse(postProcess(request, concreteIndices, aliases)));
     }

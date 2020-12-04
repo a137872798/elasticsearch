@@ -55,6 +55,7 @@ import java.util.Objects;
  * tombstones remain in the cluster state for a fixed period of time, after which
  * they are purged.
  * 自定义数据 代表索引墓地
+ * 当索引被删除时 会先放到这个对象中
  */
 public final class IndexGraveyard implements Metadata.Custom {
 
@@ -205,6 +206,7 @@ public final class IndexGraveyard implements Metadata.Custom {
 
         /**
          * Add a deleted index to the list of tombstones in the cluster state.
+         * 将某个index包装成墓碑后插入到list中
          */
         public Builder addTombstone(final Index index) {
             tombstones.add(new Tombstone(index, currentTime));
@@ -213,6 +215,7 @@ public final class IndexGraveyard implements Metadata.Custom {
 
         /**
          * Add a set of deleted indexes to the list of tombstones in the cluster state.
+         * 本次要删除的index 被封装成墓碑对象 并添加到容器中
          */
         public Builder addTombstones(final Collection<Index> indices) {
             for (Index index : indices) {
@@ -353,6 +356,7 @@ public final class IndexGraveyard implements Metadata.Custom {
 
     /**
      * An individual tombstone entry for representing a deleted index.
+     * 每个被删除的索引 对应一个墓碑
      */
     public static final class Tombstone implements ToXContentObject, Writeable {
 
@@ -377,6 +381,11 @@ public final class IndexGraveyard implements Metadata.Custom {
         private final Index index;
         private final long deleteDateInMillis;
 
+        /**
+         *
+         * @param index  被删除的索引
+         * @param deleteDateInMillis  索引被删除的时间
+         */
         private Tombstone(final Index index, final long deleteDateInMillis) {
             Objects.requireNonNull(index);
             if (deleteDateInMillis < 0L) {

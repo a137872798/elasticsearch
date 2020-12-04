@@ -37,6 +37,7 @@ import java.util.stream.Collectors;
  * An index abstraction is a reference to one or more concrete indices.
  * An index abstraction has a unique name and encapsulates all the  {@link IndexMetadata} instances it is pointing to.
  * Also depending on type it may refer to a single or many concrete indices and may or may not have a write index.
+ * 可以通过3种维度来查找Index  比如通过别名查找关联的Index 或者通过DataStream 查找下面的子级index
  */
 public interface IndexAbstraction {
 
@@ -128,6 +129,11 @@ public interface IndexAbstraction {
         private final IndexMetadata concreteIndex;
         private final DataStream dataStream;
 
+        /**
+         * 如果该index是由创建某个 dataStream时 间接创建出来的  就会设置 dataStream属性
+         * @param indexMetadata
+         * @param dataStream
+         */
         public Index(IndexMetadata indexMetadata, DataStream dataStream) {
             this.concreteIndex = indexMetadata;
             this.dataStream = dataStream;
@@ -175,8 +181,7 @@ public interface IndexAbstraction {
 
     /**
      * Represents an alias and groups all {@link IndexMetadata} instances sharing the same alias name together.
-     * 如果indexName去查找时 对应到了一个别名对象  那么该别名对象本身可能就对应了多个index   (多个index使用了同一个别名)
-     * 一个index 也可以对应多个 aliasMetadata
+     * 多个index允许使用同一个alias
      */
     class Alias implements IndexAbstraction {
 
@@ -185,7 +190,7 @@ public interface IndexAbstraction {
          */
         private final String aliasName;
         /**
-         * 相关的索引对应的元数据
+         * 该别名对应的多个index
          */
         private final List<IndexMetadata> referenceIndexMetadatas;
         private final SetOnce<IndexMetadata> writeIndex = new SetOnce<>();
@@ -270,7 +275,9 @@ public interface IndexAbstraction {
             this.referenceIndexMetadatas.add(indexMetadata);
         }
 
-        // 忽略校验代码
+        /**
+         * 判定哪个是 writeIndices
+         */
         public void computeAndValidateAliasProperties() {
             // Validate write indices
             List<IndexMetadata> writeIndices = referenceIndexMetadatas.stream()
@@ -312,12 +319,19 @@ public interface IndexAbstraction {
     }
 
     /**
-     * 代表以数据流的形式  该对象内部也是一组index
+     * 当创建 DataStream时 会间接创建index
      */
     class DataStream implements IndexAbstraction {
 
         private final org.elasticsearch.cluster.metadata.DataStream dataStream;
+        /**
+         * 该数据流相关的index
+         */
         private final List<IndexMetadata> dataStreamIndices;
+
+        /**
+         * 一般情况下 dataStreamIndices 的长度应该是1  如果关联了多个index 那么最后一个index被认为是writeIndex
+         */
         private final IndexMetadata writeIndex;
 
         public DataStream(org.elasticsearch.cluster.metadata.DataStream dataStream, List<IndexMetadata> dataStreamIndices) {

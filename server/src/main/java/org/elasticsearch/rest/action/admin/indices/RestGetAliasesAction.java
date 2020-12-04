@@ -51,6 +51,7 @@ import static org.elasticsearch.rest.RestRequest.Method.HEAD;
 
 /**
  * The REST handler for get alias and head alias APIs.
+ * 获取某个索引的别名 获取全局别名
  */
 public class RestGetAliasesAction extends BaseRestHandler {
 

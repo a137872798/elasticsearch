@@ -739,7 +739,7 @@ public class IndicesService extends AbstractLifecycleComponent
                 finalListeners,
                 indexingMemoryController);
 
-        // 创建成功后使用函数进行检测 并在结束后
+        // 创建成功后使用函数进行检测
         try (Closeable dummy = () -> indexService.close("temp", false)) {
             return indexServiceConsumer.apply(indexService);
         }

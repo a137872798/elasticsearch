@@ -74,6 +74,7 @@ import static java.util.Collections.unmodifiableMap;
 
 /**
  * 映射服务  作为一个管理json字符串映射的门面对象 内部关联了各种映射需要的组件
+ * 每当创建一个indexService后 会对应一个MapperService
  */
 public class MapperService extends AbstractIndexComponent implements Closeable {
 
@@ -134,7 +135,7 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
      */
     private volatile FieldTypeLookup fieldTypes;
     /**
-     * 通过名字可以找到各种ObjectMapper对象
+     * 以 ObjectMapper.fullPath 为key   value存储mapper对象
      */
     private volatile Map<String, ObjectMapper> fullPathObjectMappers = emptyMap();
 
@@ -159,6 +160,9 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
 
     private final BooleanSupplier idFieldDataEnabled;
 
+    /**
+     * 初始化映射服务对象
+     */
     public MapperService(IndexSettings indexSettings, IndexAnalyzers indexAnalyzers, NamedXContentRegistry xContentRegistry,
                          SimilarityService similarityService, MapperRegistry mapperRegistry,
                          Supplier<QueryShardContext> queryShardContextSupplier, BooleanSupplier idFieldDataEnabled) {
@@ -169,7 +173,8 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
         // 用相关参数生成 docMapperParser
         this.documentParser = new DocumentMapperParser(indexSettings, this, xContentRegistry, similarityService, mapperRegistry,
                 queryShardContextSupplier);
-        // 将3个默认的analyzer 包装成Wrapper 同时每个 fieldType 内部都包含analyzer
+
+        // 这个wrapper的作用是 先尝试用 MapperFieldType本身指定的analyzer 如果不存在则使用默认 analyzer
         this.indexAnalyzer = new MapperAnalyzerWrapper(indexAnalyzers.getDefaultIndexAnalyzer(), p -> p.indexAnalyzer());
         this.searchAnalyzer = new MapperAnalyzerWrapper(indexAnalyzers.getDefaultSearchAnalyzer(), p -> p.searchAnalyzer());
         this.searchQuoteAnalyzer = new MapperAnalyzerWrapper(indexAnalyzers.getDefaultSearchQuoteAnalyzer(), p -> p.searchQuoteAnalyzer());
@@ -306,6 +311,7 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
         // 这里是将 mappings又重新转换成 json结构体存储在 XContentBuilder对象中 方便随时对该结构体进行修改
         // Strings.toString() 会将结构体变回 json字符串
         CompressedXContent content = new CompressedXContent(Strings.toString(XContentFactory.jsonBuilder().map(mappings)));
+        // 将解析出来的结果与MapperService原有的数据合并后 更新
         internalMerge(type, content, reason);
     }
 
@@ -390,15 +396,19 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
     }
 
     /**
-     * 将新生成的 docMapper 与之前的数据进行合并
+     * 当抽取了用户传入的json字符串中相关信息 并转换成Mapper后 会生成一个 DocumentMapper对象
+     * 而每个index 会对应一个 mapperService 这里就是将本次传入的新的mapper 与之前旧的mapper进行合并
      * @param mapper
      * @param reason
      * @return
      */
     private synchronized DocumentMapper internalMerge(DocumentMapper mapper, MergeReason reason) {
-        // 首次调用 这些属性都处于默认状态
+        // MapperService在 index级别的数据是共享的  所以设置的属性在解析相同index数据时可以复用
+        // 默认情况 hasNested为false
         boolean hasNested = this.hasNested;
+        // 初始状态为emptyMap
         Map<String, ObjectMapper> fullPathObjectMappers = this.fullPathObjectMappers;
+        // 这个对象是通过名字查找 MappedFieldType  默认为空
         FieldTypeLookup fieldTypes = this.fieldTypes;
 
         assert mapper != null;
@@ -406,6 +416,7 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
         validateTypeName(mapper.type());
 
         // compute the merged DocumentMapper
+        // 默认情况下 内部的mapper为空
         DocumentMapper oldMapper = this.mapper;
         DocumentMapper newMapper;
         if (oldMapper != null) {
@@ -415,7 +426,6 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
         }
 
         // check basic sanity of the new mapping
-        // TODO 这么多种类的mapper到底是干嘛的
         List<ObjectMapper> objectMappers = new ArrayList<>();
         List<FieldMapper> fieldMappers = new ArrayList<>();
         List<FieldAliasMapper> fieldAliasMappers = new ArrayList<>();
@@ -424,25 +434,30 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
         // 将root的各种mapper 归类填充到不同的容器中
         MapperUtils.collect(newMapper.mapping().root(), objectMappers, fieldMappers, fieldAliasMappers);
 
+        // 这里对各级mapper 进行校验
         MapperMergeValidator.validateNewMappers(objectMappers, fieldMappers, fieldAliasMappers, fieldTypes);
+        // 约束性校验
         checkPartitionedIndexConstraints(newMapper);
 
         // update lookup data-structures
-        // 将这些mapper 存储到 fieldTypes中
+        // 将mapper数据填充到 fieldType中
         fieldTypes = fieldTypes.copyAndAddAll(fieldMappers, fieldAliasMappers);
 
         for (ObjectMapper objectMapper : objectMappers) {
+            // 第一次循环进入这里
             if (fullPathObjectMappers == this.fullPathObjectMappers) {
                 // first time through the loops
                 fullPathObjectMappers = new HashMap<>(this.fullPathObjectMappers);
             }
             fullPathObjectMappers.put(objectMapper.fullPath(), objectMapper);
 
+            // 当有某个 objectMapper 是嵌套的  更新hasNested标识
             if (objectMapper.nested().isNested()) {
                 hasNested = true;
             }
         }
 
+        // TODO 校验性代码忽略
         MapperMergeValidator.validateFieldReferences(fieldMappers, fieldAliasMappers,
             fullPathObjectMappers, fieldTypes);
 
@@ -472,14 +487,16 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
         }
         checkIndexSortCompatibility(indexSettings.getIndexSortConfig(), hasNested);
 
-        // 也是更新内部的属性
+        // 代表合并后的 mapper对象 如果是首次调用该方法 就是首次传入的mapper对象
         if (newMapper != null) {
+            // 使用merge后的 fieldTypesLookup对象 去更新mapper内部的数据
             DocumentMapper updatedDocumentMapper = newMapper.updateFieldType(fieldTypes.fullNameToFieldType);
             if (updatedDocumentMapper != newMapper) {
                 newMapper = updatedDocumentMapper;
             }
         }
 
+        // 这种MergeReason  不会修改该对象内部的字段
         if (reason == MergeReason.MAPPING_UPDATE_PREFLIGHT) {
             return newMapper;
         }
@@ -490,6 +507,7 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
             fullPathObjectMappers = Collections.unmodifiableMap(fullPathObjectMappers);
         }
 
+        // 将最新数据覆盖到 mapperService内部的属性中
         // commit the change
         if (newMapper != null) {
             this.mapper = newMapper;
@@ -590,7 +608,12 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
             });
     }
 
+    /**
+     * 检测索引分区约束性条件
+     * @param newMapper
+     */
     private void checkPartitionedIndexConstraints(DocumentMapper newMapper) {
+        // 当settings 要求设置 而mapper中没有时 抛出异常
         if (indexSettings.getIndexMetadata().isRoutingPartitionedIndex()) {
             if (!newMapper.routingFieldMapper().required()) {
                 throw new IllegalArgumentException("mapping type [" + newMapper.type() + "] must have routing "

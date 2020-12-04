@@ -64,7 +64,7 @@ class FieldTypeLookup implements Iterable<MappedFieldType> {
      * from the provided mappers. If a field already exists, its field type will be updated
      * to use the new type from the given field mapper. Similarly if an alias already
      * exists, it will be updated to reference the field type from the new mapper.
-     * 将数据填充到 fieldTypeLookup中
+     * 将各种mapper 填充到 fieldTypeLookup中
      */
     public FieldTypeLookup copyAndAddAll(Collection<FieldMapper> fieldMappers,
                                          Collection<FieldAliasMapper> fieldAliasMappers) {
@@ -73,6 +73,7 @@ class FieldTypeLookup implements Iterable<MappedFieldType> {
         CopyOnWriteHashMap<String, String> aliases = this.aliasToConcreteName;
         Map<String, DynamicKeyFieldMapper> dynamicKeyMappers = new HashMap<>();
 
+        // 将fieldMapper填充到内部属性中
         for (FieldMapper fieldMapper : fieldMappers) {
             String fieldName = fieldMapper.name();
             MappedFieldType fieldType = fieldMapper.fieldType();

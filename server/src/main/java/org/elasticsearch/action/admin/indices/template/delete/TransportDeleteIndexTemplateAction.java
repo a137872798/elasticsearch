@@ -41,6 +41,7 @@ import java.io.IOException;
 
 /**
  * Delete index action.
+ * 在主节点删除某个模板
  */
 public class TransportDeleteIndexTemplateAction
         extends TransportMasterNodeAction<DeleteIndexTemplateRequest, AcknowledgedResponse> {
@@ -81,6 +82,7 @@ public class TransportDeleteIndexTemplateAction
             new MetadataIndexTemplateService
                 .RemoveRequest(request.name())
                 .masterTimeout(request.masterNodeTimeout()),
+            // 当模板被移除时触发监听器 将结果返回给请求端
             new MetadataIndexTemplateService.RemoveListener() {
                 @Override
                 public void onResponse(MetadataIndexTemplateService.RemoveResponse response) {

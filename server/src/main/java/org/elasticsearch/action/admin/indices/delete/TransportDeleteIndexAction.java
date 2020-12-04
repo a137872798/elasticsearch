@@ -47,6 +47,7 @@ import java.util.Set;
 
 /**
  * Delete index action.
+ * 删除某些索引 只能在master节点执行
  */
 public class TransportDeleteIndexAction extends TransportMasterNodeAction<DeleteIndexRequest, AcknowledgedResponse> {
 
@@ -78,6 +79,7 @@ public class TransportDeleteIndexAction extends TransportMasterNodeAction<Delete
 
     @Override
     protected void doExecute(Task task, DeleteIndexRequest request, ActionListener<AcknowledgedResponse> listener) {
+        // 为了避免大范围的删除索引 会先对请求参数做检测
         destructiveOperations.failDestructive(request.indices());
         super.doExecute(task, request, listener);
     }
@@ -87,6 +89,12 @@ public class TransportDeleteIndexAction extends TransportMasterNodeAction<Delete
         return state.blocks().indicesAllowReleaseResources(indexNameExpressionResolver.concreteIndexNames(state, request));
     }
 
+    /**
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     */
     @Override
     protected void masterOperation(Task task, final DeleteIndexRequest request, final ClusterState state,
                                    final ActionListener<AcknowledgedResponse> listener) {

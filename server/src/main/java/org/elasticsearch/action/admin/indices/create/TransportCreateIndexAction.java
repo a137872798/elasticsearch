@@ -38,6 +38,7 @@ import java.io.IOException;
 
 /**
  * Create index action.
+ * 创建索引的请求
  */
 public class TransportCreateIndexAction extends TransportMasterNodeAction<CreateIndexRequest, CreateIndexResponse> {
 
@@ -85,6 +86,7 @@ public class TransportCreateIndexAction extends TransportMasterNodeAction<Create
                 .preferV2Templates(request.preferV2Templates())
                 .waitForActiveShards(request.waitForActiveShards());
 
+        // 在内部会添加一个更新ClusterState的任务(就是插入新的索引)
         createIndexService.createIndex(updateRequest, ActionListener.map(listener, response ->
             new CreateIndexResponse(response.isAcknowledged(), response.isShardsAcknowledged(), indexName)));
     }

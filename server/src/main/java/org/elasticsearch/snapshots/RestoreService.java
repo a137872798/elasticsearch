@@ -666,7 +666,7 @@ public class RestoreService implements ClusterStateApplier {
     }
 
     /**
-     * 更新restoreState
+     * 删除某些index
      * @param oldRestore
      * @param deletedIndices
      * @return

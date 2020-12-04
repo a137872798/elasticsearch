@@ -45,6 +45,12 @@ public final class IndexAnalyzers implements Closeable {
     private final Map<String, NamedAnalyzer> normalizers;
     private final Map<String, NamedAnalyzer> whitespaceNormalizers;
 
+    /**
+     * 在初始化时 就插入了各种analyzer
+     * @param analyzers
+     * @param normalizers
+     * @param whitespaceNormalizers
+     */
     public IndexAnalyzers(Map<String, NamedAnalyzer> analyzers, Map<String, NamedAnalyzer> normalizers,
             Map<String, NamedAnalyzer> whitespaceNormalizers) {
         Objects.requireNonNull(analyzers.get(DEFAULT_ANALYZER_NAME), "the default analyzer must be set");

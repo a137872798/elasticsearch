@@ -29,6 +29,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 
+/**
+ * 删除V1模板
+ */
 public class RestDeleteIndexTemplateAction extends BaseRestHandler {
 
     @Override

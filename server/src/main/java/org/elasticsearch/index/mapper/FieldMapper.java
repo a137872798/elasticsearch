@@ -75,7 +75,7 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
         protected boolean docValuesSet = false;
 
         /**
-         * 该对象内部维护了一组field
+         * 负责构建子级 FieldMapper
          */
         protected final MultiFields.Builder multiFieldsBuilder;
 
@@ -420,9 +420,15 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
         this.copyTo = fieldMergeWith.copyTo;
     }
 
+    /**
+     * 更新内部的 fieldType数据
+     * @param fullNameToFieldType   从该容器中找到匹配的新fieldType
+     * @return
+     */
     @Override
     public FieldMapper updateFieldType(Map<String, MappedFieldType> fullNameToFieldType) {
         final MappedFieldType newFieldType = fullNameToFieldType.get(fieldType.name());
+        // 如果没有找到对应的fieldType 代表没有发生变化 不需要更新
         if (newFieldType == null) {
             // this field does not exist in the mappings yet
             // this can happen if this mapper represents a mapping update
@@ -432,12 +438,12 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
                 fieldType.getClass() + " != " + newFieldType.getClass() + " on field " + fieldType.name());
         }
 
-        // 在通过上面的校验后 也是使用multiField 进行更新
+        // 更新trie树下的子节点
         MultiFields updatedMultiFields = multiFields.updateFieldType(fullNameToFieldType);
         if (fieldType == newFieldType && multiFields == updatedMultiFields) {
             return this; // no change
         }
-        // 生成一个副本 不修改对象
+        // 更新fieldType信息
         FieldMapper updated = clone();
         updated.fieldType = newFieldType;
         updated.multiFields = updatedMultiFields;
@@ -581,9 +587,6 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
 
         public static class Builder {
 
-            /**
-             * Mapper.Builder 原本是用来生成 Mapper的  这里应该生成 FieldMapper对象
-             */
             private final ImmutableOpenMap.Builder<String, Mapper.Builder> mapperBuilders = ImmutableOpenMap.builder();
 
             /**
@@ -635,7 +638,7 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
         private final ImmutableOpenMap<String, FieldMapper> mappers;
 
         /**
-         * 拷贝了一个副本 而不会修改原对象
+         * 如果某个 fieldMapper 没有子节点 那么子节点对应的容器为emptyMap
          * @param mappers
          */
         private MultiFields(ImmutableOpenMap<String, FieldMapper> mappers) {
@@ -691,7 +694,7 @@ public abstract class FieldMapper extends Mapper implements Cloneable {
         }
 
         /**
-         * 每个fieldMapper对象 支持通过MappedFieldType 进行更新
+         * 更新子节点信息  会产生递归
          * @param fullNameToFieldType
          * @return
          */

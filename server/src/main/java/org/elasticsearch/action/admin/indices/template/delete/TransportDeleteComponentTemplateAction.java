@@ -39,6 +39,9 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 删除某个componentTemplate
+ */
 public class TransportDeleteComponentTemplateAction
     extends TransportMasterNodeAction<DeleteComponentTemplateAction.Request, AcknowledgedResponse> {
 

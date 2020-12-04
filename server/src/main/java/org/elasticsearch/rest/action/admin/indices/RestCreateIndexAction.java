@@ -39,6 +39,9 @@ import java.util.Map;
 import static java.util.Collections.singletonMap;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
+/**
+ * 创建索引的请求
+ */
 public class RestCreateIndexAction extends BaseRestHandler {
 
     @Override

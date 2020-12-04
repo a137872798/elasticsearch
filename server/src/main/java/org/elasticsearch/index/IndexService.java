@@ -304,7 +304,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         this.valuesSourceRegistry =  valuesSourceRegistry;
         if (needsMapperService(indexSettings, indexCreationContext)) {
             assert indexAnalyzers != null;
-            // 生成映射服务
+            // 一个索引对应一个映射服务
             this.mapperService = new MapperService(indexSettings, indexAnalyzers, xContentRegistry, similarityService, mapperRegistry,
                 // we parse all percolator queries as they would be parsed on shard 0
                 () -> newQueryShardContext(0, null, System::currentTimeMillis, null), idFieldDataEnabled);

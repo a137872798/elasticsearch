@@ -27,6 +27,9 @@ import org.elasticsearch.rest.action.RestToXContentListener;
 import java.io.IOException;
 import java.util.List;
 
+/**
+ * 删除某个数据流  在创建数据流时 同时还会创建一个对应的index 在删除时应该也是一样 会顺便删除对应的索引
+ */
 public class RestDeleteDataStreamAction extends BaseRestHandler {
 
     @Override

@@ -50,7 +50,8 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * 索引模板是啥玩意
+ * 创建索引时会使用到模板
+ * 这个是V1版本的
  */
 public class IndexTemplateMetadata extends AbstractDiffable<IndexTemplateMetadata> {
 
@@ -78,6 +79,9 @@ public class IndexTemplateMetadata extends AbstractDiffable<IndexTemplateMetadat
     @Nullable
     private final Integer version;
 
+    /**
+     * 每个模板通过这组表达式去匹配indexName  匹配成功的index就会使用这个模板
+     */
     private final List<String> patterns;
 
     private final Settings settings;

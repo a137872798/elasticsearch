@@ -30,6 +30,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 
+/**
+ * 删除V2版本的模板
+ */
 public class RestDeleteIndexTemplateV2Action extends BaseRestHandler {
 
     @Override

@@ -49,10 +49,13 @@ public class MappingMetadata extends AbstractDiffable<MappingMetadata> {
     private final String type;
 
     /**
-     * 格式化数据已经被压缩成数据流了
+     * DocumentMapper在初始化时 会为自身创建一个压缩数据流 也就是这个mappingSource
      */
     private final CompressedXContent source;
 
+    /**
+     * 对应所有元数据中 仅与RoutingFieldMapper相关的 required属性
+     */
     private final boolean routingRequired;
 
     public MappingMetadata(DocumentMapper docMapper) {

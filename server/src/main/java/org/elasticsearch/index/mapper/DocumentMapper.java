@@ -179,7 +179,14 @@ public class DocumentMapper implements ToXContentFragment {
     private final Map<String, ObjectMapper> objectMappers;
 
     private final boolean hasNestedObjects;
+
+    /**
+     * 已经被废弃的 metadataFieldMapper
+     */
     private final MetadataFieldMapper[] deleteTombstoneMetadataFieldMappers;
+    /**
+     * 有些metadataFieldMapper 本认为是 noop的 本次创建的documentMapper对象 如果命中了会存入该数组
+     */
     private final MetadataFieldMapper[] noopTombstoneMetadataFieldMappers;
 
     /**
@@ -221,7 +228,7 @@ public class DocumentMapper implements ToXContentFragment {
                 indexAnalyzers.getDefaultSearchAnalyzer(),
                 indexAnalyzers.getDefaultSearchQuoteAnalyzer());
 
-        // 下面处理 关于 Object的映射对象
+        // 下面处理 关于 Object的映射对象  trie树下所有的ObjectMapper都会被抽取出来 设置到map中
         Map<String, ObjectMapper> builder = new HashMap<>();
         for (ObjectMapper objectMapper : newObjectMappers) {
             ObjectMapper previous = builder.put(objectMapper.fullPath(), objectMapper);
@@ -238,21 +245,24 @@ public class DocumentMapper implements ToXContentFragment {
                 hasNestedObjects = true;
             }
         }
-        // 只要有一个mapper是嵌套的 就将标识修改成true
+        // 代表 objectMappers 中至少有某个 ObjectMapper是嵌套的
         this.hasNestedObjects = hasNestedObjects;
 
         try {
-            // 将本对象格式化后存储
+            // 将本对象压缩成数据流 并标记反序列化方式为 JSON
             mappingSource = new CompressedXContent(this, XContentType.JSON, ToXContent.EMPTY_PARAMS);
         } catch (Exception e) {
             throw new ElasticsearchGenerationException("failed to serialize source for type [" + type + "]", e);
         }
 
+        // 这些应该是版本已经废弃的 用于描述元数据的field
         final Collection<String> deleteTombstoneMetadataFields = Arrays.asList(VersionFieldMapper.NAME, IdFieldMapper.NAME,
             TypeFieldMapper.NAME, SeqNoFieldMapper.NAME, SeqNoFieldMapper.PRIMARY_TERM_NAME, SeqNoFieldMapper.TOMBSTONE_NAME);
-        // 找到一些已经被删除的mapper  和一些 noop的mapper
+
+        // 如果本次设置的元数据相关的mapper对象 命中了已经被废弃的 field容器
         this.deleteTombstoneMetadataFieldMappers = Stream.of(mapping.metadataMappers)
             .filter(field -> deleteTombstoneMetadataFields.contains(field.name())).toArray(MetadataFieldMapper[]::new);
+        // 找到命中 noop的元数据fieldMapper
         final Collection<String> noopTombstoneMetadataFields = Arrays.asList(
             VersionFieldMapper.NAME, SeqNoFieldMapper.NAME, SeqNoFieldMapper.PRIMARY_TERM_NAME, SeqNoFieldMapper.TOMBSTONE_NAME);
         this.noopTombstoneMetadataFieldMappers = Stream.of(mapping.metadataMappers)
@@ -379,6 +389,7 @@ public class DocumentMapper implements ToXContentFragment {
 
     /**
      * Recursively update sub field types.
+     * 一般是这个容器更新后 去替换原本的旧数据
      */
     public DocumentMapper updateFieldType(Map<String, MappedFieldType> fullNameToFieldType) {
         Mapping updated = this.mapping.updateFieldType(fullNameToFieldType);

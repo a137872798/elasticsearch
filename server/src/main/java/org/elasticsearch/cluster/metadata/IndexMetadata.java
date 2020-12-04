@@ -986,6 +986,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             return this;
         }
 
+        /**
+         *
+         * @param mappingMd  实际上对应某个 documentMapper
+         * @return
+         */
         public Builder putMapping(MappingMetadata mappingMd) {
             mappings.clear();
             if (mappingMd != null) {
@@ -999,6 +1004,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             return this;
         }
 
+        /**
+         * 填充别名元数据
+         * @param aliasMetadata
+         * @return
+         */
         public Builder putAlias(AliasMetadata aliasMetadata) {
             aliases.put(aliasMetadata.alias(), aliasMetadata);
             return this;

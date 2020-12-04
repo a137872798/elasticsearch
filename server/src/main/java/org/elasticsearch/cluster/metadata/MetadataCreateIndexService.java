@@ -258,6 +258,7 @@ public class MetadataCreateIndexService {
      *
      * @param request the index creation cluster state update request
      * @param listener the listener on which to send the index creation cluster state update response
+     *                 发布一个更新clusterState的任务
      */
     public void createIndex(final CreateIndexClusterStateUpdateRequest request,
                             final ActionListener<CreateIndexClusterStateUpdateResponse> listener) {
@@ -283,12 +284,20 @@ public class MetadataCreateIndexService {
         }, listener::onFailure));
     }
 
+    /**
+     * 创建索引 并且将相关数据填充到 ClusterState中 并发布到集群中
+     * @param request
+     * @param listener
+     */
     private void onlyCreateIndex(final CreateIndexClusterStateUpdateRequest request,
                                  final ActionListener<ClusterStateUpdateResponse> listener) {
         Settings.Builder updatedSettingsBuilder = Settings.builder();
+        // 将req中的所有配置都加上 "index." 前缀
         Settings build = updatedSettingsBuilder.put(request.settings()).normalizePrefix(IndexMetadata.INDEX_SETTING_PREFIX).build();
         indexScopedSettings.validate(build, true); // we do validate here - index setting must be consistent
         request.settings(build);
+
+        // 发起一个更新任务
         clusterService.submitStateUpdateTask(
             "create-index [" + request.index() + "], cause [" + request.cause() + "]",
             new AckedClusterStateUpdateTask<>(Priority.URGENT, request, listener) {
@@ -355,8 +364,11 @@ public class MetadataCreateIndexService {
             if (v2Template != null && preferV2Templates) {
                 // If a v2 template was found, it takes precedence over all v1 templates, so create
                 // the index using that template and the request's specified settings
+                // 处理V2版本的模板 以及req中的信息 抽取出来生成indexMetadata后设置到ClusterState中 并返回
                 return applyCreateIndexRequestWithV2Template(currentState, request, silent, v2Template, metadataTransformer);
             } else {
+                // TODO 忽略旧模板 因为V1版本可能会在之后被移除 并且逻辑跟V2的应该差不多
+                // 当没有找到匹配的V2版本模板时 使用V1版本的模板
                 if (v2Template != null) {
                     logger.debug("ignoring matching index template [{}] as [prefer_v2_templates] is set to false", v2Template);
                 }
@@ -372,6 +384,7 @@ public class MetadataCreateIndexService {
                         v1Templates.stream().map(IndexTemplateMetadata::name).sorted().collect(Collectors.joining(", ")));
                 }
 
+                // 从V1版本的模板中抽取相关信息 并更新ClusterState
                 return applyCreateIndexRequestWithV1Templates(currentState, request, silent, v1Templates, metadataTransformer);
             }
         }
@@ -423,20 +436,24 @@ public class MetadataCreateIndexService {
                                                               final BiConsumer<Metadata.Builder, IndexMetadata> metadataTransformer)
                                                                                         throws Exception {
         // create the index here (on the master) to validate it can be created, as well as adding the mapping
+        // 这里生成IndexService 并进行处理后 最终还是会关闭indexService的  但是已经生成了最新的元数据  并且此时还没有开始为分片recovery数据
         return indicesService.<ClusterState, Exception>withTempIndexService(temporaryIndexMeta,
             // 当临时性的 indexService被创建后 使用该函数进行处理
             indexService -> {
             try {
+                // 这里会将mappings 按照各种信息拆解并生成Mapper对象  最终被包装成DocumentMapper对象  并填充到这个indexService相关的 MapperService中
                 updateIndexMappingsAndBuildSortOrder(indexService, mappings, sourceMetadata);
             } catch (Exception e) {
                 logger.debug("failed on parsing mappings on index creation [{}]", request.index());
                 throw e;
             }
 
+            // 获取 req/IndexTemplate/ComponentTemplate 下所有的 aliasMetadata 
             final List<AliasMetadata> aliases = aliasSupplier.apply(indexService);
 
             final IndexMetadata indexMetadata;
             try {
+                // 通过之前生成的各种信息 生成一个新的indexMetadata
                 indexMetadata = buildIndexMetadata(request.index(), aliases, indexService.mapperService()::documentMapper,
                     temporaryIndexMeta.getSettings(), temporaryIndexMeta.getRoutingNumShards(), sourceMetadata);
             } catch (Exception e) {
@@ -448,8 +465,11 @@ public class MetadataCreateIndexService {
                 request.index(), request.cause(), templatesApplied, indexMetadata.getNumberOfShards(),
                 indexMetadata.getNumberOfReplicas(), mappings.keySet());
 
+            // 可以看到此时index 还没有加入到cluster中
             indexService.getIndexEventListener().beforeIndexAddedToCluster(indexMetadata.getIndex(),
                 indexMetadata.getSettings());
+            // 为index创建分片 并将相关信息填充到routingTable
+            // 伴随着的还有为这些分片设置路由信息(借助allocationService)
             return clusterStateCreateIndex(currentState, request.blocks(), indexMetadata, allocationService::reroute, metadataTransformer);
         });
     }
@@ -558,7 +578,7 @@ public class MetadataCreateIndexService {
             // req中会携带是否倾向于使用V2Template
             resolvePreferV2Templates(request));
 
-        // 开始创建索引
+        // 这里将所有相关信息都填充到clusterState了 并且没有真正的打开indexService (包含解析json后生成的Mapping对象也设置到 indexMetadata中了)
         return applyCreateIndexWithTemporaryService(currentState, request, silent, null, tmpImd, mappings,
             // 这个方法最终就是将 req/template的所有别名合并后返回
             indexService -> resolveAndValidateAliases(request.index(), request.aliases(),
@@ -954,29 +974,51 @@ public class MetadataCreateIndexService {
     /**
      * Creates the index into the cluster state applying the provided blocks. The final cluster state will contain an updated routing
      * table based on the live nodes.
+     * @param clusterBlocks 本次插入indexMetadata 可能伴随着某些集群操作被阻塞
+     * @param metadataTransformer 默认为null
+     * 本次要将某个index加入到集群中 伴随着的还有分片的路由信息分配 以及 clusterState的变化
      */
     static ClusterState clusterStateCreateIndex(ClusterState currentState, Set<ClusterBlock> clusterBlocks, IndexMetadata indexMetadata,
                                                 BiFunction<ClusterState, String, ClusterState> rerouteRoutingTable,
                                                 BiConsumer<Metadata.Builder, IndexMetadata> metadataTransformer) {
+
+        // 在metadata中插入一个新的indexMetadata
         Metadata.Builder builder = Metadata.builder(currentState.metadata())
             .put(indexMetadata, false);
+        // TODO 先不考虑这个
         if (metadataTransformer != null) {
             metadataTransformer.accept(builder, indexMetadata);
         }
         Metadata newMetadata = builder.build();
 
         String indexName = indexMetadata.getIndex().getName();
+        // 此时可能会阻止集群中的一些操作   基于之前旧的block数据 以及此时的新数据 生成新的blockBuilder对象
         ClusterBlocks.Builder blocks = createClusterBlocksBuilder(currentState, indexName, clusterBlocks);
+        // 使用元数据中的 blocks 覆盖之前的数据
         blocks.updateBlocks(indexMetadata);
 
+        // 更新 ClusterState
         ClusterState updatedState = ClusterState.builder(currentState).blocks(blocks).metadata(newMetadata).build();
 
+        // 更新路由表信息
         RoutingTable.Builder routingTableBuilder = RoutingTable.builder(updatedState.routingTable())
             .addAsNew(updatedState.metadata().index(indexName));
         updatedState = ClusterState.builder(updatedState).routingTable(routingTableBuilder.build()).build();
+        // 因为路由表发生了变化 进行reroute
         return rerouteRoutingTable.apply(updatedState, "index [" + indexName + "] created");
     }
 
+
+    /**
+     *
+     * @param indexName 本次要处理的索引名
+     * @param aliases   所有相关的别名的元数据
+     * @param documentMapperSupplier   通过该函数可以获取该index对应的 indexService.MapperService.DocumentMapper 该对象内部包含了各种mapper对象 规定了数据的存储方式以及一些相关属性
+     * @param indexSettings
+     * @param routingNumShards      描述有多少分片
+     * @param sourceMetadata        创建该indexMetadata时 可能会参考其他metadata
+     * @return
+     */
     static IndexMetadata buildIndexMetadata(String indexName, List<AliasMetadata> aliases,
                                             Supplier<DocumentMapper> documentMapperSupplier, Settings indexSettings, int routingNumShards,
                                             @Nullable IndexMetadata sourceMetadata) {
@@ -990,6 +1032,7 @@ public class MetadataCreateIndexService {
         }
 
         for (MappingMetadata mappingMd : mappingsMetadata.values()) {
+            // 将映射信息设置到 indexMetadata中
             indexMetadataBuilder.putMapping(mappingMd);
         }
 
@@ -1006,6 +1049,7 @@ public class MetadataCreateIndexService {
      * Creates an {@link IndexMetadata.Builder} for the provided index and sets a valid primary term for all the shards if a source
      * index meta data is provided (this represents the case where we're shrinking/splitting an index and the primary term for the newly
      * created index needs to be gte than the maximum term in the source index).
+     * 根据现有信息生成一个 IndexMetadata.Builder
      */
     private static IndexMetadata.Builder createIndexMetadataBuilder(String indexName, @Nullable IndexMetadata sourceMetadata,
                                                                     Settings indexSettings, int routingNumShards) {
@@ -1032,6 +1076,13 @@ public class MetadataCreateIndexService {
         return builder;
     }
 
+    /**
+     * 根据现有信息 以及新的 blocks 生成一个新的 ClusterBlocks.Builder
+     * @param currentState
+     * @param index
+     * @param blocks
+     * @return
+     */
     private static ClusterBlocks.Builder createClusterBlocksBuilder(ClusterState currentState, String index, Set<ClusterBlock> blocks) {
         ClusterBlocks.Builder blocksBuilder = ClusterBlocks.builder().blocks(currentState.blocks());
         if (!blocks.isEmpty()) {
@@ -1055,9 +1106,11 @@ public class MetadataCreateIndexService {
         // 在基于 CREATE_INDEX 的场景下 创建的indexService就会在初始化时 创建 MapperService
         if (!mappings.isEmpty()) {
             assert mappings.size() == 1 : mappings;
+            // 将解析后的mapping对象设置到了mapperService中
             mapperService.merge(MapperService.SINGLE_MAPPING_NAME, mappings, MergeReason.MAPPING_UPDATE);
         }
 
+        // 如果没有其他IndexMetadata (或者说被作为模板的元数据) 这里调用函数主要是校验是否会出现异常吧
         if (sourceMetadata == null) {
             // now that the mapping is merged we can validate the index sort.
             // we cannot validate for index shrinking since the mapping is empty

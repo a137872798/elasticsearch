@@ -74,6 +74,7 @@ import static org.elasticsearch.indices.cluster.IndicesClusterStateService.Alloc
 
 /**
  * Service responsible for submitting index templates updates
+ * 管理索引模板的服务
  */
 public class MetadataIndexTemplateService {
 
@@ -100,6 +101,11 @@ public class MetadataIndexTemplateService {
         this.xContentRegistry = xContentRegistry;
     }
 
+    /**
+     * 移除某些template
+     * @param request
+     * @param listener
+     */
     public void removeTemplates(final RemoveRequest request, final RemoveListener listener) {
         clusterService.submitStateUpdateTask("remove-index-template [" + request.name + "]", new ClusterStateUpdateTask(Priority.URGENT) {
 
@@ -115,6 +121,7 @@ public class MetadataIndexTemplateService {
 
             @Override
             public ClusterState execute(ClusterState currentState) {
+                // 这个删除操作和 V2是一样的
                 Set<String> templateNames = new HashSet<>();
                 for (ObjectCursor<String> cursor : currentState.metadata().templates().keys()) {
                     String templateName = cursor.value;
@@ -242,6 +249,7 @@ public class MetadataIndexTemplateService {
     /**
      * Remove the given component template from the cluster state. The component template name
      * supports simple regex wildcards for removing multiple component templates at a time.
+     * 移除某个索引模板后 将最新的clusterState发布到集群中
      */
     public void removeComponentTemplate(final String name, final TimeValue masterTimeout,
                                         final ActionListener<AcknowledgedResponse> listener) {
@@ -258,6 +266,11 @@ public class MetadataIndexTemplateService {
                     listener.onFailure(e);
                 }
 
+                /**
+                 * 从ClusterState中移除某个 componentTemplate
+                 * @param currentState
+                 * @return
+                 */
                 @Override
                 public ClusterState execute(ClusterState currentState) {
                     Set<String> templateNames = new HashSet<>();
@@ -473,6 +486,7 @@ public class MetadataIndexTemplateService {
     /**
      * Remove the given index template from the cluster state. The index template name
      * supports simple regex wildcards for removing multiple index templates at a time.
+     * 在ClusterState中移除 V2版本的模板
      */
     public void removeIndexTemplateV2(final String name, final TimeValue masterTimeout,
                                       final ActionListener<AcknowledgedResponse> listener) {
@@ -501,7 +515,12 @@ public class MetadataIndexTemplateService {
             });
     }
 
-    // Package visible for testing
+    /**
+     * 删除V2模板
+     * @param currentState
+     * @param name
+     * @return
+     */
     static ClusterState innerRemoveIndexTemplateV2(ClusterState currentState, String name) {
         Set<String> templateNames = new HashSet<>();
         for (String templateName : currentState.metadata().templatesV2().keySet()) {
@@ -652,7 +671,7 @@ public class MetadataIndexTemplateService {
      * @param isHidden Whether or not the index is known to be hidden. May be {@code null} if the index
      *                 being hidden has not been explicitly requested. When {@code null} if the result
      *                 of template application results in a hidden index, then global templates will
-     *                 not be returned
+     *                 not be returned    当前index是否应该被隐藏
      * @return a list of templates sorted by {@link IndexTemplateMetadata#order()} descending.
      *
      */
@@ -661,6 +680,7 @@ public class MetadataIndexTemplateService {
         final List<IndexTemplateMetadata> matchedTemplates = new ArrayList<>();
         for (ObjectCursor<IndexTemplateMetadata> cursor : metadata.templates().values()) {
             final IndexTemplateMetadata template = cursor.value;
+            // 默认就是非隐藏模式
             if (isHidden == null || isHidden == Boolean.FALSE) {
                 final boolean matched = template.patterns().stream().anyMatch(patternMatchPredicate);
                 if (matched) {
@@ -668,6 +688,7 @@ public class MetadataIndexTemplateService {
                 }
             } else {
                 assert isHidden == Boolean.TRUE;
+                // 如果是隐藏模板  那么忽略表达式为"*"的模板
                 final boolean isNotMatchAllTemplate = template.patterns().stream().noneMatch(Regex::isMatchAllPattern);
                 if (isNotMatchAllTemplate) {
                     if (template.patterns().stream().anyMatch(patternMatchPredicate)) {
@@ -680,11 +701,14 @@ public class MetadataIndexTemplateService {
 
         // this is complex but if the index is not hidden in the create request but is hidden as the result of template application,
         // then we need to exclude global templates
+        // TODO 应该不重要 先忽略
         if (isHidden == null) {
+            // 找到包含 hidden的配置项
             final Optional<IndexTemplateMetadata> templateWithHiddenSetting = matchedTemplates.stream()
                 .filter(template -> IndexMetadata.INDEX_HIDDEN_SETTING.exists(template.settings())).findFirst();
             if (templateWithHiddenSetting.isPresent()) {
                 final boolean templatedIsHidden = IndexMetadata.INDEX_HIDDEN_SETTING.get(templateWithHiddenSetting.get().settings());
+                // 如果模板配置了 hidden  只要包含"*" 就从结果列表中移除
                 if (templatedIsHidden) {
                     // remove the global templates
                     matchedTemplates.removeIf(current -> current.patterns().stream().anyMatch(Regex::isMatchAllPattern));

@@ -103,6 +103,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     /**
      * A constructor to internally create shard routing instances, note, the internal flag should only be set to true
      * by either this class or tests. Visible for testing.
+     * 当创建一个未分配的分片时  currentNodeId/relocationNodeId 都是null
      */
     ShardRouting(ShardId shardId, String currentNodeId,
                  String relocatingNodeId, boolean primary, ShardRoutingState state, RecoverySource recoverySource,
@@ -116,7 +117,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
         this.unassignedInfo = unassignedInfo;
         this.allocationId = allocationId;
         this.expectedShardSize = expectedShardSize;
-        // 初始化relocation对应的分片
+        // 如果当前分片是一个处于Relocation状态的分片 那么同时会为targetNode创建一个init状态的分片
         this.targetRelocatingShard = initializeTargetRelocatingShard();
         this.asList = Collections.singletonList(this);
         assert expectedShardSize == UNAVAILABLE_EXPECTED_SHARD_SIZE || state == ShardRoutingState.INITIALIZING ||
@@ -150,7 +151,11 @@ public final class ShardRouting implements Writeable, ToXContentObject {
 
     /**
      * Creates a new unassigned shard.
-     * 生成一个未分配的分片数据   因为此时还没有指派给某个分配器  所以 allocationId为null
+     * @param shardId 该分片的id
+     * @param primary 主分片 or 副本
+     * @param recoverySource 该分片从哪里获取数据
+     * @param unassignedInfo 描述分配信息的对象
+     * 生成一个未分配的分片
      */
     public static ShardRouting newUnassigned(ShardId shardId, boolean primary, RecoverySource recoverySource,
                                              UnassignedInfo unassignedInfo) {

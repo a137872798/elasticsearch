@@ -380,7 +380,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         /**
          * Initializes a new empty index, as if it was created from an API.
-         * 因为该索引才完成创建 所以处于未分配状态
+         * 当创建了一个新的 IndexMetadata时 并插入到RoutingTable中   此时会初始化一个UnassignedInfo
          */
         public Builder initializeAsNew(IndexMetadata indexMetadata) {
             return initializeEmpty(indexMetadata, new UnassignedInfo(UnassignedInfo.Reason.INDEX_CREATED, null));
@@ -480,36 +480,40 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         /**
          * Initializes a new empty index, with an option to control if its from an API or not.
-         * @param indexMetadata 描述索引的元数据
-         * @param unassignedInfo 代表分片未分配的原因
-         * 初始化一个空的索引对象
+         * @param indexMetadata
+         * @param unassignedInfo
+         *                       此时插入了一个新的index  需要为它生成一个 IndexRouting
          */
         private Builder initializeEmpty(IndexMetadata indexMetadata, UnassignedInfo unassignedInfo) {
             assert indexMetadata.getIndex().equals(index);
-            // 在调用该方法前 确保shards为空
+            // 分片是之后生成的 此时不应该有数据
             if (!shards.isEmpty()) {
                 throw new IllegalStateException("trying to initialize an index with fresh shards, but already has shards created");
             }
+
+            // 按照 shardId 生成分片 每个shardId对应 primary+replicaNum个分片
             for (int shardNumber = 0; shardNumber < indexMetadata.getNumberOfShards(); shardNumber++) {
-                // 为每个 IndexShardRoutingTable 生成对应的shardId
+                // shardNumber 作为分片id
                 ShardId shardId = new ShardId(index, shardNumber);
                 final RecoverySource primaryRecoverySource;
-                // 如果分片id 已经有某些 AllocationIds了   这里私有分片的恢复源就设定为 从磁盘中恢复
+                // 下面3种判断都只是处理 primary的恢复源  与副本无关
                 if (indexMetadata.inSyncAllocationIds(shardNumber).isEmpty() == false) {
                     // we have previous valid copies for this shard. use them for recovery
                     primaryRecoverySource = ExistingStoreRecoverySource.INSTANCE;
-                // TODO ResizeSourceIndex 是什么???
+                    // TODO 如果有resize相关的配置
                 } else if (indexMetadata.getResizeSourceIndex() != null) {
                     // this is a new index but the initial shards should merged from another index
                     primaryRecoverySource = LocalShardsRecoverySource.INSTANCE;
                 } else {
+                    // 正常情况下应该就是 EmptyStoreRecoverySource
                     // a freshly created index with no restriction
                     primaryRecoverySource = EmptyStoreRecoverySource.INSTANCE;
                 }
                 IndexShardRoutingTable.Builder indexShardRoutingBuilder = new IndexShardRoutingTable.Builder(shardId);
+                // 遍历次数为 primary + replica
                 for (int i = 0; i <= indexMetadata.getNumberOfReplicas(); i++) {
-                    // 第一个分片总是作为 私有分片  啥意思   可以看到其他分片都是使用 PeerRecoverySource 代表从远端进行数据恢复
                     boolean primary = i == 0;
+                    // 除了主分片外 副本都使用PeerRecoverySource 作为恢复源 代表着都是从主分片拉取数据
                     indexShardRoutingBuilder.addShard(ShardRouting.newUnassigned(shardId, primary,
                         primary ? primaryRecoverySource : PeerRecoverySource.INSTANCE, unassignedInfo));
                 }

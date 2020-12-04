@@ -123,10 +123,14 @@ public final class Mapping implements ToXContentFragment {
 
     /**
      * Recursively update sub field types.
+     * 更新内部有关 MetadataFieldMapper的数据
      */
     public Mapping updateFieldType(Map<String, MappedFieldType> fullNameToFieldType) {
+
+        // 记录哪些field发生了变化
         MetadataFieldMapper[] updatedMeta = null;
         for (int i = 0; i < metadataMappers.length; ++i) {
+            // 每个fieldMapper对象 代表某个field的数据结构 同时还有一个用于描述这个数据存储到lucene时的 fieldType属性  这里根据传入的参数更新fieldType
             MetadataFieldMapper currentFieldMapper = metadataMappers[i];
             MetadataFieldMapper updatedFieldMapper = (MetadataFieldMapper) currentFieldMapper.updateFieldType(fullNameToFieldType);
             if (updatedFieldMapper != currentFieldMapper) {

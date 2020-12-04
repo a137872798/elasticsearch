@@ -536,6 +536,11 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
             return this;
         }
 
+        /**
+         * 在原有的路由表上 增加某个index 的路由信息
+         * @param indexMetadata
+         * @return
+         */
         public Builder addAsNew(IndexMetadata indexMetadata) {
             if (indexMetadata.getState() == IndexMetadata.State.OPEN) {
                 IndexRoutingTable.Builder indexRoutingBuilder = new IndexRoutingTable.Builder(indexMetadata.getIndex())

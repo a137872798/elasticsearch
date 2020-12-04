@@ -426,6 +426,11 @@ public class ClusterBlocks extends AbstractDiffable<ClusterBlocks> {
             return this;
         }
 
+        /**
+         * 使用 indexMetadata中的信息去覆盖之前的数据
+         * @param indexMetadata
+         * @return
+         */
         public Builder updateBlocks(IndexMetadata indexMetadata) {
             // let's remove all blocks for this index and add them back -- no need to remove all individual blocks....
             indices.remove(indexMetadata.getIndex().getName());

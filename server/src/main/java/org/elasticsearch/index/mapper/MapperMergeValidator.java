@@ -40,19 +40,23 @@ class MapperMergeValidator {
      * @param fieldMappers The newly added field mappers.
      * @param fieldAliasMappers The newly added field alias mappers.
      * @param fieldTypes Any existing field and field alias mappers, collected into a lookup structure.
+     *                   对各级mapper进行校验
      */
     public static void validateNewMappers(Collection<ObjectMapper> objectMappers,
                                           Collection<FieldMapper> fieldMappers,
                                           Collection<FieldAliasMapper> fieldAliasMappers,
                                           FieldTypeLookup fieldTypes) {
         Set<String> objectFullNames = new HashSet<>();
+        // 主要就是去重性校验
         for (ObjectMapper objectMapper : objectMappers) {
+            // 在解析过程中 此时的路径  比如 aa.bb 就代表 {"aa":{"bb":{}}}
             String fullPath = objectMapper.fullPath();
             if (objectFullNames.add(fullPath) == false) {
                 throw new IllegalArgumentException("Object mapper [" + fullPath + "] is defined twice.");
             }
         }
 
+        // 检验 fieldMapper
         Set<String> fieldNames = new HashSet<>();
         for (FieldMapper fieldMapper : fieldMappers) {
             String name = fieldMapper.name();
@@ -65,6 +69,7 @@ class MapperMergeValidator {
             validateFieldMapper(fieldMapper, fieldTypes);
         }
 
+        // 检验 fieldAliasMapper
         Set<String> fieldAliasNames = new HashSet<>();
         for (FieldAliasMapper fieldAliasMapper : fieldAliasMappers) {
             String name = fieldAliasMapper.name();
@@ -82,6 +87,7 @@ class MapperMergeValidator {
 
     /**
      * Checks that the new field mapper does not conflict with existing mappings.
+     * 校验某个 fieldMapper是否合法
      */
     private static void validateFieldMapper(FieldMapper fieldMapper,
                                             FieldTypeLookup fieldTypes) {

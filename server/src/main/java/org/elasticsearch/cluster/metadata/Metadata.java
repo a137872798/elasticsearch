@@ -188,6 +188,10 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
      * 在元数据中存储了索引信息   当集群状态发生变化时 可以根据新旧的metadata 快速定位到本次新增的索引
      */
     private final ImmutableOpenMap<String, IndexMetadata> indices;
+
+    /**
+     * 存储 V1版本的模板
+     */
     private final ImmutableOpenMap<String, IndexTemplateMetadata> templates;
 
     /**
@@ -379,6 +383,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
      * @param concreteIndices The concrete indices that the aliases must point to in order to be returned.
      * @return A map of index name to the list of aliases metadata. If a concrete index does not have matching
      * aliases then the result will <b>not</b> include the index's key.
+     * 根据 req 以及index信息 找到所有相关的别名
      */
     public ImmutableOpenMap<String, List<AliasMetadata>> findAliases(final AliasesRequest aliasesRequest, final String[] concreteIndices) {
         return findAliases(aliasesRequest.aliases(), concreteIndices);
@@ -389,6 +394,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
      * that point to the specified concrete indices (directly or matching indices via wildcards).
      *
      * @param aliases The aliases to look for. Might contain include or exclude wildcards.
+     *                这是一组限定条件
      * @param concreteIndices The concrete indices that the aliases must point to in order to be returned
      * @return A map of index name to the list of aliases metadata. If a concrete index does not have matching
      * aliases then the result will <b>not</b> include the index's key.
@@ -400,6 +406,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
             return ImmutableOpenMap.of();
         }
         String[] patterns = new String[aliases.length];
+        // 每个正则表达式是用于排除/允许某个别名
         boolean[] include = new boolean[aliases.length];
         for (int i = 0; i < aliases.length; i++) {
             String alias = aliases[i];
@@ -411,17 +418,21 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
                 include[i] = true;
             }
         }
+        // 代表没有额外的限制 就是将index下所有的alias都返回
         boolean matchAllAliases = patterns.length == 0;
         ImmutableOpenMap.Builder<String, List<AliasMetadata>> mapBuilder = ImmutableOpenMap.builder();
         for (String index : concreteIndices) {
             IndexMetadata indexMetadata = indices.get(index);
             List<AliasMetadata> filteredValues = new ArrayList<>();
+            // 这里遍历index下所有的 alias
             for (ObjectCursor<AliasMetadata> cursor : indexMetadata.getAliases().values()) {
                 AliasMetadata value = cursor.value;
                 boolean matched = matchAllAliases;
                 String alias = value.alias();
                 for (int i = 0; i < patterns.length; i++) {
+                    // 代表满足条件的会加入到返回结果中
                     if (include[i]) {
+                        // 代表
                         if (matched == false) {
                             String pattern = patterns[i];
                             matched = ALL.equals(pattern) || Regex.simpleMatch(pattern, alias);
@@ -430,6 +441,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
                         matched = Regex.simpleMatch(patterns[i], alias) == false;
                     }
                 }
+                // 当未设置限制条件时
                 if (matched) {
                     filteredValues.add(value);
                 }
@@ -1211,6 +1223,11 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
             return this;
         }
 
+        /**
+         * 添加一个新的数据流
+         * @param dataStream
+         * @return
+         */
         public Builder put(DataStream dataStream) {
             Objects.requireNonNull(dataStream, "it is invalid to add a null data stream");
             Map<String, DataStream> existingDataStreams =
@@ -1354,26 +1371,41 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
             return this;
         }
 
+        /**
+         * 通过建造器模式生成 Metadata
+         * @return
+         */
         public Metadata build() {
             // TODO: We should move these datastructures to IndexNameExpressionResolver, this will give the following benefits:
             // 1) The datastructures will be rebuilt only when needed. Now during serializing we rebuild these datastructures
             //    while these datastructures aren't even used.
             // 2) The aliasAndIndexLookup can be updated instead of rebuilding it all the time.
 
+            // 本次所有索引都会加入到这个列表中
             final Set<String> allIndices = new HashSet<>(indices.size());
+            // 仅存储所有 hidden为false的index
             final List<String> visibleIndices = new ArrayList<>();
+            // 存储所有State 为 OPEN的index
             final List<String> allOpenIndices = new ArrayList<>();
+            // 存储hidden为false 并且State为OPEN
             final List<String> visibleOpenIndices = new ArrayList<>();
+            // 存储所有State 为 CLOSE的index
             final List<String> allClosedIndices = new ArrayList<>();
+            // 存储hidden为false 且State为CLOSE
             final List<String> visibleClosedIndices = new ArrayList<>();
+            // 所有索引的别名都会存储在这里
             final Set<String> allAliases = new HashSet<>();
+
+            // 为所有index进行分组
             for (ObjectCursor<IndexMetadata> cursor : indices.values()) {
                 final IndexMetadata indexMetadata = cursor.value;
                 final String name = indexMetadata.getIndex().getName();
                 boolean added = allIndices.add(name);
                 assert added : "double index named [" + name + "]";
+                // 判断该index 是否属于 hidden
                 final boolean visible = IndexMetadata.INDEX_HIDDEN_SETTING.get(indexMetadata.getSettings()) == false;
                 if (visible) {
+                    // 如果是可见的 就加入到对应的列表中
                     visibleIndices.add(name);
                 }
                 if (indexMetadata.getState() == IndexMetadata.State.OPEN) {
@@ -1390,6 +1422,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
                 indexMetadata.getAliases().keysIt().forEachRemaining(allAliases::add);
             }
 
+            // 存储所有 DataStream的名字
             final Set<String> allDataStreams = new HashSet<>();
             DataStreamMetadata dataStreamMetadata = (DataStreamMetadata) this.customs.get(DataStreamMetadata.TYPE);
             if (dataStreamMetadata != null) {
@@ -1401,10 +1434,12 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
             final Set<String> aliasDuplicatesWithIndices = new HashSet<>(allAliases);
             aliasDuplicatesWithIndices.retainAll(allIndices);
             ArrayList<String> duplicates = new ArrayList<>();
+            // 代表别名 与某个索引名冲突了
             if (aliasDuplicatesWithIndices.isEmpty() == false) {
                 // iterate again and constructs a helpful message
                 for (ObjectCursor<IndexMetadata> cursor : indices.values()) {
                     for (String alias : aliasDuplicatesWithIndices) {
+                        // 找到具体的冲突信息 并插入到duplicates中
                         if (cursor.value.getAliases().containsKey(alias)) {
                             duplicates.add(alias + " (alias of " + cursor.value.getIndex() + ") conflicts with index");
                         }
@@ -1412,6 +1447,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
                 }
             }
 
+            // 当别名与 dataStream.name 冲突时 也将相关信息插入到 duplicates 容器中
             final Set<String> aliasDuplicatesWithDataStreams = new HashSet<>(allAliases);
             aliasDuplicatesWithDataStreams.retainAll(allDataStreams);
             if (aliasDuplicatesWithDataStreams.isEmpty() == false) {
@@ -1425,6 +1461,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
                 }
             }
 
+            // dataStream的名字 也不能与 indexName冲突
             final Set<String> dataStreamDuplicatesWithIndices = new HashSet<>(allDataStreams);
             dataStreamDuplicatesWithIndices.retainAll(allIndices);
             if (dataStreamDuplicatesWithIndices.isEmpty() == false) {
@@ -1433,13 +1470,16 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
                 }
             }
 
+            // 一旦发现有名称发生冲突 就抛出异常
             if (duplicates.size() > 0) {
                 throw new IllegalStateException("index, alias, and data stream names need to be unique, but the following duplicates " +
                     "were found [" + Strings.collectionToCommaDelimitedString(duplicates) + "]");
             }
 
+            // 这里已经将 dataStream index alias的关联关系存储到该容器中了
             SortedMap<String, IndexAbstraction> indicesLookup = Collections.unmodifiableSortedMap(buildIndicesLookup());
 
+            // TODO 先忽略校验性代码
             validateDataStreams(indicesLookup);
 
             // build all concrete indices arrays:
@@ -1458,19 +1498,29 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
                 allOpenIndicesArray, visibleOpenIndicesArray, allClosedIndicesArray, visibleClosedIndicesArray, indicesLookup);
         }
 
+        /**
+         * 将此时存储的所有index存储到一个lookUp对象中 方便外部使用者查询
+         * @return
+         */
         private SortedMap<String, IndexAbstraction> buildIndicesLookup() {
             SortedMap<String, IndexAbstraction> indicesLookup = new TreeMap<>();
+
+            // 通过indexName 反向检索所属的 dataStream
             Map<String, DataStream> indexToDataStreamLookup = new HashMap<>();
             DataStreamMetadata dataStreamMetadata = (DataStreamMetadata) this.customs.get(DataStreamMetadata.TYPE);
             // If there are no indices, then skip data streams. This happens only when metadata is read from disk
+            // dataStreamMetadata 描述了所有存储的dataStream 每个dataStream可以关联一组index
             if (dataStreamMetadata != null && indices.size() > 0) {
+                // 遍历所有的dataStream
                 for (DataStream dataStream : dataStreamMetadata.dataStreams().values()) {
+                    // 取出所有经由dataStream 间接创建出来的index
                     List<IndexMetadata> backingIndices = dataStream.getIndices().stream()
                         .map(index -> indices.get(index.getName()))
                         .collect(Collectors.toList());
                     assert backingIndices.isEmpty() == false;
                     assert backingIndices.contains(null) == false;
 
+                    // 添加映射关系到 lookup对象中
                     IndexAbstraction existing = indicesLookup.put(dataStream.getName(),
                         new IndexAbstraction.DataStream(dataStream, backingIndices));
                     assert existing == null : "duplicate data stream for " + dataStream.getName();
@@ -1485,6 +1535,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
                 IndexMetadata indexMetadata = cursor.value;
 
                 IndexAbstraction.Index index;
+                // 可以看到 处理index时 如果发现它属于某个dataStream 则会设置parent字段
                 DataStream parent = indexToDataStreamLookup.get(indexMetadata.getIndex().getName());
                 if (parent != null) {
                     assert parent.getIndices().contains(indexMetadata.getIndex());
@@ -1496,12 +1547,14 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
                 IndexAbstraction existing = indicesLookup.put(indexMetadata.getIndex().getName(), index);
                 assert existing == null : "duplicate for " + indexMetadata.getIndex();
 
+                // 获取这个索引所有的别名信息
                 for (ObjectObjectCursor<String, AliasMetadata> aliasCursor : indexMetadata.getAliases()) {
                     AliasMetadata aliasMetadata = aliasCursor.value;
                     indicesLookup.compute(aliasMetadata.getAlias(), (aliasName, alias) -> {
                         if (alias == null) {
                             return new IndexAbstraction.Alias(aliasMetadata, indexMetadata);
                         } else {
+                            // 可能多个index使用了同一个别名  这种情况是允许的 就会让该alias下挂载更多的index
                             assert alias.getType() == IndexAbstraction.Type.ALIAS : alias.getClass().getName();
                             ((IndexAbstraction.Alias) alias).addIndex(indexMetadata);
                             return alias;

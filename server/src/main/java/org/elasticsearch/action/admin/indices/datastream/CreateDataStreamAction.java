@@ -230,10 +230,13 @@ public class CreateDataStreamAction extends ActionType<AcknowledgedResponse> {
             CreateIndexClusterStateUpdateRequest createIndexRequest =
                 new CreateIndexClusterStateUpdateRequest("initialize_data_stream", firstBackingIndexName, firstBackingIndexName)
                 .settings(Settings.builder().put("index.hidden", true).build());
+            // 创建新的index 并将相关信息更新到ClusterState中  此时还没有为新的shard恢复数据 只是通过allocationService分配位置
             currentState = metadataCreateIndexService.applyCreateIndexRequest(currentState, createIndexRequest, false);
             IndexMetadata firstBackingIndex = currentState.metadata().index(firstBackingIndexName);
             assert firstBackingIndex != null;
 
+            // 因为本次实际上是由于创建DataStream导致间接创建的indexMetadata
+            // 所以还要在 Metadata中插入一个DataStream
             Metadata.Builder builder = Metadata.builder(currentState.metadata()).put(
                 new DataStream(request.name, request.timestampFieldName, List.of(firstBackingIndex.getIndex())));
             logger.info("adding data stream [{}]", request.name);
