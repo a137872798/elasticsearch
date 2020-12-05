@@ -32,6 +32,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取索引的 segment信息  这个segment是lucene中的段么???
+ */
 public class RestIndicesSegmentsAction extends BaseRestHandler {
 
     @Override

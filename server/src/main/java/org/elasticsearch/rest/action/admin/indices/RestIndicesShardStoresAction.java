@@ -40,6 +40,7 @@ import static org.elasticsearch.rest.RestStatus.OK;
 
 /**
  * Rest action for {@link IndicesShardStoresAction}
+ * 这是要存储分片数据么
  */
 public class RestIndicesShardStoresAction extends BaseRestHandler {
 

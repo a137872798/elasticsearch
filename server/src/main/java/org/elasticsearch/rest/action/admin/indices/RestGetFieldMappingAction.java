@@ -41,6 +41,9 @@ import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestStatus.NOT_FOUND;
 import static org.elasticsearch.rest.RestStatus.OK;
 
+/**
+ * 获取某个field的 mapping信息
+ */
 public class RestGetFieldMappingAction extends BaseRestHandler {
 
     @Override

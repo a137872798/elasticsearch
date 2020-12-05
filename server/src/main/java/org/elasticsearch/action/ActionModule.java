@@ -554,7 +554,9 @@ public class ActionModule extends AbstractModule {
         actions.register(SnapshotsStatusAction.INSTANCE, TransportSnapshotsStatusAction.class);
 
         actions.register(IndicesStatsAction.INSTANCE, TransportIndicesStatsAction.class);
+        // 某个索引段信息
         actions.register(IndicesSegmentsAction.INSTANCE, TransportIndicesSegmentsAction.class);
+        // 获取分片的存储信息
         actions.register(IndicesShardStoresAction.INSTANCE, TransportIndicesShardStoresAction.class);
         // 创建一个新的索引
         actions.register(CreateIndexAction.INSTANCE, TransportCreateIndexAction.class);
@@ -562,19 +564,25 @@ public class ActionModule extends AbstractModule {
         actions.register(RolloverAction.INSTANCE, TransportRolloverAction.class);
         // 删除某些索引
         actions.register(DeleteIndexAction.INSTANCE, TransportDeleteIndexAction.class);
+        // 获取某些索引信息
         actions.register(GetIndexAction.INSTANCE, TransportGetIndexAction.class);
         actions.register(OpenIndexAction.INSTANCE, TransportOpenIndexAction.class);
         // 关闭某个索引对象
         actions.register(CloseIndexAction.INSTANCE, TransportCloseIndexAction.class);
+        // 获取mappings信息
         actions.register(GetMappingsAction.INSTANCE, TransportGetMappingsAction.class);
+        // 获取某个field的映射信息
         actions.register(GetFieldMappingsAction.INSTANCE, TransportGetFieldMappingsAction.class);
+        // 按照index为单位 获取fieldMapping信息
         actions.register(TransportGetFieldMappingsIndexAction.TYPE, TransportGetFieldMappingsIndexAction.class);
         actions.register(PutMappingAction.INSTANCE, TransportPutMappingAction.class);
+        // 添加或者删除 alias 都是通过该action
         actions.register(IndicesAliasesAction.INSTANCE, TransportIndicesAliasesAction.class);
         actions.register(UpdateSettingsAction.INSTANCE, TransportUpdateSettingsAction.class);
         // 分析某个索引下的数据
         actions.register(AnalyzeAction.INSTANCE, TransportAnalyzeAction.class);
         actions.register(PutIndexTemplateAction.INSTANCE, TransportPutIndexTemplateAction.class);
+        // 获取indexTemplate
         actions.register(GetIndexTemplatesAction.INSTANCE, TransportGetIndexTemplatesAction.class);
         // 删除某个索引模板
         actions.register(DeleteIndexTemplateAction.INSTANCE, TransportDeleteIndexTemplateAction.class);
@@ -585,6 +593,7 @@ public class ActionModule extends AbstractModule {
             // 删除某个componentTemplate
             actions.register(DeleteComponentTemplateAction.INSTANCE, TransportDeleteComponentTemplateAction.class);
             actions.register(PutIndexTemplateV2Action.INSTANCE, TransportPutIndexTemplateV2Action.class);
+            // 获取V2版本的 indexTemplate
             actions.register(GetIndexTemplateV2Action.INSTANCE, TransportGetIndexTemplateV2Action.class);
             // 删除V2版本的模板
             actions.register(DeleteIndexTemplateV2Action.INSTANCE, TransportDeleteIndexTemplateV2Action.class);
@@ -603,6 +612,7 @@ public class ActionModule extends AbstractModule {
         actions.register(ClearIndicesCacheAction.INSTANCE, TransportClearIndicesCacheAction.class);
         // 获取别名信息
         actions.register(GetAliasesAction.INSTANCE, TransportGetAliasesAction.class);
+        // 获取配置信息
         actions.register(GetSettingsAction.INSTANCE, TransportGetSettingsAction.class);
 
         actions.register(IndexAction.INSTANCE, TransportIndexAction.class);

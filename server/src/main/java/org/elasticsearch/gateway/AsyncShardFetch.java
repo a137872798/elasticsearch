@@ -145,7 +145,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
      * The ignoreNodes are nodes that are supposed to be ignored for this round, since fetching is async, we need
      * to keep them around and make sure we add them back when all the responses are fetched and returned.
      * @param nodes 当前集群中包含的所有节点
-     * @param ignoreNodes 代表数据不会出现在哪些节点上
+     * @param ignoreNodes 代表数据不会出现在哪些节点上  本次会忽略这些node
      */
     public synchronized FetchResult<T> fetchData(DiscoveryNodes nodes, Set<String> ignoreNodes) {
         if (closed) {
@@ -153,10 +153,11 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
         }
         nodesToIgnore.addAll(ignoreNodes);
 
-        // 新增的node包装成entry后加入cache 不再有效的node从cache中移除
+        // 将node加入到缓存就代表这些node 已经被处理过了  避免重复发起请求
         fillShardCacheWithDataNodes(cache, nodes);
-        // 这里就利用到了缓存 只有还未拉取到数据的节点才会发起请求 TODO 缓存什么时候被清理 ???
-        // 找到还未拉取数据  以及fetching=false的节点
+
+        // 这里就利用到了缓存 只有还未拉取到数据的节点才会发起请求
+        // 找到还未拉取数据  以及fetching=false的节点  (node被包装成entry后 fetching默认为false)
         List<NodeEntry<T>> nodesToFetch = findNodesToFetch(cache);
 
         // 代表本次有需要拉取数据的相关节点
@@ -224,6 +225,9 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
      * on the same cache generation, otherwise the results are discarded. It then goes and fills the relevant data for
      * the shard (response + failures), issuing a reroute at the end of it to make sure there will be another round
      * of allocations taking this new data into account.
+     * @param responses 对应处理成功的结果
+     * @param failures 对应处理失败的结果
+     * @param fetchingRound 代表当前是第几轮发起的请求
      * 当拉取任务完成时触发该方法
      */
     protected synchronized void processAsyncFetch(List<T> responses, List<FailedNodeException> failures, long fetchingRound) {
@@ -239,7 +243,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
                 // 在执行拉取任务前 相关entry都应该已经被填入
                 NodeEntry<T> nodeEntry = cache.get(response.getNode().getId());
                 if (nodeEntry != null) {
-                    // TODO 先忽略异常情况
+                    // 当发起下一轮请求时 会忽略上一轮的结果
                     if (nodeEntry.getFetchingRound() != fetchingRound) {
                         assert nodeEntry.getFetchingRound() > fetchingRound : "node entries only replaced by newer rounds";
                         logger.trace("{} received response for [{}] from node {} for an older fetching round (expected: {} but was: {})",
@@ -308,13 +312,16 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
     /**
      * Fills the shard fetched data with new (data) nodes and a fresh NodeEntry, and removes from
      * it nodes that are no longer part of the state.
+     * @param shardCache 内部存储缓存数据
+     * @param nodes 本次拉取任务涉及到的所有node
      */
     private void fillShardCacheWithDataNodes(Map<String, NodeEntry<T>> shardCache, DiscoveryNodes nodes) {
         // verify that all current data nodes are there
         // 只需要为数据节点创建缓存
         for (ObjectObjectCursor<String, DiscoveryNode> cursor : nodes.getDataNodes()) {
             DiscoveryNode node = cursor.value;
-            // 如果该节点没有保存在 cache中 那么将node包裹成entry后 设置到cache中
+
+            // 代表是新增的 包装成 entry后加入到缓存中
             if (shardCache.containsKey(node.getId()) == false) {
                 shardCache.put(node.getId(), new NodeEntry<T>(node.getId()));
             }
@@ -327,7 +334,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
     /**
      * Finds all the nodes that need to be fetched. Those are nodes that have no
      * data, and are not in fetch mode.
-     * 找到所有还未填充数据 以及还未开始拉取数据的 entry
+     * 找到所有还未填充数据并且还未开始拉取数据的 entry
      */
     private List<NodeEntry<T>> findNodesToFetch(Map<String, NodeEntry<T>> shardCache) {
         List<NodeEntry<T>> nodesToFetch = new ArrayList<>();
@@ -432,7 +439,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
     static class NodeEntry<T> {
         private final String nodeId;
         /**
-         * 正在向该节点拉取数据
+         * 正在向该节点拉取数据  初始化时为false
          */
         private boolean fetching;
         @Nullable
@@ -456,6 +463,10 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
             return fetching;
         }
 
+        /**
+         * 代表在对应的 fetch任务中 是第几轮发起的拉取
+         * @param fetchingRound
+         */
         void markAsFetching(long fetchingRound) {
             assert fetching == false : "double marking a node as fetching";
             this.fetching = true;

@@ -466,7 +466,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
      * overridden via plugins)
      *
      * @see MapperPlugin#getFieldFilter()
-     *
+     * 找到所有符合条件的映射数据 并包装成 MappingMetadata返回
      */
     public ImmutableOpenMap<String, MappingMetadata> findMappings(String[] concreteIndices,
                                                                   Function<String, Predicate<String>> fieldFilter)
@@ -477,6 +477,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
         }
 
         ImmutableOpenMap.Builder<String, MappingMetadata> indexMapBuilder = ImmutableOpenMap.builder();
+        // 获取传入的索引 与当前用于的索引的交集
         Iterable<String> intersection = HppcMaps.intersection(ObjectHashSet.from(concreteIndices), indices.keys());
         for (String index : intersection) {
             IndexMetadata indexMetadata = indices.get(index);
@@ -486,6 +487,12 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
         return indexMapBuilder.build();
     }
 
+    /**
+     * 找到符合条件的mapping
+     * @param mappingMetadata
+     * @param fieldPredicate
+     * @return
+     */
     @SuppressWarnings("unchecked")
     private static MappingMetadata filterFields(MappingMetadata mappingMetadata, Predicate<String> fieldPredicate) {
         if (mappingMetadata == null) {
@@ -502,23 +509,34 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
             mapping = sourceAsMap;
         }
 
+        // 如果不包含 properties属性 直接返回 metadata
         Map<String, Object> properties = (Map<String, Object>)mapping.get("properties");
         if (properties == null || properties.isEmpty()) {
             return mappingMetadata;
         }
 
+        // 这里会间接修改 sourceAsMap
         filterFields("", properties, fieldPredicate);
 
         return new MappingMetadata(mappingMetadata.type(), sourceAsMap);
     }
 
+    /**
+     * 找到符合条件的 field
+     * @param currentPath
+     * @param fields
+     * @param fieldPredicate
+     * @return
+     */
     @SuppressWarnings("unchecked")
     private static boolean filterFields(String currentPath, Map<String, Object> fields, Predicate<String> fieldPredicate) {
         assert fieldPredicate != MapperPlugin.NOOP_FIELD_PREDICATE;
         Iterator<Map.Entry<String, Object>> entryIterator = fields.entrySet().iterator();
         while (entryIterator.hasNext()) {
             Map.Entry<String, Object> entry = entryIterator.next();
+            // 拼接当前路径 形成一条完整路径    比如导航到 json字符串的某个 key  (key1->key2->key3->key)
             String newPath = mergePaths(currentPath, entry.getKey());
+            // 获取对应的数据
             Object value = entry.getValue();
             boolean mayRemove = true;
             boolean isMultiField = false;

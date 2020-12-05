@@ -84,12 +84,18 @@ public final class ClusterShardHealth implements Writeable, ToXContentFragment {
     private final int unassignedShards;
     private final boolean primaryActive;
 
+    /**
+     * 专门描述某个 shardId 下所有分片的信息
+     * @param shardId
+     * @param shardRoutingTable   某个分片的路由信息
+     */
     public ClusterShardHealth(final int shardId, final IndexShardRoutingTable shardRoutingTable) {
         this.shardId = shardId;
         int computeActiveShards = 0;
         int computeRelocatingShards = 0;
         int computeInitializingShards = 0;
         int computeUnassignedShards = 0;
+        // 遍历内部每个分片  根据不同情况插入到不同的列表中
         for (ShardRouting shardRouting : shardRoutingTable) {
             if (shardRouting.active()) {
                 computeActiveShards++;
@@ -103,8 +109,11 @@ public final class ClusterShardHealth implements Writeable, ToXContentFragment {
                 computeUnassignedShards++;
             }
         }
+
+        // 通过这些分片此时的运行状态 可以大体做一个健康状态的判断
         ClusterHealthStatus computeStatus;
         final ShardRouting primaryRouting = shardRoutingTable.primaryShard();
+        // 当主分片处于活跃状态时  如果有副本不可用 只会认为处于 yellow 也就是虽然非正常运作 但是还能保持基本的职能
         if (primaryRouting.active()) {
             if (computeActiveShards == shardRoutingTable.size()) {
                 computeStatus = ClusterHealthStatus.GREEN;
@@ -112,6 +121,7 @@ public final class ClusterShardHealth implements Writeable, ToXContentFragment {
                 computeStatus = ClusterHealthStatus.YELLOW;
             }
         } else {
+            // 当主分片不可用时 需要做一些复杂的判断
             computeStatus = getInactivePrimaryHealth(primaryRouting);
         }
         this.status = computeStatus;
@@ -195,6 +205,7 @@ public final class ClusterShardHealth implements Writeable, ToXContentFragment {
      * some point, cluster health should still turn RED.
      *
      * NB: this method should *not* be called on active shards nor on non-primary shards.
+     * 此时主分片处于不可用状态   需要进行集群状态的健康检测
      */
     public static ClusterHealthStatus getInactivePrimaryHealth(final ShardRouting shardRouting) {
         assert shardRouting.primary() : "cannot invoke on a replica shard: " + shardRouting;
@@ -203,6 +214,7 @@ public final class ClusterShardHealth implements Writeable, ToXContentFragment {
         assert shardRouting.recoverySource() != null : "cannot invoke on a shard that has no recovery source" + shardRouting;
         final UnassignedInfo unassignedInfo = shardRouting.unassignedInfo();
         RecoverySource.Type recoveryType = shardRouting.recoverySource().getType();
+        // TODO
         if (unassignedInfo.getLastAllocationStatus() != AllocationStatus.DECIDERS_NO && unassignedInfo.getNumFailedAllocations() == 0
                 && (recoveryType == RecoverySource.Type.EMPTY_STORE
                     || recoveryType == RecoverySource.Type.LOCAL_SHARDS

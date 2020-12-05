@@ -47,6 +47,7 @@ import java.util.List;
 
 /**
  * Get index action.
+ * 获取某些索引信息
  */
 public class TransportGetIndexAction extends TransportClusterInfoAction<GetIndexRequest, GetIndexResponse> {
 
@@ -83,6 +84,13 @@ public class TransportGetIndexAction extends TransportClusterInfoAction<GetIndex
         return new GetIndexResponse(in);
     }
 
+    /**
+     *
+     * @param request
+     * @param concreteIndices  本次要获取哪些索引信息
+     * @param state
+     * @param listener
+     */
     @Override
     protected void doMasterOperation(final GetIndexRequest request, String[] concreteIndices, final ClusterState state,
                                      final ActionListener<GetIndexResponse> listener) {
@@ -90,12 +98,16 @@ public class TransportGetIndexAction extends TransportClusterInfoAction<GetIndex
         ImmutableOpenMap<String, List<AliasMetadata>> aliasesResult = ImmutableOpenMap.of();
         ImmutableOpenMap<String, Settings> settings = ImmutableOpenMap.of();
         ImmutableOpenMap<String, Settings> defaultSettings = ImmutableOpenMap.of();
+
+        // 本次请求中会描述要获取index的哪些特性
         Feature[] features = request.features();
         boolean doneAliases = false;
         boolean doneMappings = false;
         boolean doneSettings = false;
+        // 将对应各个 feature的数据取出来 合并后返回
         for (Feature feature : features) {
             switch (feature) {
+                // 代表要获取index对应的mappings信息
             case MAPPINGS:
                     if (!doneMappings) {
                         try {

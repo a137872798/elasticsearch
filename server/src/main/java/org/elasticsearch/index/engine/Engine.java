@@ -1130,6 +1130,7 @@ public abstract class Engine implements Closeable {
 
     /**
      * The list of segments in the engine.
+     * 获取该engine对应的shard 的所有segment信息
      */
     public abstract List<Segment> segments(boolean verbose);
 

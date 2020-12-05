@@ -37,6 +37,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取映射信息
+ */
 public class RestGetMappingAction extends BaseRestHandler {
 
     @Override

@@ -38,6 +38,9 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.unmodifiableMap;
 
+/**
+ * 获取某个field的映射信息
+ */
 public class TransportGetFieldMappingsAction extends HandledTransportAction<GetFieldMappingsRequest, GetFieldMappingsResponse> {
 
     private final ClusterService clusterService;
@@ -54,6 +57,12 @@ public class TransportGetFieldMappingsAction extends HandledTransportAction<GetF
         this.client = client;
     }
 
+    /**
+     *
+     * @param task
+     * @param request   内部描述了 要获取哪些field的信息
+     * @param listener
+     */
     @Override
     protected void doExecute(Task task, GetFieldMappingsRequest request, final ActionListener<GetFieldMappingsResponse> listener) {
         ClusterState clusterState = clusterService.state();
@@ -65,9 +74,11 @@ public class TransportGetFieldMappingsAction extends HandledTransportAction<GetF
         if (concreteIndices.length == 0) {
             listener.onResponse(new GetFieldMappingsResponse(emptyMap()));
         } else {
+            // 以index为单位开始处理数据
             for (final String index : concreteIndices) {
                 GetFieldMappingsIndexRequest shardRequest = new GetFieldMappingsIndexRequest(request, index);
 
+                // 直接借助本地的其他action 而没有经过网络传输
                 client.executeLocally(TransportGetFieldMappingsIndexAction.TYPE, shardRequest, new ActionListener<>() {
                     @Override
                     public void onResponse(GetFieldMappingsResponse result) {

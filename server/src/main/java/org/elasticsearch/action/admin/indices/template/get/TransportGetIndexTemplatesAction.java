@@ -40,6 +40,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * 获取索引模板
+ */
 public class TransportGetIndexTemplatesAction extends
     TransportMasterNodeReadAction<GetIndexTemplatesRequest, GetIndexTemplatesResponse> {
 
@@ -78,6 +81,7 @@ public class TransportGetIndexTemplatesAction extends
             results = new ArrayList<>();
         }
 
+        // 就是简单的map操作
         for (String name : request.names()) {
             if (Regex.isSimpleMatchPattern(name)) {
                 for (ObjectObjectCursor<String, IndexTemplateMetadata> entry : state.metadata().templates()) {

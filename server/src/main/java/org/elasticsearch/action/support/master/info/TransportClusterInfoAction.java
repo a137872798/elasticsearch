@@ -30,7 +30,11 @@ import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
-
+/**
+ * 在leader节点处理前加了一层处理
+ * @param <Request>
+ * @param <Response>
+ */
 public abstract class TransportClusterInfoAction<Request extends ClusterInfoRequest<Request>, Response extends ActionResponse>
         extends TransportMasterNodeReadAction<Request, Response> {
 
@@ -49,6 +53,7 @@ public abstract class TransportClusterInfoAction<Request extends ClusterInfoRequ
     @Override
     protected final void masterOperation(Task task, final Request request, final ClusterState state,
                                          final ActionListener<Response> listener) {
+        // 从req中剥离出index 交由子类处理
         String[] concreteIndices = indexNameExpressionResolver.concreteIndexNames(state, request);
         doMasterOperation(request, concreteIndices, state, listener);
     }

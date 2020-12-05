@@ -60,11 +60,15 @@ import static java.util.Collections.unmodifiableList;
 
 /**
  * Add/remove aliases action
+ * 添加/删除别名 信息   只能在leader节点处理
  */
 public class TransportIndicesAliasesAction extends TransportMasterNodeAction<IndicesAliasesRequest, AcknowledgedResponse> {
 
     private static final Logger logger = LogManager.getLogger(TransportIndicesAliasesAction.class);
 
+    /**
+     * 所有别名的处理都交由该服务
+     */
     private final MetadataIndexAliasesService indexAliasesService;
     private final RequestValidators<IndicesAliasesRequest> requestValidators;
 
@@ -103,28 +107,42 @@ public class TransportIndicesAliasesAction extends TransportMasterNodeAction<Ind
         return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_WRITE, indices.toArray(new String[indices.size()]));
     }
 
+    /**
+     * 处理别名请求
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     */
     @Override
     protected void masterOperation(Task task, final IndicesAliasesRequest request, final ClusterState state,
                                    final ActionListener<AcknowledgedResponse> listener) {
 
         //Expand the indices names
+        // 获取本次执行的所有action
         List<AliasActions> actions = request.aliasActions();
         List<AliasAction> finalActions = new ArrayList<>();
 
         // Resolve all the AliasActions into AliasAction instances and gather all the aliases
         Set<String> aliases = new HashSet<>();
         for (AliasActions action : actions) {
+            // 获取所有相关的索引
             final Index[] concreteIndices = indexNameExpressionResolver.concreteIndices(state, request.indicesOptions(), action.indices());
+            // 通过校验器 检测req的合法性  TODO 先不细看实现逻辑
             final Optional<Exception> maybeException = requestValidators.validateRequest(request, state, concreteIndices);
             if (maybeException.isPresent()) {
                 listener.onFailure(maybeException.get());
                 return;
             }
             Collections.addAll(aliases, action.getOriginalAliases());
+            // 某次action操作涉及到的所有index
+            // TODO 不纠结 反正也是map操作
             for (final Index index : concreteIndices) {
                 switch (action.actionType()) {
                 case ADD:
+                    // 代表本次处理的是一个添加请求   只会返回当前req中携带的所有别名
                     for (String alias : concreteAliases(action, state.metadata(), index.getName())) {
+                        // 将action中的其他信息包装成 Add 对象后插入到最终要执行的action列表中
                         finalActions.add(new AliasAction.Add(index.getName(), alias, action.filter(), action.indexRouting(),
                             action.searchRouting(), action.writeIndex(), action.isHidden()));
                     }
@@ -163,10 +181,19 @@ public class TransportIndicesAliasesAction extends TransportMasterNodeAction<Ind
         });
     }
 
+    /**
+     * 处理index 获取相关别名
+     * @param action  包含本次操作的具体信息
+     * @param metadata
+     * @param concreteIndex
+     * @return
+     */
     private static String[] concreteAliases(AliasActions action, Metadata metadata, String concreteIndex) {
+        // 删除操作支持使用通配符  添加操作不支持
         if (action.expandAliasesWildcards()) {
             //for DELETE we expand the aliases
             String[] indexAsArray = {concreteIndex};
+            // 将本次index对应的所有别名 以及当前action中携带的别名插入到列表中
             ImmutableOpenMap<String, List<AliasMetadata>> aliasMetadata = metadata.findAliases(action, indexAsArray);
             List<String> finalAliases = new ArrayList<>();
             for (ObjectCursor<List<AliasMetadata>> curAliases : aliasMetadata.values()) {

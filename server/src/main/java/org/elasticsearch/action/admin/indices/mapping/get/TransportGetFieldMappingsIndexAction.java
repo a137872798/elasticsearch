@@ -57,6 +57,7 @@ import static java.util.Collections.singletonMap;
 
 /**
  * Transport action used to retrieve the mappings related to fields that belong to a specific index
+ * 以index为单位 获取fieldMapping信息
  */
 public class TransportGetFieldMappingsIndexAction
         extends TransportSingleShardAction<GetFieldMappingsIndexRequest, GetFieldMappingsResponse> {
@@ -67,6 +68,15 @@ public class TransportGetFieldMappingsIndexAction
     protected final ClusterService clusterService;
     private final IndicesService indicesService;
 
+    /**
+     * 通过依赖注入的方式 使得在创建该对象时不需要知道明确的注入参数对象
+     * @param clusterService
+     * @param transportService
+     * @param indicesService
+     * @param threadPool
+     * @param actionFilters
+     * @param indexNameExpressionResolver
+     */
     @Inject
     public TransportGetFieldMappingsIndexAction(ClusterService clusterService, TransportService transportService,
                                                 IndicesService indicesService, ThreadPool threadPool, ActionFilters actionFilters,
@@ -83,21 +93,37 @@ public class TransportGetFieldMappingsIndexAction
         return false;
     }
 
+    /**
+     * 只返回当前所有活跃分片
+     * @param state
+     * @param request
+     * @return
+     */
     @Override
     protected ShardsIterator shards(ClusterState state, InternalRequest request) {
         // Will balance requests between shards
         return state.routingTable().index(request.concreteIndex()).randomAllActiveShardsIt();
     }
 
+    /**
+     * 以分片为单位处理请求
+     * @param request
+     * @param shardId
+     * @return
+     */
     @Override
     protected GetFieldMappingsResponse shardOperation(final GetFieldMappingsIndexRequest request, ShardId shardId) {
         assert shardId != null;
         IndexService indexService = indicesService.indexServiceSafe(shardId.getIndex());
         Version indexCreatedVersion = indexService.mapperService().getIndexSettings().getIndexVersionCreated();
+        // 判断这个fieldMapping是否是某个元数据的
         Predicate<String> metadataFieldPredicate = (f) -> indicesService.isMetadataField(indexCreatedVersion, f);
+        // 可以不是元数据的fieldMapping  只需要通过 filter校验  (getFieldFilter() 通过指定的index名可以找到对应的filter)
         Predicate<String> fieldPredicate = metadataFieldPredicate.or(indicesService.getFieldFilter().apply(shardId.getIndexName()));
 
+        // 获取这个index 所映射出的 document
         DocumentMapper documentMapper = indexService.mapperService().documentMapper();
+        // 从中找到符合条件的 fieldMapping
         Map<String, FieldMappingMetadata> fieldMapping = findFieldMappings(fieldPredicate, documentMapper, request);
         return new GetFieldMappingsResponse(singletonMap(shardId.getIndexName(), fieldMapping));
     }
@@ -149,21 +175,34 @@ public class TransportGetFieldMappingsIndexAction
         }
     };
 
+
+    /**
+     * 从documentMapper中找到符合条件的fieldMapping
+     * @param fieldPredicate
+     * @param documentMapper
+     * @param request
+     * @return
+     */
     private static Map<String, FieldMappingMetadata> findFieldMappings(Predicate<String> fieldPredicate,
                                                                              DocumentMapper documentMapper,
                                                                              GetFieldMappingsIndexRequest request) {
+        // 如果documentMapper为空就无法寻找fieldMapping
         if (documentMapper == null) {
             return Collections.emptyMap();
         }
         Map<String, FieldMappingMetadata> fieldMappings = new HashMap<>();
+        // 该对象会负责管理所有 fieldMapping
         final DocumentFieldMappers allFieldMappers = documentMapper.mappers();
         for (String field : request.fields()) {
+            // 如果请求中有 "*" 那么会把所有fieldMapping 都填充进去
             if (Regex.isMatchAllPattern(field)) {
                 for (Mapper fieldMapper : allFieldMappers) {
+                    // 将满足条件的fieldMapping 插入到容器中
                     addFieldMapper(fieldPredicate, fieldMapper.name(), fieldMapper, fieldMappings, request.includeDefaults());
                 }
             } else if (Regex.isSimpleMatchPattern(field)) {
                 for (Mapper fieldMapper : allFieldMappers) {
+                    // 如果包含正则匹配 将符合条件的插入到容器中
                     if (Regex.simpleMatch(field, fieldMapper.name())) {
                         addFieldMapper(fieldPredicate,  fieldMapper.name(),
                                 fieldMapper, fieldMappings, request.includeDefaults());
@@ -180,12 +219,23 @@ public class TransportGetFieldMappingsIndexAction
         return Collections.unmodifiableMap(fieldMappings);
     }
 
+    /**
+     * 将命中条件的fieldMapper 插入到map中
+     * @param fieldPredicate
+     * @param field
+     * @param fieldMapper
+     * @param fieldMappings
+     * @param includeDefaults
+     */
     private static void addFieldMapper(Predicate<String> fieldPredicate,
                                        String field, Mapper fieldMapper, Map<String, FieldMappingMetadata> fieldMappings,
                                        boolean includeDefaults) {
+
+        // 避免重复插入
         if (fieldMappings.containsKey(field)) {
             return;
         }
+        // 当通过谓语检测后 才能插入到map中
         if (fieldPredicate.test(field)) {
             try {
                 BytesReference bytes = XContentHelper.toXContent(fieldMapper, XContentType.JSON,

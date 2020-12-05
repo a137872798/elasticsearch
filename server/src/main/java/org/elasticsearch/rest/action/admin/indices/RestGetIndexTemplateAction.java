@@ -40,6 +40,7 @@ import static org.elasticsearch.rest.RestStatus.OK;
 
 /**
  * The REST handler for get template and head template APIs.
+ * 获取某个indexTemplate
  */
 public class RestGetIndexTemplateAction extends BaseRestHandler {
 

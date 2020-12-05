@@ -36,6 +36,9 @@ import static org.elasticsearch.rest.RestRequest.Method.HEAD;
 import static org.elasticsearch.rest.RestStatus.NOT_FOUND;
 import static org.elasticsearch.rest.RestStatus.OK;
 
+/**
+ * 获取 indexTemplateV2
+ */
 public class RestGetIndexTemplateV2Action extends BaseRestHandler {
 
     @Override

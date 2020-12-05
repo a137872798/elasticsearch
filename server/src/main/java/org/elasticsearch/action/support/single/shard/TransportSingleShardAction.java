@@ -250,7 +250,7 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
         }
 
         /**
-         * 串行处理每个分片
+         * 仅往一个分片上发送请求
          * @param currentFailure
          */
         private void perform(@Nullable final Exception currentFailure) {
@@ -344,7 +344,6 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
             if (logger.isTraceEnabled()) {
                 logger.trace("executing [{}] on shard [{}]", request, request.internalShardId);
             }
-            // 收到请求的第一个节点会获取所有相关的分片 然后遍历并将当前正在处理的分片标记在req内部
             asyncShardOperation(request, request.internalShardId, new ChannelActionListener<>(channel, transportShardAction, request));
         }
     }

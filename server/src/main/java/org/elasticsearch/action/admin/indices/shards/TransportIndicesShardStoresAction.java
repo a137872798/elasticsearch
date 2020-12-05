@@ -69,6 +69,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 /**
  * Transport action that reads the cluster state for shards with the requested criteria (see {@link ClusterHealthStatus}) of specific
  * indices and fetches store information from all the nodes using {@link TransportNodesListGatewayStartedShards}
+ * 获取分片仓库信息
  */
 public class TransportIndicesShardStoresAction
         extends TransportMasterNodeReadAction<IndicesShardStoresRequest, IndicesShardStoresResponse> {
@@ -96,6 +97,13 @@ public class TransportIndicesShardStoresAction
         return new IndicesShardStoresResponse(in);
     }
 
+    /**
+     * 在主节点处理请求
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     */
     @Override
     protected void masterOperation(Task task, IndicesShardStoresRequest request, ClusterState state,
                                    ActionListener<IndicesShardStoresResponse> listener) {
@@ -111,10 +119,13 @@ public class TransportIndicesShardStoresAction
             if (indexShardRoutingTables == null) {
                 continue;
             }
+            // 可能在配置中会设置 自定义的数据路径
             final String customDataPath = IndexMetadata.INDEX_DATA_PATH_SETTING.get(state.metadata().index(index).getSettings());
+            // 以 shardId 作为分界线
             for (IndexShardRoutingTable routing : indexShardRoutingTables) {
                 final int shardId = routing.shardId().id();
                 ClusterShardHealth shardHealth = new ClusterShardHealth(shardId, routing);
+                // req携带了什么 status 就代表想要获取哪些状态的分片信息
                 if (request.shardStatuses().contains(shardHealth.getStatus())) {
                     shardsToFetch.add(Tuple.tuple(routing.shardId(), customDataPath));
                 }
@@ -126,6 +137,7 @@ public class TransportIndicesShardStoresAction
         // we could fetch all shard store info from every node once (nNodes requests)
         // we have to implement a TransportNodesAction instead of using TransportNodesListGatewayStartedShards
         // for fetching shard stores info, that operates on a list of shards instead of a single shard
+        // 开始发起一个从分片仓库拉取数据的任务
         new AsyncShardStoresInfoFetches(state.nodes(), routingNodes, shardsToFetch, listener).start();
     }
 
@@ -135,14 +147,28 @@ public class TransportIndicesShardStoresAction
             indexNameExpressionResolver.concreteIndexNames(state, request));
     }
 
+    /**
+     * 发起一个异步 拉取仓库信息的任务
+     */
     private class AsyncShardStoresInfoFetches {
         private final DiscoveryNodes nodes;
         private final RoutingNodes routingNodes;
         private final Set<Tuple<ShardId, String>> shards;
         private final ActionListener<IndicesShardStoresResponse> listener;
         private CountDown expectedOps;
+
+        /**
+         * 每个shard处理后的结果会存储到queue中
+         */
         private final Queue<InternalAsyncFetch.Response> fetchResponses;
 
+        /**
+         *
+         * @param nodes  记录当前集群中所有节点的信息
+         * @param routingNodes  以node为单位描述node下所有的分片信息
+         * @param shards  哪些shard需要恢复数据
+         * @param listener
+         */
         AsyncShardStoresInfoFetches(DiscoveryNodes nodes, RoutingNodes routingNodes, Set<Tuple<ShardId, String>> shards,
                                     ActionListener<IndicesShardStoresResponse> listener) {
             this.nodes = nodes;
@@ -150,6 +176,7 @@ public class TransportIndicesShardStoresAction
             this.shards = shards;
             this.listener = listener;
             this.fetchResponses = new ConcurrentLinkedQueue<>();
+            // 只有当所有分片都处理完成时  才触发监听器
             this.expectedOps = new CountDown(shards.size());
         }
 
@@ -158,14 +185,24 @@ public class TransportIndicesShardStoresAction
                 listener.onResponse(new IndicesShardStoresResponse());
             } else {
                 // explicitely type lister, some IDEs (Eclipse) are not able to correctly infer the function type
+                // 这个对象定义了如何拉取数据的逻辑
                 Lister<BaseNodesResponse<NodeGatewayStartedShards>, NodeGatewayStartedShards> lister = this::listStartedShards;
                 for (Tuple<ShardId, String> shard : shards) {
+                    // 以分片为单位 开始拉取数据
                     InternalAsyncFetch fetch = new InternalAsyncFetch(logger, "shard_stores", shard.v1(), shard.v2(), lister);
                     fetch.fetchData(nodes, Collections.<String>emptySet());
                 }
             }
         }
 
+
+        /**
+         * 开始处理某个分片的拉取任务
+         * @param shardId 拉取的分片id
+         * @param customDataPath
+         * @param nodes
+         * @param listener
+         */
         private void listStartedShards(ShardId shardId, String customDataPath, DiscoveryNode[] nodes,
                                        ActionListener<BaseNodesResponse<NodeGatewayStartedShards>> listener) {
             var request = new TransportNodesListGatewayStartedShards.Request(shardId, customDataPath, nodes);
@@ -173,6 +210,9 @@ public class TransportIndicesShardStoresAction
                 ActionListener.wrap(listener::onResponse, listener::onFailure));
         }
 
+        /**
+         * 以shard为单位  执行拉取store数据的任务
+         */
         private class InternalAsyncFetch extends AsyncShardFetch<NodeGatewayStartedShards> {
 
             InternalAsyncFetch(Logger logger, String type, ShardId shardId, String customDataPath,
@@ -180,6 +220,12 @@ public class TransportIndicesShardStoresAction
                 super(logger, type, shardId, customDataPath, action);
             }
 
+            /**
+             * 这里已经覆盖了父类的方法  就是当单个分片在所有相关节点上都收到结果后触发
+             * @param responses 对应处理成功的结果
+             * @param failures 对应处理失败的结果
+             * @param fetchingRound 代表当前是第几轮发起的请求
+             */
             @Override
             protected synchronized void processAsyncFetch(List<NodeGatewayStartedShards> responses, List<FailedNodeException> failures,
                                                           long fetchingRound) {
@@ -189,11 +235,16 @@ public class TransportIndicesShardStoresAction
                 }
             }
 
+            /**
+             * 当所有分片的元数据信息都获取到后 进入第二个阶段
+             */
             void finish() {
                 ImmutableOpenMap.Builder<String, ImmutableOpenIntMap<java.util.List<IndicesShardStoresResponse.StoreStatus>>>
                     indicesStoreStatusesBuilder = ImmutableOpenMap.builder();
 
                 java.util.List<IndicesShardStoresResponse.Failure> failureBuilder = new ArrayList<>();
+
+                // 每个response 都代表
                 for (Response fetchResponse : fetchResponses) {
                     ImmutableOpenIntMap<java.util.List<IndicesShardStoresResponse.StoreStatus>> indexStoreStatuses =
                         indicesStoreStatusesBuilder.get(fetchResponse.shardId.getIndexName());

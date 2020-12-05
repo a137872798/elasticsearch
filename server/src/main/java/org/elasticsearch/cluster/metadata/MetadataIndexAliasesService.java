@@ -51,6 +51,7 @@ import static org.elasticsearch.indices.cluster.IndicesClusterStateService.Alloc
 
 /**
  * Service responsible for submitting add and remove aliases requests
+ * 有关添加或者移除别名的请求 都交由该服务处理
  */
 public class MetadataIndexAliasesService {
 

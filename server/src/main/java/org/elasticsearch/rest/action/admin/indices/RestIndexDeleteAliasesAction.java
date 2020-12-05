@@ -31,6 +31,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 
+/**
+ * 处理删除索引别名的请求
+ */
 public class RestIndexDeleteAliasesAction extends BaseRestHandler {
 
     @Override

@@ -34,6 +34,9 @@ import java.util.Map;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
+/**
+ * 插入一些别名的请求
+ */
 public class RestIndexPutAliasAction extends BaseRestHandler {
 
     @Override

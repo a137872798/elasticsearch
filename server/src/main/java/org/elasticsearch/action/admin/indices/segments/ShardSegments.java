@@ -31,10 +31,19 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 
+/**
+ * 每个分片 对应了一组segment
+ */
 public class ShardSegments implements Writeable, Iterable<Segment> {
 
+    /**
+     * 这个分片的路由信息
+     */
     private ShardRouting shardRouting;
 
+    /**
+     * 每个分片都对应了一组 lucene.segment
+     */
     private List<Segment> segments;
 
     ShardSegments(ShardRouting shardRouting, List<Segment> segments) {

@@ -131,6 +131,9 @@ public class GetFieldMappingsResponse extends ActionResponse implements ToXConte
         }
     }
 
+    /**
+     * 存储 fieldMapping信息
+     */
     public static class FieldMappingMetadata implements ToXContentFragment {
 
         private static final ParseField FULL_NAME = new ParseField("full_name");
@@ -142,6 +145,9 @@ public class GetFieldMappingsResponse extends ActionResponse implements ToXConte
             );
 
         private String fullName;
+        /**
+         * 此时 fieldMapping信息 已经被序列化了
+         */
         private BytesReference source;
 
         public FieldMappingMetadata(String fullName, BytesReference source) {

@@ -38,6 +38,7 @@ import static org.elasticsearch.rest.RestRequest.Method.HEAD;
 
 /**
  * The REST handler for get index and head index APIs.
+ * 获取所有索引信息
  */
 public class RestGetIndicesAction extends BaseRestHandler {
 

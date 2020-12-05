@@ -31,6 +31,10 @@ import java.io.IOException;
  * A request to retrieve information about an index.
  */
 public class GetIndexRequest extends ClusterInfoRequest<GetIndexRequest> {
+
+    /**
+     * 代表要获取index的哪些信息
+     */
     public enum Feature {
         ALIASES((byte) 0),
         MAPPINGS((byte) 1),

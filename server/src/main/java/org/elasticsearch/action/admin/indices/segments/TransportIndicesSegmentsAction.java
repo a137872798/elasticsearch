@@ -40,6 +40,10 @@ import org.elasticsearch.transport.TransportService;
 import java.io.IOException;
 import java.util.List;
 
+/**
+ * 获取索引segment信息
+ * 该请求会按照shard维度进行拆解
+ */
 public class TransportIndicesSegmentsAction
         extends TransportBroadcastByNodeAction<IndicesSegmentsRequest, IndicesSegmentResponse, ShardSegments> {
 
@@ -90,10 +94,18 @@ public class TransportIndicesSegmentsAction
         return new IndicesSegmentsRequest(in);
     }
 
+    /**
+     * 如何处理每个分片
+     * @param request      the node-level request
+     * @param shardRouting the shard on which to execute the operation
+     * @return
+     */
     @Override
     protected ShardSegments shardOperation(IndicesSegmentsRequest request, ShardRouting shardRouting) {
+        // 一个index下对应多个分片 每个分片的segment信息总和 才是一个index的segment信息吧
         IndexService indexService = indicesService.indexServiceSafe(shardRouting.index());
         IndexShard indexShard = indexService.getShard(shardRouting.id());
+        // 主要就是通过engine实现该功能 并将相关数据包装一下作为结果
         return new ShardSegments(indexShard.routingEntry(), indexShard.segments(request.verbose()));
     }
 }
