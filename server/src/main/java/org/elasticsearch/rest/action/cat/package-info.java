@@ -19,5 +19,6 @@
 
 /**
  * {@link org.elasticsearch.rest.RestHandler}s for actions that spit out tables of results.
+ * 这个包下面的action 都是将结果以table的形式输出
  */
 package org.elasticsearch.rest.action.cat;

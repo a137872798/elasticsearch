@@ -118,7 +118,7 @@ public class MetadataUpdateSettingsService {
                 // 有关动态配置 或者包含通配符的配置项 又加入到open容器中
                 settingsForOpenIndices.copy(key, normalizedSettings);
             } else {
-                // 剩余的存储到skip容器中
+                // 存储非动态配置项
                 skippedSettings.add(key);
             }
         }
@@ -157,6 +157,7 @@ public class MetadataUpdateSettingsService {
                         actualIndices[i] = index.getName();
                         // 先获取本次操作涉及到的所有index
                         final IndexMetadata metadata = currentState.metadata().getIndexSafe(index);
+                        // 根据此时index是否处于打开状态 存储到2个容器中
                         if (metadata.getState() == IndexMetadata.State.OPEN) {
                             openIndices.add(index);
                         } else {
@@ -164,18 +165,24 @@ public class MetadataUpdateSettingsService {
                         }
                     }
 
+                    // skip中存储的是非动态配置 并且此时有某些index处于打开状态
+                    // 看来非dynamic配置项不能作用于打开的索引上 必须先等待索引被关闭
                     if (!skippedSettings.isEmpty() && !openIndices.isEmpty()) {
                         throw new IllegalArgumentException(String.format(Locale.ROOT,
                             "Can't update non dynamic settings [%s] for open indices %s", skippedSettings, openIndices));
                     }
 
+                    // 那么此时 要么本次更新的都是动态配置项 要么所有索引均处于关闭状态
+                    // 这个配置项是从openSettings中获得的 也就是说这个配置属于动态配置
                     int updatedNumberOfReplicas = openSettings.getAsInt(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, -1);
                     if (updatedNumberOfReplicas != -1 && preserveExisting == false) {
 
                         // Verify that this won't take us over the cluster shard limit.
+                        // 根据最新的副本数 计算这些索引总计应该创建多少分片
                         int totalNewShards = Arrays.stream(request.indices())
                             .mapToInt(i -> getTotalNewShards(i, currentState, updatedNumberOfReplicas))
                             .sum();
+                        // 检测这些分片总数是否超过了集群限制
                         Optional<String> error = IndicesService.checkShardLimit(totalNewShards, currentState);
                         if (error.isPresent()) {
                             ValidationException ex = new ValidationException();
@@ -186,11 +193,14 @@ public class MetadataUpdateSettingsService {
                         // we do *not* update the in sync allocation ids as they will be removed upon the first index
                         // operation which make these copies stale
                         // TODO: update the list once the data is deleted by the node?
+                        // 根据副本数调整路由表下所有分片数量
                         routingTableBuilder.updateNumberOfReplicas(updatedNumberOfReplicas, actualIndices);
+                        // 更新元数据中有关分片数量的信息
                         metadataBuilder.updateNumberOfReplicas(updatedNumberOfReplicas, actualIndices);
                         logger.info("updating number_of_replicas to [{}] for indices {}", updatedNumberOfReplicas, actualIndices);
                     }
 
+                    // 因为即将要对index做一些操作 所以这里增加了一些block 避免在意外情况下访问
                     ClusterBlocks.Builder blocks = ClusterBlocks.builder().blocks(currentState.blocks());
                     maybeUpdateClusterBlock(actualIndices, blocks, IndexMetadata.INDEX_READ_ONLY_BLOCK,
                         IndexMetadata.INDEX_READ_ONLY_SETTING, openSettings);
@@ -203,29 +213,36 @@ public class MetadataUpdateSettingsService {
                     maybeUpdateClusterBlock(actualIndices, blocks, IndexMetadata.INDEX_READ_BLOCK,
                         IndexMetadata.INDEX_BLOCKS_READ_SETTING, openSettings);
 
+                    // 存在打开的索引 那么本次更新配置必须全部都是动态配置
                     if (!openIndices.isEmpty()) {
                         for (Index index : openIndices) {
                             IndexMetadata indexMetadata = metadataBuilder.getSafe(index);
                             Settings.Builder updates = Settings.builder();
                             Settings.Builder indexSettings = Settings.builder().put(indexMetadata.getSettings());
+                            // 更新原有的配置  如果某些值被设置成null 会从indexSettings中移除
                             if (indexScopedSettings.updateDynamicSettings(openSettings, indexSettings, updates, index.getName())) {
+                                // 这里又覆盖回去还改毛啊???
                                 if (preserveExisting) {
                                     indexSettings.put(indexMetadata.getSettings());
                                 }
                                 Settings finalSettings = indexSettings.build();
                                 indexScopedSettings.validate(
                                     finalSettings.filter(k -> indexScopedSettings.isPrivateSetting(k) == false), true);
+                                // 这里将 finalSettings覆盖到之前的旧配置中
                                 metadataBuilder.put(IndexMetadata.builder(indexMetadata).settings(finalSettings));
                             }
                         }
                     }
 
+                    // 针对close的索引 无论是否是动态配置 都可以更新  当openIndex为空 就可以存在普通配置 当openIndex不为空 实际上本次更新的配置还是只有动态配置(过不了上面的判断条件)
+                    // 操作跟上面基本相同
                     if (!closeIndices.isEmpty()) {
                         for (Index index : closeIndices) {
                             IndexMetadata indexMetadata = metadataBuilder.getSafe(index);
                             Settings.Builder updates = Settings.builder();
                             Settings.Builder indexSettings = Settings.builder().put(indexMetadata.getSettings());
                             if (indexScopedSettings.updateSettings(closedSettings, indexSettings, updates, index.getName())) {
+                                // 理解不了这个标记的意义
                                 if (preserveExisting) {
                                     indexSettings.put(indexMetadata.getSettings());
                                 }
@@ -237,14 +254,19 @@ public class MetadataUpdateSettingsService {
                         }
                     }
 
+                    // 如果存在有关事务文件存储的配置  age应该是形容最多保留多久前的文件  而size则是当文件达到多少大小时强制清理
+                    // 清理了就代表数据无法恢复  极端情况会导致写入可能还未读取的数据被删除??? 特别是MQ这种被清理了会怎么办 允许出现这种情况吗
                     if (IndexSettings.INDEX_TRANSLOG_RETENTION_AGE_SETTING.exists(normalizedSettings) ||
                         IndexSettings.INDEX_TRANSLOG_RETENTION_SIZE_SETTING.exists(normalizedSettings)) {
+                        // 检测这些配置项是否合法
                         for (String index : actualIndices) {
+                            // 实际上在8.0版本开始 不再支持这两项配置了 当检测到会抛出异常
                             MetadataCreateIndexService.validateTranslogRetentionSettings(metadataBuilder.get(index).getSettings());
                         }
                     }
                     // increment settings versions
                     for (final String index : actualIndices) {
+                        // 如果配置项发生了变化 需要增加版本号
                         if (same(currentState.metadata().index(index).getSettings(), metadataBuilder.get(index).getSettings()) == false) {
                             final IndexMetadata.Builder builder = IndexMetadata.builder(metadataBuilder.get(index));
                             builder.settingsVersion(1 + builder.settingsVersion());
@@ -252,6 +274,7 @@ public class MetadataUpdateSettingsService {
                         }
                     }
 
+                    // 因为配置项的更新 所以需要为新生成的分片分配路由
                     ClusterState updatedState = ClusterState.builder(currentState).metadata(metadataBuilder)
                         .routingTable(routingTableBuilder.build()).blocks(blocks).build();
 
@@ -261,6 +284,7 @@ public class MetadataUpdateSettingsService {
                         for (Index index : openIndices) {
                             final IndexMetadata currentMetadata = currentState.getMetadata().getIndexSafe(index);
                             final IndexMetadata updatedMetadata = updatedState.metadata().getIndexSafe(index);
+                            // 以检测元数据的场景会创建索引服务 确保不会出现异常  并且会关闭索引
                             indicesService.verifyIndexMetadata(currentMetadata, updatedMetadata);
                         }
                         for (Index index : closeIndices) {
@@ -280,10 +304,20 @@ public class MetadataUpdateSettingsService {
             });
     }
 
+    /**
+     * 计算某个index下总的分片数
+     * @param index  当前处理的索引名
+     * @param currentState
+     * @param updatedNumberOfReplicas
+     * @return
+     */
     private int getTotalNewShards(Index index, ClusterState currentState, int updatedNumberOfReplicas) {
         IndexMetadata indexMetadata = currentState.metadata().index(index);
+        // 有多少shardId
         int shardsInIndex = indexMetadata.getNumberOfShards();
+        // 原先有多少副本
         int oldNumberOfReplicas = indexMetadata.getNumberOfReplicas();
+        // 通过副本数差值 * shardId 数 得到增加的分片总数 因为primary会对冲 所以不需要考虑
         int replicaIncrease = updatedNumberOfReplicas - oldNumberOfReplicas;
         return replicaIncrease * shardsInIndex;
     }

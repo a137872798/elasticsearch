@@ -754,10 +754,10 @@ public abstract class AbstractScopedSettings {
      * {@link IllegalArgumentException} is thrown instead.
      * </p>
      *
-     * @param toApply the new settings to apply
+     * @param toApply the new settings to apply     本次所有的更新项
      * @param target the target settings builder that the updates are applied to. All keys that have explicit null value in toApply will be
      *        removed from this builder
-     * @param updates a settings builder that holds all updates applied to target
+     * @param updates a settings builder that holds all updates applied to target    空容器 存储本次被更新的配置项
      * @param type a free text string to allow better exceptions messages
      * @return <code>true</code> if the target has changed otherwise <code>false</code>
      */
@@ -782,14 +782,15 @@ public abstract class AbstractScopedSettings {
     /**
      * Returns <code>true</code> if the given key is a valid delete key
      * @param onlyDynamic 代表仅处理动态配置
-     * 检测某个配置能否被移除  TODO
+     * 检测某个配置能否被移除
      */
     private boolean isValidDelete(String key, boolean onlyDynamic) {
-        // 首先final配置是不能移除的
+        // 首先final配置项是不能被删除的
         return isFinalSetting(key) == false && // it's not a final setting
             // 如果是动态配置 允许删除
             // the setting is not registered AND it's been archived
             // it's a dynamicSetting and we only do dynamic settings
+            // TODO 当没有配置项 但是key以 archive开头 就可以删除是什么鬼???
             (onlyDynamic && isDynamicSetting(key) || get(key) == null && key.startsWith(ARCHIVED_SETTINGS_PREFIX)
                 ||
                 (onlyDynamic == false && get(key) != null)); // if it's not dynamic AND we have a key
@@ -800,8 +801,8 @@ public abstract class AbstractScopedSettings {
      *
      * @param toApply the new settings to apply    本次会作用的新配置
      * @param target the target settings builder that the updates are applied to. All keys that have explicit null value in toApply will be
-     *        removed from this builder      之前的旧配置
-     * @param updates a settings builder that holds all updates applied to target   处理后的结果会存储在该对象中
+     *        removed from this builder      本次更新将会作用到这个容器中  如果更新项对应的value为null 从target中移除该配置项
+     * @param updates a settings builder that holds all updates applied to target   本次成功作用的所有更新项会存储到这个builder中
      * @param type a free text string to allow better exceptions messages
      * @param onlyDynamic if <code>false</code> all settings are updated otherwise only dynamic settings are updated. if set to
      *        <code>true</code> and a non-dynamic setting is updated an exception is thrown.    代表仅更新 属性为Dynamic的settings  默认为true
@@ -812,20 +813,22 @@ public abstract class AbstractScopedSettings {
         final Set<String> toRemove = new HashSet<>();
         Settings.Builder settingsBuilder = Settings.builder();
 
-        // 首先部分配置是不允许更新的
+        // 首先被标记成final的配置项是不能更新的  其次在没有要求onlyDynamic 或者当前配置项是dynamic是随时可以更新的
         final Predicate<String> canUpdate = (key) -> (
             isFinalSetting(key) == false && // it's not a final setting
                 ((onlyDynamic == false && get(key) != null) || isDynamicSetting(key)));
+
+        // 遍历本次要更新的所有配置项
         for (String key : toApply.keySet()) {
-            // keys 和 settings是分离的  hasValue 为false 就代表这个配置被删除了
+            // 如果对应的value为null 实际上代表本次是一次删除更新
             boolean isDelete = toApply.hasValue(key) == false;
-            // 当key 精确命中的配置项支持删除 或者key是一个模糊匹配 那么可以存储到remove容器中
+            // 当本次是一个删除操作  并且符合删除条件 或者以*结尾 先存入到remove容器中 之后做删除操作
             if (isDelete && (isValidDelete(key, onlyDynamic) || key.endsWith("*"))) {
                 // this either accepts null values that suffice the canUpdate test OR wildcard expressions (key ends with *)
                 // we don't validate if there is any dynamic setting with that prefix yet we could do in the future
                 toRemove.add(key);
                 // we don't set changed here it's set after we apply deletes below if something actually changed
-                // 被更新的配置首先应该确保存在原始配置
+                // 更新配置前 必须确保原配置存在
             } else if (get(key) == null) {
                 throw new IllegalArgumentException(type + " setting [" + key + "], not recognized");
                 // 本次是更新操作且满足更新条件
@@ -834,7 +837,9 @@ public abstract class AbstractScopedSettings {
                 get(key).validateWithoutDependencies(toApply); // we might not have a full picture here do to a dependency validation
                 // 将新的配置设置到 builder中
                 settingsBuilder.copy(key, toApply);
+                // 本次更新的配置项要存储到容器中
                 updates.copy(key, toApply);
+                // 代表本次配置项确实发生了变化
                 changed |= toApply.get(key).equals(target.get(key)) == false;
             } else {
                 if (isFinalSetting(key)) {
@@ -844,8 +849,9 @@ public abstract class AbstractScopedSettings {
                 }
             }
         }
-        // 在处理完更新后 处理之前找到的所有待删除的配置
+        //
         changed |= applyDeletes(toRemove, target, k -> isValidDelete(k, onlyDynamic));
+        // 使用本次更新的配置项覆盖之前的配置
         target.put(settingsBuilder.build());
         return changed;
     }

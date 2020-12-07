@@ -108,6 +108,9 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
     private String pipeline;
     private String finalPipeline;
 
+    /**
+     * 默认情况下构建该req时 管道还未被解析
+     */
     private boolean isPipelineResolved;
 
     /**

@@ -115,9 +115,15 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest>
 
     private ActiveShardCount waitForActiveShards = ActiveShardCount.DEFAULT;
 
+    /**
+     * 该属性和 doc对应的indexRequest 有什么区别呢???
+     */
     private IndexRequest upsertRequest;
 
     private boolean scriptedUpsert = false;
+    /**
+     * upsert 更新插入的意思 insert and update???
+     */
     private boolean docAsUpsert = false;
     private boolean detectNoop = true;
     private Boolean preferV2Templates;

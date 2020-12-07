@@ -487,8 +487,8 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
         /**
          * Update the number of replicas for the specified indices.
          *
-         * @param numberOfReplicas the number of replicas
-         * @param indices          the indices to update the number of replicas for
+         * @param numberOfReplicas the number of replicas  本次设置的新的副本数
+         * @param indices          the indices to update the number of replicas for  本次更新涉及到的索引
          * @return the builder
          * 更新某些索引推荐的副本数量
          */
@@ -519,7 +519,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
                     for (int i = 0; i < (numberOfReplicas - currentNumberOfReplicas); i++) {
                         builder.addReplica();
                     }
-                // 代表需要丢弃一些副本  怎么知道要丢哪几个node对应的副本呢
+                // 代表需要在每个相关的节点上移除副本
                 } else if (currentNumberOfReplicas > numberOfReplicas) {
                     int delta = currentNumberOfReplicas - numberOfReplicas;
                     if (delta <= 0) {

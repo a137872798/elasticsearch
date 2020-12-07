@@ -41,6 +41,9 @@ import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestStatus.OK;
 
+/**
+ * 校验查询对象是什么
+ */
 public class RestValidateQueryAction extends BaseRestHandler {
 
     @Override

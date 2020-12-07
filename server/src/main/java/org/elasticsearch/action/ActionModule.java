@@ -608,6 +608,7 @@ public class ActionModule extends AbstractModule {
             actions.register(DeleteIndexTemplateV2Action.INSTANCE, TransportDeleteIndexTemplateV2Action.class);
             actions.register(SimulateIndexTemplateAction.INSTANCE, TransportSimulateIndexTemplateAction.class);
         }
+        // 校验query对象
         actions.register(ValidateQueryAction.INSTANCE, TransportValidateQueryAction.class);
         // 获取索引的刷新状态
         actions.register(RefreshAction.INSTANCE, TransportRefreshAction.class);
@@ -615,6 +616,7 @@ public class ActionModule extends AbstractModule {
         actions.register(FlushAction.INSTANCE, TransportFlushAction.class);
         // 发起强制merge的操作
         actions.register(ForceMergeAction.INSTANCE, TransportForceMergeAction.class);
+        // 升级服务
         actions.register(UpgradeAction.INSTANCE, TransportUpgradeAction.class);
         actions.register(UpgradeStatusAction.INSTANCE, TransportUpgradeStatusAction.class);
         actions.register(UpgradeSettingsAction.INSTANCE, TransportUpgradeSettingsAction.class);
@@ -634,6 +636,7 @@ public class ActionModule extends AbstractModule {
         actions.register(UpdateAction.INSTANCE, TransportUpdateAction.class);
         actions.register(MultiGetAction.INSTANCE, TransportMultiGetAction.class);
         actions.register(TransportShardMultiGetAction.TYPE, TransportShardMultiGetAction.class);
+        // 处理大块数据请求
         actions.register(BulkAction.INSTANCE, TransportBulkAction.class);
         actions.register(TransportShardBulkAction.TYPE, TransportShardBulkAction.class);
         actions.register(SearchAction.INSTANCE, TransportSearchAction.class);

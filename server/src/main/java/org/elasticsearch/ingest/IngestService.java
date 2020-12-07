@@ -71,6 +71,7 @@ import java.util.function.IntConsumer;
 
 /**
  * Holder class for several ingest related services.
+ * 摄取服务对象
  */
 public class IngestService implements ClusterStateApplier, ReportingService<IngestInfo> {
 
@@ -85,13 +86,14 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
     // We know of all the processor factories when a node with all its plugin have been initialized. Also some
     // processor factories rely on other node services. Custom metadata is statically registered when classes
     // are loaded, so in the cluster state we just save the pipeline config and here we keep the actual pipelines around.
+    // 管道对象一开始就是提前存储在诊断服务内部的
     private volatile Map<String, PipelineHolder> pipelines = Map.of();
     private final ThreadPool threadPool;
     private final IngestMetric totalMetrics = new IngestMetric();
     private final List<Consumer<ClusterState>> ingestClusterStateListeners = new CopyOnWriteArrayList<>();
 
     /**
-     * 初始化 摄取拂去
+     * 初始化
      * @param clusterService   集群服务
      * @param threadPool     线程池总控对象
      * @param env             环境中包含需要的各种配置
@@ -352,6 +354,14 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         ExceptionsHelper.rethrowAndSuppress(exceptions);
     }
 
+    /**
+     * 执行诊断工作
+     * @param numberOfActionRequests  bulkReq内部有多少子级req
+     * @param actionRequests
+     * @param onFailure
+     * @param onCompletion
+     * @param onDropped
+     */
     public void executeBulkRequest(int numberOfActionRequests,
                                    Iterable<DocWriteRequest<?>> actionRequests,
                                    BiConsumer<Integer, Exception> onFailure,
@@ -368,11 +378,14 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
             @Override
             protected void doRun() {
                 final Thread originalThread = Thread.currentThread();
+                // 当前总共有多少请求
                 final AtomicInteger counter = new AtomicInteger(numberOfActionRequests);
                 int i = 0;
                 for (DocWriteRequest<?> actionRequest : actionRequests) {
+                    // 从docWriterReq中抽取indexReq
                     IndexRequest indexRequest = TransportBulkAction.getIndexWriteRequest(actionRequest);
                     if (indexRequest == null) {
+                        // 当所有doc都被处理完后 触发结果对应的监听器
                         if (counter.decrementAndGet() == 0){
                             onCompletion.accept(originalThread, null);
                         }
@@ -393,6 +406,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
                     } else if (IngestService.NOOP_PIPELINE_NAME.equals(finalPipelineId) == false) {
                         pipelines = List.of(finalPipelineId);
                     } else {
+                        // 非管道模式 不进行处理
                         if (counter.decrementAndGet() == 0) {
                             onCompletion.accept(originalThread, null);
                         }
@@ -400,6 +414,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
                         continue;
                     }
 
+                    // 将管道信息包装成list对象
                     executePipelines(i, pipelines.iterator(), indexRequest, onDropped, onFailure, counter, onCompletion, originalThread);
 
                     i++;
@@ -408,9 +423,20 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         });
     }
 
+    /**
+     * 首先只有从req中获取到了 pipeline 才能使用管道模式进行处理
+     * @param slot
+     * @param it
+     * @param indexRequest
+     * @param onDropped
+     * @param onFailure
+     * @param counter
+     * @param onCompletion
+     * @param originalThread
+     */
     private void executePipelines(
         final int slot,
-        final Iterator<String> it,
+        final Iterator<String> it,  // 遍历 defaultPipeline/finalPipeline
         final IndexRequest indexRequest,
         final IntConsumer onDropped,
         final BiConsumer<Integer, Exception> onFailure,
@@ -421,6 +447,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         while (it.hasNext()) {
             final String pipelineId = it.next();
             try {
+                // 获取相关的管道包装对象  内部包含一个(PipelineConfiguration Pipeline 对象)
                 PipelineHolder holder = pipelines.get(pipelineId);
                 if (holder == null) {
                     throw new IllegalArgumentException("pipeline with id [" + pipelineId + "] does not exist");
@@ -718,9 +745,18 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         return new Pipeline(id, description, null, new CompoundProcessor(failureProcessor));
     }
 
+    /**
+     * 管道对象的包装器
+     */
     static class PipelineHolder {
 
+        /**
+         * 描述该管道的配置对象
+         */
         final PipelineConfiguration configuration;
+        /**
+         * 管道对象
+         */
         final Pipeline pipeline;
 
         PipelineHolder(PipelineConfiguration configuration, Pipeline pipeline) {

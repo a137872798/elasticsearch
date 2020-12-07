@@ -34,6 +34,9 @@ import java.util.Set;
 import static org.elasticsearch.rest.action.cat.RestTable.buildHelpWidths;
 import static org.elasticsearch.rest.action.cat.RestTable.pad;
 
+/**
+ * 为什么叫 cat action
+ */
 public abstract class AbstractCatAction extends BaseRestHandler {
 
     protected abstract RestChannelConsumer doCatRequest(RestRequest request, NodeClient client);
@@ -42,6 +45,13 @@ public abstract class AbstractCatAction extends BaseRestHandler {
 
     protected abstract Table getTableWithHeader(RestRequest request);
 
+    /**
+     * 定义了如何处理数据 以及通过channel返回结果的模板
+     * @param request the request to execute
+     * @param client  client for executing actions on the local node
+     * @return
+     * @throws IOException
+     */
     @Override
     public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
         boolean helpWanted = request.paramAsBoolean("help", false);

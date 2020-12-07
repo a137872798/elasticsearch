@@ -54,6 +54,7 @@ import java.util.Set;
 
 /**
  * Upgrade index/indices action.
+ * lucene版本升级的先忽略吧
  */
 public class TransportUpgradeAction extends TransportBroadcastByNodeAction<UpgradeRequest, UpgradeResponse, ShardUpgradeResult> {
 

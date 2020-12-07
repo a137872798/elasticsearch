@@ -1323,6 +1323,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
          * @param numberOfReplicas the number of replicas
          * @param indices          the indices to update the number of replicas for
          * @return the builder
+         * 某些index此时的副本数量以及发生了变化
          */
         public Builder updateNumberOfReplicas(final int numberOfReplicas, final String[] indices) {
             for (String index : indices) {

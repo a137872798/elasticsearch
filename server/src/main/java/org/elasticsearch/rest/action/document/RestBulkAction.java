@@ -45,6 +45,7 @@ import static org.elasticsearch.rest.RestRequest.Method.PUT;
  * { "create" : { "_index" : "test", "_id" : "1" }
  * { "type1" : { "field1" : "value1" } }
  * </pre>
+ * 针对大块数据的操作 涉及到index下的document了
  */
 public class RestBulkAction extends BaseRestHandler {
 

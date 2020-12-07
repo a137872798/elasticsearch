@@ -866,6 +866,7 @@ public class IndicesService extends AbstractLifecycleComponent
      * This method will throw an exception if the creation or the update fails.
      * The created {@link IndexService} will not be registered and will be closed immediately.
      * @param metadata
+     * 使用新的索引元数据 尝试创建索引服务 主要是为了确保新的索引服务不会抛出异常
      */
     public synchronized void verifyIndexMetadata(IndexMetadata metadata, IndexMetadata metadataUpdate) throws IOException {
         final List<Closeable> closeables = new ArrayList<>();
@@ -1855,7 +1856,7 @@ public class IndicesService extends AbstractLifecycleComponent
      * @param state     The current cluster state
      * @return If present, an error message to be given as the reason for failing
      * an operation. If empty, a sign that the operation is valid.
-     * 检测当前集群能否承载这么多分片
+     * 检测当前集群能否承载这么多分片   通过本次新增的分片加上之前的分片 与集群中最大承载数做比较
      */
     public static Optional<String> checkShardLimit(int newShards, ClusterState state) {
         Settings theseSettings = state.metadata().settings();

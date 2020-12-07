@@ -35,6 +35,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 对索引版本进行升级 应该是考虑兼容性的  先忽略吧
+ */
 public class RestUpgradeActionDeprecated extends BaseRestHandler {
 
     private static final DeprecationLogger deprecationLogger = new DeprecationLogger(

@@ -34,6 +34,7 @@ import org.elasticsearch.script.ScriptService;
 
 /**
  * A pipeline is a list of {@link Processor} instances grouped under a unique id.
+ * 管道对象  内部存储了一组processor对象
  */
 public final class Pipeline {
 
@@ -47,6 +48,9 @@ public final class Pipeline {
     private final String description;
     @Nullable
     private final Integer version;
+    /**
+     * 内部整合了一组processor
+     */
     private final CompoundProcessor compoundProcessor;
     private final IngestMetric metrics;
     private final LongSupplier relativeTimeProvider;
@@ -66,6 +70,15 @@ public final class Pipeline {
         this.relativeTimeProvider = relativeTimeProvider;
     }
 
+    /**
+     * 根据现有信息创建一个管道对象
+     * @param id
+     * @param config
+     * @param processorFactories
+     * @param scriptService
+     * @return
+     * @throws Exception
+     */
     public static Pipeline create(String id, Map<String, Object> config,
         Map<String, Processor.Factory> processorFactories, ScriptService scriptService) throws Exception {
         String description = ConfigurationUtils.readOptionalStringProperty(null, null, config, DESCRIPTION_KEY);

@@ -39,6 +39,7 @@ import java.util.Objects;
 
 /**
  * Encapsulates a pipeline's id and configuration as a blob
+ * 描述管道的配置对象  一个简单的bean对象
  */
 public final class PipelineConfiguration extends AbstractDiffable<PipelineConfiguration> implements ToXContentObject {
 
