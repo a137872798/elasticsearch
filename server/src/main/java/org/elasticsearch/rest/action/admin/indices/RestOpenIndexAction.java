@@ -33,6 +33,10 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 打开某个索引的请求
+ * 除了创建索引还有个打开的操作
+ */
 public class RestOpenIndexAction extends BaseRestHandler {
 
     @Override

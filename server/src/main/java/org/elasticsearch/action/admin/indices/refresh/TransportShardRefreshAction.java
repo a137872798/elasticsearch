@@ -37,7 +37,10 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
-
+/**
+ * 针对shard发起刷新请求
+ * 该action的处理 将会扩散到所有分片上
+ */
 public class TransportShardRefreshAction
         extends TransportReplicationAction<BasicReplicationRequest, BasicReplicationRequest, ReplicationResponse> {
 
@@ -57,6 +60,12 @@ public class TransportShardRefreshAction
         return new ReplicationResponse(in);
     }
 
+    /**
+     * 当在主分片收到请求时进行处理
+     * @param shardRequest the request to the primary shard
+     * @param primary      the primary shard to perform the operation on
+     * @param listener
+     */
     @Override
     protected void shardOperationOnPrimary(BasicReplicationRequest shardRequest, IndexShard primary,
             ActionListener<PrimaryResult<BasicReplicationRequest, ReplicationResponse>> listener) {

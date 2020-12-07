@@ -90,7 +90,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * The action samples cluster state on the receiving node to reroute to node with primary copy and on the
  * primary node to validate request before primary operation followed by sampling state again for resolving
  * nodes with replica copies to perform replication.
- * 代表某个action的处理会传播到所有副本上
+ * 代表某个action的处理会某个shardId下所有分片中
  */
 public abstract class TransportReplicationAction<
             Request extends ReplicationRequest<Request>,

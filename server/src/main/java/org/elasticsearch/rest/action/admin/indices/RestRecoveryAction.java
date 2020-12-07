@@ -34,6 +34,7 @@ import static org.elasticsearch.rest.RestRequest.Method.GET;
 
 /**
  * REST handler to report on index recoveries.
+ * 获取当前index的恢复状态
  */
 public class RestRecoveryAction extends BaseRestHandler {
 

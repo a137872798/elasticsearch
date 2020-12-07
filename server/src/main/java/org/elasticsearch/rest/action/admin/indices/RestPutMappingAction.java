@@ -37,6 +37,9 @@ import static org.elasticsearch.client.Requests.putMappingRequest;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
+/**
+ * 插入一个mappings信息  应该会涉及到与oldMapping的merge工作
+ */
 public class RestPutMappingAction extends BaseRestHandler {
 
     @Override

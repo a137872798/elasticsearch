@@ -98,6 +98,7 @@ public class MetadataIndexStateService {
     private static final Logger logger = LogManager.getLogger(MetadataIndexStateService.class);
 
     public static final int INDEX_CLOSED_BLOCK_ID = 4;
+    // TODO 推测是某个打开的索引 即将被关闭前会增加这个block
     public static final ClusterBlock INDEX_CLOSED_BLOCK = new ClusterBlock(4, "index closed", false,
         false, false, RestStatus.FORBIDDEN, ClusterBlockLevel.READ_WRITE);
     public static final Setting<Boolean> VERIFIED_BEFORE_CLOSE_SETTING =
@@ -130,8 +131,7 @@ public class MetadataIndexStateService {
      * Closing indices is a 3 steps process: it first adds a write block to every indices to close, then waits for the operations on shards
      * to be terminated and finally closes the indices by moving their state to CLOSE.
      *
-     * @param request
-     * 实际上只是将index 在 IndexMetadata/RoutingTable 级别标记成了CLOSE
+     * @param request 实际上只是将index 在 IndexMetadata/RoutingTable 级别标记成了CLOSE
      */
     public void closeIndices(final CloseIndexClusterStateUpdateRequest request, final ActionListener<CloseIndexResponse> listener) {
         final Index[] concreteIndices = request.indices();
@@ -599,25 +599,47 @@ public class MetadataIndexStateService {
             closingResults.values());
     }
 
+    /**
+     * 打开某个索引
+     *
+     * @param request
+     * @param listener
+     */
     public void openIndex(final OpenIndexClusterStateUpdateRequest request,
                           final ActionListener<OpenIndexClusterStateUpdateResponse> listener) {
+
+        // 开启索引
         onlyOpenIndex(request, ActionListener.wrap(response -> {
             if (response.isAcknowledged()) {
                 String[] indexNames = Arrays.stream(request.indices()).map(Index::getName).toArray(String[]::new);
+                // 该对象是监控shard状态变化的observer  内部会包含一个ClusterStateObserver 就是会将自身作为listener插入到clusterApplyService中
+                // 监听clusterState的变化  当CS满足集群状态要求时 触发钩子
                 activeShardsObserver.waitForActiveShards(indexNames, request.waitForActiveShards(), request.ackTimeout(),
+
+                    // true代表满足条件 false 代表超时
                     shardsAcknowledged -> {
                         if (shardsAcknowledged == false) {
                             logger.debug("[{}] indices opened, but the operation timed out while waiting for " +
                                 "enough shards to be started.", Arrays.toString(indexNames));
                         }
                         listener.onResponse(new OpenIndexClusterStateUpdateResponse(response.isAcknowledged(), shardsAcknowledged));
-                    }, listener::onFailure);
+                    },
+                    // 代表异常情况
+                    listener::onFailure);
             } else {
+                // TODO 非ack场景先忽略
                 listener.onResponse(new OpenIndexClusterStateUpdateResponse(false, false));
             }
         }, listener::onFailure));
     }
 
+    /**
+     * 打开某个索引  记得在createIndex时 只是开启了一个临时的索引对象 以及创建了新索引的一系列数据 并更新到元数据上
+     * 之后便关闭了创建的临时索引  那么这里应该就是真正的去打开索引
+     *
+     * @param request
+     * @param listener
+     */
     private void onlyOpenIndex(final OpenIndexClusterStateUpdateRequest request,
                                final ActionListener<ClusterStateUpdateResponse> listener) {
         if (request.indices() == null || request.indices().length == 0) {
@@ -636,24 +658,36 @@ public class MetadataIndexStateService {
                 public ClusterState execute(final ClusterState currentState) {
                     final ClusterState updatedState = openIndices(request.indices(), currentState);
                     //no explicit wait for other nodes needed as we use AckedClusterStateUpdateTask
+                    // 由于某些index被打开 会创建相关的shard 所以需要触发重路由 为这些未分配的分片确定位置
                     return allocationService.reroute(updatedState, "indices opened [" + indicesAsString + "]");
                 }
             }
         );
     }
 
+    /**
+     * 打开某些索引 以及更新集群元数据
+     *
+     * @param indices      本次被打开的一些索引
+     * @param currentState 旧的集群状态
+     * @return
+     */
     ClusterState openIndices(final Index[] indices, final ClusterState currentState) {
         final List<IndexMetadata> indicesToOpen = new ArrayList<>();
         for (Index index : indices) {
             final IndexMetadata indexMetadata = currentState.metadata().getIndexSafe(index);
             if (indexMetadata.getState() != IndexMetadata.State.OPEN) {
                 indicesToOpen.add(indexMetadata);
+                // 虽然此时处于OPEN状态 但是被标记了一个id为 INDEX_CLOSED_BLOCK_ID的block  TODO 这个block在很多场景中还会使用 先mark一下
             } else if (currentState.blocks().hasIndexBlockWithId(index.getName(), INDEX_CLOSED_BLOCK_ID)) {
                 indicesToOpen.add(indexMetadata);
             }
         }
 
+        // 检测此时打开的索引是否已经足够多了 如果此时集群中已经存在很多shard了 为了避免承载过高 是不会允许继续创建的
         validateShardLimit(currentState, indices);
+
+        // 如果本次要打开的索引数为0 不做任何处理
         if (indicesToOpen.isEmpty()) {
             return currentState;
         }
@@ -667,10 +701,12 @@ public class MetadataIndexStateService {
 
         for (IndexMetadata indexMetadata : indicesToOpen) {
             final Index index = indexMetadata.getIndex();
+            // 只有此时处于 CLOSE状态的索引才有打开的必要
             if (indexMetadata.getState() != IndexMetadata.State.OPEN) {
                 final Settings.Builder updatedSettings = Settings.builder().put(indexMetadata.getSettings());
                 updatedSettings.remove(VERIFIED_BEFORE_CLOSE_SETTING.getKey());
 
+                // 某个数据每次变化都用一个版本号来记录 还可以解决ABA的问题
                 IndexMetadata updatedIndexMetadata = IndexMetadata.builder(indexMetadata)
                     .state(IndexMetadata.State.OPEN)
                     .settingsVersion(indexMetadata.getSettingsVersion() + 1)
@@ -679,8 +715,10 @@ public class MetadataIndexStateService {
 
                 // The index might be closed because we couldn't import it due to old incompatible version
                 // We need to check that this index can be upgraded to the current version
+                // 更新该索引对应的元数据信息
                 updatedIndexMetadata = metadataIndexUpgradeService.upgradeIndexMetadata(updatedIndexMetadata, minIndexCompatibilityVersion);
                 try {
+                    // 这里主要是以METADATA_VERIFICATION 作为创建indexService的上下文  并在创建后关闭indexService
                     indicesService.verifyIndexMetadata(updatedIndexMetadata, updatedIndexMetadata);
                 } catch (Exception e) {
                     throw new ElasticsearchException("Failed to verify index " + index, e);
@@ -689,14 +727,17 @@ public class MetadataIndexStateService {
             }
 
             // Always removes index closed blocks (note: this can fail on-going close index actions)
+            // 只要index被重新打开 就移除掉INDEX_CLOSED_BLOCK
             blocks.removeIndexBlockWithId(index.getName(), INDEX_CLOSED_BLOCK_ID);
         }
 
+        // 在将本次涉及到的index标记成OPEN状态 以及经过校验后 更新ClusterState
         ClusterState updatedState = ClusterState.builder(currentState).metadata(metadata).blocks(blocks).build();
 
         final RoutingTable.Builder routingTable = RoutingTable.builder(updatedState.routingTable());
         for (IndexMetadata previousIndexMetadata : indicesToOpen) {
             if (previousIndexMetadata.getState() != IndexMetadata.State.OPEN) {
+                // 找到本次更新的 IndexMetadata 并更新到 routingTable中
                 routingTable.addAsFromCloseToOpen(updatedState.metadata().getIndexSafe(previousIndexMetadata.getIndex()));
             }
         }
@@ -710,13 +751,16 @@ public class MetadataIndexStateService {
      * @param currentState The current cluster state.
      * @param indices      The indices which are to be opened.
      * @throws ValidationException If this operation would take the cluster over the limit and enforcement is enabled.
+     *                             检测此时创建的分片数是否已经超过集群容纳上限
      */
     static void validateShardLimit(ClusterState currentState, Index[] indices) {
+        // 此时所有打开的索引下对应的分片总数
         int shardsToOpen = Arrays.stream(indices)
             .filter(index -> currentState.metadata().index(index).getState().equals(IndexMetadata.State.CLOSE))
             .mapToInt(index -> getTotalShardCount(currentState, index))
             .sum();
 
+        // 检测数量是否超过了整个集群的承载
         Optional<String> error = IndicesService.checkShardLimit(shardsToOpen, currentState);
         if (error.isPresent()) {
             ValidationException ex = new ValidationException();
@@ -725,6 +769,13 @@ public class MetadataIndexStateService {
         }
     }
 
+    /**
+     * 获取该索引下的总分片数
+     *
+     * @param state
+     * @param index
+     * @return
+     */
     private static int getTotalShardCount(ClusterState state, Index index) {
         IndexMetadata indexMetadata = state.metadata().index(index);
         return indexMetadata.getNumberOfShards() * (1 + indexMetadata.getNumberOfReplicas());

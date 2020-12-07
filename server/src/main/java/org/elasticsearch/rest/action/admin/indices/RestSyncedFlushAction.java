@@ -42,6 +42,9 @@ import java.util.List;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 发起同步刷盘请求
+ */
 public class RestSyncedFlushAction extends BaseRestHandler {
 
     private static final Logger logger = LogManager.getLogger(RestSyncedFlushAction.class);

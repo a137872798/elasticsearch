@@ -44,12 +44,17 @@ import java.io.IOException;
 
 /**
  * Open index action
+ * 打开某个索引
+ * 该操作仅支持在leader节点调用
  */
 public class TransportOpenIndexAction extends TransportMasterNodeAction<OpenIndexRequest, OpenIndexResponse> {
 
     private static final Logger logger = LogManager.getLogger(TransportOpenIndexAction.class);
 
     private final MetadataIndexStateService indexStateService;
+    /**
+     * 该对象主要是确保一次操作的索引数不宜过多
+     */
     private final DestructiveOperations destructiveOperations;
 
     @Inject
@@ -76,6 +81,7 @@ public class TransportOpenIndexAction extends TransportMasterNodeAction<OpenInde
 
     @Override
     protected void doExecute(Task task, OpenIndexRequest request, ActionListener<OpenIndexResponse> listener) {
+        // 首先避免大范围操作索引  (也就是禁止使用通配符)
         destructiveOperations.failDestructive(request.indices());
         super.doExecute(task, request, listener);
     }
@@ -86,6 +92,13 @@ public class TransportOpenIndexAction extends TransportMasterNodeAction<OpenInde
             indexNameExpressionResolver.concreteIndexNames(state, request));
     }
 
+    /**
+     * 处理逻辑入口
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     */
     @Override
     protected void masterOperation(Task task, final OpenIndexRequest request, final ClusterState state,
                                    final ActionListener<OpenIndexResponse> listener) {

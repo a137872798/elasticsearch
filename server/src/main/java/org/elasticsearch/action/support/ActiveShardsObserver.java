@@ -36,6 +36,7 @@ import java.util.function.Predicate;
 /**
  * This class provides primitives for waiting for a configured number of shards
  * to become active before sending a response on an {@link ActionListener}.
+ * 等待相关的shard变成活跃状态
  */
 public class ActiveShardsObserver {
 
@@ -57,6 +58,7 @@ public class ActiveShardsObserver {
      * @param timeout the timeout value
      * @param onResult a function that is executed in response to the requisite shards becoming active or a timeout (whichever comes first)
      * @param onFailure a function that is executed in response to an error occurring during waiting for the active shards
+     *                  等待每个index下相关的 shardId下 primary replica中处于活跃状态的分片数达到多少
      */
     public void waitForActiveShards(final String[] indexNames,
                                     final ActiveShardCount activeShardCount,
@@ -65,6 +67,7 @@ public class ActiveShardsObserver {
                                     final Consumer<Exception> onFailure) {
 
         // wait for the configured number of active shards to be allocated before executing the result consumer
+        // 代表当前没有条件要求 直接触发监听器
         if (activeShardCount == ActiveShardCount.NONE) {
             // not waiting, so just run whatever we were to run when the waiting is
             onResult.accept(true);
@@ -73,6 +76,7 @@ public class ActiveShardsObserver {
 
         final ClusterState state = clusterService.state();
         final ClusterStateObserver observer = new ClusterStateObserver(state, clusterService, null, logger, threadPool.getThreadContext());
+        // 直接检测此时状态是否满足条件
         if (activeShardCount.enoughShardsActive(state, indexNames)) {
             onResult.accept(true);
         } else {
@@ -90,6 +94,10 @@ public class ActiveShardsObserver {
                     onFailure.accept(new NodeClosedException(clusterService.localNode()));
                 }
 
+                /**
+                 * 可以看到将灵活变动的地方抽取到外部作为接口的api
+                 * @param timeout
+                 */
                 @Override
                 public void onTimeout(TimeValue timeout) {
                     onResult.accept(false);

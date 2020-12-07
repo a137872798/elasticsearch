@@ -32,6 +32,9 @@ import java.util.List;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
+/**
+ * 插入V2版本的indexTemplate
+ */
 public class RestPutIndexTemplateV2Action extends BaseRestHandler {
 
     @Override

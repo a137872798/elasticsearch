@@ -35,6 +35,9 @@ import java.util.Set;
 import static org.elasticsearch.client.Requests.updateSettingsRequest;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
+/**
+ * 更新某个配置的请求
+ */
 public class RestUpdateSettingsAction extends BaseRestHandler {
 
     @Override

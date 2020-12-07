@@ -36,6 +36,8 @@ import java.util.List;
 
 /**
  * Refresh action.
+ * 发起一个refresh请求
+ * 实际上refresh 就是提交lucene中未刷盘的数据 并且更新 segment_N 文件
  */
 public class TransportRefreshAction
     extends TransportBroadcastReplicationAction<RefreshRequest, RefreshResponse, BasicReplicationRequest, ReplicationResponse> {
@@ -44,6 +46,7 @@ public class TransportRefreshAction
     public TransportRefreshAction(ClusterService clusterService, TransportService transportService, ActionFilters actionFilters,
                                   IndexNameExpressionResolver indexNameExpressionResolver, NodeClient client) {
         super(RefreshAction.NAME, RefreshRequest::new, clusterService, transportService, client, actionFilters,
+            // 处理每个分片的action是 TransportShardRefreshAction.TYPE
             indexNameExpressionResolver, TransportShardRefreshAction.TYPE);
     }
 

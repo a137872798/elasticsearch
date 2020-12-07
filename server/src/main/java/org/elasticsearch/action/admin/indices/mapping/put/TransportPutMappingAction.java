@@ -49,12 +49,17 @@ import java.util.Optional;
 
 /**
  * Put mapping action.
+ * 在主分片插入一个新的  mappings信息
  */
 public class TransportPutMappingAction extends TransportMasterNodeAction<PutMappingRequest, AcknowledgedResponse> {
 
     private static final Logger logger = LogManager.getLogger(TransportPutMappingAction.class);
 
     private final MetadataMappingService metadataMappingService;
+
+    /**
+     * 目前 ES默认的内置实现都为空
+     */
     private final RequestValidators<PutMappingRequest> requestValidators;
 
     @Inject
@@ -94,13 +99,22 @@ public class TransportPutMappingAction extends TransportMasterNodeAction<PutMapp
         return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_WRITE, indices);
     }
 
+    /**
+     * 处理逻辑会转发到这里
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     */
     @Override
     protected void masterOperation(Task task, final PutMappingRequest request, final ClusterState state,
                                    final ActionListener<AcknowledgedResponse> listener) {
         try {
+            // 如果请求中没有指定具体的Index  就只能通过indexNameExpressionResolver 去寻找合适的索引信息
             final Index[] concreteIndices = request.getConcreteIndex() == null ?
                 indexNameExpressionResolver.concreteIndices(state, request)
                 : new Index[] {request.getConcreteIndex()};
+            // 通过校验器进行校验  目前没有内置的校验器
             final Optional<Exception> maybeValidationException = requestValidators.validateRequest(request, state, concreteIndices);
             if (maybeValidationException.isPresent()) {
                 listener.onFailure(maybeValidationException.get());

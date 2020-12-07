@@ -246,9 +246,10 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
     /**
      * Returns <code>true</code> if all shards are primary and active. Otherwise <code>false</code>.
-     * 代表所有私有的分片刚好都是活跃分片
+     * 代表该index下所有 shard主分片都处于active状态
      */
     public boolean allPrimaryShardsActive() {
+        // 这里的shards() 数量对应的是 shardId数量
         return primaryShardsActive() == shards().size();
     }
 
@@ -404,9 +405,10 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         /**
          * Initializes a new empty index, as as a result of opening a closed index.
-         * 重新开启关闭的索引
+         * 重新开启某个之前关闭的索引
          */
         public Builder initializeAsFromCloseToOpen(IndexMetadata indexMetadata) {
+            // 这里的 unassignedInfo.Reason 是 reopened
             return initializeEmpty(indexMetadata, new UnassignedInfo(UnassignedInfo.Reason.INDEX_REOPENED, null));
         }
 
@@ -482,7 +484,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
          * Initializes a new empty index, with an option to control if its from an API or not.
          * @param indexMetadata
          * @param unassignedInfo
-         *                       此时插入了一个新的index  需要为它生成一个 IndexRouting
+         *                       初始化一个空的index
          */
         private Builder initializeEmpty(IndexMetadata indexMetadata, UnassignedInfo unassignedInfo) {
             assert indexMetadata.getIndex().equals(index);

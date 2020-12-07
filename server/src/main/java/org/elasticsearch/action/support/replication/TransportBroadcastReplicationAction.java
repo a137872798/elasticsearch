@@ -151,7 +151,7 @@ public abstract class TransportBroadcastReplicationAction<Request extends Broadc
     protected void shardExecute(Task task, Request request, ShardId shardId, ActionListener<ShardResponse> shardActionListener) {
         ShardRequest shardRequest = newShardRequest(request, shardId);
         shardRequest.setParentTask(clusterService.localNode().getId(), task.getId());
-        // 注意这里没有指定node 实际上还是在本节点进行处理 那么交托的action 需要自己定位到目标分片所在的节点  (可以通过clusterState定位)
+        // 在本节点使用replicatedBroadcastShardAction 对应的action进行处理
         client.executeLocally(replicatedBroadcastShardAction, shardRequest, shardActionListener);
     }
 

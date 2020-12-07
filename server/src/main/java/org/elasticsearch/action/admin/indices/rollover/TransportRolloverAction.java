@@ -57,10 +57,14 @@ import java.util.stream.Collectors;
 
 /**
  * Main class to swap the index pointed to by an alias, given some conditions
+ * TODO 翻转??? 先看核心功能 这个先跳过
  */
 public class TransportRolloverAction extends TransportMasterNodeAction<RolloverRequest, RolloverResponse> {
 
     private final MetadataRolloverService rolloverService;
+    /**
+     * 内部包含了检测此时CS中活跃的分片数量是否达到要求的observer
+     */
     private final ActiveShardsObserver activeShardsObserver;
     private final Client client;
 
@@ -98,6 +102,14 @@ public class TransportRolloverAction extends TransportMasterNodeAction<RolloverR
             indexNameExpressionResolver.concreteIndexNames(state, indicesOptions, request.indices()));
     }
 
+    /**
+     * 必须在leader节点进行 rollover操作
+     * @param task
+     * @param rolloverRequest
+     * @param state
+     * @param listener
+     * @throws Exception
+     */
     @Override
     protected void masterOperation(Task task, final RolloverRequest rolloverRequest, final ClusterState state,
                                    final ActionListener<RolloverResponse> listener) throws Exception {

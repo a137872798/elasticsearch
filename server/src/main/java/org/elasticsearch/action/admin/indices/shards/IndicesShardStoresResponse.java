@@ -118,6 +118,13 @@ public class IndicesShardStoresResponse extends ActionResponse implements ToXCon
             }
         }
 
+        /**
+         * 描述某个分片在某个node上的分配结果
+         * @param node  被分配在哪个node
+         * @param allocationId
+         * @param allocationStatus  该节点属于 primary 还是replica
+         * @param storeException  代表在存储过程中是否出现了异常
+         */
         public StoreStatus(DiscoveryNode node, String allocationId, AllocationStatus allocationStatus, Exception storeException) {
             this.node = node;
             this.allocationId = allocationId;

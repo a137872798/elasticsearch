@@ -553,6 +553,7 @@ public class ActionModule extends AbstractModule {
         // 获取当前快照的状态
         actions.register(SnapshotsStatusAction.INSTANCE, TransportSnapshotsStatusAction.class);
 
+        // 获取索引统计信息
         actions.register(IndicesStatsAction.INSTANCE, TransportIndicesStatsAction.class);
         // 某个索引段信息
         actions.register(IndicesSegmentsAction.INSTANCE, TransportIndicesSegmentsAction.class);
@@ -560,12 +561,15 @@ public class ActionModule extends AbstractModule {
         actions.register(IndicesShardStoresAction.INSTANCE, TransportIndicesShardStoresAction.class);
         // 创建一个新的索引
         actions.register(CreateIndexAction.INSTANCE, TransportCreateIndexAction.class);
+        // 重置某些大小
         actions.register(ResizeAction.INSTANCE, TransportResizeAction.class);
+        // 翻转是什么
         actions.register(RolloverAction.INSTANCE, TransportRolloverAction.class);
         // 删除某些索引
         actions.register(DeleteIndexAction.INSTANCE, TransportDeleteIndexAction.class);
         // 获取某些索引信息
         actions.register(GetIndexAction.INSTANCE, TransportGetIndexAction.class);
+        // 打开某个索引
         actions.register(OpenIndexAction.INSTANCE, TransportOpenIndexAction.class);
         // 关闭某个索引对象
         actions.register(CloseIndexAction.INSTANCE, TransportCloseIndexAction.class);
@@ -575,23 +579,28 @@ public class ActionModule extends AbstractModule {
         actions.register(GetFieldMappingsAction.INSTANCE, TransportGetFieldMappingsAction.class);
         // 按照index为单位 获取fieldMapping信息
         actions.register(TransportGetFieldMappingsIndexAction.TYPE, TransportGetFieldMappingsIndexAction.class);
+        // 插入一个新的mappings信息
         actions.register(PutMappingAction.INSTANCE, TransportPutMappingAction.class);
         // 添加或者删除 alias 都是通过该action
         actions.register(IndicesAliasesAction.INSTANCE, TransportIndicesAliasesAction.class);
+        // 更新配置信息(索引级别)
         actions.register(UpdateSettingsAction.INSTANCE, TransportUpdateSettingsAction.class);
         // 分析某个索引下的数据
         actions.register(AnalyzeAction.INSTANCE, TransportAnalyzeAction.class);
+        // 插入某个索引模板
         actions.register(PutIndexTemplateAction.INSTANCE, TransportPutIndexTemplateAction.class);
         // 获取indexTemplate
         actions.register(GetIndexTemplatesAction.INSTANCE, TransportGetIndexTemplatesAction.class);
         // 删除某个索引模板
         actions.register(DeleteIndexTemplateAction.INSTANCE, TransportDeleteIndexTemplateAction.class);
         if (ITV2_FEATURE_ENABLED) {
+            // 插入一个componentTemplate 的请求
             actions.register(PutComponentTemplateAction.INSTANCE, TransportPutComponentTemplateAction.class);
             // 获取某个组件模板
             actions.register(GetComponentTemplateAction.INSTANCE, TransportGetComponentTemplateAction.class);
             // 删除某个componentTemplate
             actions.register(DeleteComponentTemplateAction.INSTANCE, TransportDeleteComponentTemplateAction.class);
+            // 插入V2版本的 indexTemplate
             actions.register(PutIndexTemplateV2Action.INSTANCE, TransportPutIndexTemplateV2Action.class);
             // 获取V2版本的 indexTemplate
             actions.register(GetIndexTemplateV2Action.INSTANCE, TransportGetIndexTemplateV2Action.class);
@@ -600,6 +609,7 @@ public class ActionModule extends AbstractModule {
             actions.register(SimulateIndexTemplateAction.INSTANCE, TransportSimulateIndexTemplateAction.class);
         }
         actions.register(ValidateQueryAction.INSTANCE, TransportValidateQueryAction.class);
+        // 获取索引的刷新状态
         actions.register(RefreshAction.INSTANCE, TransportRefreshAction.class);
         // 发起索引刷盘操作
         actions.register(FlushAction.INSTANCE, TransportFlushAction.class);
@@ -631,6 +641,7 @@ public class ActionModule extends AbstractModule {
         actions.register(MultiSearchAction.INSTANCE, TransportMultiSearchAction.class);
         actions.register(ExplainAction.INSTANCE, TransportExplainAction.class);
         actions.register(ClearScrollAction.INSTANCE, TransportClearScrollAction.class);
+        // 获取索引当前的恢复状态信息
         actions.register(RecoveryAction.INSTANCE, TransportRecoveryAction.class);
         actions.register(NodesReloadSecureSettingsAction.INSTANCE, TransportNodesReloadSecureSettingsAction.class);
 
@@ -691,6 +702,7 @@ public class ActionModule extends AbstractModule {
         actions.register(TransportNodesListShardStoreMetadata.TYPE, TransportNodesListShardStoreMetadata.class);
         // 当以shard为单位处理 flush请求时 使用这个action进行处理
         actions.register(TransportShardFlushAction.TYPE, TransportShardFlushAction.class);
+        // 以分片为单位 获取刷新信息
         actions.register(TransportShardRefreshAction.TYPE, TransportShardRefreshAction.class);
 
         return unmodifiableMap(actions.getRegistry());

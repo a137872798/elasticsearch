@@ -31,6 +31,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 翻转是什么???
+ */
 public class RestRolloverIndexAction extends BaseRestHandler {
 
     @Override

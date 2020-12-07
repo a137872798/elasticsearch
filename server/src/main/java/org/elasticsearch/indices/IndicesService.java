@@ -747,6 +747,7 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * This creates a new IndexService without registering it
+     * @param indexCreationContext 本次创建该索引服务是基于什么场景 比如需要创建一个新的索引 或者只是想要做校验工作
      * @param indexingOperationListeners  监控有关索引的操作 比如 indexingMemoryController 每当索引写入或者删除的时候 在内存中就会反映出变化
      * @param builtInListeners 监听有关index的相关事件
      * 根据元数据信息 以及各种缓存对象创建 IndexService
@@ -864,20 +865,23 @@ public class IndicesService extends AbstractLifecycleComponent
      * is different from the given {@code metadata}.
      * This method will throw an exception if the creation or the update fails.
      * The created {@link IndexService} will not be registered and will be closed immediately.
+     * @param metadata
      */
     public synchronized void verifyIndexMetadata(IndexMetadata metadata, IndexMetadata metadataUpdate) throws IOException {
         final List<Closeable> closeables = new ArrayList<>();
         try {
+            // 2个临时缓存 之后会被关闭
             IndicesFieldDataCache indicesFieldDataCache = new IndicesFieldDataCache(settings, new IndexFieldDataCache.Listener() {});
             closeables.add(indicesFieldDataCache);
             IndicesQueryCache indicesQueryCache = new IndicesQueryCache(settings);
             closeables.add(indicesQueryCache);
             // this will also fail if some plugin fails etc. which is nice since we can verify that early
-            // 由于校验元数据 而创建indexService时 使用的context不同
+            // 注意这里调用 createIndexService传入的类型是 METADATA_VERIFICATION  在其他场景 比如创建索引的时候传入的是CREATE_INDEX
             final IndexService service =
                 createIndexService(METADATA_VERIFICATION, metadata, indicesQueryCache, indicesFieldDataCache, emptyList());
+            // 在检测完毕后会关闭服务
             closeables.add(() -> service.close("metadata verification", false));
-            // 将元数据合并
+            // 将mapping进行合并
             service.mapperService().merge(metadata, MapperService.MergeReason.MAPPING_RECOVERY);
             if (metadata.equals(metadataUpdate) == false) {
                 service.updateMetadata(metadata, metadataUpdate);

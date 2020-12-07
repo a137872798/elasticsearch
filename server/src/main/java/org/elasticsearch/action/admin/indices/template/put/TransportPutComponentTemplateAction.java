@@ -42,6 +42,9 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 插入一个componentTemplate
+ */
 public class TransportPutComponentTemplateAction
     extends TransportMasterNodeAction<PutComponentTemplateAction.Request, AcknowledgedResponse> {
 
@@ -75,16 +78,24 @@ public class TransportPutComponentTemplateAction
         return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA_WRITE);
     }
 
+    /**
+     * @param task
+     * @param request
+     * @param state
+     * @param listener
+     */
     @Override
     protected void masterOperation(Task task, final PutComponentTemplateAction.Request request, final ClusterState state,
                                    final ActionListener<AcknowledgedResponse> listener) {
         ComponentTemplate componentTemplate = request.componentTemplate();
         Template template = componentTemplate.template();
         // Normalize the index settings if necessary
+        // 如果这个template 携带了配置信息
         if (template.settings() != null) {
             Settings.Builder builder = Settings.builder().put(template.settings()).normalizePrefix(IndexMetadata.INDEX_SETTING_PREFIX);
             Settings settings = builder.build();
             indexScopedSettings.validate(settings, true);
+            // 重新生成 componentTemplate对象
             template = new Template(settings, template.mappings(), template.aliases());
             componentTemplate = new ComponentTemplate(template, componentTemplate.version(), componentTemplate.metadata());
         }

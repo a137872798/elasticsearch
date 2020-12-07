@@ -65,6 +65,9 @@ public class MetadataMappingService {
     private final IndicesService indicesService;
 
     final RefreshTaskExecutor refreshExecutor = new RefreshTaskExecutor();
+    /**
+     * 处理 putMappings请求
+     */
     final PutMappingExecutor putMappingExecutor = new PutMappingExecutor();
 
 
@@ -206,24 +209,34 @@ public class MetadataMappingService {
         );
     }
 
+    /**
+     * 更新 mappings请求
+     */
     class PutMappingExecutor implements ClusterStateTaskExecutor<PutMappingClusterStateUpdateRequest> {
+
         @Override
-        public ClusterTasksResult<PutMappingClusterStateUpdateRequest>
-        execute(ClusterState currentState, List<PutMappingClusterStateUpdateRequest> tasks) throws Exception {
+        public ClusterTasksResult<PutMappingClusterStateUpdateRequest> execute(ClusterState currentState, List<PutMappingClusterStateUpdateRequest> tasks) throws Exception {
             Map<Index, MapperService> indexMapperServices = new HashMap<>();
             ClusterTasksResult.Builder<PutMappingClusterStateUpdateRequest> builder = ClusterTasksResult.builder();
             try {
+                // 第一步 创建用于解析mappings字符串的  MapperService对象
                 for (PutMappingClusterStateUpdateRequest request : tasks) {
                     try {
                         for (Index index : request.indices()) {
                             final IndexMetadata indexMetadata = currentState.metadata().getIndexSafe(index);
+
+                            // 因为多个req中 index可能会重复 这里就要避免重复创建
                             if (indexMapperServices.containsKey(indexMetadata.getIndex()) == false) {
+                                // 创建MapperService的过程只是简单的赋值操作
                                 MapperService mapperService = indicesService.createIndexMapperService(indexMetadata);
                                 indexMapperServices.put(index, mapperService);
                                 // add mappings for all types, we need them for cross-type validation
+                                // 因为index在创建时 会根据匹配的template 初始化内部的mappings字符串  在这里解析成 XXXMapper树
                                 mapperService.merge(indexMetadata, MergeReason.MAPPING_RECOVERY);
                             }
                         }
+
+                        // 上面针对同一index创建 MapperService的操作已经做了去重 所以下面针对每个index只需要再处理一次
                         currentState = applyRequest(currentState, request, indexMapperServices);
                         builder.success(request);
                     } catch (Exception e) {
@@ -236,13 +249,23 @@ public class MetadataMappingService {
             }
         }
 
+        /**
+         *
+         * @param currentState  当前集群状态
+         * @param request       本次会更新的所有mappings
+         * @param indexMapperServices   通过index可以从这个容器中找到匹配的mapperService
+         * @return
+         * @throws IOException
+         */
         private ClusterState applyRequest(ClusterState currentState, PutMappingClusterStateUpdateRequest request,
                                           Map<Index, MapperService> indexMapperServices) throws IOException {
 
             CompressedXContent mappingUpdateSource = new CompressedXContent(request.source());
             final Metadata metadata = currentState.metadata();
             final List<IndexMetadata> updateList = new ArrayList<>();
+            // 遍历本次req要处理的所有index
             for (Index index : request.indices()) {
+                // 找到匹配的MapperService
                 MapperService mapperService = indexMapperServices.get(index);
                 // IMPORTANT: always get the metadata from the state since it get's batched
                 // and if we pull it from the indexService we might miss an update etc.
@@ -250,22 +273,32 @@ public class MetadataMappingService {
 
                 // this is paranoia... just to be sure we use the exact same metadata tuple on the update that
                 // we used for the validation, it makes this mechanism little less scary (a little)
+                // 这里是为了下面的for循环 与本轮for循环处理的是同一组 IndexMetadata
                 updateList.add(indexMetadata);
                 // try and parse it (no need to add it here) so we can bail early in case of parsing exception
+                // 如果之前 IndexMetadata中存在.mappings() 字符串 那么在上面已经处理成 DocumentMapper了
+                // 或者没有设置
+                // 这里的parse 以及 merge只是为了今早的发现异常 实际上并不会使用结果
                 DocumentMapper existingMapper = mapperService.documentMapper();
+                // 而在这里就是解析本次传入的 mappings 之后将2个mapper合并
                 DocumentMapper newMapper = mapperService.parse(MapperService.SINGLE_MAPPING_NAME, mappingUpdateSource);
                 if (existingMapper != null) {
                     // first, simulate: just call merge and ignore the result
+                    // 这里没有使用合并后的结果 而是直接丢弃
                     existingMapper.merge(newMapper.mapping());
                 }
             }
             Metadata.Builder builder = Metadata.builder(metadata);
             boolean updated = false;
+
+            // 这里开始才进行实际的解析和合并操作
             for (IndexMetadata indexMetadata : updateList) {
                 boolean updatedMapping = false;
                 // do the actual merge here on the master, and update the mapping source
                 // we use the exact same indexService and metadata we used to validate above here to actually apply the update
                 final Index index = indexMetadata.getIndex();
+
+                // 在上面 已经使用合并后的 existingMapper替换之前的DocumentMapper对象了
                 final MapperService mapperService = indexMapperServices.get(index);
 
                 CompressedXContent existingSource = null;
@@ -278,9 +311,11 @@ public class MetadataMappingService {
                 CompressedXContent updatedSource = mergedMapper.mappingSource();
 
                 if (existingSource != null) {
+                    // 代表本次插入的mappings与之前的一致
                     if (existingSource.equals(updatedSource)) {
                         // same source, no changes, ignore it
                     } else {
+                        // 本次插入的mappings更新了之前的数据
                         updatedMapping = true;
                         // use the merged mapping source
                         if (logger.isDebugEnabled()) {
@@ -288,9 +323,9 @@ public class MetadataMappingService {
                         } else if (logger.isInfoEnabled()) {
                             logger.info("{} update_mapping [{}]", index, mergedMapper.type());
                         }
-
                     }
                 } else {
+                    // 代表首次生成mappings
                     updatedMapping = true;
                     if (logger.isDebugEnabled()) {
                         logger.debug("{} create_mapping with source [{}]", index, updatedSource);
@@ -303,6 +338,7 @@ public class MetadataMappingService {
                 // Mapping updates on a single type may have side-effects on other types so we need to
                 // update mapping metadata on all types
                 DocumentMapper mapper = mapperService.documentMapper();
+                // 更新 IndexMetadata的 mapping数据
                 if (mapper != null) {
                     indexMetadataBuilder.putMapping(new MappingMetadata(mapper.mappingSource()));
                 }
@@ -326,10 +362,16 @@ public class MetadataMappingService {
 
     }
 
+    /**
+     * 针对某个index 插入新的 mappings信息
+     * @param request
+     * @param listener
+     */
     public void putMapping(final PutMappingClusterStateUpdateRequest request, final ActionListener<ClusterStateUpdateResponse> listener) {
         clusterService.submitStateUpdateTask("put-mapping " + Strings.arrayToCommaDelimitedString(request.indices()),
                 request,
                 ClusterStateTaskConfig.build(Priority.HIGH, request.masterNodeTimeout()),
+                // 更新CS的逻辑委托到了该对象
                 putMappingExecutor,
                 new AckedClusterStateTaskListener() {
 

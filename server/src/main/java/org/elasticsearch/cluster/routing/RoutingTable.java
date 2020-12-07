@@ -568,8 +568,15 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
             return this;
         }
 
+        /**
+         * 借由某个从close状态更新到open状态的indexMetadata
+         * 更新路由表对象
+         * @param indexMetadata
+         * @return
+         */
         public Builder addAsFromCloseToOpen(IndexMetadata indexMetadata) {
             if (indexMetadata.getState() == IndexMetadata.State.OPEN) {
+                // 就是根据index的分片数 重建shard 并插入到routingTable中
                 IndexRoutingTable.Builder indexRoutingBuilder = new IndexRoutingTable.Builder(indexMetadata.getIndex())
                         .initializeAsFromCloseToOpen(indexMetadata);
                 add(indexRoutingBuilder);

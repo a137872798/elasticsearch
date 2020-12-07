@@ -47,6 +47,7 @@ import java.util.Map;
 /**
  * Transport action for shard recovery operation. This transport action does not actually
  * perform shard recovery, it only reports on recoveries (both active and complete).
+ * 描述索引的恢复状态
  */
 public class TransportRecoveryAction extends TransportBroadcastByNodeAction<RecoveryRequest, RecoveryResponse, RecoveryState> {
 
@@ -96,13 +97,27 @@ public class TransportRecoveryAction extends TransportBroadcastByNodeAction<Reco
         return new RecoveryRequest(in);
     }
 
+    /**
+     * 父对象会将请求拆解到 某个node上处理某个分片
+     * @param request      the node-level request
+     * @param shardRouting the shard on which to execute the operation
+     * @return
+     */
     @Override
     protected RecoveryState shardOperation(RecoveryRequest request, ShardRouting shardRouting) {
         IndexService indexService = indicesService.indexServiceSafe(shardRouting.shardId().getIndex());
         IndexShard indexShard = indexService.getShard(shardRouting.shardId().id());
+        // 获取当前的恢复状态
         return indexShard.recoveryState();
     }
 
+    /**
+     * 获取本次要处理的所有分片
+     * @param state
+     * @param request         the underlying request
+     * @param concreteIndices the concrete indices on which to execute the operation
+     * @return
+     */
     @Override
     protected ShardsIterator shards(ClusterState state, RecoveryRequest request, String[] concreteIndices) {
         return state.routingTable().allShardsIncludingRelocationTargets(concreteIndices);

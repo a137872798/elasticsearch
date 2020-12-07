@@ -38,6 +38,9 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 插入V2版本的indexTemplate
+ */
 public class TransportPutIndexTemplateV2Action
     extends TransportMasterNodeAction<PutIndexTemplateV2Action.Request, AcknowledgedResponse> {
 

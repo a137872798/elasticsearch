@@ -145,6 +145,8 @@ public final class ActiveShardCount implements Writeable {
     /**
      * Returns true iff the given cluster state's routing table contains enough active
      * shards for the given indices to meet the required shard count represented by this instance.
+     * 这个enoughShardsActive的意思是 针对每个index下的每个 shardId 对应的所有 primary + replica 下处于active的分片数必须达到多少
+     * 当然primary必须保证处于active状态
      */
     public boolean enoughShardsActive(final ClusterState clusterState, final String... indices) {
         if (this == ActiveShardCount.NONE) {
@@ -153,6 +155,7 @@ public final class ActiveShardCount implements Writeable {
         }
 
         for (final String indexName : indices) {
+            // 获取本次索引对应的元数据信息
             final IndexMetadata indexMetadata = clusterState.metadata().index(indexName);
             if (indexMetadata == null) {
                 // its possible the index was deleted while waiting for active shard copies,
@@ -168,6 +171,7 @@ public final class ActiveShardCount implements Writeable {
                 continue;
             }
             assert indexRoutingTable != null;
+            // 在该index下只要有一个primary没有处于active状态 就认为整个index不可用
             if (indexRoutingTable.allPrimaryShardsActive() == false) {
                 // all primary shards aren't active yet
                 return false;

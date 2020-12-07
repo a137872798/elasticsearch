@@ -32,6 +32,9 @@ import java.util.List;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
+/**
+ * 插入一个componentTemplate
+ */
 public class RestPutComponentTemplateAction extends BaseRestHandler {
 
     @Override

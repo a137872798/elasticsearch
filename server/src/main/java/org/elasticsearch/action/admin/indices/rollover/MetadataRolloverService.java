@@ -53,6 +53,7 @@ import static org.elasticsearch.cluster.metadata.MetadataIndexTemplateService.fi
 
 /**
  * Service responsible for handling rollover requests for write aliases and data streams
+ * 该对象是专门负责处理rollover请求的服务
  */
 public class MetadataRolloverService {
     private static final Pattern INDEX_NAME_PATTERN = Pattern.compile("^.*-\\d+$");
@@ -85,10 +86,23 @@ public class MetadataRolloverService {
         }
     }
 
+    /**
+     * 针对当前CS 进行rollover
+     * @param currentState
+     * @param rolloverTarget
+     * @param newIndexName
+     * @param createIndexRequest
+     * @param metConditions  这里有一些限制条件
+     * @param silent
+     * @return
+     * @throws Exception
+     */
     public RolloverResult rolloverClusterState(ClusterState currentState, String rolloverTarget, String newIndexName,
                                                CreateIndexRequest createIndexRequest, List<Condition<?>> metConditions,
                                                boolean silent) throws Exception {
+        // TODO 先忽略校验性代码
         validate(currentState.metadata(), rolloverTarget, newIndexName, createIndexRequest);
+        // 在创建index时 index相关的 dataStream/alias 会存储到lookup中 这里就通过它进行快速查找
         final IndexAbstraction indexAbstraction = currentState.metadata().getIndicesLookup().get(rolloverTarget);
         switch (indexAbstraction.getType()) {
             case ALIAS:
@@ -99,10 +113,23 @@ public class MetadataRolloverService {
                     createIndexRequest, metConditions, silent);
             default:
                 // the validate method above prevents this case
+                // 传入的rollover不能直接对应到某个index
                 throw new IllegalStateException("unable to roll over type [" + indexAbstraction.getType().getDisplayName() + "]");
         }
     }
 
+    /**
+     * 翻转某个别名???
+     * @param currentState
+     * @param alias
+     * @param aliasName
+     * @param newIndexName
+     * @param createIndexRequest
+     * @param metConditions
+     * @param silent
+     * @return
+     * @throws Exception
+     */
     private RolloverResult rolloverAlias(ClusterState currentState, IndexAbstraction.Alias alias, String aliasName,
                                          String newIndexName, CreateIndexRequest createIndexRequest, List<Condition<?>> metConditions,
                                          boolean silent) throws Exception {

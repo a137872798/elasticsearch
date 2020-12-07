@@ -33,6 +33,9 @@ import java.util.List;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
+/**
+ * 将某些大小重置
+ */
 public abstract class RestResizeHandler extends BaseRestHandler {
 
     RestResizeHandler() {
@@ -53,6 +56,8 @@ public abstract class RestResizeHandler extends BaseRestHandler {
         resizeRequest.setWaitForActiveShards(ActiveShardCount.parseString(request.param("wait_for_active_shards")));
         return channel -> client.admin().indices().resizeIndex(resizeRequest, new RestToXContentListener<>(channel));
     }
+
+    // 以下3种resize 共用同一个action
 
     public static class RestShrinkIndexAction extends RestResizeHandler {
 

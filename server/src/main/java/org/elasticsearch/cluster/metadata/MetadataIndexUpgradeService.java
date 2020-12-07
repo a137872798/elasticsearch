@@ -75,6 +75,9 @@ public class MetadataIndexUpgradeService {
      * <p>
      * If the index does not need upgrade it returns the index metadata unchanged, otherwise it returns a modified index metadata. If index
      * cannot be updated the method throws an exception.
+     * @param indexMetadata 当前所有状态
+     * @param minimumIndexCompatibilityVersion
+     * 检测集群元数据是否需要升级  应该跟版本兼容性有关 先忽略
      */
     public IndexMetadata upgradeIndexMetadata(IndexMetadata indexMetadata, Version minimumIndexCompatibilityVersion) {
         // Throws an exception if there are too-old segments:

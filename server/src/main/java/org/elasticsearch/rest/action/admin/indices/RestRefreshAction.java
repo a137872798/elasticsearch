@@ -35,6 +35,9 @@ import java.util.List;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 某个索引当前的刷新状况
+ */
 public class RestRefreshAction extends BaseRestHandler {
 
     @Override

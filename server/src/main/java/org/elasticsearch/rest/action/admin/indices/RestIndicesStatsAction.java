@@ -41,6 +41,9 @@ import java.util.function.Consumer;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 获取索引统计信息
+ */
 public class RestIndicesStatsAction extends BaseRestHandler {
 
     @Override

@@ -30,6 +30,7 @@ import org.elasticsearch.client.ElasticsearchClient;
  * <p>
  * All the stats to be returned can be cleared using {@link #clear()}, at which point, specific
  * stats can be enabled.
+ * 生成某个统计项请求
  */
 public class IndicesStatsRequestBuilder
         extends BroadcastOperationRequestBuilder<IndicesStatsRequest, IndicesStatsResponse, IndicesStatsRequestBuilder> {

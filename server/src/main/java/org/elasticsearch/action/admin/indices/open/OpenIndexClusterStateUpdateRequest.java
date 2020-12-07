@@ -26,6 +26,9 @@ import org.elasticsearch.cluster.ack.IndicesClusterStateUpdateRequest;
  */
 public class OpenIndexClusterStateUpdateRequest extends IndicesClusterStateUpdateRequest<OpenIndexClusterStateUpdateRequest> {
 
+    /**
+     * 要求至少达到多少活跃分片数
+     */
     private ActiveShardCount waitForActiveShards = ActiveShardCount.DEFAULT;
 
     public OpenIndexClusterStateUpdateRequest() {

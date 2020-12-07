@@ -75,6 +75,7 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
         CLUSTER_RECOVERED,
         /**
          * Unassigned as a result of opening a closed index.
+         * 重新开启某个之前关闭的索引
          */
         INDEX_REOPENED,
         /**

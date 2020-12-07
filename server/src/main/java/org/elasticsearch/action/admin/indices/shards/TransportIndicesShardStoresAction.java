@@ -69,7 +69,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 /**
  * Transport action that reads the cluster state for shards with the requested criteria (see {@link ClusterHealthStatus}) of specific
  * indices and fetches store information from all the nodes using {@link TransportNodesListGatewayStartedShards}
- * 获取分片仓库信息
+ * 获取所有分片当前存储状态的请求
  */
 public class TransportIndicesShardStoresAction
         extends TransportMasterNodeReadAction<IndicesShardStoresRequest, IndicesShardStoresResponse> {
@@ -148,7 +148,7 @@ public class TransportIndicesShardStoresAction
     }
 
     /**
-     * 发起一个异步 拉取仓库信息的任务
+     * 获取当前所有分片存储状态的请求
      */
     private class AsyncShardStoresInfoFetches {
         private final DiscoveryNodes nodes;
@@ -222,8 +222,9 @@ public class TransportIndicesShardStoresAction
 
             /**
              * 这里已经覆盖了父类的方法  就是当单个分片在所有相关节点上都收到结果后触发
-             * @param responses 对应处理成功的结果
-             * @param failures 对应处理失败的结果
+             * 因为一个shardId 会对应一个primary 多个replica
+             * @param responses 所有收到的成功的结果
+             * @param failures 在该集群下有关该shardId 所有请求中失败的结果
              * @param fetchingRound 代表当前是第几轮发起的请求
              */
             @Override
@@ -244,8 +245,9 @@ public class TransportIndicesShardStoresAction
 
                 java.util.List<IndicesShardStoresResponse.Failure> failureBuilder = new ArrayList<>();
 
-                // 每个response 都代表
+                // 每个response 都代表一个分片在集群上所有相关节点当前状态的查询结果
                 for (Response fetchResponse : fetchResponses) {
+                    // 该分片在每个节点上对应的结果就是 StoreStatus
                     ImmutableOpenIntMap<java.util.List<IndicesShardStoresResponse.StoreStatus>> indexStoreStatuses =
                         indicesStoreStatusesBuilder.get(fetchResponse.shardId.getIndexName());
                     final ImmutableOpenIntMap.Builder<java.util.List<IndicesShardStoresResponse.StoreStatus>> indexShardsBuilder;
@@ -254,13 +256,17 @@ public class TransportIndicesShardStoresAction
                     } else {
                         indexShardsBuilder = ImmutableOpenIntMap.builder(indexStoreStatuses);
                     }
+                    // 获取此时分片对应的状态信息
                     java.util.List<IndicesShardStoresResponse.StoreStatus> storeStatuses = indexShardsBuilder
                         .get(fetchResponse.shardId.id());
                     if (storeStatuses == null) {
                         storeStatuses = new ArrayList<>();
                     }
+                    // 仅处理已经分配到节点上的分片信息
                     for (NodeGatewayStartedShards response : fetchResponse.responses) {
                         if (shardExistsInNode(response)) {
+                            // node + shardId 可以定位到某个具体的分片  因为同一个shardId的不同子分片必须分布在不同的node上
+                            // 这时可以确定分配到该node上的分片是 primary 还是replica
                             IndicesShardStoresResponse.StoreStatus.AllocationStatus allocationStatus = getAllocationStatus(
                                 fetchResponse.shardId.getIndexName(), fetchResponse.shardId.id(), response.getNode());
                             storeStatuses.add(new IndicesShardStoresResponse.StoreStatus(response.getNode(), response.allocationId(),
@@ -268,6 +274,7 @@ public class TransportIndicesShardStoresAction
                         }
                     }
                     CollectionUtil.timSort(storeStatuses);
+                    // 将结果存储到map中
                     indexShardsBuilder.put(fetchResponse.shardId.id(), storeStatuses);
                     indicesStoreStatusesBuilder.put(fetchResponse.shardId.getIndexName(), indexShardsBuilder.build());
                     for (FailedNodeException failure : fetchResponse.failures) {
@@ -279,6 +286,13 @@ public class TransportIndicesShardStoresAction
                     Collections.unmodifiableList(failureBuilder)));
             }
 
+            /**
+             * 获取某个具体分片此时的分配状态
+             * @param index
+             * @param shardID
+             * @param node
+             * @return
+             */
             private IndicesShardStoresResponse.StoreStatus.AllocationStatus getAllocationStatus(String index, int shardID,
                                                                                                 DiscoveryNode node) {
                 for (ShardRouting shardRouting : routingNodes.node(node.getId())) {
@@ -298,6 +312,7 @@ public class TransportIndicesShardStoresAction
 
             /**
              * A shard exists/existed in a node only if shard state file exists in the node
+             * 代表该分片已经分配到某个node上了
              */
             private boolean shardExistsInNode(final NodeGatewayStartedShards response) {
                 return response.storeException() != null || response.allocationId() != null;

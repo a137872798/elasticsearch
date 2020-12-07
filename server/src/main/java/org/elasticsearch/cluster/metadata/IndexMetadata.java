@@ -141,6 +141,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
          * if a cluster should allow to create more than 1024 shards per index. NOTE: this does not limit the number of shards
          * per cluster. this also prevents creating stuff like a new index with millions of shards by accident which essentially
          * kills the entire cluster with OOM on the spot.*/
+        // 某个index下最多允许存在多少shard
         final int maxNumShards = Integer.parseInt(System.getProperty("es.index.max_number_of_shards", "1024"));
         if (maxNumShards < 1) {
             throw new IllegalArgumentException("es.index.max_number_of_shards must be > 0");
@@ -1562,7 +1563,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             throw new IllegalArgumentException("the number of target shards (" + numTargetShards + ") must be greater than the shard id: "
                 + shardId);
         }
-        // 生成一个路由因子
+        // 获取一个倍数关系
         final int routingFactor = getRoutingFactor(numSourceShards, numTargetShards);
         assertSplitMetadata(numSourceShards, numTargetShards, sourceIndexMetadata);
         return new ShardId(sourceIndexMetadata.getIndex(), shardId/routingFactor);
@@ -1622,9 +1623,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
     /**
      * Returns the source shard ids to shrink into the given shard id.
-     * @param shardId the id of the target shard to shrink to
+     * @param shardId the id of the target shard to shrink to   当前遍历到了第几个分片
      * @param sourceIndexMetadata the source index metadata
-     * @param numTargetShards the total number of shards in the target index
+     * @param numTargetShards the total number of shards in the target index   本次预计总共生成多少分片
      * @return a set of shard IDs to shrink into the given shard ID.
      *
      */
@@ -1637,8 +1638,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             throw new IllegalArgumentException("the number of target shards [" + numTargetShards
                 +"] must be less that the number of source shards [" + sourceIndexMetadata.getNumberOfShards() + "]");
         }
+
+        // 获取一个倍数因子
         int routingFactor = getRoutingFactor(sourceIndexMetadata.getNumberOfShards(), numTargetShards);
         Set<ShardId> shards = new HashSet<>(routingFactor);
+        // 那么shardId 相比之前数量就会有所减少
         for (int i = shardId * routingFactor; i < routingFactor*shardId + routingFactor; i++) {
             shards.add(new ShardId(sourceIndexMetadata.getIndex(), i));
         }
@@ -1651,23 +1655,23 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * {@link org.elasticsearch.cluster.routing.OperationRouting#generateShardId(IndexMetadata, String, String)} to guarantee consistent
      * hashing / routing of documents even if the number of shards changed (ie. a shrunk index).
      *
-     * @param sourceNumberOfShards the total number of shards in the source index       RESIZE 索引的分片数
-     * @param targetNumberOfShards the total number of shards in the target index       本次要处理的索引的分片数
-     * @return the routing factor for and shrunk index with the given number of target shards.
-     * @throws IllegalArgumentException if the number of source shards is less than the number of target shards or if the source shards
-     * are not divisible by the number of target shards.
+     * @param sourceNumberOfShards the total number of shards in the source index
+     * @param targetNumberOfShards the total number of shards in the target index
+     * 计算一个路由因子
      */
     public static int getRoutingFactor(int sourceNumberOfShards, int targetNumberOfShards) {
         final int factor;
+        // 代表本次是一个扩容的操作  这里要求至少翻倍 TODO 先不去考虑为什么要翻倍
         if (sourceNumberOfShards < targetNumberOfShards) { // split
-            // 一个超过1的值
             factor = targetNumberOfShards / sourceNumberOfShards;
             if (factor * sourceNumberOfShards != targetNumberOfShards || factor <= 1) {
                 throw new IllegalArgumentException("the number of source shards [" + sourceNumberOfShards + "] must be a " +
                     "factor of ["
                     + targetNumberOfShards + "]");
             }
+            // 缩容 也要求至少缩小到 1/2
         } else if (sourceNumberOfShards > targetNumberOfShards) { // shrink
+            // 至少要求是2
             factor = sourceNumberOfShards / targetNumberOfShards;
             if (factor * targetNumberOfShards != sourceNumberOfShards || factor <= 1) {
                 throw new IllegalArgumentException("the number of source shards [" + sourceNumberOfShards + "] must be a " +

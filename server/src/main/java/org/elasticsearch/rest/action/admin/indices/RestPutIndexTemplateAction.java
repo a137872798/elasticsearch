@@ -35,6 +35,9 @@ import static java.util.Arrays.asList;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
+/**
+ * 插入一个indexTemplate
+ */
 public class RestPutIndexTemplateAction extends BaseRestHandler {
 
     @Override

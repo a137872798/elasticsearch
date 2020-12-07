@@ -155,6 +155,7 @@ public class MetadataIndexTemplateService {
     /**
      * Add the given component template to the cluster state. If {@code create} is true, an
      * exception will be thrown if the component template already exists
+     * 在CS中插入新的componentTemplate
      */
     public void putComponentTemplate(final String cause, final boolean create, final String name, final TimeValue masterTimeout,
                                      final ComponentTemplate template, final ActionListener<AcknowledgedResponse> listener) {
@@ -176,6 +177,12 @@ public class MetadataIndexTemplateService {
                     return addComponentTemplate(currentState, create, name, template);
                 }
 
+                /**
+                 * 当在集群发布成功时 才触发监听器
+                 * @param source
+                 * @param oldState
+                 * @param newState
+                 */
                 @Override
                 public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
                     listener.onResponse(new AcknowledgedResponse(true));
@@ -183,7 +190,15 @@ public class MetadataIndexTemplateService {
             });
     }
 
-    // Package visible for testing
+    /**
+     * 在当前集群状态中插入新的componentTemplate
+     * @param currentState
+     * @param create
+     * @param name  这个componentTemplate的名字
+     * @param template
+     * @return
+     * @throws Exception
+     */
     ClusterState addComponentTemplate(final ClusterState currentState, final boolean create,
                                       final String name, final ComponentTemplate template) throws Exception {
         if (create && currentState.metadata().componentTemplates().containsKey(name)) {
@@ -194,6 +209,7 @@ public class MetadataIndexTemplateService {
         String stringMappings = mappings == null ? null : mappings.string();
 
         // We may need to normalize index settings, so do that also
+        // 先进行规范化检测
         Settings finalSettings = template.template().settings();
         if (finalSettings != null) {
             finalSettings = Settings.builder()
@@ -201,9 +217,11 @@ public class MetadataIndexTemplateService {
                 .build();
         }
 
+        // 检验mappings能否被正常解析
         validateTemplate(finalSettings, stringMappings, indicesService, xContentRegistry);
 
         // if we're updating a component template, let's check if it's part of any V2 template that will yield the CT update invalid
+        // 这里是要求必须存在于 globalTemplate上 也不知道为啥
         if (create == false && finalSettings != null) {
             // if the CT is specifying the `index.hidden` setting it cannot be part of any global template
             if (IndexMetadata.INDEX_HIDDEN_SETTING.exists(finalSettings)) {
@@ -211,6 +229,7 @@ public class MetadataIndexTemplateService {
                 List<String> globalTemplatesThatUseThisComponent = new ArrayList<>();
                 for (Map.Entry<String, IndexTemplateV2> entry : existingTemplates.entrySet()) {
                     IndexTemplateV2 templateV2 = entry.getValue();
+                    // 找到使用这个componentTemplate的所有 indexTemplate
                     if (templateV2.composedOf().contains(name) && templateV2.indexPatterns().stream().anyMatch(Regex::isMatchAllPattern)) {
                         // global templates don't support configuring the `index.hidden` setting so we don't need to resolve the settings as
                         // no other component template can remove this setting from the resolved settings, so just invalidate this update
@@ -230,6 +249,7 @@ public class MetadataIndexTemplateService {
         if (stringMappings != null) {
             Map<String, Object> parsedMappings = MapperService.parseMapping(xContentRegistry, stringMappings);
             if (parsedMappings.size() > 0) {
+                // 为原本的数据结构 额外套了一层 "_doc"
                 stringMappings = Strings.toString(XContentFactory.jsonBuilder()
                     .startObject()
                     .field(MapperService.SINGLE_MAPPING_NAME, parsedMappings)
@@ -237,6 +257,7 @@ public class MetadataIndexTemplateService {
             }
         }
 
+        // 重新生成 template 并设置到CS中
         final Template finalTemplate = new Template(finalSettings,
             stringMappings == null ? null : new CompressedXContent(stringMappings), template.template().aliases());
         final ComponentTemplate finalComponentTemplate = new ComponentTemplate(finalTemplate, template.version(), template.metadata());
@@ -345,12 +366,22 @@ public class MetadataIndexTemplateService {
         }
     }
 
+    /**
+     * 插入V2版本的indexTemplate
+     * @param currentState
+     * @param create
+     * @param name
+     * @param template
+     * @return
+     * @throws Exception
+     */
     public ClusterState addIndexTemplateV2(final ClusterState currentState, final boolean create,
                                            final String name, final IndexTemplateV2 template) throws Exception {
         if (create && currentState.metadata().templatesV2().containsKey(name)) {
             throw new IllegalArgumentException("index template [" + name + "] already exists");
         }
 
+        // 检测是否有与现存的某个 模板冲突 TODO 先忽略这些检测逻辑
         Map<String, List<String>> overlaps = findConflictingV2Templates(currentState, name, template.indexPatterns(), true,
             template.priority());
         overlaps.remove(name);
@@ -383,6 +414,7 @@ public class MetadataIndexTemplateService {
             deprecationLogger.deprecatedAndMaybeLog("index_template_pattern_overlap", warning);
         }
 
+        // 下面的处理基本和 IndexTemplate一致
         IndexTemplateV2 finalIndexTemplate = template;
         Template innerTemplate = template.template();
         if (innerTemplate != null) {
@@ -544,6 +576,11 @@ public class MetadataIndexTemplateService {
         return ClusterState.builder(currentState).metadata(metadata).build();
     }
 
+    /**
+     * 插入一个新的模板
+     * @param request
+     * @param listener
+     */
     public void putTemplate(final PutRequest request, final PutListener listener) {
         Settings.Builder updatedSettingsBuilder = Settings.builder();
         updatedSettingsBuilder.put(request.settings).normalizePrefix(IndexMetadata.INDEX_SETTING_PREFIX);
@@ -593,7 +630,13 @@ public class MetadataIndexTemplateService {
         });
     }
 
-    // Package visible for testing
+    /**
+     * 插入某个 indexTemplate
+     * @param currentState
+     * @param request
+     * @param templateBuilder
+     * @return
+     */
     static ClusterState innerPutTemplate(final ClusterState currentState, PutRequest request,
                                          IndexTemplateMetadata.Builder templateBuilder) {
         // Flag for whether this is updating an existing template or adding a new one
@@ -932,6 +975,14 @@ public class MetadataIndexTemplateService {
         return Collections.unmodifiableList(aliases);
     }
 
+    /**
+     * 该方法主要就是检验 mappings能否被正常解析
+     * @param validateSettings
+     * @param mappings
+     * @param indicesService
+     * @param xContentRegistry
+     * @throws Exception
+     */
     private static void validateTemplate(Settings validateSettings, String mappings,
                                          IndicesService indicesService, NamedXContentRegistry xContentRegistry) throws Exception {
         // First check to see if mappings are valid XContent
@@ -973,6 +1024,7 @@ public class MetadataIndexTemplateService {
             createdIndex = dummyIndexService.index();
 
             if (mappings != null) {
+                // 这里会触发 mappings的解析
                 dummyIndexService.mapperService().merge(MapperService.SINGLE_MAPPING_NAME,
                     MapperService.parseMapping(xContentRegistry, mappings), MergeReason.MAPPING_UPDATE);
             }
