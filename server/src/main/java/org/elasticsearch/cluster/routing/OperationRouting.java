@@ -72,7 +72,7 @@ public class OperationRouting {
      * 获取index 下某个 shardId 对应的所有分片
      * @param clusterState
      * @param index
-     * @param id
+     * @param id  req.id
      * @param routing
      * @return
      */
@@ -329,6 +329,7 @@ public class OperationRouting {
      * @return
      */
     protected IndexShardRoutingTable shards(ClusterState clusterState, String index, String id, String routing) {
+        // generateShardId 就是通过一种接近随机的方式获取分片id
         int shardId = generateShardId(indexMetadata(clusterState, index), id, routing);
         // 通过路由表对象找到 目标索引下有关某个分片的路由表
         return clusterState.getRoutingTable().shardRoutingTable(index, shardId);
@@ -350,7 +351,7 @@ public class OperationRouting {
     /**
      * 生成分片id
      * @param indexMetadata  索引元数据信息
-     * @param id   这是什么id ???
+     * @param id   一个uuid  当处理一个 bulkReq时 会为它生成一个随机id
      * @param routing 路由信息
      * @return
      */
@@ -365,7 +366,7 @@ public class OperationRouting {
             effectiveRouting = routing;
         }
 
-        // 代表这个索引还有多个分区
+        // 代表这个索引还有多个分区  TODO 先忽略分区的概念
         if (indexMetadata.isRoutingPartitionedIndex()) {
             // 通过hash计算后 获得一个分区的offset
             partitionOffset = Math.floorMod(Murmur3HashFunction.hash(id), indexMetadata.getRoutingPartitionSize());
@@ -381,7 +382,7 @@ public class OperationRouting {
      *
      * @param indexMetadata  索引元数据
      * @param effectiveRouting   有效的路由信息
-     * @param partitionOffset   索引所在分区的偏移量 某个索引可能存在多个分区
+     * @param partitionOffset   索引所在分区的偏移量 某个索引可能存在多个分区  先假设始终为0
      * @return
      */
     private static int calculateScaledShardId(IndexMetadata indexMetadata, String effectiveRouting, int partitionOffset) {

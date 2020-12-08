@@ -106,14 +106,19 @@ public final class Pipeline {
      *
      * If <code>null</code> is returned then this document will be dropped and not indexed, otherwise
      * this document will be kept and indexed.
+     * 每个管道内部会包含一组processor 这里就是用管道去处理可被摄取的doc对象
      */
     public void execute(IngestDocument ingestDocument, BiConsumer<IngestDocument, Exception> handler) {
         final long startTimeInNanos = relativeTimeProvider.getAsLong();
         metrics.preIngest();
-        compoundProcessor.execute(ingestDocument, (result, e) -> {
+        // 内部会交由各个 processor进行处理
+        compoundProcessor.execute(ingestDocument,
+            // 当处理完毕后触发该函数
+            (result, e) -> {
             long ingestTimeInMillis = TimeUnit.NANOSECONDS.toMillis(relativeTimeProvider.getAsLong() - startTimeInNanos);
             metrics.postIngest(ingestTimeInMillis);
             if (e != null) {
+                // 记录失败次数
                 metrics.ingestFailed();
             }
             handler.accept(result, e);

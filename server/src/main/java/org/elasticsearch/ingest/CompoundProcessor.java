@@ -35,15 +35,23 @@ import java.util.stream.Collectors;
 /**
  * A Processor that executes a list of other "processors". It executes a separate list of
  * "onFailureProcessors" when any of the processors throw an {@link Exception}.
+ * 内部组合里一组处理
  */
 public class CompoundProcessor implements Processor {
+
     public static final String ON_FAILURE_MESSAGE_FIELD = "on_failure_message";
     public static final String ON_FAILURE_PROCESSOR_TYPE_FIELD = "on_failure_processor_type";
     public static final String ON_FAILURE_PROCESSOR_TAG_FIELD = "on_failure_processor_tag";
     public static final String ON_FAILURE_PIPELINE_FIELD = "on_failure_pipeline";
 
     private final boolean ignoreFailure;
+    /**
+     * 内部包含一组正常处理使用的处理器
+     */
     private final List<Processor> processors;
+    /**
+     * 当出现异常时 使用这组处理器
+     */
     private final List<Processor> onFailureProcessors;
     private final List<Tuple<Processor, IngestMetric>> processorsWithMetrics;
     private final LongSupplier relativeTimeProvider;
@@ -59,6 +67,14 @@ public class CompoundProcessor implements Processor {
     public CompoundProcessor(boolean ignoreFailure, List<Processor> processors, List<Processor> onFailureProcessors) {
         this(ignoreFailure, processors, onFailureProcessors, System::nanoTime);
     }
+
+    /**
+     *
+     * @param ignoreFailure
+     * @param processors
+     * @param onFailureProcessors
+     * @param relativeTimeProvider
+     */
     CompoundProcessor(boolean ignoreFailure, List<Processor> processors, List<Processor> onFailureProcessors,
                       LongSupplier relativeTimeProvider) {
         super();
@@ -67,6 +83,7 @@ public class CompoundProcessor implements Processor {
         this.onFailureProcessors = onFailureProcessors;
         this.relativeTimeProvider = relativeTimeProvider;
         this.processorsWithMetrics = new ArrayList<>(processors.size());
+        // 为每个处理器绑定一个统计项对象
         processors.forEach(p -> processorsWithMetrics.add(new Tuple<>(p, new IngestMetric())));
     }
 
@@ -86,6 +103,10 @@ public class CompoundProcessor implements Processor {
         return processors;
     }
 
+    /**
+     * 将所有 processor 展开 比如某些processor可能是CompoundProcessor类型
+     * @return
+     */
     public List<Processor> flattenProcessors() {
         List<Processor> allProcessors = new ArrayList<>(flattenProcessors(processors));
         allProcessors.addAll(flattenProcessors(onFailureProcessors));
@@ -121,10 +142,19 @@ public class CompoundProcessor implements Processor {
 
     @Override
     public void execute(IngestDocument ingestDocument, BiConsumer<IngestDocument, Exception> handler) {
+        // 链式调用 从下标为0的processor开始处理
         innerExecute(0, ingestDocument, handler);
     }
 
+
+    /**
+     *
+     * @param currentProcessor  当前正在使用的处理器下标
+     * @param ingestDocument
+     * @param handler
+     */
     void innerExecute(int currentProcessor, IngestDocument ingestDocument, BiConsumer<IngestDocument, Exception> handler) {
+        // 此时已经处理到最后一个 processor 直接交给handler来处理
         if (currentProcessor == processorsWithMetrics.size()) {
             handler.accept(ingestDocument, null);
             return;
@@ -134,27 +164,35 @@ public class CompoundProcessor implements Processor {
         final Processor processor = processorWithMetric.v1();
         final IngestMetric metric = processorWithMetric.v2();
         final long startTimeInNanos = relativeTimeProvider.getAsLong();
+        // 每当轮到某个processor进行处理时 会更新统计项
         metric.preIngest();
-        processor.execute(ingestDocument, (result, e) -> {
+        processor.execute(ingestDocument,
+            // 当某个processor处理完后 触发该函数
+            (result, e) -> {
             long ingestTimeInMillis = TimeUnit.NANOSECONDS.toMillis(relativeTimeProvider.getAsLong() - startTimeInNanos);
             metric.postIngest(ingestTimeInMillis);
 
             if (e != null) {
                 metric.ingestFailed();
+                // 代表在processor的处理中出现了异常  但是忽略异常  那么传播到下一环
                 if (ignoreFailure) {
                     innerExecute(currentProcessor + 1, ingestDocument, handler);
                 } else {
+                    // 追加某些异常信息
                     IngestProcessorException compoundProcessorException =
                         newCompoundProcessorException(e, processor, ingestDocument);
+                    // 以异常方式触发 handler
                     if (onFailureProcessors.isEmpty()) {
                         handler.accept(null, compoundProcessorException);
                     } else {
+                        // 使用 failureProcessor消化异常  之后以成功的方式触发handler
                         executeOnFailureAsync(0, ingestDocument, compoundProcessorException, handler);
                     }
                 }
             } else {
                 if (result != null) {
                     innerExecute(currentProcessor + 1, result, handler);
+                    // 如果某个环节没有生成结果 就提前结束处理
                 } else {
                     handler.accept(null, null);
                 }
@@ -162,13 +200,22 @@ public class CompoundProcessor implements Processor {
         });
     }
 
+    /**
+     * 使用 failureProcessor处理异常
+     * @param currentOnFailureProcessor
+     * @param ingestDocument
+     * @param exception
+     * @param handler
+     */
     void executeOnFailureAsync(int currentOnFailureProcessor, IngestDocument ingestDocument, ElasticsearchException exception,
                                BiConsumer<IngestDocument, Exception> handler) {
+        // 在之后的处理过程中可能会需要用到异常信息 所以将信息填充到了ingestDocument中
         if (currentOnFailureProcessor == 0) {
             putFailureMetadata(ingestDocument, exception);
         }
 
         if (currentOnFailureProcessor == onFailureProcessors.size()) {
+            // 代表所有processor都已经处理完毕 此时就可以将异常信息从 ingestDocument中抽取出来了
             removeFailureMetadata(ingestDocument);
             handler.accept(ingestDocument, null);
             return;
@@ -176,6 +223,7 @@ public class CompoundProcessor implements Processor {
 
         final Processor onFailureProcessor = onFailureProcessors.get(currentOnFailureProcessor);
         onFailureProcessor.execute(ingestDocument, (result, e) -> {
+            // 如果无法消化异常 或者没有产生result 都会提前结束处理流程
             if (e != null) {
                 removeFailureMetadata(ingestDocument);
                 handler.accept(null, newCompoundProcessorException(e, onFailureProcessor, ingestDocument));
@@ -197,6 +245,8 @@ public class CompoundProcessor implements Processor {
         String failedProcessorType = (processorTypeHeader != null) ? processorTypeHeader.get(0) : null;
         String failedProcessorTag = (processorTagHeader != null) ? processorTagHeader.get(0) : null;
         String failedPipelineId = (processorOriginHeader != null) ? processorOriginHeader.get(0) : null;
+
+        // 将异常信息填充到  ingestDocument中
         Map<String, Object> ingestMetadata = ingestDocument.getIngestMetadata();
         ingestMetadata.put(ON_FAILURE_MESSAGE_FIELD, cause.getRootCause().getMessage());
         ingestMetadata.put(ON_FAILURE_PROCESSOR_TYPE_FIELD, failedProcessorType);

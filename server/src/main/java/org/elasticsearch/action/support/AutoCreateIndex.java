@@ -37,6 +37,7 @@ import java.util.List;
 /**
  * Encapsulates the logic of whether a new index should be automatically created when
  * a write operation is about to happen in a non existing index.
+ * 内部包含一些判断逻辑  描述某个索引是否允许自动创建
  */
 public final class AutoCreateIndex {
 
@@ -62,13 +63,17 @@ public final class AutoCreateIndex {
     /**
      * Should the index be auto created?
      * @throws IndexNotFoundException if the index doesn't exist and shouldn't be auto created
+     * 检测某个索引是否支持自动创建
      */
     public boolean shouldAutoCreate(String index, ClusterState state) {
+        // 首先检测该index是否存在于clusterState中
         if (resolver.hasIndexOrAlias(index, state)) {
             return false;
         }
         // One volatile read, so that all checks are done against the same instance:
         final AutoCreate autoCreate = this.autoCreate;
+
+        // 不允许自动创建这个索引 那么本次处理就无法找到这个索引了
         if (autoCreate.autoCreateIndex == false) {
             throw new IndexNotFoundException("[" + AUTO_CREATE_INDEX_SETTING.getKey() + "] is [false]", index);
         }
@@ -77,6 +82,8 @@ public final class AutoCreateIndex {
         if (autoCreate.expressions.isEmpty()) {
             return true;
         }
+
+        // TODO 先忽略 正常情况不会设置
         for (Tuple<String, Boolean> expression : autoCreate.expressions) {
             String indexExpression = expression.v1();
             boolean include = expression.v2();
@@ -100,11 +107,21 @@ public final class AutoCreateIndex {
         this.autoCreate = autoCreate;
     }
 
+    /**
+     * 该对象可以判断某个索引是否支持自动创建
+     */
     static class AutoCreate {
         private final boolean autoCreateIndex;
+
+        /**
+         * 看来默认情况下是不会填充这个列表的
+         */
         private final List<Tuple<String, Boolean>> expressions;
         private final String string;
 
+        /**
+         * @param value  true/false
+         */
         private AutoCreate(String value) {
             boolean autoCreateIndex;
             List<Tuple<String, Boolean>> expressions = new ArrayList<>();

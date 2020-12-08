@@ -46,6 +46,7 @@ import java.util.function.BiConsumer;
 
 /**
  * Represents a single document being captured before indexing and holds the source and metadata (like id, type and index).
+ * 代表在进行索引前 捕获的某个文档   存储了source以及元数据
  */
 public final class IngestDocument {
 
@@ -55,14 +56,31 @@ public final class IngestDocument {
 
     static final String TIMESTAMP = "timestamp";
 
+    /**
+     * 存储 source和元数据的容器
+     */
     private final Map<String, Object> sourceAndMetadata;
+    /**
+     * 摄取元数据
+     */
     private final Map<String, Object> ingestMetadata;
 
     // Contains all pipelines that have been executed for this document
+    // 用于检测循环依赖的容器
     private final Set<String> executedPipelines = new LinkedHashSet<>();
 
+    /**
+     * 相关参数都是描述某个index的
+     * @param index
+     * @param id
+     * @param routing
+     * @param version
+     * @param versionType
+     * @param source  实际上该map内部就是doc的数据  比如json转换成map后
+     */
     public IngestDocument(String index, String id, String routing,
                           Long version, VersionType versionType, Map<String, Object> source) {
+        // 在初始化阶段 将相关信息填充到map中
         this.sourceAndMetadata = new HashMap<>();
         this.sourceAndMetadata.putAll(source);
         this.sourceAndMetadata.put(Metadata.INDEX.getFieldName(), index);
@@ -77,6 +95,7 @@ public final class IngestDocument {
             sourceAndMetadata.put(Metadata.VERSION_TYPE.getFieldName(), VersionType.toString(versionType));
         }
 
+        // 一开始摄取map中只存储了时间戳信息
         this.ingestMetadata = new HashMap<>();
         this.ingestMetadata.put(TIMESTAMP, ZonedDateTime.now(ZoneOffset.UTC));
     }
@@ -105,13 +124,16 @@ public final class IngestDocument {
      * @return the value for the provided path if existing, null otherwise
      * @throws IllegalArgumentException if the path is null, empty, invalid, if the field doesn't exist
      * or if the field that is found at the provided path is not of the expected type.
+     * 通过path定位到某个field  通过class转换格式化数据
      */
     public <T> T getFieldValue(String path, Class<T> clazz) {
         FieldPath fieldPath = new FieldPath(path);
         Object context = fieldPath.initialContext;
+        // 根据pathElement 从上下文中抽取参数
         for (String pathElement : fieldPath.pathElements) {
             context = resolve(pathElement, path, context);
         }
+        // 将最终取出的上下文信息转换成 对应的类型
         return cast(path, context, clazz);
     }
 
@@ -146,6 +168,7 @@ public final class IngestDocument {
      * or if the field that is found at the provided path is not of the expected type.
      */
     public <T> T getFieldValue(TemplateScript.Factory pathTemplate, Class<T> clazz) {
+        // renderTemplate(pathTemplate) 会将该对象内部的参数 包装成一个模板引擎对象  并生成一个path信息
         return getFieldValue(renderTemplate(pathTemplate), clazz);
     }
 
@@ -171,6 +194,7 @@ public final class IngestDocument {
      * @return the byte array for the provided path if existing
      * @throws IllegalArgumentException if the path is null, empty, invalid, if the field doesn't exist
      * or if the field that is found at the provided path is not of the expected type.
+     * 将结果以byte[] 形式返回
      */
     public byte[] getFieldValueAsBytes(String path, boolean ignoreMissing) {
         Object object = getFieldValue(path, Object.class, ignoreMissing);
@@ -191,6 +215,7 @@ public final class IngestDocument {
      * @param fieldPathTemplate the template for the path within the document in dot-notation
      * @return true if the document contains a value for the field, false otherwise
      * @throws IllegalArgumentException if the path is null, empty or invalid
+     * 就是判断当前sourceAndMetadata 中 使用该path能否匹配到数据
      */
     public boolean hasField(TemplateScript.Factory fieldPathTemplate) {
         return hasField(renderTemplate(fieldPathTemplate));
@@ -212,10 +237,12 @@ public final class IngestDocument {
      * @param failOutOfRange Whether to throw an IllegalArgumentException if array is accessed outside of its range
      * @return true if the document contains a value for the field, false otherwise
      * @throws IllegalArgumentException if the path is null, empty or invalid.
+     * 检测当前上下文中是否包含该field(path)
      */
     public boolean hasField(String path, boolean failOutOfRange) {
         FieldPath fieldPath = new FieldPath(path);
         Object context = fieldPath.initialContext;
+        // 实际上就是map操作
         for (int i = 0; i < fieldPath.pathElements.length - 1; i++) {
             String pathElement = fieldPath.pathElements[i];
             if (context == null) {
@@ -248,6 +275,7 @@ public final class IngestDocument {
             }
         }
 
+        // 这里处理最后一个element
         String leafKey = fieldPath.pathElements[fieldPath.pathElements.length - 1];
         if (context instanceof Map) {
             @SuppressWarnings("unchecked")
@@ -289,11 +317,13 @@ public final class IngestDocument {
      * Removes the field identified by the provided path.
      * @param path the path of the field to be removed
      * @throws IllegalArgumentException if the path is null, empty, invalid or if the field doesn't exist.
+     * 将path对应的数据 从context中移除
      */
     public void removeField(String path) {
         FieldPath fieldPath = new FieldPath(path);
         Object context = fieldPath.initialContext;
         for (int i = 0; i < fieldPath.pathElements.length - 1; i++) {
+            // 当pathElement不存在时 抛出异常
             context = resolve(fieldPath.pathElements[i], path, context);
         }
 
@@ -332,6 +362,13 @@ public final class IngestDocument {
                 "] as part of path [" + path + "]");
     }
 
+    /**
+     * 可以看到将pathElement作为key 从容器中获取数据
+     * @param pathElement
+     * @param fullPath
+     * @param context
+     * @return
+     */
     private static Object resolve(String pathElement, String fullPath, Object context) {
         if (context == null) {
             throw new IllegalArgumentException("cannot resolve [" + pathElement + "] from null as part of path [" + fullPath + "]");
@@ -375,6 +412,7 @@ public final class IngestDocument {
      * @param path The path within the document in dot-notation
      * @param value The value or values to append to the existing ones
      * @throws IllegalArgumentException if the path is null, empty or invalid.
+     * 在指定的path位置 设置value
      */
     public void appendFieldValue(String path, Object value) {
         setFieldValue(path, value, true);
@@ -393,6 +431,7 @@ public final class IngestDocument {
      * @throws IllegalArgumentException if the path is null, empty or invalid.
      */
     public void appendFieldValue(TemplateScript.Factory fieldPathTemplate, ValueSource valueSource) {
+        // 将2个原始map包装成model
         Map<String, Object> model = createTemplateModel();
         appendFieldValue(fieldPathTemplate.newInstance(model).execute(), valueSource.copyAndResolve(model));
     }
@@ -406,6 +445,7 @@ public final class IngestDocument {
      * @param value The value to put in for the path key
      * @throws IllegalArgumentException if the path is null, empty, invalid or if the value cannot be set to the
      * item identified by the provided path.
+     * 将该value 设置到path对应的位置
      */
     public void setFieldValue(String path, Object value) {
         setFieldValue(path, value, false);
@@ -425,6 +465,12 @@ public final class IngestDocument {
         setFieldValue(fieldPathTemplate.newInstance(model).execute(), valueSource.copyAndResolve(model), false);
     }
 
+    /**
+     * 在指定的path 设置value
+     * @param path
+     * @param value
+     * @param append 本次是否是一次追加操作
+     */
     private void setFieldValue(String path, Object value, boolean append) {
         FieldPath fieldPath = new FieldPath(path);
         Object context = fieldPath.initialContext;
@@ -439,6 +485,7 @@ public final class IngestDocument {
                 if (map.containsKey(pathElement)) {
                     context = map.get(pathElement);
                 } else {
+                    // 又是 trie树的结构
                     HashMap<Object, Object> newMap = new HashMap<>();
                     map.put(pathElement, newMap);
                     context = newMap;
@@ -471,6 +518,7 @@ public final class IngestDocument {
         if (context instanceof Map) {
             @SuppressWarnings("unchecked")
             Map<String, Object> map = (Map<String, Object>) context;
+            // 如果是追加模式 也就是认为可能key对应的value已经存在 就将其修改成 list类型 并追加一个新的value
             if (append) {
                 if (map.containsKey(leafKey)) {
                     Object object = map.get(leafKey);
@@ -485,7 +533,9 @@ public final class IngestDocument {
                 }
                 return;
             }
+            // 非追加模式 进行覆盖(或者首次插入)
             map.put(leafKey, value);
+            // 如果已经是一个 list了 就看key对应的下标  TODO 怎么知道在path的哪一层要传入数字的key ???
         } else if (context instanceof List) {
             @SuppressWarnings("unchecked")
             List<Object> list = (List<Object>) context;
@@ -500,6 +550,7 @@ public final class IngestDocument {
                 throw new IllegalArgumentException("[" + index + "] is out of bounds for array with length [" + list.size() +
                         "] as part of path [" + path + "]");
             }
+            // 追加模式就是将 list中的某个元素也修改成list
             if (append) {
                 Object object = list.get(index);
                 List<Object> newList = appendValues(object, value);
@@ -508,6 +559,7 @@ public final class IngestDocument {
                 }
                 return;
             }
+            // 非追加模式选择覆盖
             list.set(index, value);
         } else {
             throw new IllegalArgumentException("cannot set [" + leafKey + "] with parent object of type [" +
@@ -515,6 +567,12 @@ public final class IngestDocument {
         }
     }
 
+    /**
+     *
+     * @param maybeList  这个对象可能是单个对象 也可能是一个list对象
+     * @param value  本次要追加的值
+     * @return
+     */
     @SuppressWarnings("unchecked")
     private static List<Object> appendValues(Object maybeList, Object value) {
         List<Object> list;
@@ -526,6 +584,7 @@ public final class IngestDocument {
             list = new ArrayList<>();
             list.add(maybeList);
         }
+        // 将结果追加到list中
         appendValues(list, value);
         return list;
     }
@@ -549,10 +608,20 @@ public final class IngestDocument {
                 clazz.getName() + "]");
     }
 
+    /**
+     * 通过工厂对象 将某个模型解析成字符串
+     * @param template
+     * @return
+     */
     public String renderTemplate(TemplateScript.Factory template) {
         return template.newInstance(createTemplateModel()).execute();
     }
 
+    /**
+     * 创建模板的模型
+     * 这里将源数据 以及 摄取处理的数据设置到map中
+     * @return
+     */
     private Map<String, Object> createTemplateModel() {
         Map<String, Object> model = new HashMap<>(sourceAndMetadata);
         model.put(SourceFieldMapper.NAME, sourceAndMetadata);
@@ -565,10 +634,12 @@ public final class IngestDocument {
     /**
      * one time operation that extracts the metadata fields from the ingest document and returns them.
      * Metadata fields that used to be accessible as ordinary top level fields will be removed as part of this call.
+     * 提取元数据
      */
     public Map<Metadata, Object> extractMetadata() {
         Map<Metadata, Object> metadataMap = new EnumMap<>(Metadata.class);
         for (Metadata metadata : Metadata.values()) {
+            // 将元数据从 sourceAndMetadata中转移到 metadataMap中
             metadataMap.put(metadata, sourceAndMetadata.remove(metadata.getFieldName()));
         }
         return metadataMap;
@@ -643,11 +714,17 @@ public final class IngestDocument {
      *
      * @param pipeline the pipeline to execute
      * @param handler handles the result or failure
+     * 使用某个管道来处理doc数据
      */
     public void executePipeline(Pipeline pipeline, BiConsumer<IngestDocument, Exception> handler) {
+        // 能够添加成功 代表首次使用这个管道
         if (executedPipelines.add(pipeline.getId())) {
+            // 更新此时正在使用的 pipeline
             Object previousPipeline = ingestMetadata.put("pipeline", pipeline.getId());
-            pipeline.execute(this, (result, e) -> {
+            pipeline.execute(this,
+                // 当内部所有的processor都处理完后 会触发该函数
+                (result, e) -> {
+                // 可以看出这里有可能会发生递归调用 (在processor处理过程中可能又会调用该方法) 在执行execute后 会将上下文信息还原
                 executedPipelines.remove(pipeline.getId());
                 if (previousPipeline != null) {
                     ingestMetadata.put("pipeline", previousPipeline);
@@ -663,6 +740,7 @@ public final class IngestDocument {
 
     /**
      * @return a pipeline stack; all pipelines that are in execution by this document in reverse order
+     * 将此时所有执行过的pipeline翻转
      */
     List<String> getPipelineStack() {
         List<String> pipelineStack = new ArrayList<>(executedPipelines);
@@ -695,6 +773,9 @@ public final class IngestDocument {
                 '}';
     }
 
+    /**
+     * 上下文中有某些数据不属于 doc 而是描述doc的元数据
+     */
     public enum Metadata {
         INDEX(IndexFieldMapper.NAME),
         ID(IdFieldMapper.NAME),
@@ -713,16 +794,24 @@ public final class IngestDocument {
         }
     }
 
+    /**
+     * document 本身是一个结构化数据 比如 json  那么定位到某个field 这里抽象出 path的概念  比如 {"a":{"b":{}}}  就可以用 a.b作为path 来代表定位到了b
+     */
     private class FieldPath {
 
         private final String[] pathElements;
         private final Object initialContext;
 
+        /**
+         * 将某个路径拆解成多个片段
+         * @param path
+         */
         private FieldPath(String path) {
             if (Strings.isEmpty(path)) {
                 throw new IllegalArgumentException("path cannot be null nor empty");
             }
             String newPath;
+            // 在不同场景下传入path 会对应不同的上下文   比如针对摄取的场景 就是将摄取元数据作为上下文
             if (path.startsWith(INGEST_KEY_PREFIX)) {
                 initialContext = ingestMetadata;
                 newPath = path.substring(INGEST_KEY_PREFIX.length(), path.length());

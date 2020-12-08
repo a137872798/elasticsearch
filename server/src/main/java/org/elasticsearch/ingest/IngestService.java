@@ -355,7 +355,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
     }
 
     /**
-     * 执行诊断工作
+     * 执行摄取工作
      * @param numberOfActionRequests  bulkReq内部有多少子级req
      * @param actionRequests
      * @param onFailure
@@ -382,7 +382,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
                 final AtomicInteger counter = new AtomicInteger(numberOfActionRequests);
                 int i = 0;
                 for (DocWriteRequest<?> actionRequest : actionRequests) {
-                    // 从docWriterReq中抽取indexReq
+                    // 无法获取indexReq的请求 actionReq将被忽略
                     IndexRequest indexRequest = TransportBulkAction.getIndexWriteRequest(actionRequest);
                     if (indexRequest == null) {
                         // 当所有doc都被处理完后 触发结果对应的监听器
@@ -393,6 +393,8 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
                         continue;
                     }
 
+
+                    // 只要通过pipeline执行过一次后 就将pipeline置空  因为在通过pipeline处理后 又会触发一次 doExecute 此时发现pipeline被置空了 就不会重复走这段逻辑了
                     final String pipelineId = indexRequest.getPipeline();
                     indexRequest.setPipeline(NOOP_PIPELINE_NAME);
                     final String finalPipelineId = indexRequest.getFinalPipeline();
@@ -414,9 +416,8 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
                         continue;
                     }
 
-                    // 将管道信息包装成list对象
+                    // 内部就是一套使用pipeline进行处理的模板
                     executePipelines(i, pipelines.iterator(), indexRequest, onDropped, onFailure, counter, onCompletion, originalThread);
-
                     i++;
                 }
             }
@@ -428,19 +429,21 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
      * @param slot
      * @param it
      * @param indexRequest
+     * @param counter
+     *
+     * 在不同场景触发不同钩子
      * @param onDropped
      * @param onFailure
-     * @param counter
      * @param onCompletion
      * @param originalThread
      */
     private void executePipelines(
         final int slot,
-        final Iterator<String> it,  // 遍历 defaultPipeline/finalPipeline
+        final Iterator<String> it,  // 每个请求至多可以携带2个管道信息    这里遍历 defaultPipeline/finalPipeline 取出相应的管道进行处理
         final IndexRequest indexRequest,
-        final IntConsumer onDropped,
+        final IntConsumer onDropped,   // 如果在pipeline处理后 result为null 代表处理过程中数据被丢弃了 那么会触发这个钩子
         final BiConsumer<Integer, Exception> onFailure,
-        final AtomicInteger counter,
+        final AtomicInteger counter,  // 代表此时处理的是第几个req
         final BiConsumer<Thread, Exception> onCompletion,
         final Thread originalThread
     ) {
@@ -453,11 +456,14 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
                     throw new IllegalArgumentException("pipeline with id [" + pipelineId + "] does not exist");
                 }
                 Pipeline pipeline = holder.pipeline;
-                innerExecute(slot, indexRequest, pipeline, onDropped, e -> {
+                innerExecute(slot, indexRequest, pipeline, onDropped,
+                    e -> {
+                    // 代表出现异常  触发钩子
                     if (e != null) {
                         onFailure.accept(slot, e);
                     }
 
+                    // 代表本次处理没有产生异常 使用it中的下一个pipeline去处理
                     if (it.hasNext()) {
                         executePipelines(slot, it, indexRequest, onDropped, onFailure, counter, onCompletion, originalThread);
                     } else {
@@ -529,8 +535,17 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         return sb.toString();
     }
 
+    /**
+     * 当使用某个管道 对某个indexReq进行处理时触发该方法
+     * @param slot
+     * @param indexRequest
+     * @param pipeline   本次处理请求的管道对象
+     * @param itemDroppedHandler
+     * @param handler
+     */
     private void innerExecute(int slot, IndexRequest indexRequest, Pipeline pipeline, IntConsumer itemDroppedHandler,
                               Consumer<Exception> handler) {
+        // 如果本次管道内部不包含处理器  直接触发handler
         if (pipeline.getProcessors().isEmpty()) {
             handler.accept(null);
             return;
@@ -544,22 +559,34 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         String id = indexRequest.id();
         String routing = indexRequest.routing();
         Long version = indexRequest.version();
+
+        // 这个版本类型 包含internal/external 2种类型 对应engine中的类型
         VersionType versionType = indexRequest.versionType();
         Map<String, Object> sourceAsMap = indexRequest.sourceAsMap();
+
+        // 该对象可以通过指定path的方式 获取source内部的数据 以及可以指定pipeline去处理内部的数据流
         IngestDocument ingestDocument = new IngestDocument(index, id, routing, version, versionType, sourceAsMap);
-        ingestDocument.executePipeline(pipeline, (result, e) -> {
+
+        // 使用pipeline 对数据进行处理
+        ingestDocument.executePipeline(pipeline,
+            // 当产生结果时 使用该函数进行处理
+            (result, e) -> {
             long ingestTimeInMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeInNanos);
             totalMetrics.postIngest(ingestTimeInMillis);
             if (e != null) {
                 totalMetrics.ingestFailed();
                 handler.accept(e);
+                // 当某些processor处理后 可能result就变成了null 代表这次处理的数据被丢弃了 触发onDrop函数
             } else if (result == null) {
                 itemDroppedHandler.accept(slot);
                 handler.accept(null);
             } else {
+                // 获取元数据信息
                 Map<IngestDocument.Metadata, Object> metadataMap = ingestDocument.extractMetadata();
                 //it's fine to set all metadata fields all the time, as ingest document holds their starting values
                 //before ingestion, which might also get modified during ingestion.
+
+                // 将元数据中的信息 转移到 indexReq上
                 indexRequest.index((String) metadataMap.get(IngestDocument.Metadata.INDEX));
                 indexRequest.id((String) metadataMap.get(IngestDocument.Metadata.ID));
                 indexRequest.routing((String) metadataMap.get(IngestDocument.Metadata.ROUTING));
@@ -568,6 +595,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
                     indexRequest.versionType(VersionType.fromString((String) metadataMap.get(IngestDocument.Metadata.VERSION_TYPE)));
                 }
                 indexRequest.source(ingestDocument.getSourceAndMetadata(), indexRequest.getContentType());
+
                 handler.accept(null);
             }
         });

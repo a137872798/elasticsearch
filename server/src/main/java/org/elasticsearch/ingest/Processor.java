@@ -37,6 +37,7 @@ import java.util.function.LongSupplier;
  * Whether changes are made and what exactly is modified is up to the implementation.
  *
  * Processors may get called concurrently and thus need to be thread-safe.
+ * 处理器是设置在pipeline内 用于实现摄取功能的
  */
 public interface Processor {
 

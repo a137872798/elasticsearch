@@ -23,6 +23,7 @@ import java.util.Map;
 
 /**
  * A string template rendered as a script.
+ * 渲染脚本的模板 啥玩意???
  */
 public abstract class TemplateScript {
 
@@ -38,12 +39,23 @@ public abstract class TemplateScript {
     }
 
     public static final String[] PARAMETERS = {};
-    /** Run a template and return the resulting string, encoded in utf8 bytes. */
+    /**
+     * Run a template and return the resulting string, encoded in utf8 bytes.
+     * 执行模板引擎 并生成结果
+     */
     public abstract String execute();
 
     public interface Factory {
+        /**
+         * 将一组参数转换成 脚本对象   一般就是直接将params 赋值到 TemplateScript.params上
+         * @param params
+         * @return
+         */
         TemplateScript newInstance(Map<String, Object> params);
     }
 
+    /**
+     * 在脚本上下文中 可以看到某个class 以及各种反射获取到的method信息
+     */
     public static final ScriptContext<Factory> CONTEXT = new ScriptContext<>("template", Factory.class);
 }

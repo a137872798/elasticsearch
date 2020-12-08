@@ -35,6 +35,9 @@ import java.util.Objects;
  */
 public class ActionListenerResponseHandler<Response extends TransportResponse> implements TransportResponseHandler<Response> {
 
+    /**
+     * 当产生结果时触发该监听器
+     */
     private final ActionListener<? super Response> listener;
     private final Writeable.Reader<Response> reader;
     private final String executor;

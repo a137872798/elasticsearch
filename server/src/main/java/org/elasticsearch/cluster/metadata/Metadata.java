@@ -630,20 +630,24 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
     /**
      * Returns indexing routing for the given <code>aliasOrIndex</code>. Resolves routing from the alias metadata used
      * in the write index.
+     * 根据索引/别名 解析出路由信息
      */
     public String resolveWriteIndexRouting(@Nullable String routing, String aliasOrIndex) {
         if (aliasOrIndex == null) {
             return routing;
         }
 
+        // 如果传入的index无法找到对应数据 或者不是别名类型 就不进行处理
         IndexAbstraction result = getIndicesLookup().get(aliasOrIndex);
         if (result == null || result.getType() != IndexAbstraction.Type.ALIAS) {
             return routing;
         }
+        // 如果查询结果没有writeIndex 那么就无法处理  writeIndex 和普通index 的区别是什么???
         IndexMetadata writeIndex = result.getWriteIndex();
         if (writeIndex == null) {
             throw new IllegalArgumentException("alias [" + aliasOrIndex + "] does not have a write index");
         }
+        // 这里如果命中了某个别名的元数据 将它的routing信息返回
         AliasMetadata aliasMd = writeIndex.getAliases().get(result.getName());
         if (aliasMd.indexRouting() != null) {
             if (aliasMd.indexRouting().indexOf(',') != -1) {
@@ -852,6 +856,7 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
     /**
      * @param concreteIndex The concrete index to check if routing is required
      * @return Whether routing is required according to the mapping for the specified index and type
+     * 检测某个 indexMetadata是否需要routing 信息
      */
     public boolean routingRequired(String concreteIndex) {
         IndexMetadata indexMetadata = indices.get(concreteIndex);

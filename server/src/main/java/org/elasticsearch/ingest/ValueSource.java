@@ -36,6 +36,7 @@ import static org.elasticsearch.script.Script.DEFAULT_TEMPLATE_LANG;
 
 /**
  * Holds a value. If the value is requested a copy is made and optionally template snippets are resolved too.
+ * 该对象可以提供一个 value
  */
 public interface ValueSource {
 
@@ -86,6 +87,9 @@ public interface ValueSource {
         }
     }
 
+    /**
+     * 通过一个map对象来存储value
+     */
     final class MapValue implements ValueSource {
 
         private final Map<ValueSource, ValueSource> map;
@@ -119,6 +123,9 @@ public interface ValueSource {
         }
     }
 
+    /**
+     * 包装一组 ValueSource
+     */
     final class ListValue implements ValueSource {
 
         private final List<ValueSource> values;
@@ -160,6 +167,11 @@ public interface ValueSource {
             this.value = value;
         }
 
+        /**
+         * 无关传入的参数 总是返回内部的value
+         * @param model The model to be used when resolving any templates
+         * @return
+         */
         @Override
         public Object copyAndResolve(Map<String, Object> model) {
             return value;
@@ -217,6 +229,11 @@ public interface ValueSource {
             this.template = template;
         }
 
+        /**
+         * 将model转换成string后返回
+         * @param model The model to be used when resolving any templates
+         * @return
+         */
         @Override
         public Object copyAndResolve(Map<String, Object> model) {
             return template.newInstance(model).execute();

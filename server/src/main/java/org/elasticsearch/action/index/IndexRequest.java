@@ -265,6 +265,7 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
     /**
      * Controls the shard routing of the request. Using this value to hash the shard
      * and not the id.
+     * 设置该req的路由信息
      */
     @Override
     public IndexRequest routing(String routing) {
@@ -602,6 +603,12 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
     }
 
 
+    /**
+     * 处理数据
+     * @param indexCreatedVersion
+     * @param mappingMd
+     * @param concreteIndex
+     */
     public void process(Version indexCreatedVersion, @Nullable MappingMetadata mappingMd, String concreteIndex) {
         if (mappingMd != null) {
             // might as well check for routing here
@@ -626,6 +633,7 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
     }
 
     /* resolve the routing if needed */
+    // 推测如果index不是别名 那么routing必须要设置 只有当index是一个alias时 才需要解析
     public void resolveRouting(Metadata metadata) {
         routing(metadata.resolveWriteIndexRouting(routing, index));
     }

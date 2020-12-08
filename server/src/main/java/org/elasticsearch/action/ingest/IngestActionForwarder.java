@@ -35,11 +35,16 @@ import java.util.concurrent.atomic.AtomicInteger;
  * A utility for forwarding ingest requests to ingest nodes in a round-robin fashion.
  *
  * TODO: move this into IngestService and make index/bulk actions call that
+ * 该对象会感知集群变化的事件
  */
 public final class IngestActionForwarder implements ClusterStateApplier {
 
     private final TransportService transportService;
     private final AtomicInteger ingestNodeGenerator = new AtomicInteger(Randomness.get().nextInt());
+
+    /**
+     * 维护此时集群中所有摄取节点
+     */
     private DiscoveryNode[] ingestNodes;
 
     public IngestActionForwarder(TransportService transportService) {
@@ -47,6 +52,12 @@ public final class IngestActionForwarder implements ClusterStateApplier {
         ingestNodes = new DiscoveryNode[0];
     }
 
+    /**
+     * 将请求转发到集群中的某个摄取节点
+     * @param action
+     * @param request
+     * @param listener
+     */
     public void forwardIngestRequest(ActionType<?> action, ActionRequest request, ActionListener<?> listener) {
         transportService.sendRequest(randomIngestNode(), action.name(), request,
             new ActionListenerResponseHandler(listener, action.getResponseReader()));
@@ -61,6 +72,10 @@ public final class IngestActionForwarder implements ClusterStateApplier {
         return nodes[Math.floorMod(ingestNodeGenerator.incrementAndGet(), nodes.length)];
     }
 
+    /**
+     * 追踪集群中最新的摄取节点信息
+     * @param event
+     */
     @Override
     public void applyClusterState(ClusterChangedEvent event) {
         ingestNodes = event.state().getNodes().getIngestNodes().values().toArray(DiscoveryNode.class);

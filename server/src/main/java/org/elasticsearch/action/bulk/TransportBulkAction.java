@@ -194,6 +194,7 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                 // 本次是否使用V2版本的模板 记得在index创建时
                 boolean preferV2Templates = bulkRequest.preferV2Templates() == null ?
                     IndexMetadata.PREFER_V2_TEMPLATES_SETTING.getDefault(Settings.EMPTY) : bulkRequest.preferV2Templates();
+
                 boolean indexRequestHasPipeline = resolvePipelines(actionRequest, indexRequest, preferV2Templates, metadata);
                 hasIndexRequestsWithPipelines |= indexRequestHasPipeline;
             }
@@ -225,36 +226,45 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                     assert arePipelinesResolved : bulkRequest;
                 }
                 if (clusterService.localNode().isIngestNode()) {
-                    // 如果当前节点是一个摄取节点  就走不同的逻辑 并且在处理完后直接触发监听器
+                    // 如果当前节点是一个摄取节点  就走不同的逻辑 并且在处理完后直接触发监听器  实际上listener就是重走doExecute 但是能保证下次的pipeline为空 下次就不会进入 if (hasIndexRequestsWithPipelines)这个分支
                     processBulkIndexIngestRequest(task, bulkRequest, listener);
                 } else {
+                    // 如果当前节点不是摄取节点   在接收到请求后 会转发到集群中的某个摄取节点
                     ingestForwarder.forwardIngestRequest(BulkAction.INSTANCE, bulkRequest, listener);
                 }
+                // 如果此时集群中不包含摄取节点 会抛出异常
             } catch (Exception e) {
                 listener.onFailure(e);
             }
             return;
         }
 
+        // 在经过pipeline处理过一轮后 进入下面的处理逻辑
         if (needToCheck()) {
             // Attempt to create all the indices that we're going to need during the bulk before we start.
             // Step 1: collect all the indices in the request
+            // 在开始执行bulk操作前 先找到所有index  如果之后发现这些索引还未创建  那么会先创建索引
             final Set<String> indices = bulkRequest.requests.stream()
                     // delete requests should not attempt to create the index (if the index does not
                     // exists), unless an external versioning is used
-                .filter(request -> request.opType() != DocWriteRequest.OpType.DELETE
-                        || request.versionType() == VersionType.EXTERNAL
-                        || request.versionType() == VersionType.EXTERNAL_GTE)
+                // 找到非 DELETE类型的操作  或者虽然是DELETE类型 但是版本类型属于 EXTERNAL 还是允许生成indices
+                .filter(request ->
+                    request.opType() != DocWriteRequest.OpType.DELETE || request.versionType() == VersionType.EXTERNAL || request.versionType() == VersionType.EXTERNAL_GTE)
                 .map(DocWriteRequest::index)
                 .collect(Collectors.toSet());
             /* Step 2: filter that to indices that don't exist and we can create. At the same time build a map of indices we can't create
-             * that we'll use when we try to run the requests. */
+             * that we'll use when we try to run the requests.
+             * 无法自动创建的索引会插入到这个map中
+             * */
             final Map<String, IndexNotFoundException> indicesThatCannotBeCreated = new HashMap<>();
+
+            // 支持自动创建的索引会加入到这个set中
             Set<String> autoCreateIndices = new HashSet<>();
             ClusterState state = clusterService.state();
             for (String index : indices) {
                 boolean shouldAutoCreate;
                 try {
+                    // 如果不支持自动创建该索引 会抛出 indexNotFound异常
                     shouldAutoCreate = shouldAutoCreate(index, state);
                 } catch (IndexNotFoundException e) {
                     shouldAutoCreate = false;
@@ -265,6 +275,7 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                 }
             }
             // Step 3: create all the indices that are missing, if there are any missing. start the bulk after all the creates come back.
+            // 这个时候认为已经尽可能的创建索引了
             if (autoCreateIndices.isEmpty()) {
                 executeBulk(task, bulkRequest, startTime, listener, responses, indicesThatCannotBeCreated);
             } else {
@@ -433,6 +444,12 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
         return autoCreateIndex.needToCheck();
     }
 
+    /**
+     * 检测某个index是否支持自动创建
+     * @param index
+     * @param state
+     * @return
+     */
     boolean shouldAutoCreate(String index, ClusterState state) {
         return autoCreateIndex.shouldAutoCreate(index, state);
     }
@@ -463,13 +480,21 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
     /**
      * retries on retryable cluster blocks, resolves item requests,
      * constructs shard bulk requests and delegates execution to shard bulk action
+     * 描述一个 bulk操作
      * */
     private final class BulkOperation extends ActionRunnable<BulkResponse> {
         private final Task task;
         private final BulkRequest bulkRequest;
         private final AtomicArray<BulkItemResponse> responses;
         private final long startTimeNanos;
+        /**
+         * 当CS不满足某种状态时 就需要观测CS的变化 并在满足条件时进行处理
+         */
         private final ClusterStateObserver observer;
+
+        /**
+         * 本次处理的所有req中 某些对应的index 此时无法在集群中找到 并且也不支持自动创建
+         */
         private final Map<String, IndexNotFoundException> indicesThatCannotBeCreated;
 
         BulkOperation(Task task, BulkRequest bulkRequest, ActionListener<BulkResponse> listener, AtomicArray<BulkItemResponse> responses,
@@ -483,36 +508,49 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             this.observer = new ClusterStateObserver(clusterService, bulkRequest.timeout(), logger, threadPool.getThreadContext());
         }
 
+        /**
+         * 当执行 run() 方法时会转发到该方法
+         * 本次处理的就是一个完整的 bulkReq    bulk大块数据请求就是体现在一次对多个index执行 某种操作吧
+         */
         @Override
         protected void doRun() {
             final ClusterState clusterState = observer.setAndGetObservedState();
+            // 如果本次处理出现异常,中止处理
             if (handleBlockExceptions(clusterState)) {
                 return;
             }
             final ConcreteIndices concreteIndices = new ConcreteIndices(clusterState, indexNameExpressionResolver);
             Metadata metadata = clusterState.metadata();
+
+            // 在这个for loop 中是在为req填充相关属性
             for (int i = 0; i < bulkRequest.requests.size(); i++) {
                 DocWriteRequest<?> docWriteRequest = bulkRequest.requests.get(i);
                 //the request can only be null because we set it to null in the previous step, so it gets ignored
                 if (docWriteRequest == null) {
                     continue;
                 }
+                // 检测对应的索引是否可用 不可用则添加到失败列表中  主要就是检测index是否存在 是否被关闭 是否是writeIndex
                 if (addFailureIfIndexIsUnavailable(docWriteRequest, i, concreteIndices, metadata)) {
                     continue;
                 }
                 Index concreteIndex = concreteIndices.resolveIfAbsent(docWriteRequest);
                 try {
+                    // 根据不同的操作类型 生成不同的请求对象
                     switch (docWriteRequest.opType()) {
                         case CREATE:
                         case INDEX:
                             IndexRequest indexRequest = (IndexRequest) docWriteRequest;
                             final IndexMetadata indexMetadata = metadata.index(concreteIndex);
+                            // 每个索引会有一个mapping对象 描述了这个index的数据应该是什么结构
                             MappingMetadata mappingMd = indexMetadata.mapping();
                             Version indexCreated = indexMetadata.getCreationVersion();
+                            // 从元数据中 获取该index的路由信息
                             indexRequest.resolveRouting(metadata);
+                            // 最后设置一些属性  为这个req设置了一个id
                             indexRequest.process(indexCreated, mappingMd, concreteIndex.getName());
                             break;
                         case UPDATE:
+                            // 解析路由信息设置到req中
                             TransportUpdateAction.resolveAndValidateRouting(metadata, concreteIndex.getName(),
                                 (UpdateRequest) docWriteRequest);
                             break;
@@ -536,19 +574,25 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             }
 
             // first, go over all the requests and create a ShardId -> Operations mapping
+            // 这里就是遍历一个完整的 bulkReq下的小请求
             Map<ShardId, List<BulkItemRequest>> requestsByShard = new HashMap<>();
             for (int i = 0; i < bulkRequest.requests.size(); i++) {
                 DocWriteRequest<?> request = bulkRequest.requests.get(i);
+                // 代表在之前不满足处理条件 已经被移除了
                 if (request == null) {
                     continue;
                 }
+
                 String concreteIndex = concreteIndices.getConcreteIndex(request.index()).getName();
+                // id 作为一个随机因子会间接决定本次处理的 shardId
                 ShardId shardId = clusterService.operationRouting().indexShards(clusterState, concreteIndex, request.id(),
                     request.routing()).shardId();
+                // 每次针对该 shardId的请求被包装成一个 BulkItemReq  一次完整的bulkReq中 可能会包含对同一个index同一shardId的多次操作 所有有必要使用列表
                 List<BulkItemRequest> shardRequests = requestsByShard.computeIfAbsent(shardId, shard -> new ArrayList<>());
                 shardRequests.add(new BulkItemRequest(i, request));
             }
 
+            // 代表本次没有需要处理的请求了 比如所有索引都不存在
             if (requestsByShard.isEmpty()) {
                 listener.onResponse(new BulkResponse(responses.toArray(new BulkItemResponse[responses.length()]),
                     buildTookInMillis(startTimeNanos)));
@@ -605,11 +649,17 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             }
         }
 
+        /**
+         * 检测当前集群中是否对 wrier操作进行了阻塞
+         * @param state
+         * @return
+         */
         private boolean handleBlockExceptions(ClusterState state) {
             ClusterBlockException blockException = state.blocks().globalBlockedException(ClusterBlockLevel.WRITE);
             if (blockException != null) {
                 if (blockException.retryable()) {
                     logger.trace("cluster is blocked, scheduling a retry", blockException);
+                    // 如果允许重试 那么等待CS发生变化
                     retry(blockException);
                 } else {
                     onFailure(blockException);
@@ -619,6 +669,10 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             return false;
         }
 
+        /**
+         * 代表本次操作被阻塞  但是允许重试
+         * @param failure
+         */
         void retry(Exception failure) {
             assert failure != null;
             if (observer.isTimedOut()) {
@@ -645,23 +699,37 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             });
         }
 
+        /**
+         * 针对无法处理的索引 加入到失败列表中
+         * @param request
+         * @param idx   当前处理到第几个请求
+         * @param concreteIndices  该容器用于存储索引
+         * @param metadata
+         * @return
+         */
         private boolean addFailureIfIndexIsUnavailable(DocWriteRequest<?> request, int idx, final ConcreteIndices concreteIndices,
                 final Metadata metadata) {
+            // 代表该index不存在
             IndexNotFoundException cannotCreate = indicesThatCannotBeCreated.get(request.index());
             if (cannotCreate != null) {
+                // 添加到处理失败的容器中
                 addFailure(request, idx, cannotCreate);
                 return true;
             }
+            // 每个被处理过的索引会加入到concreteIndices中
             Index concreteIndex = concreteIndices.getConcreteIndex(request.index());
             if (concreteIndex == null) {
                 try {
+                    // 将req对应的index存储到 concreteIndices 中
                     concreteIndex = concreteIndices.resolveIfAbsent(request);
+                    // 代表无法找到对应的 writeIndex 比如req中携带的索引信息可能是一个别名
                 } catch (IndexClosedException | IndexNotFoundException ex) {
                     addFailure(request, idx, ex);
                     return true;
                 }
             }
             IndexMetadata indexMetadata = metadata.getIndexSafe(concreteIndex);
+            // 如果此时索引已经被关闭了 也加入到失败的列表中
             if (indexMetadata.getState() == IndexMetadata.State.CLOSE) {
                 addFailure(request, idx, new IndexClosedException(concreteIndex));
                 return true;
@@ -669,21 +737,40 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             return false;
         }
 
+        /**
+         * 代表某个req处理失败
+         * @param request
+         * @param idx
+         * @param unavailableException
+         */
         private void addFailure(DocWriteRequest<?> request, int idx, Exception unavailableException) {
             BulkItemResponse.Failure failure = new BulkItemResponse.Failure(request.index(), request.id(),
                     unavailableException);
             BulkItemResponse bulkItemResponse = new BulkItemResponse(idx, request.opType(), failure);
             responses.set(idx, bulkItemResponse);
             // make sure the request gets never processed again
+            // 避免该请求被重复处理
             bulkRequest.requests.set(idx, null);
         }
     }
 
+    /**
+     * 执行bulk操作
+     * @param task
+     * @param bulkRequest
+     * @param startTimeNanos
+     * @param listener
+     * @param responses
+     * @param indicesThatCannotBeCreated  本次创建失败的索引都存储在这个列表中
+     */
     void executeBulk(Task task, final BulkRequest bulkRequest, final long startTimeNanos, final ActionListener<BulkResponse> listener,
             final AtomicArray<BulkItemResponse> responses, Map<String, IndexNotFoundException> indicesThatCannotBeCreated) {
         new BulkOperation(task, bulkRequest, listener, responses, startTimeNanos, indicesThatCannotBeCreated).run();
     }
 
+    /**
+     * docWriterReq 被解析后会变成index 并存储到该对象中
+     */
     private static class ConcreteIndices  {
         private final ClusterState state;
         private final IndexNameExpressionResolver indexNameExpressionResolver;
@@ -698,9 +785,15 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             return indices.get(indexOrAlias);
         }
 
+        /**
+         * 每次要处理的index 将会存储到该对象内部
+         * @param request
+         * @return
+         */
         Index resolveIfAbsent(DocWriteRequest<?> request) {
             Index concreteIndex = indices.get(request.index());
             if (concreteIndex == null) {
+                // 找到 writeIndex  为什么会有写索引与普通索引呢  如果没有找到writeIndex 也会抛出异常
                 concreteIndex = indexNameExpressionResolver.concreteWriteIndex(state, request);
                 indices.put(request.index(), concreteIndex);
             }
@@ -721,20 +814,28 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
     private void processBulkIndexIngestRequest(Task task, BulkRequest original, ActionListener<BulkResponse> listener) {
         final long ingestStartTimeInNanos = System.nanoTime();
         final BulkRequestModifier bulkRequestModifier = new BulkRequestModifier(original);
-        // 开始执行摄取工作
+        // 开始执行摄取工作   内部会使用一套 pipeline进行处理   同时将req内部的pipeline置空
         ingestService.executeBulkRequest(
             original.numberOfActions(),
             () -> bulkRequestModifier,
+            // 当遇到异常时 通过该函数进行处理
             bulkRequestModifier::markItemAsFailed,
+            // 当处理完毕时 触发该方法  param1 对应线程  param2 对应异常信息
             (originalThread, exception) -> {
                 if (exception != null) {
                     logger.debug("failed to execute pipeline for a bulk request", exception);
                     listener.onFailure(exception);
                 } else {
+                    // 当正常处理时 触发该函数
                     long ingestTookInMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - ingestStartTimeInNanos);
+
+                    // 为下一轮doExecute 更新了请求对象
                     BulkRequest bulkRequest = bulkRequestModifier.getBulkRequest();
+                    // 对监听器做了一层包装
                     ActionListener<BulkResponse> actionListener = bulkRequestModifier.wrapActionListenerIfNeeded(ingestTookInMillis,
                         listener);
+
+                    // 因为本次请求实际上没有对任何doc 进行处理 所以以一个空结果触发监听器
                     if (bulkRequest.requests().isEmpty()) {
                         // at this stage, the transport bulk action can't deal with a bulk request with no requests,
                         // so we stop and send an empty response back to the client.
@@ -743,8 +844,11 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                     } else {
                         // If a processor went async and returned a response on a different thread then
                         // before we continue the bulk request we should fork back on a write thread:
+                        // 代表在执行前后线程没有切换  也就是说在processor的处理中 没有切换线程
                         if (originalThread == Thread.currentThread()) {
                             assert Thread.currentThread().getName().contains(ThreadPool.Names.WRITE);
+
+                            // 这里又调用了 doExecute 重新回到主流程
                             doExecute(task, bulkRequest, actionListener);
                         } else {
                             threadPool.executor(ThreadPool.Names.WRITE).execute(new AbstractRunnable() {
@@ -771,6 +875,7 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                     }
                 }
             },
+            // 对应 onDrop函数
             bulkRequestModifier::markItemAsDropped
         );
     }
@@ -788,9 +893,12 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
          */
         final BulkRequest bulkRequest;
         /**
-         * 稀疏位图
+         * 稀疏位图  失败的req会被记录在位图内
          */
         final SparseFixedBitSet failedSlots;
+        /**
+         * 存储每个req的处理结果
+         */
         final List<BulkItemResponse> itemResponses;
         final AtomicIntegerArray originalSlots;
 
@@ -815,7 +923,12 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             return (currentSlot + 1) < bulkRequest.requests().size();
         }
 
+        /**
+         * 原bulkReq对象在经过处理后 生成一个新的bulkReq
+         * @return
+         */
         BulkRequest getBulkRequest() {
+            // 代表没有提前出现错误 返回原始请求对象
             if (itemResponses.isEmpty()) {
                 return bulkRequest;
             } else {
@@ -824,9 +937,12 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                 modifiedBulkRequest.waitForActiveShards(bulkRequest.waitForActiveShards());
                 modifiedBulkRequest.timeout(bulkRequest.timeout());
 
+
+                // 可以看到这里忽略了之前失败 或者被丢弃的req
                 int slot = 0;
                 List<DocWriteRequest<?>> requests = bulkRequest.requests();
                 for (int i = 0; i < requests.size(); i++) {
+                    // 这里将req原样返回
                     DocWriteRequest<?> request = requests.get(i);
                     if (failedSlots.get(i) == false) {
                         modifiedBulkRequest.add(request);
@@ -837,12 +953,22 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             }
         }
 
+        /**
+         * 对监听器做一层包装
+         * @param ingestTookInMillis
+         * @param actionListener
+         * @return
+         */
         ActionListener<BulkResponse> wrapActionListenerIfNeeded(long ingestTookInMillis, ActionListener<BulkResponse> actionListener) {
             if (itemResponses.isEmpty()) {
                 return ActionListener.map(actionListener,
+                    // 在处理结果时 先做一层映射
                     response -> new BulkResponse(response.getItems(), response.getTook().getMillis(), ingestTookInMillis));
             } else {
-                return ActionListener.delegateFailure(actionListener, (delegatedListener, response) -> {
+                return ActionListener.delegateFailure(actionListener,
+                    // 在正常收到 res后 对处理逻辑进行了增强
+                    (delegatedListener, response) -> {
+                    // 将结果插入到合适的位置
                     BulkItemResponse[] items = response.getItems();
                     for (int i = 0; i < items.length; i++) {
                         itemResponses.add(originalSlots.get(i), response.getItems()[i]);
@@ -854,12 +980,18 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             }
         }
 
+        /**
+         * slot对应的req在使用pipeline处理时 数据被丢弃了
+         * @param slot
+         */
         synchronized void markItemAsDropped(int slot) {
             IndexRequest indexRequest = getIndexWriteRequest(bulkRequest.requests().get(slot));
             failedSlots.set(slot);
+            // 在这种情况下使用自动生成的id
             final String id = indexRequest.id() == null ? DROPPED_ITEM_WITH_AUTO_GENERATED_ID : indexRequest.id();
             itemResponses.add(
                 new BulkItemResponse(slot, indexRequest.opType(),
+                    // TODO 这的意思是 被处理后 doc被丢弃了 所以是一个更新请求 并且是丢弃源数据的请求 ???
                     new UpdateResponse(
                         new ShardId(indexRequest.index(), IndexMetadata.INDEX_UUID_NA_VALUE, 0),
                         id, SequenceNumbers.UNASSIGNED_SEQ_NO, SequenceNumbers.UNASSIGNED_PRIMARY_TERM,
@@ -869,7 +1001,13 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             );
         }
 
+        /**
+         * 处理异常信息
+         * @param slot
+         * @param e
+         */
         synchronized void markItemAsFailed(int slot, Exception e) {
+            // 获取当前正在处理的req  getIndexWriteRequest()函数会将UpdateRequest内部的indexRequest取出来
             IndexRequest indexRequest = getIndexWriteRequest(bulkRequest.requests().get(slot));
             logger.debug(() -> new ParameterizedMessage("failed to execute pipeline [{}] for document [{}/{}]",
                 indexRequest.getPipeline(), indexRequest.index(), indexRequest.id()), e);
@@ -878,8 +1016,10 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             // 1) Remember the request item slot from the bulk, so that we're done processing all requests we know what failed
             // 2) Add a bulk item failure for this request
             // 3) Continue with the next request in the bulk.
+            // 通过位图记录 哪些slot对应的req处理失败了
             failedSlots.set(slot);
             BulkItemResponse.Failure failure = new BulkItemResponse.Failure(indexRequest.index(), indexRequest.id(), e);
+            // 失败结果在包装后 也要存储到response中
             itemResponses.add(new BulkItemResponse(slot, indexRequest.opType(), failure));
         }
 
