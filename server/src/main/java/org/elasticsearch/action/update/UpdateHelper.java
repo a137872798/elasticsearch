@@ -68,8 +68,11 @@ public class UpdateHelper {
 
     /**
      * Prepares an update request by converting it into an index or delete request or an update response (no action).
+     * @param request 本次更新请求
+     * @param indexShard 本次要处理的分片
      */
     public Result prepare(UpdateRequest request, IndexShard indexShard, LongSupplier nowInMillis) {
+        // 根据参数信息从engine中获取结果信息
         final GetResult getResult = indexShard.getService().getForUpdate(
             request.id(), request.ifSeqNo(), request.ifPrimaryTerm());
         return prepare(indexShard.shardId(), request, getResult, nowInMillis);
@@ -78,16 +81,22 @@ public class UpdateHelper {
     /**
      * Prepares an update request by converting it into an index or delete request or an update response (no action, in the event of a
      * noop).
+     * 当产生了getResult后 需要通过该函数做处理
      */
     protected Result prepare(ShardId shardId, UpdateRequest request, final GetResult getResult, LongSupplier nowInMillis) {
+        // 代表实际上本次没有查询到数据
         if (getResult.isExists() == false) {
             // If the document didn't exist, execute the update request as an upsert
+            // 那么本次实际上是一次插入操作
             return prepareUpsert(shardId, request, getResult, nowInMillis);
+            // 如果查询到的结果没有source(field) 那么抛出异常
         } else if (getResult.internalSourceRef() == null) {
             // no source, we can't do anything, throw a failure...
             throw new DocumentSourceMissingException(shardId, request.id());
+            // 如果请求中没有包含脚本数据 且doc不为空
         } else if (request.script() == null && request.doc() != null) {
             // The request has no script, it is a new doc that should be merged with the old document
+            // 处理普通的更新请求 核心实现就是将2个map进行合并
             return prepareUpdateIndexRequest(shardId, request, getResult, request.detectNoop());
         } else {
             // The request has a script (or empty script), execute the script and prepare a new index request
@@ -98,6 +107,7 @@ public class UpdateHelper {
     /**
      * Execute a scripted upsert, where there is an existing upsert document and a script to be executed. The script is executed and a new
      * Tuple of operation and updated {@code _source} is returned.
+     * 使用脚本更新map数据
      */
     Tuple<UpdateOpType, Map<String, Object>> executeScriptedUpsert(Map<String, Object> upsertDoc, Script script, LongSupplier nowInMillis) {
         Map<String, Object> ctx = new HashMap<>(3);
@@ -123,15 +133,22 @@ public class UpdateHelper {
     /**
      * Prepare the request for upsert, executing the upsert script if present, and returning a {@code Result} containing a new
      * {@code IndexRequest} to be executed on the primary and replicas.
+     * @param shardId 本次处理数据对应的分片id
+     * @param request 本次更新的请求体
+     * @param getResult 之前的查询结果 此时内部应该是没有数据的 isExist为false
+     * 采用相关参数作为条件 无法get到数据 那么本次实质就是一次插入请求
      */
     Result prepareUpsert(ShardId shardId, UpdateRequest request, final GetResult getResult, LongSupplier nowInMillis) {
             if (request.upsertRequest() == null && !request.docAsUpsert()) {
                 throw new DocumentMissingException(shardId, request.id());
             }
+            // 根据情况选择不同的indexRequest
             IndexRequest indexRequest = request.docAsUpsert() ? request.doc() : request.upsertRequest();
+            // 代表尝试使用 脚本来进行更新
             if (request.scriptedUpsert() && request.script() != null) {
                 // Run the script to perform the create logic
                 IndexRequest upsert = request.upsertRequest();
+                // 使用脚本来更新source数据
                 Tuple<UpdateOpType, Map<String, Object>> upsertResult = executeScriptedUpsert(upsert.sourceAsMap(), request.script,
                     nowInMillis);
                 switch (upsertResult.v1()) {
@@ -165,11 +182,14 @@ public class UpdateHelper {
 
     /**
      * Calculate a routing value to be used, either the included index request's routing, or retrieved document's routing when defined.
+     * 计算路由信息
      */
     @Nullable
     static String calculateRouting(GetResult getResult, @Nullable IndexRequest updateIndexRequest) {
+        // 如果请求中已经携带了路由信息 直接返回
         if (updateIndexRequest != null && updateIndexRequest.routing() != null) {
             return updateIndexRequest.routing();
+            // 首先 req中没有routing信息  其次get结果中包含routing的信息
         } else if (getResult.getFields().containsKey(RoutingFieldMapper.NAME)) {
             return getResult.field(RoutingFieldMapper.NAME).getValue().toString();
         } else {
@@ -180,25 +200,36 @@ public class UpdateHelper {
     /**
      * Prepare the request for merging the existing document with a new one, can optionally detect a noop change. Returns a {@code Result}
      * containing a new {@code IndexRequest} to be executed on the primary and replicas.
+     * @param shardId 本次处理的分片id
+     * @param request 包含本次更新请求的具体参数
+     * @param getResult 本次get请求的结果
+     * @param detectNoop 在执行更新操作前是否要检测本次是不是 NOOP操作
      */
     Result prepareUpdateIndexRequest(ShardId shardId, UpdateRequest request, GetResult getResult, boolean detectNoop) {
+
         final IndexRequest currentRequest = request.doc();
+        // 从req 或者get结果的 routing.field中获取路由信息
         final String routing = calculateRouting(getResult, currentRequest);
+        // 将内部的source转换成结构化数据
         final Tuple<XContentType, Map<String, Object>> sourceAndContent = XContentHelper.convertToMap(getResult.internalSourceRef(), true);
         final XContentType updateSourceContentType = sourceAndContent.v1();
         final Map<String, Object> updatedSourceAsMap = sourceAndContent.v2();
 
+        // 尝试将原始数据对应的map与本次传入的map进行合并  实际上就是map操作   返回结果就是数据是否发生了变化
         final boolean noop = !XContentHelper.update(updatedSourceAsMap, currentRequest.sourceAsMap(), detectNoop);
 
         // We can only actually turn the update into a noop if detectNoop is true to preserve backwards compatibility and to handle cases
         // where users repopulating multi-fields or adding synonyms, etc.
+        // 如果本次没有数据发生变化
         if (detectNoop && noop) {
             UpdateResponse update = new UpdateResponse(shardId, getResult.getId(),
                 getResult.getSeqNo(), getResult.getPrimaryTerm(), getResult.getVersion(), DocWriteResponse.Result.NOOP);
             update.setGetResult(extractGetResult(request, request.index(), getResult.getSeqNo(), getResult.getPrimaryTerm(),
                 getResult.getVersion(), updatedSourceAsMap, updateSourceContentType, getResult.internalSourceRef()));
+            // 将本次结果包装成result返回
             return new Result(update, DocWriteResponse.Result.NOOP, updatedSourceAsMap, updateSourceContentType);
         } else {
+            // 更新本次的indexResult  同时将更新后的map作为结果
             final IndexRequest finalIndexRequest = Requests.indexRequest(request.index())
                     .id(request.id()).routing(routing)
                     .source(updatedSourceAsMap, updateSourceContentType)
@@ -264,9 +295,16 @@ public class UpdateHelper {
         }
     }
 
+    /**
+     * 使用脚本更新source数据
+     * @param script
+     * @param ctx
+     * @return
+     */
     private Map<String, Object> executeScript(Script script, Map<String, Object> ctx) {
         try {
             if (scriptService != null) {
+                // 通过脚本服务去编译一个脚本
                 UpdateScript.Factory factory = scriptService.compile(script, UpdateScript.CONTEXT);
                 UpdateScript executableScript = factory.newInstance(script.getParams(), ctx);
                 executableScript.execute();
@@ -279,10 +317,12 @@ public class UpdateHelper {
 
     /**
      * Applies {@link UpdateRequest#fetchSource()} to the _source of the updated document to be returned in a update response.
+     * 将相关信息包装成 getResult对象
      */
     public static GetResult extractGetResult(final UpdateRequest request, String concreteIndex, long seqNo, long primaryTerm, long version,
                                              final Map<String, Object> source, XContentType sourceContentType,
                                              @Nullable final BytesReference sourceAsBytes) {
+        // 如果没有获取source属性 就不需要处理
         if (request.fetchSource() == null || request.fetchSource().fetchSource() == false) {
             return null;
         }
@@ -291,8 +331,10 @@ public class UpdateHelper {
         if (request.fetchSource().includes().length > 0 || request.fetchSource().excludes().length > 0) {
             SourceLookup sourceLookup = new SourceLookup();
             sourceLookup.setSource(source);
+            // 使用 FetchSourceContext内部的filter去处理source数据
             Object value = sourceLookup.filter(request.fetchSource());
             try {
+                // 将处理后的结果填充到输出流中
                 final int initialCapacity = Math.min(1024, sourceAsBytes.length());
                 BytesStreamOutput streamOutput = new BytesStreamOutput(initialCapacity);
                 try (XContentBuilder builder = new XContentBuilder(sourceContentType.xContent(), streamOutput)) {
@@ -305,10 +347,14 @@ public class UpdateHelper {
         }
 
         // TODO when using delete/none, we can still return the source as bytes by generating it (using the sourceContentType)
+        // 总的来说就是将 source通过 FetchSourceContext处理后 重新生成GetResult
         return new GetResult(concreteIndex, request.id(), seqNo, primaryTerm, version, true, sourceFilteredAsBytes,
             Collections.emptyMap(), Collections.emptyMap());
     }
 
+    /**
+     * 表示某次更新的结果
+     */
     public static class Result {
 
         private final Writeable action;

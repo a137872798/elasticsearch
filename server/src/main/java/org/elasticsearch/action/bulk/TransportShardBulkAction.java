@@ -78,7 +78,10 @@ import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
-/** Performs shard-level bulk (index, delete or update) operations */
+/**
+ * Performs shard-level bulk (index, delete or update) operations
+ * 以分片为单位处理 bulk请求
+ */
 public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequest, BulkShardRequest, BulkShardResponse> {
 
     public static final String ACTION_NAME = BulkAction.NAME + "[s]";
@@ -86,6 +89,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
 
     private static final Logger logger = LogManager.getLogger(TransportShardBulkAction.class);
 
+    /**
+     * 更新的辅助对象
+     */
     private final UpdateHelper updateHelper;
     private final MappingUpdatedAction mappingUpdatedAction;
 
@@ -109,6 +115,12 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         return new BulkShardResponse(in);
     }
 
+    /**
+     * 当在 shardId 的主分片处理该请求时
+     * @param request
+     * @param primary      the primary shard to perform the operation on
+     * @param listener listener for the result of the operation on primary, including current translog location and operation response
+     */
     @Override
     protected void shardOperationOnPrimary(BulkShardRequest request, IndexShard primary,
             ActionListener<PrimaryResult<BulkShardRequest, BulkShardResponse>> listener) {
@@ -138,6 +150,17 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         );
     }
 
+    /**
+     * 在主分片执行写入操作
+     * @param request  该对象包含了本次针对该shardId的多个请求
+     * @param primary   此时存在于该节点上 用于表示shard的indexShard对象
+     * @param updateHelper  该对象在update时起到一定的辅助作用
+     * @param nowInMillisSupplier  用于获取当前时间戳的函数
+     * @param mappingUpdater   包含更新逻辑
+     * @param waitForMappingUpdate   观察CS的变化 在符合条件时触发相关函数
+     * @param listener   业务层监听器
+     * @param threadPool
+     */
     public static void performOnPrimary(
         BulkShardRequest request,
         IndexShard primary,
@@ -149,15 +172,23 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         ThreadPool threadPool) {
         new ActionRunnable<>(listener) {
 
+            // 使用专门的 write线程进行处理
             private final Executor executor = threadPool.executor(ThreadPool.Names.WRITE);
 
+            // 在初始化上下文时 已经切换到某个req了
             private final BulkPrimaryExecutionContext context = new BulkPrimaryExecutionContext(request, primary);
 
             final long startBulkTime = System.nanoTime();
 
+            /**
+             * 执行处理逻辑
+             * @throws Exception
+             */
             @Override
             protected void doRun() throws Exception {
+                // 只要此时还有req可以被处理
                 while (context.hasMoreOperationsToExecute()) {
+                    // 执行某个 bulkItemReq
                     if (executeBulkItemRequest(context, updateHelper, nowInMillisSupplier, mappingUpdater, waitForMappingUpdate,
                         ActionListener.wrap(v -> executor.execute(this), this::onRejection)) == false) {
                         // We are waiting for a mapping update on another thread, that will invoke this action again once its done
@@ -204,6 +235,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                         context.getBulkShardRequest(), context.buildShardResponse(), context.getLocationToSync(), null,
                         context.getPrimary(), logger));
             }
+            // 立即触发 doRun()
         }.run();
     }
 
@@ -211,13 +243,16 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
      * Executes bulk item requests and handles request execution exceptions.
      * @return {@code true} if request completed on this thread and the listener was invoked, {@code false} if the request triggered
      *                      a mapping update that will finish and invoke the listener on a different thread
+     *                      处理某个 bulkItemReq
      */
     static boolean executeBulkItemRequest(BulkPrimaryExecutionContext context, UpdateHelper updateHelper, LongSupplier nowInMillisSupplier,
                                        MappingUpdatePerformer mappingUpdater, Consumer<ActionListener<Void>> waitForMappingUpdate,
                                        ActionListener<Void> itemDoneListener) throws Exception {
+        // 获取本次req的操作类型
         final DocWriteRequest.OpType opType = context.getCurrent().opType();
 
         final UpdateHelper.Result updateResult;
+        // 如果本次操作类型是一个更新操作
         if (opType == DocWriteRequest.OpType.UPDATE) {
             final UpdateRequest updateRequest = (UpdateRequest) context.getCurrent();
             try {

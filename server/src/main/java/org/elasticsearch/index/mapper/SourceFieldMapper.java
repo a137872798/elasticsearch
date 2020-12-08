@@ -48,6 +48,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
+/**
+ * 专门负责映射 lucene下存储的doc中 field.name=source的field数据
+ */
 public class SourceFieldMapper extends MetadataFieldMapper {
 
     public static final String NAME = "_source";

@@ -50,6 +50,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Base class for transport actions that modify data in some shard like index, delete, and shardBulk.
  * Allows performing async actions (e.g. refresh) after performing write operations on primary and replica shards
+ * 这是一个写入操作 会先作用在 primary上 之后作用到所有replica
  */
 public abstract class TransportWriteAction<
             Request extends ReplicatedWriteRequest<Request>,
@@ -65,7 +66,9 @@ public abstract class TransportWriteAction<
               request, replicaRequest, executor, true, forceExecutionOnPrimary);
     }
 
-    /** Syncs operation result to the translog or throws a shard not available failure */
+    /**
+     * Syncs operation result to the translog or throws a shard not available failure
+     * */
     protected static Location syncOperationResultOrThrow(final Engine.Result operationResult,
                                                          final Location currentLocation) throws Exception {
         final Location location;

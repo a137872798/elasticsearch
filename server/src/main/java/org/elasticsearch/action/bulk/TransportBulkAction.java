@@ -275,7 +275,7 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                 }
             }
             // Step 3: create all the indices that are missing, if there are any missing. start the bulk after all the creates come back.
-            // 这个时候认为已经尽可能的创建索引了
+            // 这个时候认为已经不剩可以创建的索引了
             if (autoCreateIndices.isEmpty()) {
                 executeBulk(task, bulkRequest, startTime, listener, responses, indicesThatCannotBeCreated);
             } else {
@@ -599,29 +599,38 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                 return;
             }
 
+            // 在下面才开始处理请求
             final AtomicInteger counter = new AtomicInteger(requestsByShard.size());
             String nodeId = clusterService.localNode().getId();
+            // 处理请求 会以shardId为单位进行分组
             for (Map.Entry<ShardId, List<BulkItemRequest>> entry : requestsByShard.entrySet()) {
                 final ShardId shardId = entry.getKey();
                 final List<BulkItemRequest> requests = entry.getValue();
+                // 以某个shard为目的地的请求会被合并
                 BulkShardRequest bulkShardRequest = new BulkShardRequest(shardId, bulkRequest.getRefreshPolicy(),
                         requests.toArray(new BulkItemRequest[requests.size()]));
+
+                // 将外层bulkReq中的 活跃分片数量转移到这个属性中
                 bulkShardRequest.waitForActiveShards(bulkRequest.waitForActiveShards());
                 bulkShardRequest.timeout(bulkRequest.timeout());
                 bulkShardRequest.routedBasedOnClusterVersion(clusterState.version());
                 if (task != null) {
                     bulkShardRequest.setParentTask(nodeId, task.getId());
                 }
+                // 以分片为单位处理请求
                 client.executeLocally(TransportShardBulkAction.TYPE, bulkShardRequest, new ActionListener<>() {
                     @Override
                     public void onResponse(BulkShardResponse bulkShardResponse) {
                         for (BulkItemResponse bulkItemResponse : bulkShardResponse.getResponses()) {
                             // we may have no response if item failed
                             if (bulkItemResponse.getResponse() != null) {
+                                // 将分片信息传播到每个item上
                                 bulkItemResponse.getResponse().setShardInfo(bulkShardResponse.getShardInfo());
                             }
+                            // 将结果回填到 responses中
                             responses.set(bulkItemResponse.getItemId(), bulkItemResponse);
                         }
+                        // 每当某个shardId的相关请求处理完毕时 将计数器减1 当计数值归0时 触发finish函数
                         if (counter.decrementAndGet() == 0) {
                             finishHim();
                         }

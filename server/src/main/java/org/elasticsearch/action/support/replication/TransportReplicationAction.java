@@ -142,6 +142,22 @@ public abstract class TransportReplicationAction<
     }
 
 
+    /**
+     *
+     * @param settings
+     * @param actionName
+     * @param transportService
+     * @param clusterService
+     * @param indicesService
+     * @param threadPool
+     * @param shardStateAction
+     * @param actionFilters
+     * @param requestReader
+     * @param replicaRequestReader
+     * @param executor
+     * @param syncGlobalCheckpointAfterOperation   操作完成后是否要同步全局检查点 TODO 这个值该怎么使用呢???
+     * @param forceExecutionOnPrimary
+     */
     protected TransportReplicationAction(Settings settings, String actionName, TransportService transportService,
                                          ClusterService clusterService, IndicesService indicesService,
                                          ThreadPool threadPool, ShardStateAction shardStateAction,

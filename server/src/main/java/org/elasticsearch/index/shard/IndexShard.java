@@ -1291,8 +1291,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      */
     public Engine.GetResult get(Engine.Get get) {
         readAllowed();
-        // 确保此时允许读取后 使用engine对象 读取数据
+        // DocumentMapper 描述了如何映射doc (doc也就是从lucene中查询出来的结果)
         DocumentMapper mapper = mapperService.documentMapper();
+        // 既然映射对象本身都不存在 就无法
         if (mapper == null) {
             return GetResult.NOT_EXISTS;
         }

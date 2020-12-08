@@ -116,18 +116,24 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest>
     private ActiveShardCount waitForActiveShards = ActiveShardCount.DEFAULT;
 
     /**
-     * 该属性和 doc对应的indexRequest 有什么区别呢???
+     * 2个indexRequest请求 当旧数据不存在时 默认会使用这个数据进行插入
      */
     private IndexRequest upsertRequest;
 
+    /**
+     * 是否支持使用脚本进行更新
+     */
     private boolean scriptedUpsert = false;
     /**
-     * upsert 更新插入的意思 insert and update???
+     * 代表使用doc替代 upsertRequest的数据
      */
     private boolean docAsUpsert = false;
     private boolean detectNoop = true;
     private Boolean preferV2Templates;
 
+    /**
+     * 默认情况使用这个数据作为更新数据
+     */
     @Nullable
     private IndexRequest doc;
 
@@ -783,6 +789,7 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest>
 
     /**
      * Should this update attempt to detect if it is a noop? Defaults to true.
+     * 在更新前是否需要检测本次操作是一个NOOP操作
      */
     public boolean detectNoop() {
         return detectNoop;

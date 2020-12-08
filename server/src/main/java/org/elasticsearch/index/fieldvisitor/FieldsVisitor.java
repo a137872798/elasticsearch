@@ -50,7 +50,7 @@ import static org.elasticsearch.common.util.set.Sets.newHashSet;
 public class FieldsVisitor extends StoredFieldVisitor {
 
     /**
-     * id 和 routing是特殊的field
+     * id和routing 是doc的基础字段 必然会获取
      */
     private static final Set<String> BASE_REQUIRED_FIELDS = unmodifiableSet(newHashSet(
             IdFieldMapper.NAME,
@@ -77,6 +77,11 @@ public class FieldsVisitor extends StoredFieldVisitor {
         this(loadSource, SourceFieldMapper.NAME);
     }
 
+    /**
+     * 代表是否要拦截 source
+     * @param loadSource
+     * @param sourceFieldName
+     */
     public FieldsVisitor(boolean loadSource, String sourceFieldName) {
         this.loadSource = loadSource;
         this.sourceFieldName = sourceFieldName;
@@ -136,7 +141,7 @@ public class FieldsVisitor extends StoredFieldVisitor {
     }
 
     /**
-     * 开始处理二进制数据
+     * 开始处理二进制数据    判断field.name 是否是特殊字段 id,routing,source 并进行赋值
      * @param fieldInfo
      * @param value
      */
@@ -225,7 +230,7 @@ public class FieldsVisitor extends StoredFieldVisitor {
         id = null;
 
         requiredFields.addAll(BASE_REQUIRED_FIELDS);
-        // 如果还需要读取 doc.source 字段 也加入到容器中
+        // 如果loadSource属性为true 代表不需要拦截source这个field
         if (loadSource) {
             requiredFields.add(sourceFieldName);
         }

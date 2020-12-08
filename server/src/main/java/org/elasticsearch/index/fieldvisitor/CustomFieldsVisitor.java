@@ -33,17 +33,27 @@ public class CustomFieldsVisitor extends FieldsVisitor {
 
     private final Set<String> fields;
 
+    /**
+     *
+     * @param fields
+     * @param loadSource 是否要读取source数据
+     */
     public CustomFieldsVisitor(Set<String> fields, boolean loadSource) {
         super(loadSource);
         this.fields = fields;
     }
 
+    /**
+     * 针对是否要处理某些field时 额外加了一些限制
+     * @param fieldInfo
+     * @return
+     */
     @Override
     public Status needsField(FieldInfo fieldInfo) {
         if (super.needsField(fieldInfo) == Status.YES) {
             return Status.YES;
         }
-        // 可以看到在这里没有做remove操作  可以推测 id routing这种只会在一个segment的一个doc中出现 而其他field则可以拦截一个segment下出现的所有doc
+        // 只要属于customField 那么也需要被维护
         if (fields.contains(fieldInfo.name)) {
             return Status.YES;
         }

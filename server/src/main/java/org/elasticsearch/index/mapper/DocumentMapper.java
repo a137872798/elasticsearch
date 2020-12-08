@@ -325,6 +325,12 @@ public class DocumentMapper implements ToXContentFragment {
         return this.objectMappers;
     }
 
+    /**
+     *
+     * @param source 包含了 field.name=source/indexName/routing等信息
+     * @return
+     * @throws MapperParsingException
+     */
     public ParsedDocument parse(SourceToParse source) throws MapperParsingException {
         // 该对象负责对整个doc进行解析 而针对不同的field就需要不同的fieldMapper对象
         return documentParser.parseDocument(source, mapping.metadataMappers);

@@ -350,6 +350,11 @@ public class ScriptService implements Closeable, ClusterStateApplier {
         IOUtils.close(engines.values());
     }
 
+    /**
+     * 根据lang信息 获取对应的脚本引擎
+     * @param lang
+     * @return
+     */
     private ScriptEngine getEngine(String lang) {
         ScriptEngine scriptEngine = engines.get(lang);
         if (scriptEngine == null) {
@@ -378,6 +383,7 @@ public class ScriptService implements Closeable, ClusterStateApplier {
      * Compiles a script using the given context.
      *
      * @return a compiled script which may be used to construct instances of a script for the given context
+     * 使用脚本服务去编译一个脚本
      */
     public <FactoryType> FactoryType compile(Script script, ScriptContext<FactoryType> context) {
         Objects.requireNonNull(script);
@@ -390,12 +396,14 @@ public class ScriptService implements Closeable, ClusterStateApplier {
 
         String id = idOrCode;
 
+        // 如果本次的脚本类型是一次 存储类型
         if (type == ScriptType.STORED) {
             // * lang and options will both be null when looking up a stored script,
             // so we must get the source to retrieve them before checking if the
             // context is supported
             // * a stored script must be pulled from the cluster state every time in case
             // the script has been updated since the last compilation
+            // 通过id找到脚本源 并获取相关属性
             StoredScriptSource source = getScriptFromClusterState(id);
             lang = source.getLang();
             idOrCode = source.getSource();
@@ -427,8 +435,10 @@ public class ScriptService implements Closeable, ClusterStateApplier {
             logger.trace("compiling lang: [{}] type: [{}] script: {}", lang, type, idOrCode);
         }
 
+        // 检查脚本是否之前做过缓存
         ScriptCache scriptCache = cacheHolder.get().get(context.name);
         assert scriptCache != null : "script context [" + context.name + "] has no script cache";
+        //
         return scriptCache.compile(context, scriptEngine, id, idOrCode, type, options);
     }
 
@@ -463,6 +473,11 @@ public class ScriptService implements Closeable, ClusterStateApplier {
         return scriptMetadata.getStoredScripts();
     }
 
+    /**
+     * 通过id查找被存储起来的 脚本源
+     * @param id
+     * @return
+     */
     StoredScriptSource getScriptFromClusterState(String id) {
         ScriptMetadata scriptMetadata = clusterState.metadata().custom(ScriptMetadata.TYPE);
 
@@ -470,6 +485,7 @@ public class ScriptService implements Closeable, ClusterStateApplier {
             throw new ResourceNotFoundException("unable to find script [" + id + "] in cluster state");
         }
 
+        // 从scriptMetadata中获取脚本源信息
         StoredScriptSource source = scriptMetadata.getStoredScript(id);
 
         if (source == null) {
@@ -710,9 +726,14 @@ public class ScriptService implements Closeable, ClusterStateApplier {
      * Container for the ScriptCache(s).  This class operates in two modes:
      * 1) general mode, if the general script cache is configured.  There are no context caches in this case.
      * 2) context mode, if the context script cache is configured.  There is no general cache in this case.
+     * 该对象维护了所有脚本的缓存数据
      */
     static class CacheHolder {
         final ScriptCache general;
+
+        /**
+         * 通过指定的key 可以找到缓存对象
+         */
         final Map<String, AtomicReference<ScriptCache>> contextCache;
 
         CacheHolder(int cacheMaxSize, TimeValue cacheExpire, Tuple<Integer, TimeValue> maxCompilationRate, String contextRateSetting) {
@@ -730,6 +751,7 @@ public class ScriptService implements Closeable, ClusterStateApplier {
         /**
          * get the cache appropriate for the context.  If in general mode, return the general cache.  Otherwise return the ScriptCache for
          * the given context. Returns null in context mode if the requested context does not exist.
+         * 通过context 检索某个脚本缓存对象
          */
         ScriptCache get(String context) {
             if (general != null) {

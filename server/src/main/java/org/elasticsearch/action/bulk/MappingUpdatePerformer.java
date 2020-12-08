@@ -23,6 +23,9 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.index.mapper.Mapping;
 import org.elasticsearch.index.shard.ShardId;
 
+/**
+ * 映射数据更新接口  看来存储在lucene中的数据就是以mappings的形式展示的
+ */
 public interface MappingUpdatePerformer {
 
     /**

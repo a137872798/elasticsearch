@@ -73,6 +73,7 @@ public abstract class DocWriteResponse extends ReplicationResponse implements Wr
         UPDATED(1),
         DELETED(2),
         NOT_FOUND(3),
+        // 比如本次是一次update操作 并且数据实际上没有变化 那么结果就是NOOP
         NOOP(4);
 
         private final byte op;

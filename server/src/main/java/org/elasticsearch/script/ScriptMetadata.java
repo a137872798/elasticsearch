@@ -281,6 +281,9 @@ public final class ScriptMetadata implements Metadata.Custom, Writeable, ToXCont
         return new ScriptMetadataDiff(in);
     }
 
+    /**
+     * 该属性应该是由用户设置
+     */
     private final Map<String, StoredScriptSource> scripts;
 
     /**

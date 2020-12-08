@@ -35,9 +35,13 @@ import java.util.Arrays;
  * This is a utility class that holds the per request state needed to perform bulk operations on the primary.
  * More specifically, it maintains an index to the current executing bulk item, which allows execution
  * to stop and wait for external events such as mapping updates.
+ * 当在主分片处理bulk请求时的上下文信息
  */
 class BulkPrimaryExecutionContext {
 
+    /**
+     * 描述此时的处理进程
+     */
     enum ItemProcessingState {
         /** Item execution is ready to start, no operations have been performed yet */
         INITIAL,
@@ -66,12 +70,22 @@ class BulkPrimaryExecutionContext {
         COMPLETED
     }
 
+    /**
+     * 本shard对应的bulk请求对象
+     */
     private final BulkShardRequest request;
     private final IndexShard primary;
+    /**
+     * 描述此时事务日志文件所在的位置
+     */
     private Translog.Location locationToSync = null;
     private int currentIndex = -1;
 
     private ItemProcessingState currentItemState;
+
+    /**
+     * 当前正在处理的req
+     */
     private DocWriteRequest requestToExecute;
     private BulkItemResponse executionResult;
     private int retryCounter;
@@ -84,25 +98,41 @@ class BulkPrimaryExecutionContext {
     }
 
 
+    /**
+     * 切换到下一个有效的req
+     * @param startIndex
+     * @return
+     */
     private int findNextNonAborted(int startIndex) {
         final int length = request.items().length;
+        // 转换到只要不是 aborted的req就可以
         while (startIndex < length && isAborted(request.items()[startIndex].getPrimaryResponse())) {
             startIndex++;
         }
         return startIndex;
     }
 
+    /**
+     * 已经生成了对应的结果 并且处于失败状态
+     * @param response
+     * @return
+     */
     private static boolean isAborted(BulkItemResponse response) {
         return response != null && response.isFailed() && response.getFailure().isAborted();
     }
 
-    /** move to the next item to execute */
+    /**
+     * move to the next item to execute
+     * 切换到下一个需要处理的请求
+     */
     private void advance() {
         assert currentItemState == ItemProcessingState.COMPLETED || currentIndex == -1 :
             "moving to next but current item wasn't completed (state: " + currentItemState + ")";
+        // 将当前正在处理的req的状态修改成 init
         currentItemState = ItemProcessingState.INITIAL;
         currentIndex =  findNextNonAborted(currentIndex + 1);
         retryCounter = 0;
+        // 置空相关属性
         requestToExecute = null;
         executionResult = null;
         assert assertInvariants(ItemProcessingState.INITIAL);

@@ -842,7 +842,7 @@ public class InternalEngine extends Engine {
     /**
      * 执行get请求 并返回查询结果
      * @param get  在get请求中还可以严格要求版本
-     * @param searcherFactory
+     * @param searcherFactory   该对象可以根据要求 生成searcher
      * @return
      * @throws EngineException
      */

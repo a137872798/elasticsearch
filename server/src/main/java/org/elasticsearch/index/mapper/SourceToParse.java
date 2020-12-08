@@ -27,7 +27,7 @@ import org.elasticsearch.common.xcontent.XContentType;
 import java.util.Objects;
 
 /**
- * 当通过 getService找到分片的相关信息时 会根据doc内部存储的数据初始化parse对象
+ * 该对象专门负责解析 field.name=source 的数据流
  */
 public class SourceToParse {
 
@@ -51,9 +51,6 @@ public class SourceToParse {
     private final XContentType xContentType;
 
     /**
-     * 根据原始数据流 以及格式化类型生成该对象
-     * 当前看到的使用场景是这样  shardGetService 调用get方法  配合engine对象 查询到一组数据 并且doc中应该还有被  id source routing等属性  现在将这些数据传入
-     * source应该是格式化数据 之后可能要进行解析
      * @param index
      * @param id
      * @param source

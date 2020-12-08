@@ -36,6 +36,9 @@ import java.util.Set;
 
 import static java.util.Collections.emptyMap;
 
+/**
+ * 便于对source进行一些操作
+ */
 public class SourceLookup implements Map<String, Object> {
 
     private LeafReader reader;

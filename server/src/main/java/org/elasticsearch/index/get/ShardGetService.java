@@ -118,17 +118,18 @@ public final class ShardGetService extends AbstractIndexShardComponent {
 
     /**
      * @param id
-     * @param gFields
-     * @param realtime
+     * @param gFields  获取要求的fields的信息
+     * @param realtime  是否实时获取数据
      * @param version
      * @param versionType
      * @param ifSeqNo
      * @param ifPrimaryTerm
-     * @param fetchSourceContext 在fetch中需要的各种参数
+     * @param fetchSourceContext 本次是否要fetch  source数据
      * @return
      */
     private GetResult get(String id, String[] gFields, boolean realtime, long version, VersionType versionType,
                           long ifSeqNo, long ifPrimaryTerm, FetchSourceContext fetchSourceContext) {
+        // 只是在查询前后做了一些模板操作
         currentMetric.inc();
         try {
             long now = System.nanoTime();
@@ -148,8 +149,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
     }
 
     /**
-     * 获取分片最新的 routing 信息
-     *
+     * 通过相关参数 利用engine进行数据的查询    默认情况下之获取routingField信息
      * @param id
      * @param ifSeqNo
      * @param ifPrimaryTerm
@@ -202,9 +202,13 @@ public final class ShardGetService extends AbstractIndexShardComponent {
      * }
      */
     private FetchSourceContext normalizeFetchSourceContent(@Nullable FetchSourceContext context, @Nullable String[] gFields) {
+        // 如果已经设置了context了 不修改原有的上下文
         if (context != null) {
             return context;
         }
+
+        // 未设置context的场景
+
         // 当用户没有显示声明要获取的field时 就会获取source
         if (gFields == null) {
             return FetchSourceContext.FETCH_SOURCE;
@@ -219,23 +223,23 @@ public final class ShardGetService extends AbstractIndexShardComponent {
     }
 
     /**
-     * 处理get请求的逻辑
-     *
+     * 发起一次get请求 借助engine从lucene中查询数据
      * @param id
-     * @param gFields
+     * @param gFields 本次相关的几个field
      * @param realtime
      * @param version
      * @param versionType
      * @param ifSeqNo
      * @param ifPrimaryTerm
-     * @param fetchSourceContext
+     * @param fetchSourceContext  是否要拉取source
      * @return
      */
     private GetResult innerGet(String id, String[] gFields, boolean realtime, long version, VersionType versionType,
                                long ifSeqNo, long ifPrimaryTerm, FetchSourceContext fetchSourceContext) {
-        // 尝试生成context
+        // 做一些标准化处理
         fetchSourceContext = normalizeFetchSourceContent(fetchSourceContext, gFields);
 
+        // 将请求体中携带的id 作为term 去lucene中查询数据
         Term uidTerm = new Term(IdFieldMapper.NAME, Uid.encodeId(id));
         // 通过engine 对象获取到查询结果 应该就是在底层使用了 indexReader
         // 注意在get请求时 没有传入field信息
@@ -254,7 +258,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
 
         try {
             // break between having loaded it from translog (so we only have _source), and having a document to load
-            // 进行处理后返回
+            // 查询到结果后 还需要做处理
             return innerGetLoadFromStoredFields(id, gFields, fetchSourceContext, get, mapperService);
         } finally {
             get.close();
@@ -262,13 +266,13 @@ public final class ShardGetService extends AbstractIndexShardComponent {
     }
 
     /**
-     * 对 GetResult 进行加工
+     * 查询到的结果需要映射成结构化对象
      *
      * @param id
-     * @param storedFields
-     * @param fetchSourceContext
-     * @param get
-     * @param mapperService
+     * @param storedFields 本次需要获取的field
+     * @param fetchSourceContext 本次拉取数据时是否要求获取source数据
+     * @param get  本次查询结果
+     * @param mapperService   映射服务内部定义了如何将数据流转换成结构化对象
      * @return
      */
     private GetResult innerGetLoadFromStoredFields(String id, String[] storedFields, FetchSourceContext fetchSourceContext,
@@ -281,6 +285,8 @@ public final class ShardGetService extends AbstractIndexShardComponent {
             for (String field : storedFields) {
                 // 根据传入的field 找到field级别的映射对象
                 Mapper fieldMapper = docMapper.mappers().getMapper(field);
+
+                // 代表在创建index时 没有指定field的模板 这个时候要求不能存在objectMappers 是为啥???
                 if (fieldMapper == null) {
                     if (docMapper.objectMappers().get(field) != null) {
                         // Only fail if we know it is a object field, missing paths / fields shouldn't fail.
@@ -293,23 +299,21 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         Map<String, DocumentField> documentFields = null;
         Map<String, DocumentField> metadataFields = null;
         BytesReference source = null;
-        // 能确保查询出来只有一个doc么
+        // 本次查询出来的结果对应的版本号 和docId信息
         DocIdAndVersion docIdAndVersion = get.docIdAndVersion();
         // force fetching source if we read from translog and need to recreate stored fields
-        // 如果本次查询是通过事务日志获取的结果  记得在事务日志中存在INDEX类型的operation 可能存储的就是数据吧
-        // 然后是如果这些field中 有不属于3个faker属性的 forceSourceForComputingTranslogStoredFields 为true
-        // TODO 具体还没明白为什么要执行读取source
+        // 如果本次查询结果是从事务日志中获取的 并且本次需要获取的field信息中 包含某个fake属性
+        // 这样就会强制要求获取 source数据
         boolean forceSourceForComputingTranslogStoredFields = get.isFromTranslog() && storedFields != null &&
-            // 3个faker属性 routing source id
             Stream.of(storedFields).anyMatch(f -> TranslogLeafReader.ALL_FIELD_NAMES.contains(f) == false);
 
-
-        // 创建会存储这些field数据的visitor对象   当 field为空 且 FETCH == false 时 返回null
+        // 因为指定了field信息 会生成记录这些field信息的 visitor对象
         FieldsVisitor fieldVisitor = buildFieldsVisitors(storedFields,
+            // 如果需要强制性的获取source数据 则会传入FETCH_SOURCE 上下文
             forceSourceForComputingTranslogStoredFields ? FetchSourceContext.FETCH_SOURCE : fetchSourceContext);
         if (fieldVisitor != null) {
             try {
-                // 读取指定的doc 并使用visitor 解析内部的source属性
+                // 读取指定的doc 并使用visitor处理doc数据
                 docIdAndVersion.reader.document(docIdAndVersion.docId, fieldVisitor);
             } catch (IOException e) {
                 throw new ElasticsearchException("Failed to get id [" + id + "]", e);
@@ -323,19 +327,19 @@ public final class ShardGetService extends AbstractIndexShardComponent {
             if (get.isFromTranslog()) {
                 // Fast path: if only asked for the source or stored fields that have been already provided by TranslogLeafReader,
                 // just make source consistent by reapplying source filters from mapping (possibly also nulling the source)
-                // 代表传入的field 其实就是 id/routing/source
-                // TODO
+                // 本次没有强制获取source field
                 if (forceSourceForComputingTranslogStoredFields == false) {
                     try {
-                        // 实际上对source做了一层转换 现在还不知道是啥意思
+                        // sourceMapper 就是专门转换field为source的数据流的 这里通过携带的filter做一层过滤
                         source = indexShard.mapperService().documentMapper().sourceMapper().applyFilters(source, null);
                     } catch (IOException e) {
                         throw new ElasticsearchException("Failed to reapply filters for [" + id + "] after reading from translog", e);
                     }
                 } else {
+                    // 这里获取到了 source对应的数据流
                     // Slow path: recreate stored fields from original source
                     assert source != null : "original source in translog must exist";
-                    // 初始化 sourceParse对象   该对象可以解析source数据流
+                    // 将路由信息/source信息/indexName等包装成 sourceParse对象
                     SourceToParse sourceToParse = new SourceToParse(shardId.getIndexName(), id, source, XContentHelper.xContentType(source),
                         fieldVisitor.routing());
 
@@ -343,7 +347,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
                     ParsedDocument doc = indexShard.mapperService().documentMapper().parse(sourceToParse);
                     assert doc.dynamicMappingsUpdate() == null : "mapping updates should not be required on already-indexed doc";
                     // update special fields
-                    // 如果查询结果中 也有seqNo  term  version等信息 那么就更新 parsedDocument的数据
+                    // 用本次get请求获取到的seqNo primaryTerm信息去更新doc信息
                     doc.updateSeqID(docIdAndVersion.seqNo, docIdAndVersion.primaryTerm);
                     doc.version().setLongValue(docIdAndVersion.version);
 
