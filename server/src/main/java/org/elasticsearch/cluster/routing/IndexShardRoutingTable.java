@@ -316,8 +316,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
      * selection formula. Making sure though that its random within the active shards of the same
      * (or missing) rank, and initializing shards are the last to iterate through.
      * @param collector 该对象负责统计一些数据 (responseTime serviceTime queueSize)
-     *
-     *                  这里就是将分片数据 按照分类先更新一次统计数据 之后返回
+     *      将一些分片打乱后返回
      */
     public ShardIterator activeInitializingShardsRankedIt(@Nullable ResponseCollectorService collector,
                                                           @Nullable Map<String, Long> nodeSearchCounts) {
@@ -421,10 +420,10 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
     }
 
     /**
-     * 进行数据统计 方便自适应调整
+     * 按照一些统计项信息 对分片评级
      * @param shards  当前待处理的分片
      * @param collector   该对象具备收集节点 响应时间 服务时间等的能力
-     * @param nodeSearchCounts   节点查询数是什么???
+     * @param nodeSearchCounts
      * @return
      */
     private static List<ShardRouting> rankShardsAndUpdateStats(List<ShardRouting> shards, final ResponseCollectorService collector,

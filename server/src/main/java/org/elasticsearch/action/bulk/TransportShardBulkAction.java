@@ -132,6 +132,11 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 mappingUpdatedAction.updateMappingOnMaster(shardId.getIndex(), update, mappingListener);
             },
             mappingUpdateListener -> observer.waitForNextChange(new ClusterStateObserver.Listener() {
+
+                /**
+                 * 等待集群发生变化 并反向入参的监听器
+                 * @param state
+                 */
                 @Override
                 public void onNewClusterState(ClusterState state) {
                     mappingUpdateListener.onResponse(null);
@@ -146,7 +151,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 public void onTimeout(TimeValue timeout) {
                     mappingUpdateListener.onFailure(new MapperException("timed out while waiting for a dynamic mapping update"));
                 }
-            }), listener, threadPool
+            }),
+            // 将处理逻辑桥接到这个监听器上
+            listener, threadPool
         );
     }
 
@@ -188,7 +195,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             protected void doRun() throws Exception {
                 // 只要此时还有req可以被处理
                 while (context.hasMoreOperationsToExecute()) {
-                    // 执行某个 bulkItemReq
+                    // 执行某个 bulkItemReq 当处理成功时 会自动切换到下一个
                     if (executeBulkItemRequest(context, updateHelper, nowInMillisSupplier, mappingUpdater, waitForMappingUpdate,
                         ActionListener.wrap(v -> executor.execute(this), this::onRejection)) == false) {
                         // We are waiting for a mapping update on another thread, that will invoke this action again once its done
@@ -197,15 +204,21 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     }
                     assert context.isInitial(); // either completed and moved to next or reset
                 }
+                // 目前默认实现中只有一些stats对象
                 primary.getBulkOperationListener().afterBulk(request.totalSizeInBytes(), System.nanoTime() - startBulkTime);
                 // We're done, there's no more operations to execute so we resolve the wrapped listener
                 finishRequest();
             }
 
+            /**
+             * 在处理update操作时 可能遇到了异常 触发该钩子
+             * @param e
+             */
             @Override
             public void onRejection(Exception e) {
                 // We must finish the outstanding request. Finishing the outstanding request can include
                 //refreshing and fsyncing. Therefore, we must force execution on the WRITE thread.
+                // 一旦在上面某个req的处理失败后 就会终止剩余req的处理  同时剩余的请求以异常作为结果触发监听器
                 executor.execute(new ActionRunnable<>(listener) {
 
                     @Override
@@ -215,6 +228,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                             context.setRequestToExecute(context.getCurrent());
                             final DocWriteRequest<?> docWriteRequest = context.getRequestToExecute();
                             onComplete(
+                                // 生成一个异常结果
                                 exceptionToResult(
                                     e, primary, docWriteRequest.opType() == DocWriteRequest.OpType.DELETE, docWriteRequest.version()),
                                 context, null);
@@ -229,8 +243,13 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 });
             }
 
+            /**
+             * 当在某个shard.primary上的相关操作完成后 触发监听器
+             */
             private void finishRequest() {
                 ActionListener.completeWith(listener,
+
+                    // 该函数产生结果 并触发listener
                     () -> new WritePrimaryResult<>(
                         context.getBulkShardRequest(), context.buildShardResponse(), context.getLocationToSync(), null,
                         context.getPrimary(), logger));
@@ -256,6 +275,8 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         if (opType == DocWriteRequest.OpType.UPDATE) {
             final UpdateRequest updateRequest = (UpdateRequest) context.getCurrent();
             try {
+                // 根据从engine中查询出来的结果 配合本次req信息 对doc.source进行更新 并返回更新结果
+                // 此时更新后的数据还没有写入到engine中
                 updateResult = updateHelper.prepare(updateRequest, context.getPrimary(), nowInMillisSupplier);
             } catch (Exception failure) {
                 // we may fail translating a update to index or delete operation
@@ -271,9 +292,11 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             switch (updateResult.getResponseResult()) {
                 case CREATED:
                 case UPDATED:
+                    // 此时内部的indexRequest包含最新的source信息
                     IndexRequest indexRequest = updateResult.action();
                     IndexMetadata metadata = context.getPrimary().indexSettings().getIndexMetadata();
                     MappingMetadata mappingMd = metadata.mapping();
+                    // 实际上就是为 indexReq设置id
                     indexRequest.process(metadata.getCreationVersion(), mappingMd, updateRequest.concreteIndex());
                     context.setRequestToExecute(indexRequest);
                     break;
@@ -298,6 +321,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         final long version = context.getRequestToExecute().version();
         final boolean isDelete = context.getRequestToExecute().opType() == DocWriteRequest.OpType.DELETE;
         final Engine.Result result;
+        // 使用 indexShard执行不同的操作  实际上就会委托给内部的engine执行任务
         if (isDelete) {
             final DeleteRequest request = context.getRequestToExecute();
             result = primary.applyDeleteOperationOnPrimary(version, request.id(), request.versionType(),
@@ -308,6 +332,8 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     request.index(), request.id(), request.source(), request.getContentType(), request.routing()),
                     request.ifSeqNo(), request.ifPrimaryTerm(), request.getAutoGeneratedTimestamp(), request.isRetry());
         }
+
+        // TODO 先忽略需要更新数据的场景
         if (result.getResultType() == Engine.Result.Type.MAPPING_UPDATE_REQUIRED) {
 
             try {
@@ -360,13 +386,26 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         return isDelete ? primary.getFailedDeleteResult(e, version) : primary.getFailedIndexResult(e, version);
     }
 
+    /**
+     * 此时已经将某个操作作用到了 engine内部
+     * @param r   在engine处理后的结果
+     * @param context
+     * @param updateResult  在prepare阶段生成的结果对象
+     */
     private static void onComplete(Engine.Result r, BulkPrimaryExecutionContext context, UpdateHelper.Result updateResult) {
+
+        // 使用engine处理后的结果 标记context为已完成状态
         context.markOperationAsExecuted(r);
+
+        // 根据当前操作类型判断是否是一个更新请求
         final DocWriteRequest<?> docWriteRequest = context.getCurrent();
         final DocWriteRequest.OpType opType = docWriteRequest.opType();
         final boolean isUpdate = opType == DocWriteRequest.OpType.UPDATE;
+
+        // 查看本次处理结果是否失败
         final BulkItemResponse executionResult = context.getExecutionResult();
         final boolean isFailed = executionResult.isFailed();
+        // 如果是版本冲突异常 会进行重试
         if (isUpdate && isFailed && isConflictException(executionResult.getFailure().getCause())
             && context.getRetryCounter() < ((UpdateRequest) docWriteRequest).retryOnConflict()) {
             context.resetForExecutionForRetry();
@@ -374,8 +413,10 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         }
         final BulkItemResponse response;
         if (isUpdate) {
+            // 更新成功 对BulkItemResponse做一些处理
             response = processUpdateResponse((UpdateRequest) docWriteRequest, context.getConcreteIndex(), executionResult, updateResult);
         } else {
+            // 失败只是打印日志
             if (isFailed) {
                 final Exception failure = executionResult.getFailure().getCause();
                 final MessageSupplier messageSupplier = () -> new ParameterizedMessage("{} failed to execute bulk item ({}) {}",
@@ -398,31 +439,43 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
 
     /**
      * Creates a new bulk item result from the given requests and result of performing the update operation on the shard.
+     * 处理更新成功后的结果
      */
     private static BulkItemResponse processUpdateResponse(final UpdateRequest updateRequest, final String concreteIndex,
                                                           BulkItemResponse operationResponse, final UpdateHelper.Result translate) {
         final BulkItemResponse response;
+        // 如果本次操作失败 相当于就是生成一个结果副本 并返回
         if (operationResponse.isFailed()) {
             response = new BulkItemResponse(operationResponse.getItemId(), DocWriteRequest.OpType.UPDATE, operationResponse.getFailure());
         } else {
+            // 获取本次操作类型
             final DocWriteResponse.Result translatedResult = translate.getResponseResult();
             final UpdateResponse updateResponse;
             if (translatedResult == DocWriteResponse.Result.CREATED || translatedResult == DocWriteResponse.Result.UPDATED) {
+
+                // 获取作用在engine上的req
                 final IndexRequest updateIndexRequest = translate.action();
                 final IndexResponse indexResponse = operationResponse.getResponse();
+
+                // 转换成 updateResponse
                 updateResponse = new UpdateResponse(indexResponse.getShardInfo(), indexResponse.getShardId(),
                     indexResponse.getId(), indexResponse.getSeqNo(), indexResponse.getPrimaryTerm(),
                     indexResponse.getVersion(), indexResponse.getResult());
 
+                // 本次是否有获取 source field
                 if (updateRequest.fetchSource() != null && updateRequest.fetchSource().fetchSource()) {
                     final BytesReference indexSourceAsBytes = updateIndexRequest.source();
                     final Tuple<XContentType, Map<String, Object>> sourceAndContent =
                         XContentHelper.convertToMap(indexSourceAsBytes, true, updateIndexRequest.getContentType());
+
+                    // 将source通过 context处理后 生成GetResult对象 并设置到response中
                     updateResponse.setGetResult(UpdateHelper.extractGetResult(updateRequest, concreteIndex,
                         indexResponse.getSeqNo(), indexResponse.getPrimaryTerm(),
                         indexResponse.getVersion(), sourceAndContent.v2(), sourceAndContent.v1(), indexSourceAsBytes));
                 }
+                // 本次是删除操作
             } else if (translatedResult == DocWriteResponse.Result.DELETED) {
+                // 套路与 CREATE/UPDATE 类似
                 final DeleteResponse deleteResponse = operationResponse.getResponse();
                 updateResponse = new UpdateResponse(deleteResponse.getShardInfo(), deleteResponse.getShardId(),
                     deleteResponse.getId(), deleteResponse.getSeqNo(), deleteResponse.getPrimaryTerm(),
@@ -441,6 +494,13 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         return response;
     }
 
+    /**
+     * 在副本上处理该请求  TODO 将结果写入到多少副本才算成功呢 会跟kafka一样 写入超过一半么???
+     * @param request
+     * @param replica      the replica shard to perform the operation on
+     * @return
+     * @throws Exception
+     */
     @Override
     public WriteReplicaResult<BulkShardRequest> shardOperationOnReplica(BulkShardRequest request, IndexShard replica) throws Exception {
         final long startBulkTime = System.nanoTime();
@@ -449,39 +509,65 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         return new WriteReplicaResult<>(request, location, null, replica, logger);
     }
 
+    /**
+     * 在主分片上处理请求是不需要获取 location信息的  但是在分片上处理就需要location信息
+     * @param request
+     * @param replica
+     * @return
+     * @throws Exception
+     */
     public static Translog.Location performOnReplica(BulkShardRequest request, IndexShard replica) throws Exception {
         Translog.Location location = null;
         for (int i = 0; i < request.items().length; i++) {
             final BulkItemRequest item = request.items()[i];
+            // 因为处理过程是先走primary 之后转发到replica  而在primary处理时已经为每个itemReq设置了对应的 response了
             final BulkItemResponse response = item.getPrimaryResponse();
             final Engine.Result operationResult;
+
+            // 如果在主分片处理失败了   在engine处理后返回的 Result中会携带seqNo信息  至少能确定该seqNo之前的数据都需要同步
             if (item.getPrimaryResponse().isFailed()) {
+                // 如果连seq都无法确认 就无法继续处理了
                 if (response.getFailure().getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO) {
                     continue; // ignore replication as we didn't generate a sequence number for this request.
                 }
 
                 final long primaryTerm;
+                // TODO 可能是主分片已经过时 ???
                 if (response.getFailure().getTerm() == SequenceNumbers.UNASSIGNED_PRIMARY_TERM) {
                     // primary is on older version, just take the current primary term
+                    // 使用副本当前知晓的最新的主分片term
                     primaryTerm = replica.getOperationPrimaryTerm();
                 } else {
                     primaryTerm = response.getFailure().getTerm();
                 }
+                // 在这个seqNo位 生成了一个 noop对象
                 operationResult = replica.markSeqNoAsNoop(response.getFailure().getSeqNo(), primaryTerm,
                     response.getFailure().getMessage());
             } else {
+                // 本次虽然操作成功 但是操作类型就是 NOOP 那么不做处理
                 if (response.getResponse().getResult() == DocWriteResponse.Result.NOOP) {
                     continue; // ignore replication as it's a noop
                 }
                 assert response.getResponse().getSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO;
+                // 其余情况才需要进行真正的处理
                 operationResult = performOpOnReplica(response.getResponse(), item.request(), replica);
             }
             assert operationResult != null : "operation result must never be null when primary response has no failure";
+
+            // 将location信息同步到本次操作后的result的位置信息
             location = syncOperationResultOrThrow(operationResult, location);
         }
         return location;
     }
 
+    /**
+     * 在副本上处理请求
+     * @param primaryResponse
+     * @param docWriteRequest   这个原请求对象 在primary上处理时 已经调用过prepare进行数据更新了
+     * @param replica
+     * @return
+     * @throws Exception
+     */
     private static Engine.Result performOpOnReplica(DocWriteResponse primaryResponse, DocWriteRequest<?> docWriteRequest,
                                                     IndexShard replica) throws Exception {
         final Engine.Result result;
@@ -504,6 +590,8 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 assert false : "Unexpected request operation type on replica: " + docWriteRequest + ";primary result: " + primaryResponse;
                 throw new IllegalStateException("Unexpected request operation type on replica: " + docWriteRequest.opType().getLowercase());
         }
+
+        // TODO
         if (result.getResultType() == Engine.Result.Type.MAPPING_UPDATE_REQUIRED) {
             // Even though the primary waits on all nodes to ack the mapping changes to the master
             // (see MappingUpdatedAction.updateMappingOnMaster) we still need to protect against missing mappings

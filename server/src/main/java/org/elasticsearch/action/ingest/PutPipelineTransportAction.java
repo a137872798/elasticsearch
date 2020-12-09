@@ -43,6 +43,9 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * 新增管道对象
+ */
 public class PutPipelineTransportAction extends TransportMasterNodeAction<PutPipelineRequest, AcknowledgedResponse> {
 
     private final IngestService ingestService;

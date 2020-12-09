@@ -627,14 +627,22 @@ public class ActionModule extends AbstractModule {
         // 获取配置信息
         actions.register(GetSettingsAction.INSTANCE, TransportGetSettingsAction.class);
 
+        // 发起一个index请求 现在被bulk请求所替代
         actions.register(IndexAction.INSTANCE, TransportIndexAction.class);
+        // 查询某个doc
         actions.register(GetAction.INSTANCE, TransportGetAction.class);
         actions.register(TermVectorsAction.INSTANCE, TransportTermVectorsAction.class);
+        // 查询词向量信息
         actions.register(MultiTermVectorsAction.INSTANCE, TransportMultiTermVectorsAction.class);
+        // 以shard为单位 查询词向量信息
         actions.register(TransportShardMultiTermsVectorAction.TYPE, TransportShardMultiTermsVectorAction.class);
+        // 删除某个doc
         actions.register(DeleteAction.INSTANCE, TransportDeleteAction.class);
+        // 发起一个更新doc的请求
         actions.register(UpdateAction.INSTANCE, TransportUpdateAction.class);
+        // 批量get
         actions.register(MultiGetAction.INSTANCE, TransportMultiGetAction.class);
+        // 将 multiGet请求 按照shardId分组后处理
         actions.register(TransportShardMultiGetAction.TYPE, TransportShardMultiGetAction.class);
         // 处理大块数据请求  这里的大块数据就是指一次性发起了多个请求
         actions.register(BulkAction.INSTANCE, TransportBulkAction.class);
@@ -664,9 +672,13 @@ public class ActionModule extends AbstractModule {
         actions.register(FieldCapabilitiesAction.INSTANCE, TransportFieldCapabilitiesAction.class);
         actions.register(TransportFieldCapabilitiesIndexAction.TYPE, TransportFieldCapabilitiesIndexAction.class);
 
+        // 新增管道
         actions.register(PutPipelineAction.INSTANCE, PutPipelineTransportAction.class);
+        // 查询某个管道
         actions.register(GetPipelineAction.INSTANCE, GetPipelineTransportAction.class);
+        // 删除某个管道
         actions.register(DeletePipelineAction.INSTANCE, DeletePipelineTransportAction.class);
+        // 模仿某个管道
         actions.register(SimulatePipelineAction.INSTANCE, SimulatePipelineTransportAction.class);
 
         actionPlugins.stream().flatMap(p -> p.getActions().stream()).forEach(actions::register);

@@ -32,6 +32,10 @@ public class BulkItemRequest implements Writeable {
 
     private int id;
     private DocWriteRequest<?> request;
+    /**
+     * 设置某个doc的处理结果
+     * 一次bulk操作可以同时对多个doc进行更新 每个doc对应一个 itemReq
+     */
     private volatile BulkItemResponse primaryResponse;
 
     BulkItemRequest(StreamInput in) throws IOException {

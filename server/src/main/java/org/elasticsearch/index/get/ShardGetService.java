@@ -111,8 +111,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
      */
     public GetResult get(String id, String[] gFields, boolean realtime, long version,
                          VersionType versionType, FetchSourceContext fetchSourceContext) {
-        return
-            get(id, gFields, realtime, version, versionType, UNASSIGNED_SEQ_NO, UNASSIGNED_PRIMARY_TERM, fetchSourceContext);
+        return get(id, gFields, realtime, version, versionType, UNASSIGNED_SEQ_NO, UNASSIGNED_PRIMARY_TERM, fetchSourceContext);
     }
 
 

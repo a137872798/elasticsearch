@@ -119,14 +119,17 @@ class FieldTypeLookup implements Iterable<MappedFieldType> {
 
     /**
      * Returns a list of the full names of a simple match regex like pattern against full name and index name.
+     * 找到通配符匹配的所有fieldName
      */
     public Set<String> simpleMatchToFullName(String pattern) {
         Set<String> fields = new HashSet<>();
+        // 在解析mappings时 所有field 都会存储到该对象中
         for (MappedFieldType fieldType : this) {
             if (Regex.simpleMatch(pattern, fieldType.name())) {
                 fields.add(fieldType.name());
             }
         }
+        // 如果有别名信息 将命中的别名也插入到set中
         for (String aliasName : aliasToConcreteName.keySet()) {
             if (Regex.simpleMatch(pattern, aliasName)) {
                 fields.add(aliasName);

@@ -45,6 +45,7 @@ import static org.elasticsearch.rest.RestStatus.OK;
 
 /**
  * The REST handler for get source and head source APIs.
+ * 同样是Get请求 只是在执行时要求必须设置 fetchSource为true
  */
 public class RestGetSourceAction extends BaseRestHandler {
 

@@ -81,25 +81,25 @@ public class UpdateHelper {
     /**
      * Prepares an update request by converting it into an index or delete request or an update response (no action, in the event of a
      * noop).
-     * 当产生了getResult后 需要通过该函数做处理
+     * 根据本次的查询结果 为下一步更新做准备
      */
     protected Result prepare(ShardId shardId, UpdateRequest request, final GetResult getResult, LongSupplier nowInMillis) {
-        // 代表实际上本次没有查询到数据
+        // 代表实际上本次没有查询到数据  那么本次实际上是一次插入操作
         if (getResult.isExists() == false) {
             // If the document didn't exist, execute the update request as an upsert
-            // 那么本次实际上是一次插入操作
             return prepareUpsert(shardId, request, getResult, nowInMillis);
             // 如果查询到的结果没有source(field) 那么抛出异常
         } else if (getResult.internalSourceRef() == null) {
             // no source, we can't do anything, throw a failure...
             throw new DocumentSourceMissingException(shardId, request.id());
-            // 如果请求中没有包含脚本数据 且doc不为空
+            // 如果请求中没有包含脚本更新的描述信息  使用携带的doc
         } else if (request.script() == null && request.doc() != null) {
             // The request has no script, it is a new doc that should be merged with the old document
             // 处理普通的更新请求 核心实现就是将2个map进行合并
             return prepareUpdateIndexRequest(shardId, request, getResult, request.detectNoop());
         } else {
             // The request has a script (or empty script), execute the script and prepare a new index request
+            // 通过脚本服务进行更新  TODO 先忽略 ES默认没有内置的脚本
             return prepareUpdateScriptRequest(shardId, request, getResult, nowInMillis);
         }
     }
@@ -112,13 +112,18 @@ public class UpdateHelper {
     Tuple<UpdateOpType, Map<String, Object>> executeScriptedUpsert(Map<String, Object> upsertDoc, Script script, LongSupplier nowInMillis) {
         Map<String, Object> ctx = new HashMap<>(3);
         // Tell the script that this is a create and not an update
+        // 插入一些特殊字段
         ctx.put(ContextFields.OP, UpdateOpType.CREATE.toString());
         ctx.put(ContextFields.SOURCE, upsertDoc);
         ctx.put(ContextFields.NOW, nowInMillis.getAsLong());
+
+        // 使用脚本对象对内部数据进行更新
         ctx = executeScript(script, ctx);
 
+        // 找到本次更新的操作类型
         UpdateOpType operation = UpdateOpType.lenientFromString((String) ctx.get(ContextFields.OP), logger, script.getIdOrCode());
-        @SuppressWarnings("unchecked")
+
+        // 当经过script处理过后 source内部的数据已经发生了变化
         Map<String, Object> newSource = (Map<String, Object>) ctx.get(ContextFields.SOURCE);
 
         if (operation != UpdateOpType.CREATE && operation != UpdateOpType.NONE) {
@@ -153,9 +158,11 @@ public class UpdateHelper {
                     nowInMillis);
                 switch (upsertResult.v1()) {
                     case CREATE:
+                        // 更新indexReq的数据
                         indexRequest = Requests.indexRequest(request.index()).source(upsertResult.v2());
                         break;
                     case NONE:
+                        // 代表本次实际上是一个 NOOP 操作
                         UpdateResponse update = new UpdateResponse(shardId, getResult.getId(),
                                 getResult.getSeqNo(), getResult.getPrimaryTerm(), getResult.getVersion(), DocWriteResponse.Result.NOOP);
                         update.setGetResult(getResult);
@@ -166,6 +173,7 @@ public class UpdateHelper {
                 }
             }
 
+            // 其余信息 会沿用之前的req
             indexRequest.index(request.index())
                     .id(request.id()).setRefreshPolicy(request.getRefreshPolicy()).routing(request.routing())
                     .timeout(request.timeout()).waitForActiveShards(request.waitForActiveShards())
@@ -304,8 +312,10 @@ public class UpdateHelper {
     private Map<String, Object> executeScript(Script script, Map<String, Object> ctx) {
         try {
             if (scriptService != null) {
-                // 通过脚本服务去编译一个脚本
+                // 脚本服务会借助 script内的信息 找到scriptEngine 配合 scriptContext 会生成一个脚本工厂
                 UpdateScript.Factory factory = scriptService.compile(script, UpdateScript.CONTEXT);
+                // 相当于就是将原本简单的更新逻辑 复杂化了 抽取了一个被成为脚本的对象进行更新 而获取脚本对象又需要借助其他一系列的类
+                // 目前ES内只有一个mock实现
                 UpdateScript executableScript = factory.newInstance(script.getParams(), ctx);
                 executableScript.execute();
             }

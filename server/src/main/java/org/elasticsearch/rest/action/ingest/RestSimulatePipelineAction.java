@@ -34,6 +34,9 @@ import java.util.List;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * TODO 模仿某个管道  还不知道是做什么用的
+ */
 public class RestSimulatePipelineAction extends BaseRestHandler {
 
     @Override

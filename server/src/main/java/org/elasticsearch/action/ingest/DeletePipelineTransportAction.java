@@ -36,6 +36,9 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 只能在leader节点上处理请求 删除某个管道对象
+ */
 public class DeletePipelineTransportAction extends TransportMasterNodeAction<DeletePipelineRequest, AcknowledgedResponse> {
 
     private final IngestService ingestService;

@@ -396,20 +396,21 @@ public class ScriptService implements Closeable, ClusterStateApplier {
 
         String id = idOrCode;
 
-        // 如果本次的脚本类型是一次 存储类型
+        // 本次脚本类型是stored类型
         if (type == ScriptType.STORED) {
             // * lang and options will both be null when looking up a stored script,
             // so we must get the source to retrieve them before checking if the
             // context is supported
             // * a stored script must be pulled from the cluster state every time in case
             // the script has been updated since the last compilation
-            // 通过id找到脚本源 并获取相关属性
+            // 通过id从CS中找到脚本源 并获取相关属性
             StoredScriptSource source = getScriptFromClusterState(id);
             lang = source.getLang();
             idOrCode = source.getSource();
             options = source.getOptions();
         }
 
+        // 通过lang找到脚本引擎
         ScriptEngine scriptEngine = getEngine(lang);
 
         if (isTypeEnabled(type) == false) {
@@ -438,7 +439,7 @@ public class ScriptService implements Closeable, ClusterStateApplier {
         // 检查脚本是否之前做过缓存
         ScriptCache scriptCache = cacheHolder.get().get(context.name);
         assert scriptCache != null : "script context [" + context.name + "] has no script cache";
-        //
+        // 通过context,engine 可以生成一个 脚本工厂实例   cache提供了缓存和限流功能
         return scriptCache.compile(context, scriptEngine, id, idOrCode, type, options);
     }
 

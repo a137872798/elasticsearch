@@ -37,6 +37,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 代表本次是一个更新请求
+ */
 public class RestUpdateAction extends BaseRestHandler {
 
     @Override

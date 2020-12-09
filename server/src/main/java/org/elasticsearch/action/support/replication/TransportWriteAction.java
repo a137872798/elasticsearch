@@ -50,7 +50,9 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Base class for transport actions that modify data in some shard like index, delete, and shardBulk.
  * Allows performing async actions (e.g. refresh) after performing write operations on primary and replica shards
- * 这是一个写入操作 会先作用在 primary上 之后作用到所有replica
+ * 这是一个写入操作
+ * 继承自 TransportReplicationAction  代表会先作用在 primary上 之后作用到所有replica
+ * 本对象在父类的基础上包含了一些location信息
  */
 public abstract class TransportWriteAction<
             Request extends ReplicatedWriteRequest<Request>,
@@ -68,16 +70,21 @@ public abstract class TransportWriteAction<
 
     /**
      * Syncs operation result to the translog or throws a shard not available failure
-     * */
+     * @param operationResult 本次操作的结果
+     * @param currentLocation 本次操作生成的结果在事务日志中的位置
+     */
     protected static Location syncOperationResultOrThrow(final Engine.Result operationResult,
                                                          final Location currentLocation) throws Exception {
         final Location location;
+
+        // 如果本次处理已经产生异常了  那么不应该调用该方法
         if (operationResult.getFailure() != null) {
             // check if any transient write operation failures should be bubbled up
             Exception failure = operationResult.getFailure();
             assert failure instanceof MapperParsingException : "expected mapper parsing failures. got " + failure;
             throw failure;
         } else {
+            // 返回本次结果携带的 location信息
             location = locationToSync(currentLocation, operationResult.getTranslogLocation());
         }
         return location;

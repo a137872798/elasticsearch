@@ -35,6 +35,9 @@ import java.util.List;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 批量get请求
+ */
 public class RestMultiGetAction extends BaseRestHandler {
 
     private final boolean allowExplicitIndex;

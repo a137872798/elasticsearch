@@ -38,6 +38,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * 批量获取请求
+ */
 public class TransportMultiGetAction extends HandledTransportAction<MultiGetRequest, MultiGetResponse> {
 
     private final ClusterService clusterService;
@@ -54,11 +57,19 @@ public class TransportMultiGetAction extends HandledTransportAction<MultiGetRequ
         this.indexNameExpressionResolver = resolver;
     }
 
+    /**
+     * 处理请求
+     * @param task
+     * @param request
+     * @param listener
+     */
     @Override
     protected void doExecute(Task task, final MultiGetRequest request, final ActionListener<MultiGetResponse> listener) {
         ClusterState clusterState = clusterService.state();
+        // 检测read操作是否此时处于被阻塞的状态
         clusterState.blocks().globalBlockedRaiseException(ClusterBlockLevel.READ);
 
+        // 单个请求被叫做 ItemRequest
         final AtomicArray<MultiGetItemResponse> responses = new AtomicArray<>(request.items.size());
         final Map<ShardId, MultiGetShardRequest> shardRequests = new HashMap<>();
 
@@ -69,7 +80,9 @@ public class TransportMultiGetAction extends HandledTransportAction<MultiGetRequ
             try {
                 concreteSingleIndex = indexNameExpressionResolver.concreteSingleIndex(clusterState, item).getName();
 
+                // 解析路由信息后回填到 routing() 字段
                 item.routing(clusterState.metadata().resolveIndexRouting(item.routing(), item.index()));
+                // 如果该index需要路由信息 而本次请求中没有携带  不过routing 好像只有在分区的场景下才会使用 所以可以先忽略
                 if ((item.routing() == null) && (clusterState.getMetadata().routingRequired(concreteSingleIndex))) {
                     responses.set(i, newItemFailure(concreteSingleIndex, item.id(),
                         new RoutingMissingException(concreteSingleIndex, item.id())));
@@ -80,10 +93,12 @@ public class TransportMultiGetAction extends HandledTransportAction<MultiGetRequ
                 continue;
             }
 
+            // 找到本次请求应该发往哪个分片
             ShardId shardId = clusterService.operationRouting()
                     .getShards(clusterState, concreteSingleIndex, item.id(), item.routing(), null)
                     .shardId();
 
+            // 将发往同一 shardId的请求合并
             MultiGetShardRequest shardRequest = shardRequests.get(shardId);
             if (shardRequest == null) {
                 shardRequest = new MultiGetShardRequest(request, shardId.getIndexName(), shardId.getId());
@@ -92,6 +107,7 @@ public class TransportMultiGetAction extends HandledTransportAction<MultiGetRequ
             shardRequest.add(i, item);
         }
 
+        // 有效信息不足 无法发起multiGet请求
         if (shardRequests.isEmpty()) {
             // only failures..
             listener.onResponse(new MultiGetResponse(responses.toArray(new MultiGetItemResponse[responses.length()])));
@@ -100,6 +116,12 @@ public class TransportMultiGetAction extends HandledTransportAction<MultiGetRequ
         executeShardAction(listener, responses, shardRequests);
     }
 
+    /**
+     * 原始请求按照shardId分组后 再处理
+     * @param listener
+     * @param responses
+     * @param shardRequests
+     */
     protected void executeShardAction(ActionListener<MultiGetResponse> listener,
                                       AtomicArray<MultiGetItemResponse> responses,
                                       Map<ShardId, MultiGetShardRequest> shardRequests) {

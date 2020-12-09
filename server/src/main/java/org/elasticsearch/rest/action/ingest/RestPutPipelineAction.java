@@ -33,7 +33,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
-
+/**
+ * 新增某个管道
+ */
 public class RestPutPipelineAction extends BaseRestHandler {
 
     @Override

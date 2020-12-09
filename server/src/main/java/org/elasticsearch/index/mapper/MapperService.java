@@ -688,10 +688,12 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
     /**
      * Returns all the fields that match the given pattern. If the pattern is prefixed with a type
      * then the fields will be returned with a type prefix.
+     * 使用通配符找到匹配的所有field
      */
     public Set<String> simpleMatchToFullName(String pattern) {
         if (Regex.isSimpleMatchPattern(pattern) == false) {
             // no wildcards
+            // 非通配符 代表传入的参数就是fieldName
             return Collections.singleton(pattern);
         }
         return fieldTypes.simpleMatchToFullName(pattern);

@@ -496,6 +496,11 @@ public abstract class TransportReplicationAction<
 
     }
 
+    /**
+     * 代表在主分片上的处理结果
+     * @param <ReplicaRequest>
+     * @param <Response>
+     */
     public static class PrimaryResult<ReplicaRequest extends ReplicationRequest<ReplicaRequest>,
             Response extends ReplicationResponse>
             implements ReplicationOperation.PrimaryResult<ReplicaRequest> {

@@ -39,6 +39,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * 查询词向量信息
+ */
 public class TransportMultiTermVectorsAction extends HandledTransportAction<MultiTermVectorsRequest, MultiTermVectorsResponse> {
 
     private final ClusterService clusterService;
@@ -59,6 +62,7 @@ public class TransportMultiTermVectorsAction extends HandledTransportAction<Mult
     protected void doExecute(Task task, final MultiTermVectorsRequest request, final ActionListener<MultiTermVectorsResponse> listener) {
         ClusterState clusterState = clusterService.state();
 
+        // 确保此时读操作不会被阻塞
         clusterState.blocks().globalBlockedRaiseException(ClusterBlockLevel.READ);
 
         final AtomicArray<MultiTermVectorsItemResponse> responses = new AtomicArray<>(request.requests.size());
@@ -66,6 +70,7 @@ public class TransportMultiTermVectorsAction extends HandledTransportAction<Mult
         Map<ShardId, MultiTermVectorsShardRequest> shardRequests = new HashMap<>();
         for (int i = 0; i < request.requests.size(); i++) {
             TermVectorsRequest termVectorsRequest = request.requests.get(i);
+            // 解析路由信息并回填 跟multiGet一样
             termVectorsRequest.routing(clusterState.metadata().resolveIndexRouting(termVectorsRequest.routing(),
                 termVectorsRequest.index()));
             if (!clusterState.metadata().hasConcreteIndex(termVectorsRequest.index())) {
@@ -101,6 +106,13 @@ public class TransportMultiTermVectorsAction extends HandledTransportAction<Mult
         executeShardAction(listener, responses, shardRequests);
     }
 
+
+    /**
+     * 这套处理流程基本与 multiGet一样
+     * @param listener
+     * @param responses
+     * @param shardRequests
+     */
     protected void executeShardAction(ActionListener<MultiTermVectorsResponse> listener,
                                       AtomicArray<MultiTermVectorsItemResponse> responses,
                                       Map<ShardId, MultiTermVectorsShardRequest> shardRequests) {

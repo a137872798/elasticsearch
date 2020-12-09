@@ -671,17 +671,20 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
      */
     // TODO: This can be moved to IndexNameExpressionResolver too, but this means that we will support wildcards and other expressions
     // in the index,bulk,update and delete apis.
+    // 从索引上解析路由信息
     public String resolveIndexRouting(@Nullable String routing, String aliasOrIndex) {
         if (aliasOrIndex == null) {
             return routing;
         }
 
+        // 先通过别名 或者索引名 从lookup中找到索引对象
         IndexAbstraction result = getIndicesLookup().get(aliasOrIndex);
         if (result == null || result.getType() != IndexAbstraction.Type.ALIAS) {
             return routing;
         }
         IndexAbstraction.Alias alias = (IndexAbstraction.Alias) result;
         if (result.getIndices().size() > 1) {
+            // 如果存在多个结果 抛出异常 因为此时无法确定正确的routing是什么
             rejectSingleIndexOperation(aliasOrIndex, result);
         }
         AliasMetadata aliasMd = alias.getFirstAliasMetadata();

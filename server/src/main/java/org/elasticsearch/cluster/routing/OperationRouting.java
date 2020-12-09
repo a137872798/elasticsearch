@@ -49,7 +49,8 @@ public class OperationRouting {
                     Setting.Property.Dynamic, Setting.Property.NodeScope);
 
     /**
-     * 什么叫自适应的复制选择
+     * 开启自适应选择功能  某些操作可以在某个分片以及相关的所有副本执行  如果每次请求都发往同一个副本 那么多副本就失去意义了
+     * 所以这里有一个自适应选择的因素  会根据每个副本此时的负载情况选择最合适的副本
      */
     private boolean useAdaptiveReplicaSelection;
 
@@ -81,17 +82,18 @@ public class OperationRouting {
     }
 
     /**
-     *
+     * 查询符合条件的一组分片
      * @param clusterState
-     * @param index
-     * @param id
+     * @param index  本次要获取的是哪个索引下的分片
+     * @param id    请求中可以携带id和路由信息
      * @param routing
-     * @param preference  偏好返回什么样的分片
+     * @param preference  偏好返回什么样的分片  在用户发起的请求中可以携带这种信息
      * @return
      */
     public ShardIterator getShards(ClusterState clusterState, String index, String id, @Nullable String routing,
                                    @Nullable String preference) {
         return preferenceActiveShardIterator(shards(clusterState, index, id, routing), clusterState.nodes().getLocalNodeId(),
+            // 本次只是选择合适分片 所以不需要传入统计数据的对象
             clusterState.nodes(), preference, null, null);
     }
 
@@ -188,10 +190,11 @@ public class OperationRouting {
     }
 
     /**
-     * @param indexShard   某个分片
-     * @param localNodeId    当前进程对应的节点
+     * 根据一系列相关信息 选出当前最合适的分片列表   比如负载最小的某些分片
+     * @param indexShard   对应 index.shardId 下的所有 primary + replica
+     * @param localNodeId    此时发起指令的节点   在preference 可以要求将请求发往本节点
      * @param nodes      当前集群内所有的节点
-     * @param preference    偏向于选择哪些分片
+     * @param preference    偏向于选择哪些分片  在req中可以设置
      * @param collectorService   采集响应信息的
      * @param nodeCounts
      * @return
@@ -200,7 +203,7 @@ public class OperationRouting {
                                                         DiscoveryNodes nodes, @Nullable String preference,
                                                         @Nullable ResponseCollectorService collectorService,
                                                         @Nullable Map<String, Long> nodeCounts) {
-        // 当没有指定偏好信息时 将有效的分片包装成一个迭代器
+        // 当没有指定偏好信息时    将所有符合条件的分片打乱后返回
         if (preference == null || preference.isEmpty()) {
             return shardRoutings(indexShard, nodes, collectorService, nodeCounts);
         }
@@ -274,11 +277,11 @@ public class OperationRouting {
     }
 
     /**
-     * 将相关的路由信息包装成迭代器
-     * @param indexShard
-     * @param nodes
-     * @param collectorService  可空
-     * @param nodeCounts  可空
+     * 将分片包装成迭代器
+     * @param indexShard  index.shardId下所有的分片
+     * @param nodes   当前集群下所有的节点
+     * @param collectorService  进行一些数据统计
+     * @param nodeCounts
      * @return
      */
     private ShardIterator shardRoutings(IndexShardRoutingTable indexShard, DiscoveryNodes nodes,
@@ -324,8 +327,8 @@ public class OperationRouting {
      * 获取目标索引相关的所有迭代器
      * @param clusterState 此时的集群状态 内部包含了 metadata 记录此时分片信息
      * @param index  索引名
-     * @param id
-     * @param routing
+     * @param id   每当包含一个shardId时 会伴随着一个uuid 反过来用户使用这个uuid去查询的时候 通过hash函数会映射回之前的shardId
+     * @param routing  这个是只有设置了分区才会使用
      * @return
      */
     protected IndexShardRoutingTable shards(ClusterState clusterState, String index, String id, String routing) {
@@ -349,7 +352,7 @@ public class OperationRouting {
     }
 
     /**
-     * 生成分片id
+     * 选择分片id
      * @param indexMetadata  索引元数据信息
      * @param id   一个uuid  当处理一个 bulkReq时 会为它生成一个随机id
      * @param routing 路由信息

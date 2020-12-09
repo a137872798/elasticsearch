@@ -31,6 +31,9 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
+/**
+ * 查询某个管道对象
+ */
 public class RestGetPipelineAction extends BaseRestHandler {
 
     @Override

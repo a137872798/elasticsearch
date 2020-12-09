@@ -94,9 +94,10 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
 
     /**
      * 初始化
+     *
      * @param clusterService   集群服务
-     * @param threadPool     线程池总控对象
-     * @param env             环境中包含需要的各种配置
+     * @param threadPool       线程池总控对象
+     * @param env              环境中包含需要的各种配置
      * @param scriptService
      * @param analysisRegistry
      * @param ingestPlugins
@@ -125,12 +126,13 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
 
     /**
      * 进程工厂
+     *
      * @param ingestPlugins
      * @param parameters
      * @return
      */
     private static Map<String, Processor.Factory> processorFactories(List<IngestPlugin> ingestPlugins,
-        Processor.Parameters parameters) {
+                                                                     Processor.Parameters parameters) {
         Map<String, Processor.Factory> processorFactories = new HashMap<>();
         for (IngestPlugin ingestPlugin : ingestPlugins) {
             Map<String, Processor.Factory> newProcessors = ingestPlugin.getProcessors(parameters);
@@ -153,23 +155,31 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
 
     /**
      * Deletes the pipeline specified by id in the request.
+     * 删除某个管道对象
      */
     public void delete(DeletePipelineRequest request, ActionListener<AcknowledgedResponse> listener) {
         clusterService.submitStateUpdateTask("delete-pipeline-" + request.getId(),
-                new AckedClusterStateUpdateTask<AcknowledgedResponse>(request, listener) {
+            new AckedClusterStateUpdateTask<AcknowledgedResponse>(request, listener) {
 
-            @Override
-            protected AcknowledgedResponse newResponse(boolean acknowledged) {
-                return new AcknowledgedResponse(acknowledged);
-            }
+                @Override
+                protected AcknowledgedResponse newResponse(boolean acknowledged) {
+                    return new AcknowledgedResponse(acknowledged);
+                }
 
-            @Override
-            public ClusterState execute(ClusterState currentState) {
-                return innerDelete(request, currentState);
-            }
-        });
+                @Override
+                public ClusterState execute(ClusterState currentState) {
+                    return innerDelete(request, currentState);
+                }
+            });
     }
 
+    /**
+     * 删除某个管道对象 并更新clusterState
+     *
+     * @param request
+     * @param currentState
+     * @return
+     */
     static ClusterState innerDelete(DeletePipelineRequest request, ClusterState currentState) {
         IngestMetadata currentIngestMetadata = currentState.metadata().custom(IngestMetadata.TYPE);
         if (currentIngestMetadata == null) {
@@ -193,8 +203,8 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         }
         ClusterState.Builder newState = ClusterState.builder(currentState);
         newState.metadata(Metadata.builder(currentState.getMetadata())
-                .putCustom(IngestMetadata.TYPE, new IngestMetadata(pipelinesCopy))
-                .build());
+            .putCustom(IngestMetadata.TYPE, new IngestMetadata(pipelinesCopy))
+            .build());
         return newState.build();
     }
 
@@ -204,6 +214,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
      */
     // Returning PipelineConfiguration instead of Pipeline, because Pipeline and Processor interface don't
     // know how to serialize themselves.
+    // 查询一组管道
     public static List<PipelineConfiguration> getPipelines(ClusterState clusterState, String... ids) {
         IngestMetadata ingestMetadata = clusterState.getMetadata().custom(IngestMetadata.TYPE);
         return innerGetPipelines(ingestMetadata, ids);
@@ -239,24 +250,27 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
 
     /**
      * Stores the specified pipeline definition in the request.
+     *
+     * @param ingestInfos 当前集群下所有节点的摄取信息
      */
     public void putPipeline(Map<DiscoveryNode, IngestInfo> ingestInfos, PutPipelineRequest request,
-        ActionListener<AcknowledgedResponse> listener) throws Exception {
-            // validates the pipeline and processor configuration before submitting a cluster update task:
-            validatePipeline(ingestInfos, request);
-            clusterService.submitStateUpdateTask("put-pipeline-" + request.getId(),
-                new AckedClusterStateUpdateTask<AcknowledgedResponse>(request, listener) {
+                            ActionListener<AcknowledgedResponse> listener) throws Exception {
+        // validates the pipeline and processor configuration before submitting a cluster update task:
+        // TODO 先忽略校验代码
+        validatePipeline(ingestInfos, request);
+        clusterService.submitStateUpdateTask("put-pipeline-" + request.getId(),
+            new AckedClusterStateUpdateTask<AcknowledgedResponse>(request, listener) {
 
-                    @Override
-                    protected AcknowledgedResponse newResponse(boolean acknowledged) {
-                        return new AcknowledgedResponse(acknowledged);
-                    }
+                @Override
+                protected AcknowledgedResponse newResponse(boolean acknowledged) {
+                    return new AcknowledgedResponse(acknowledged);
+                }
 
-                    @Override
-                    public ClusterState execute(ClusterState currentState) {
-                        return innerPut(request, currentState);
-                    }
-                });
+                @Override
+                public ClusterState execute(ClusterState currentState) {
+                    return innerPut(request, currentState);
+                }
+            });
     }
 
     /**
@@ -292,12 +306,13 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
     /**
      * Recursive method to obtain all of the non-failure processors for given compoundProcessor. Since conditionals are implemented as
      * wrappers to the actual processor, always prefer the actual processor's metric over the conditional processor's metric.
+     *
      * @param compoundProcessor The compound processor to start walking the non-failure processors
-     * @param processorMetrics The list of {@link Processor} {@link IngestMetric} tuples.
+     * @param processorMetrics  The list of {@link Processor} {@link IngestMetric} tuples.
      * @return the processorMetrics for all non-failure processor that belong to the original compoundProcessor
      */
     private static List<Tuple<Processor, IngestMetric>> getProcessorMetrics(CompoundProcessor compoundProcessor,
-                                                                    List<Tuple<Processor, IngestMetric>> processorMetrics) {
+                                                                            List<Tuple<Processor, IngestMetric>> processorMetrics) {
         //only surface the top level non-failure processors, on-failure processor times will be included in the top level non-failure
         for (Tuple<Processor, IngestMetric> processorWithMetric : compoundProcessor.getProcessorsWithMetrics()) {
             Processor processor = processorWithMetric.v1();
@@ -315,6 +330,12 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         return processorMetrics;
     }
 
+    /**
+     * 在当前CS中插入一组新的管道
+     * @param request
+     * @param currentState
+     * @return
+     */
     static ClusterState innerPut(PutPipelineRequest request, ClusterState currentState) {
         IngestMetadata currentIngestMetadata = currentState.metadata().custom(IngestMetadata.TYPE);
         Map<String, PipelineConfiguration> pipelines;
@@ -356,7 +377,8 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
 
     /**
      * 执行摄取工作
-     * @param numberOfActionRequests  bulkReq内部有多少子级req
+     *
+     * @param numberOfActionRequests bulkReq内部有多少子级req
      * @param actionRequests
      * @param onFailure
      * @param onCompletion
@@ -386,7 +408,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
                     IndexRequest indexRequest = TransportBulkAction.getIndexWriteRequest(actionRequest);
                     if (indexRequest == null) {
                         // 当所有doc都被处理完后 触发结果对应的监听器
-                        if (counter.decrementAndGet() == 0){
+                        if (counter.decrementAndGet() == 0) {
                             onCompletion.accept(originalThread, null);
                         }
                         assert counter.get() >= 0;
@@ -403,7 +425,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
                     if (IngestService.NOOP_PIPELINE_NAME.equals(pipelineId) == false
                         && IngestService.NOOP_PIPELINE_NAME.equals(finalPipelineId) == false) {
                         pipelines = List.of(pipelineId, finalPipelineId);
-                    } else if (IngestService.NOOP_PIPELINE_NAME.equals(pipelineId) == false ) {
+                    } else if (IngestService.NOOP_PIPELINE_NAME.equals(pipelineId) == false) {
                         pipelines = List.of(pipelineId);
                     } else if (IngestService.NOOP_PIPELINE_NAME.equals(finalPipelineId) == false) {
                         pipelines = List.of(finalPipelineId);
@@ -426,12 +448,11 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
 
     /**
      * 首先只有从req中获取到了 pipeline 才能使用管道模式进行处理
+     *
      * @param slot
      * @param it
      * @param indexRequest
-     * @param counter
-     *
-     * 在不同场景触发不同钩子
+     * @param counter        在不同场景触发不同钩子
      * @param onDropped
      * @param onFailure
      * @param onCompletion
@@ -458,21 +479,21 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
                 Pipeline pipeline = holder.pipeline;
                 innerExecute(slot, indexRequest, pipeline, onDropped,
                     e -> {
-                    // 代表出现异常  触发钩子
-                    if (e != null) {
-                        onFailure.accept(slot, e);
-                    }
-
-                    // 代表本次处理没有产生异常 使用it中的下一个pipeline去处理
-                    if (it.hasNext()) {
-                        executePipelines(slot, it, indexRequest, onDropped, onFailure, counter, onCompletion, originalThread);
-                    } else {
-                        if (counter.decrementAndGet() == 0) {
-                            onCompletion.accept(originalThread, null);
+                        // 代表出现异常  触发钩子
+                        if (e != null) {
+                            onFailure.accept(slot, e);
                         }
-                        assert counter.get() >= 0;
-                    }
-                });
+
+                        // 代表本次处理没有产生异常 使用it中的下一个pipeline去处理
+                        if (it.hasNext()) {
+                            executePipelines(slot, it, indexRequest, onDropped, onFailure, counter, onCompletion, originalThread);
+                        } else {
+                            if (counter.decrementAndGet() == 0) {
+                                onCompletion.accept(originalThread, null);
+                            }
+                            assert counter.get() >= 0;
+                        }
+                    });
             } catch (Exception e) {
                 onFailure.accept(slot, e);
                 if (counter.decrementAndGet() == 0) {
@@ -505,7 +526,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
     /**
      * Adds a listener that gets invoked with the current cluster state before processor factories
      * get invoked.
-     *
+     * <p>
      * This is useful for components that are used by ingest processors, so that they have the opportunity to update
      * before these components get used by the ingest processor factory.
      */
@@ -516,19 +537,19 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
     //package private for testing
     static String getProcessorName(Processor processor) {
         // conditionals are implemented as wrappers around the real processor, so get the real processor for the correct type for the name
-        if(processor instanceof ConditionalProcessor){
+        if (processor instanceof ConditionalProcessor) {
             processor = ((ConditionalProcessor) processor).getInnerProcessor();
         }
         StringBuilder sb = new StringBuilder(5);
         sb.append(processor.getType());
 
-        if(processor instanceof PipelineProcessor){
+        if (processor instanceof PipelineProcessor) {
             String pipelineName = ((PipelineProcessor) processor).getPipelineTemplate().newInstance(Map.of()).execute();
             sb.append(":");
             sb.append(pipelineName);
         }
         String tag = processor.getTag();
-        if(tag != null && !tag.isEmpty()){
+        if (tag != null && !tag.isEmpty()) {
             sb.append(":");
             sb.append(tag);
         }
@@ -537,9 +558,10 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
 
     /**
      * 当使用某个管道 对某个indexReq进行处理时触发该方法
+     *
      * @param slot
      * @param indexRequest
-     * @param pipeline   本次处理请求的管道对象
+     * @param pipeline           本次处理请求的管道对象
      * @param itemDroppedHandler
      * @param handler
      */
@@ -571,34 +593,34 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         ingestDocument.executePipeline(pipeline,
             // 当产生结果时 使用该函数进行处理
             (result, e) -> {
-            long ingestTimeInMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeInNanos);
-            totalMetrics.postIngest(ingestTimeInMillis);
-            if (e != null) {
-                totalMetrics.ingestFailed();
-                handler.accept(e);
-                // 当某些processor处理后 可能result就变成了null 代表这次处理的数据被丢弃了 触发onDrop函数
-            } else if (result == null) {
-                itemDroppedHandler.accept(slot);
-                handler.accept(null);
-            } else {
-                // 获取元数据信息
-                Map<IngestDocument.Metadata, Object> metadataMap = ingestDocument.extractMetadata();
-                //it's fine to set all metadata fields all the time, as ingest document holds their starting values
-                //before ingestion, which might also get modified during ingestion.
+                long ingestTimeInMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeInNanos);
+                totalMetrics.postIngest(ingestTimeInMillis);
+                if (e != null) {
+                    totalMetrics.ingestFailed();
+                    handler.accept(e);
+                    // 当某些processor处理后 可能result就变成了null 代表这次处理的数据被丢弃了 触发onDrop函数
+                } else if (result == null) {
+                    itemDroppedHandler.accept(slot);
+                    handler.accept(null);
+                } else {
+                    // 获取元数据信息
+                    Map<IngestDocument.Metadata, Object> metadataMap = ingestDocument.extractMetadata();
+                    //it's fine to set all metadata fields all the time, as ingest document holds their starting values
+                    //before ingestion, which might also get modified during ingestion.
 
-                // 将元数据中的信息 转移到 indexReq上
-                indexRequest.index((String) metadataMap.get(IngestDocument.Metadata.INDEX));
-                indexRequest.id((String) metadataMap.get(IngestDocument.Metadata.ID));
-                indexRequest.routing((String) metadataMap.get(IngestDocument.Metadata.ROUTING));
-                indexRequest.version(((Number) metadataMap.get(IngestDocument.Metadata.VERSION)).longValue());
-                if (metadataMap.get(IngestDocument.Metadata.VERSION_TYPE) != null) {
-                    indexRequest.versionType(VersionType.fromString((String) metadataMap.get(IngestDocument.Metadata.VERSION_TYPE)));
+                    // 将元数据中的信息 转移到 indexReq上
+                    indexRequest.index((String) metadataMap.get(IngestDocument.Metadata.INDEX));
+                    indexRequest.id((String) metadataMap.get(IngestDocument.Metadata.ID));
+                    indexRequest.routing((String) metadataMap.get(IngestDocument.Metadata.ROUTING));
+                    indexRequest.version(((Number) metadataMap.get(IngestDocument.Metadata.VERSION)).longValue());
+                    if (metadataMap.get(IngestDocument.Metadata.VERSION_TYPE) != null) {
+                        indexRequest.versionType(VersionType.fromString((String) metadataMap.get(IngestDocument.Metadata.VERSION_TYPE)));
+                    }
+                    indexRequest.source(ingestDocument.getSourceAndMetadata(), indexRequest.getContentType());
+
+                    handler.accept(null);
                 }
-                indexRequest.source(ingestDocument.getSourceAndMetadata(), indexRequest.getContentType());
-
-                handler.accept(null);
-            }
-        });
+            });
     }
 
     @Override
@@ -721,18 +743,19 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
 
     /**
      * Gets all the Processors of the given type from within a Pipeline.
+     *
      * @param pipelineId the pipeline to inspect
-     * @param clazz the Processor class to look for
+     * @param clazz      the Processor class to look for
      * @return True if the pipeline contains an instance of the Processor class passed in
      */
-    public<P extends Processor> List<P> getProcessorsInPipeline(String pipelineId, Class<P> clazz) {
+    public <P extends Processor> List<P> getProcessorsInPipeline(String pipelineId, Class<P> clazz) {
         Pipeline pipeline = getPipeline(pipelineId);
         if (pipeline == null) {
             throw new IllegalArgumentException("pipeline with id [" + pipelineId + "] does not exist");
         }
 
         List<P> processors = new ArrayList<>();
-        for (Processor processor: pipeline.flattenAllProcessors()) {
+        for (Processor processor : pipeline.flattenAllProcessors()) {
             if (clazz.isAssignableFrom(processor.getClass())) {
                 processors.add(clazz.cast(processor));
             }
@@ -769,7 +792,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
                 return type;
             }
         };
-        String description = "this is a place holder pipeline, because pipeline with id [" +  id + "] could not be loaded";
+        String description = "this is a place holder pipeline, because pipeline with id [" + id + "] could not be loaded";
         return new Pipeline(id, description, null, new CompoundProcessor(failureProcessor));
     }
 

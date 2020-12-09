@@ -63,10 +63,15 @@ public final class ScriptContext<FactoryType> {
     /** A unique identifier for this context. */
     public final String name;
 
-    /** A factory class for constructing script or stateful factory instances. */
+    /**
+     * A factory class for constructing script or stateful factory instances.
+     */
     public final Class<FactoryType> factoryClazz;
 
-    /** A factory class for construct script instances. */
+    /**
+     * A factory class for construct script instances.
+     * 如果这个脚本上下文 是通过newFactory来获取实例的 那么factoryClazz 就对应实例类型
+     */
     public final Class<?> statefulFactoryClazz;
 
     /** A class that is an instance of a script. */
@@ -81,25 +86,33 @@ public final class ScriptContext<FactoryType> {
     /** The default max compilation rate for scripts in this context.  Script compilation is throttled if this is exceeded */
     public final Tuple<Integer, TimeValue> maxCompilationRateDefault;
 
-    /** Construct a context with the related instance and compiled classes with caller provided cache defaults */
+    /**
+     * Construct a context with the related instance and compiled classes with caller provided cache defaults
+     * 每个上下文 会对应一种class对象
+     */
     public ScriptContext(String name, Class<FactoryType> factoryClazz, int cacheSizeDefault, TimeValue cacheExpireDefault,
                         Tuple<Integer, TimeValue> maxCompilationRateDefault) {
         this.name = name;
         this.factoryClazz = factoryClazz;
+
+        // 找到 newInstance/newFactory 方法     在一开始预估的情况下应该只存在一种方法
         Method newInstanceMethod = findMethod("FactoryType", factoryClazz, "newInstance");
         Method newFactoryMethod = findMethod("FactoryType", factoryClazz, "newFactory");
         if (newFactoryMethod != null) {
             assert newInstanceMethod == null;
             statefulFactoryClazz = newFactoryMethod.getReturnType();
+            // 如果此时只是获取到工厂类  那么工厂类 必须存在一个newInstance方法
             newInstanceMethod = findMethod("StatefulFactoryType", statefulFactoryClazz, "newInstance");
             if (newInstanceMethod == null) {
                 throw new IllegalArgumentException("Could not find method newInstance StatefulFactoryType class ["
                     + statefulFactoryClazz.getName() + "] for script context [" + name + "]");
             }
+            // 直接获取实例类型 不需要借助工厂
         } else if (newInstanceMethod != null) {
             assert newFactoryMethod == null;
             statefulFactoryClazz = null;
         } else {
+            // 当factory/newInstance 都不存在时 抛出异常
             throw new IllegalArgumentException("Could not find method newInstance or method newFactory on FactoryType class ["
                 + factoryClazz.getName() + "] for script context [" + name + "]");
         }
@@ -117,11 +130,15 @@ public final class ScriptContext<FactoryType> {
         this(name, factoryClazz, 100, TimeValue.timeValueMillis(0), new Tuple<>(75, TimeValue.timeValueMinutes(5)));
     }
 
-    /** Returns a method with the given name, or throws an exception if multiple are found. */
+    /**
+     * Returns a method with the given name, or throws an exception if multiple are found.
+     * 通过反射从某个类中找到目标方法
+     */
     private Method findMethod(String type, Class<?> clazz, String methodName) {
         Method foundMethod = null;
         for (Method method : clazz.getMethods()) {
             if (method.getName().equals(methodName)) {
+                // 不允许发生重载
                 if (foundMethod != null) {
                     throw new IllegalArgumentException("Cannot have multiple " + methodName + " methods on " + type + " class ["
                         + clazz.getName() + "] for script context [" + name + "]");

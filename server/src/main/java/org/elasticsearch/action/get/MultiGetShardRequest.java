@@ -106,6 +106,11 @@ public class MultiGetShardRequest extends SingleShardRequest<MultiGetShardReques
         return this;
     }
 
+    /**
+     * 某次请求中  该请求对象对应的下标
+     * @param location
+     * @param item
+     */
     void add(int location, MultiGetRequest.Item item) {
         this.locations.add(location);
         this.items.add(item);

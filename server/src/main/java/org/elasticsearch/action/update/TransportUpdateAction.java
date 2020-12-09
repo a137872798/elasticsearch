@@ -65,6 +65,9 @@ import static org.elasticsearch.ExceptionsHelper.unwrapCause;
 import static org.elasticsearch.action.bulk.TransportSingleItemBulkWriteAction.toSingleItemBulkRequest;
 import static org.elasticsearch.action.bulk.TransportSingleItemBulkWriteAction.wrapBulkResponse;
 
+/**
+ * 发起一个更新doc的请求
+ */
 public class TransportUpdateAction extends TransportInstanceSingleOperationAction<UpdateRequest, UpdateResponse> {
 
     private final AutoCreateIndex autoCreateIndex;

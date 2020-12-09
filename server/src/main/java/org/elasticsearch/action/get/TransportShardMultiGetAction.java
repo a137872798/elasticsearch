@@ -41,6 +41,10 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 以分片为单位处理 multiGet请求
+ * 在单分片上的处理逻辑 与get一致
+ */
 public class TransportShardMultiGetAction extends TransportSingleShardAction<MultiGetShardRequest, MultiGetShardResponse> {
 
     private static final String ACTION_NAME = MultiGetAction.NAME + "[shard]";
@@ -72,12 +76,25 @@ public class TransportShardMultiGetAction extends TransportSingleShardAction<Mul
         return true;
     }
 
+    /**
+     * 找到符合查询条件的一组shard
+     * @param state
+     * @param request
+     * @return
+     */
     @Override
     protected ShardIterator shards(ClusterState state, InternalRequest request) {
         return clusterService.operationRouting()
                 .getShards(state, request.request().index(), request.request().shardId(), request.request().preference());
     }
 
+    /**
+     * 当目标节点收到分片请求时 先触发该方法
+     * @param request
+     * @param shardId
+     * @param listener
+     * @throws IOException
+     */
     @Override
     protected void asyncShardOperation(
         MultiGetShardRequest request, ShardId shardId, ActionListener<MultiGetShardResponse> listener) throws IOException {
@@ -86,6 +103,7 @@ public class TransportShardMultiGetAction extends TransportSingleShardAction<Mul
         if (request.realtime()) { // we are not tied to a refresh cycle here anyway
             super.asyncShardOperation(request, shardId, listener);
         } else {
+            // 只要不是实时请求 就会等待下一次刷新后才触发
             indexShard.awaitShardSearchActive(b -> {
                 try {
                     super.asyncShardOperation(request, shardId, listener);
@@ -96,11 +114,18 @@ public class TransportShardMultiGetAction extends TransportSingleShardAction<Mul
         }
     }
 
+    /**
+     * 处理逻辑
+     * @param request
+     * @param shardId
+     * @return
+     */
     @Override
     protected MultiGetShardResponse shardOperation(MultiGetShardRequest request, ShardId shardId) {
         IndexService indexService = indicesService.indexServiceSafe(shardId.getIndex());
         IndexShard indexShard = indexService.getShard(shardId.id());
 
+        // 先执行一次刷新操作
         if (request.refresh() && !request.realtime()) {
             indexShard.refresh("refresh_flag_mget");
         }

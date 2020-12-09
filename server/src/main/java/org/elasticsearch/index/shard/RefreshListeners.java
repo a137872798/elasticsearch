@@ -147,7 +147,7 @@ public final class RefreshListeners implements ReferenceManager.RefreshListener,
      * @param listener for the refresh. Called with true if registering the listener ran it out of slots and forced a refresh. Called with
      *        false otherwise.
      * @return did we call the listener (true) or register the listener to call later (false)?
-     * 开始监听某个location的数据
+     * 插入一个监听某个location的监听器
      */
     public boolean addOrNotify(Translog.Location location, Consumer<Boolean> listener) {
         requireNonNull(listener, "listener cannot be null");
@@ -164,13 +164,14 @@ public final class RefreshListeners implements ReferenceManager.RefreshListener,
                 throw new IllegalStateException("can't wait for refresh on a closed index");
             }
             List<Tuple<Translog.Location, Consumer<Boolean>>> listeners = refreshListeners;
+
+            // 最多允许同时挂载多少监听器
             final int maxRefreshes = getMaxRefreshListeners.getAsInt();
-            // 此时没有正在执行的 强制更新操作  并且监听器数量没有达到最大值  可以采用等待方式
+            // 如果此时已经触发了强制刷新 那么直接触发监听器就好 不需要存储到list中
             if (refreshForcers == 0 && maxRefreshes > 0 && (listeners == null || listeners.size() < maxRefreshes)) {
                 ThreadContext.StoredContext storedContext = threadContext.newStoredContext(true);
                 Consumer<Boolean> contextPreservingListener = forced -> {
                     try (ThreadContext.StoredContext ignore = threadContext.stashContext()) {
-                        // 又是在指定的线程上下文中处理监听器 TODO 什么情况下会需要这样做
                         storedContext.restore();
                         listener.accept(forced);
                     }
@@ -185,7 +186,8 @@ public final class RefreshListeners implements ReferenceManager.RefreshListener,
             }
         }
         // No free slot so force a refresh and call the listener in this thread
-        // 当列表存不下时 强制触发刷新 并执行监听器的逻辑
+        // 当列表存不下时 或者此时已经触发了refresh  直接触发监听器
+        // 对应 Engine::refresh
         forceRefresh.run();
         listener.accept(true);
         return true;

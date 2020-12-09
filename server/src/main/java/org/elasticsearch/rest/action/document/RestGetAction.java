@@ -39,6 +39,9 @@ import static org.elasticsearch.rest.RestRequest.Method.HEAD;
 import static org.elasticsearch.rest.RestStatus.NOT_FOUND;
 import static org.elasticsearch.rest.RestStatus.OK;
 
+/**
+ * 发起某个doc的查询请求
+ */
 public class RestGetAction extends BaseRestHandler {
 
     @Override

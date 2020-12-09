@@ -87,6 +87,9 @@ class BulkPrimaryExecutionContext {
      * 当前正在处理的req
      */
     private DocWriteRequest requestToExecute;
+    /**
+     * 当前正在处理的req对应的结果
+     */
     private BulkItemResponse executionResult;
     private int retryCounter;
 
@@ -222,6 +225,7 @@ class BulkPrimaryExecutionContext {
     /**
      * sets the request that should actually be executed on the primary. This can be different then the request
      * received from the user (specifically, an update request is translated to an indexing or delete request).
+     * 设置当前正在处理的req   在bulk的prepare阶段  可能会更新 docWriterReq.source属性
      */
     public void setRequestToExecute(DocWriteRequest writeRequest) {
         assert assertInvariants(ItemProcessingState.INITIAL);
@@ -273,18 +277,28 @@ class BulkPrimaryExecutionContext {
         markAsCompleted(executionResult);
     }
 
-    /** the current operation has been executed on the primary with the specified result */
+    /**
+     * the current operation has been executed on the primary with the specified result
+     * 标记当前对象已经在主分片处理过了
+     */
     public void markOperationAsExecuted(Engine.Result result) {
         assertInvariants(ItemProcessingState.TRANSLATED);
+        // 本次处理的针对某个doc的请求对象
         final BulkItemRequest current = getCurrentItem();
+        // 该req中包含了实际写入的数据 source
         DocWriteRequest docWriteRequest = getRequestToExecute();
         switch (result.getResultType()) {
+
+            // 代表本次在engine上操作成功
             case SUCCESS:
                 final DocWriteResponse response;
+                // 代表本次是一次更新/插入index的操作
                 if (result.getOperationType() == Engine.Operation.TYPE.INDEX) {
                     Engine.IndexResult indexResult = (Engine.IndexResult) result;
+                    // 将信息抽取出来 生成response对象
                     response = new IndexResponse(primary.shardId(), requestToExecute.id(),
                         result.getSeqNo(), result.getTerm(), indexResult.getVersion(), indexResult.isCreated());
+                // 如果是删除操作 也是抽取相关信息 并包装成response对象
                 } else if (result.getOperationType() == Engine.Operation.TYPE.DELETE) {
                     Engine.DeleteResult deleteResult = (Engine.DeleteResult) result;
                     response = new DeleteResponse(primary.shardId(), requestToExecute.id(),
@@ -296,6 +310,8 @@ class BulkPrimaryExecutionContext {
                 executionResult = new BulkItemResponse(current.id(), current.request().opType(), response);
                 // set a blank ShardInfo so we can safely send it to the replicas. We won't use it in the real response though.
                 executionResult.getResponse().setShardInfo(new ReplicationResponse.ShardInfo());
+
+                // 在做过一些校验后 将 locationToSync 设置成 result.getTranslogLocation()
                 locationToSync = TransportWriteAction.locationToSync(locationToSync, result.getTranslogLocation());
                 break;
             case FAILURE:
@@ -309,24 +325,35 @@ class BulkPrimaryExecutionContext {
             default:
                 throw new AssertionError("unknown result type for " + getCurrentItem() + ": " + result.getResultType());
         }
+        // 将当前item的状态更新成处理完
         currentItemState = ItemProcessingState.EXECUTED;
     }
 
-    /** finishes the execution of the current request, with the response that should be returned to the user */
+    /**
+     * finishes the execution of the current request, with the response that should be returned to the user
+     * 标记某个req的处理已经全部完成
+     */
     public void markAsCompleted(BulkItemResponse translatedResponse) {
         assertInvariants(ItemProcessingState.EXECUTED);
         assert executionResult != null && translatedResponse.getItemId() == executionResult.getItemId();
         assert translatedResponse.getItemId() == getCurrentItem().id();
 
+        // requestToExecute 是bulk在将数据通过engine写入前 先经过prepare处理后的结果  内部的source可能会变化
         if (translatedResponse.isFailed() == false && requestToExecute != null && requestToExecute != getCurrent())  {
+            // 这里更新原来的req对象
             request.items()[currentIndex] = new BulkItemRequest(request.items()[currentIndex].id(), requestToExecute);
         }
+        // 为当前正在处理的req 设置匹配的结果
         getCurrentItem().setPrimaryResponse(translatedResponse);
         currentItemState = ItemProcessingState.COMPLETED;
+        // 自动切换到下一个req
         advance();
     }
 
-    /** builds the bulk shard response to return to the user */
+    /**
+     * builds the bulk shard response to return to the user
+     * 将每个itemResponse 合并成一个 bulkShardResponse
+     */
     public BulkShardResponse buildShardResponse() {
         assert hasMoreOperationsToExecute() == false;
         return new BulkShardResponse(request.shardId(),

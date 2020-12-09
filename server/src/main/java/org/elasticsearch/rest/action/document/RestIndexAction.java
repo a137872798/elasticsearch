@@ -39,6 +39,9 @@ import java.util.function.Supplier;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
+/**
+ * 发起一个 index操作
+ */
 public class RestIndexAction extends BaseRestHandler {
 
     @Override

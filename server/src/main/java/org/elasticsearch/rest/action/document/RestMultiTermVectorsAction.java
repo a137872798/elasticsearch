@@ -33,6 +33,9 @@ import java.util.List;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 
+/**
+ * 查询词向量
+ */
 public class RestMultiTermVectorsAction extends BaseRestHandler {
 
     @Override

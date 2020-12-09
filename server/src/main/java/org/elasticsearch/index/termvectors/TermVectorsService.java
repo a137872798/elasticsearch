@@ -71,18 +71,37 @@ import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 
+/**
+ * 查询词向量信息的服务
+ */
 public class TermVectorsService  {
 
 
     private TermVectorsService() {}
 
+    /**
+     * 针对某个分片  根据req信息 查询词向量
+     * @param indexShard
+     * @param request
+     * @return
+     */
     public static TermVectorsResponse getTermVectors(IndexShard indexShard, TermVectorsRequest request) {
         return getTermVectors(indexShard, request, System::nanoTime);
     }
 
+
+    /**
+     *
+     * @param indexShard   当前查询的是哪个分片
+     * @param request
+     * @param nanoTimeSupplier
+     * @return
+     */
     static TermVectorsResponse getTermVectors(IndexShard indexShard, TermVectorsRequest request, LongSupplier nanoTimeSupplier) {
         final long startTime = nanoTimeSupplier.getAsLong();
         final TermVectorsResponse termVectorsResponse = new TermVectorsResponse(indexShard.shardId().getIndex().getName(), request.id());
+
+        // 将id 包装成term
         final Term uidTerm = new Term(IdFieldMapper.NAME, Uid.encodeId(request.id()));
 
         Fields termVectorsByField = null;
@@ -94,12 +113,14 @@ public class TermVectorsService  {
             handleFieldWildcards(indexShard, request);
         }
 
-        try (Engine.GetResult get = indexShard.get(new Engine.Get(request.realtime(), false, request.id(), uidTerm)
-                .version(request.version()).versionType(request.versionType()));
-                Engine.Searcher searcher = indexShard.acquireSearcher("term_vector")) {
+        try (Engine.GetResult get = indexShard.get(new Engine.Get(request.realtime(), false, request.id(), uidTerm).version(request.version()).versionType(request.versionType()))
+             ; Engine.Searcher searcher = indexShard.acquireSearcher("term_vector")) {
+
+            // 将查询到的结果包装成了一个 Fields 对象 对应一个doc  通过传入某个field 可以获取到 Terms对象 可以遍历某field在该doc下所有的term
             Fields topLevelFields = fields(get.searcher() != null ? get.searcher().getIndexReader() : searcher.getIndexReader());
             DocIdAndVersion docIdAndVersion = get.docIdAndVersion();
             /* from an artificial document */
+            // 如果请求体内已经设置了doc  那么本次结果相当于是人为产生的 doc本身并不存在于shard中
             if (request.doc() != null) {
                 termVectorsByField = generateTermVectorsFromDoc(indexShard, request);
                 // if no document indexed in shard, take the queried document itself for stats
@@ -170,11 +191,18 @@ public class TermVectorsService  {
         };
     }
 
+    /**
+     * 处理潜在的通配符
+     * @param indexShard
+     * @param request
+     */
     private static void handleFieldWildcards(IndexShard indexShard, TermVectorsRequest request) {
         Set<String> fieldNames = new HashSet<>();
         for (String pattern : request.selectedFields()) {
+            // 根据通配符找到匹配的所有field
             fieldNames.addAll(indexShard.mapperService().simpleMatchToFullName(pattern));
         }
+        // 使用这组field去替换之前req内部的field
         request.selectedFields(fieldNames.toArray(Strings.EMPTY_ARRAY));
     }
 
@@ -292,6 +320,13 @@ public class TermVectorsService  {
         return index.createSearcher().getIndexReader().getTermVectors(0);
     }
 
+    /**
+     * 根据当前分片数据 以及req 生成一个可以遍历指定field下所有term的迭代器对象
+     * @param indexShard
+     * @param request
+     * @return
+     * @throws IOException
+     */
     private static Fields generateTermVectorsFromDoc(IndexShard indexShard, TermVectorsRequest request) throws IOException {
         // parse the document, at the moment we do update the mapping, just like percolate
         ParsedDocument parsedDocument = parseDocument(indexShard, indexShard.shardId().getIndexName(), request.doc(),
@@ -342,6 +377,15 @@ public class TermVectorsService  {
         return result.toArray(new String[0]);
     }
 
+    /**
+     * 将传入的doc 通过mapperService 映射成 ParsedDocument对象
+     * @param indexShard
+     * @param index
+     * @param doc
+     * @param xContentType
+     * @param routing
+     * @return
+     */
     private static ParsedDocument parseDocument(IndexShard indexShard, String index, BytesReference doc,
                                                 XContentType xContentType, String routing) {
         MapperService mapperService = indexShard.mapperService();

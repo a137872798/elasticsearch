@@ -275,10 +275,11 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                 }
             }
             // Step 3: create all the indices that are missing, if there are any missing. start the bulk after all the creates come back.
-            // 这个时候认为已经不剩可以创建的索引了
+            // 这个时候认为已经不剩可以创建的索引了  其余无效的索引不支持自动创建 会自动设置失败结果
             if (autoCreateIndices.isEmpty()) {
                 executeBulk(task, bulkRequest, startTime, listener, responses, indicesThatCannotBeCreated);
             } else {
+                // 先自动创建之前的索引  创建索引会自动将请求转发到 leader节点上
                 final AtomicInteger counter = new AtomicInteger(autoCreateIndices.size());
                 for (String index : autoCreateIndices) {
                     createIndex(index, bulkRequest.preferV2Templates(), bulkRequest.timeout(), new ActionListener<>() {
@@ -312,6 +313,7 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                 }
             }
         } else {
+            // 不进行检测直接将请求发往各个分片  此时某些分片对应的索引可能处于不可用状态
             executeBulk(task, bulkRequest, startTime, listener, responses, emptyMap());
         }
     }

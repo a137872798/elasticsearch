@@ -30,6 +30,10 @@ import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 
+/**
+ * 删除某个管道对象
+ * 在处理bulk请求时 如果节点是ingest节点 那么会先通过一组pipeline进行处理
+ */
 public class RestDeletePipelineAction extends BaseRestHandler {
     @Override
     public List<Route> routes() {

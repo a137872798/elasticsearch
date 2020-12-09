@@ -38,6 +38,9 @@ import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
+/**
+ * 以shard为单位 查询词向量信息
+ */
 public class TransportShardMultiTermsVectorAction extends
         TransportSingleShardAction<MultiTermVectorsShardRequest, MultiTermVectorsShardResponse> {
 
@@ -76,6 +79,12 @@ public class TransportShardMultiTermsVectorAction extends
                 .getShards(state, request.concreteIndex(), request.request().shardId(), request.request().preference());
     }
 
+    /**
+     * 处理方法入口
+     * @param request
+     * @param shardId
+     * @return
+     */
     @Override
     protected MultiTermVectorsShardResponse shardOperation(MultiTermVectorsShardRequest request, ShardId shardId) {
         final MultiTermVectorsShardResponse response = new MultiTermVectorsShardResponse();

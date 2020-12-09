@@ -58,7 +58,7 @@ import static org.elasticsearch.action.support.TransportActions.isShardNotAvaila
  * A base class for operations that need to perform a read operation on a single shard copy. If the operation fails,
  * the read operation can be performed on other shard copies. Concrete implementations can provide their own list
  * of candidate shards to try the read operation on.
- * 以分片为单位处理数据
+ * 在单个分片上处理
  */
 public abstract class TransportSingleShardAction<Request extends SingleShardRequest<Request>, Response extends ActionResponse>
         extends TransportAction<Request, Response> {
@@ -84,7 +84,7 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
         this.transportShardAction = actionName + "[s]";
         this.executor = executor;
 
-        // 该操作是否会产生一系列的子操作
+        // 如果这次操作是由一个父操作发起的
         if (!isSubAction()) {
             transportService.registerRequestHandler(actionName, ThreadPool.Names.SAME, request, new TransportHandler());
         }
@@ -202,7 +202,7 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
                 throw blockException;
             }
 
-            // 获取索引下面的所有分片  clusterState在集群中应该是同步到所有节点的 所以在任何节点获取到的数据应该是一样的
+            // 获取符合本次要求的所有分片
             this.shardIt = shards(clusterState, internalRequest);
         }
 
@@ -210,7 +210,7 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
          * 处理每个分片
          */
         public void start() {
-            // 当没有解析出concreteSingleIndex时 会走该分支
+            // 当没有解析出符合条件的分片时 会直接在本地处理
             if (shardIt == null) {
                 // just execute it on the local node
                 final Writeable.Reader<Response> reader = getResponseReader();

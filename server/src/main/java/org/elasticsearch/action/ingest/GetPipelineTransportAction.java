@@ -36,6 +36,9 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 获取某个管道信息
+ */
 public class GetPipelineTransportAction extends TransportMasterNodeReadAction<GetPipelineRequest, GetPipelineResponse> {
 
     @Inject

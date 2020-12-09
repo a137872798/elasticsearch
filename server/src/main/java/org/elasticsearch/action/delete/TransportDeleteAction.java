@@ -29,6 +29,7 @@ import org.elasticsearch.transport.TransportService;
  * Performs the delete operation.
  *
  * Deprecated use TransportBulkAction with a single item instead
+ * 目前使用 TransportBulkAction 来替代
  */
 @Deprecated
 public class TransportDeleteAction extends TransportSingleItemBulkWriteAction<DeleteRequest, DeleteResponse> {
