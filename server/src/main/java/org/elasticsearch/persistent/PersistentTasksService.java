@@ -43,6 +43,7 @@ import java.util.function.Predicate;
  * This service is used by persistent tasks and allocated persistent tasks to communicate changes
  * to the master node so that the master can update the cluster state and can track of the states
  * of the persistent tasks.
+ * 该对象负责完成一整套的持久化流程
  */
 public class PersistentTasksService {
 
@@ -62,6 +63,7 @@ public class PersistentTasksService {
 
     /**
      * Notifies the master node to create new persistent task and to assign it to a node.
+     * 创建一个开始执行持久化的任务
      */
     public <Params extends PersistentTaskParams> void sendStartRequest(final String taskId,
                                                                        final String taskName,

@@ -35,6 +35,14 @@ public class NodePersistentTasksExecutor {
         this.threadPool = threadPool;
     }
 
+    /**
+     * 就是通过线程池 调用executor
+     * @param params
+     * @param state
+     * @param task
+     * @param executor
+     * @param <Params>
+     */
     public <Params extends PersistentTaskParams> void executeTask(final Params params,
                                                                   final @Nullable PersistentTaskState state,
                                                                   final AllocatedPersistentTask task,

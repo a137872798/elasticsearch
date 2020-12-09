@@ -32,6 +32,9 @@ import java.util.List;
 import static java.util.Arrays.asList;
 import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 
+/**
+ * 清理画卷的请求???
+ */
 public class RestClearScrollAction extends BaseRestHandler {
 
     @Override

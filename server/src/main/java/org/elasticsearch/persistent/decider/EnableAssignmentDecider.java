@@ -62,6 +62,7 @@ public class EnableAssignmentDecider {
      * {@link EnableAssignmentDecider#CLUSTER_TASKS_ALLOCATION_ENABLE_SETTING}.
      *
      * @return the {@link AssignmentDecision}
+     * 判断当前能否分配
      */
     public AssignmentDecision canAssign() {
         if (enableAssignment == Allocation.NONE) {

@@ -25,9 +25,14 @@ import java.util.Map;
 
 /**
  * Components that registers all persistent task executors
+ * 维护了当前所有正在运行的persistentTask
  */
 public class PersistentTasksExecutorRegistry {
 
+    /**
+     * key 对应任务名
+     * value 对应执行任务的处理器
+     */
     private final Map<String, PersistentTasksExecutor<?>> taskExecutors;
 
     public PersistentTasksExecutorRegistry(Collection<PersistentTasksExecutor<?>> taskExecutors) {
@@ -38,6 +43,12 @@ public class PersistentTasksExecutorRegistry {
         this.taskExecutors = Collections.unmodifiableMap(map);
     }
 
+    /**
+     * 通过传入的任务名 查找对应的处理器
+     * @param taskName
+     * @param <Params>
+     * @return
+     */
     @SuppressWarnings("unchecked")
     public <Params extends PersistentTaskParams> PersistentTasksExecutor<Params> getPersistentTaskExecutorSafe(String taskName) {
         PersistentTasksExecutor<Params> executor = (PersistentTasksExecutor<Params>) taskExecutors.get(taskName);

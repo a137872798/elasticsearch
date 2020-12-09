@@ -93,7 +93,9 @@ public class TransportShardMultiTermsVectorAction extends
         for (int i = 0; i < request.locations.size(); i++) {
             TermVectorsRequest termVectorsRequest = request.requests.get(i);
             try {
+                // 获取词向量信息
                 TermVectorsResponse termVectorsResponse = TermVectorsService.getTermVectors(indexShard, termVectorsRequest);
+                // 在回填res的时候 也是按照对应的下标 这样将多个shard的数据合并的时候 就可以按照原顺序了
                 response.add(request.locations.get(i), termVectorsResponse);
             } catch (RuntimeException e) {
                 if (TransportActions.isShardNotAvailableException(e)) {

@@ -34,7 +34,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.elasticsearch.action.search.TransportSearchHelper.parseScrollId;
 
+/**
+ * 代表一个清理画卷的任务
+ */
 final class ClearScrollController implements Runnable {
+
+    /**
+     * 当前集群内发现的一组node
+     */
     private final DiscoveryNodes nodes;
     private final SearchTransportService searchTransportService;
     private final CountDown expectedOps;
@@ -44,6 +51,14 @@ final class ClearScrollController implements Runnable {
     private final Logger logger;
     private final Runnable runner;
 
+    /**
+     * 每当要执行一个清理任务时 就会创建一个该对象
+     * @param request
+     * @param listener
+     * @param nodes
+     * @param logger
+     * @param searchTransportService
+     */
     ClearScrollController(ClearScrollRequest request, ActionListener<ClearScrollResponse> listener, DiscoveryNodes nodes, Logger logger,
                           SearchTransportService searchTransportService) {
         this.nodes = nodes;
@@ -52,11 +67,13 @@ final class ClearScrollController implements Runnable {
         this.listener = listener;
         List<String> scrollIds = request.getScrollIds();
         final int expectedOps;
+        // 代表本次要清理所有的画卷
         if (scrollIds.size() == 1 && "_all".equals(scrollIds.get(0))) {
             expectedOps = nodes.getSize();
             runner = this::cleanAllScrolls;
         } else {
             List<ScrollIdForNode> parsedScrollIds = new ArrayList<>();
+            // 可能每个parsedScrollId 被解析后都会生成一组id
             for (String parsedScrollId : request.getScrollIds()) {
                 ScrollIdForNode[] context = parseScrollId(parsedScrollId).getContext();
                 for (ScrollIdForNode id : context) {
@@ -75,11 +92,17 @@ final class ClearScrollController implements Runnable {
 
     }
 
+    /**
+     * 当开始清理画卷时 就会触发runner
+     */
     @Override
     public void run() {
         runner.run();
     }
 
+    /**
+     * 往集群下所有节点发送一个清理画卷的请求
+     */
     void cleanAllScrolls() {
         for (final DiscoveryNode node : nodes) {
             try {

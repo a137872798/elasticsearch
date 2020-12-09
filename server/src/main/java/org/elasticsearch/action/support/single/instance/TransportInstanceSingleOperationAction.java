@@ -50,6 +50,11 @@ import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 
+/**
+ * 本次请求会发送到某个实例上处理
+ * @param <Request>
+ * @param <Response>
+ */
 public abstract class TransportInstanceSingleOperationAction<
             Request extends InstanceShardOperationRequest<Request>,
             Response extends ActionResponse
@@ -114,6 +119,7 @@ public abstract class TransportInstanceSingleOperationAction<
      */
     protected abstract ShardIterator shards(ClusterState clusterState, Request request);
 
+
     class AsyncSingleAction {
 
         private final ActionListener<Response> listener;
@@ -126,6 +132,9 @@ public abstract class TransportInstanceSingleOperationAction<
             this.listener = listener;
         }
 
+        /**
+         * 开始处理请求
+         */
         public void start() {
             ClusterState state = clusterService.state();
             this.observer = new ClusterStateObserver(state, clusterService, request.timeout(), logger, threadPool.getThreadContext());
@@ -143,6 +152,7 @@ public abstract class TransportInstanceSingleOperationAction<
                         throw blockException;
                     }
                 }
+                // 解析会在哪个index上进行处理
                 request.concreteIndex(indexNameExpressionResolver.concreteWriteIndex(clusterState, request).getName());
                 resolveRequest(clusterState, request);
                 blockException = checkRequestBlock(clusterState, request);
@@ -154,6 +164,7 @@ public abstract class TransportInstanceSingleOperationAction<
                         throw blockException;
                     }
                 }
+                // 选出符合条件的一组分片
                 shardIt = shards(clusterState, request);
             } catch (Exception e) {
                 listener.onFailure(e);
@@ -248,6 +259,9 @@ public abstract class TransportInstanceSingleOperationAction<
         }
     }
 
+    /**
+     * 在primary上处理请求
+     */
     private class ShardTransportHandler implements TransportRequestHandler<Request> {
 
         @Override

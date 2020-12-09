@@ -46,6 +46,7 @@ import java.util.Objects;
 
 /**
  * Component that runs only on the master node and is responsible for assigning running tasks to nodes
+ * 持久化集群服务  会监听集群状态的变化
  */
 public class PersistentTasksClusterService implements ClusterStateListener, Closeable {
 
@@ -56,6 +57,9 @@ public class PersistentTasksClusterService implements ClusterStateListener, Clos
     private static final Logger logger = LogManager.getLogger(PersistentTasksClusterService.class);
 
     private final ClusterService clusterService;
+    /**
+     * 存储了此时正在执行的持久化任务 以及对应的executor
+     */
     private final PersistentTasksExecutorRegistry registry;
     private final EnableAssignmentDecider decider;
     private final ThreadPool threadPool;
@@ -449,6 +453,8 @@ public class PersistentTasksClusterService implements ClusterStateListener, Clos
 
     /**
      * Class to periodically try to reassign unassigned persistent tasks.
+     * AbstractAsyncTask 代表一个支持定时执行的的异步任务
+     * 该对象是一个 周期性检查的对象
      */
     private class PeriodicRechecker extends AbstractAsyncTask {
 

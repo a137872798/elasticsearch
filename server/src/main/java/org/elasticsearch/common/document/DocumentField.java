@@ -43,6 +43,7 @@ import static org.elasticsearch.common.xcontent.XContentParserUtils.parseFieldsV
  *
  * @see SearchHit
  * @see GetResult
+ * 在doc下 某个field对应的多个值
  */
 public class DocumentField implements Writeable, ToXContentFragment, Iterable<Object> {
 

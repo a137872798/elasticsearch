@@ -40,6 +40,7 @@ import static org.elasticsearch.rest.RestRequest.Method.POST;
 /**
  * This class parses the json request and translates it into a
  * TermVectorsRequest.
+ * 查询某个doc的词向量信息
  */
 public class RestTermVectorsAction extends BaseRestHandler {
 

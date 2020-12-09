@@ -42,6 +42,7 @@ import java.io.IOException;
 
 /**
  * Performs the get operation.
+ * 查询词向量信息
  */
 public class TransportTermVectorsAction extends TransportSingleShardAction<TermVectorsRequest, TermVectorsResponse> {
 

@@ -24,6 +24,7 @@ import org.elasticsearch.common.xcontent.ToXContentObject;
 
 /**
  * Parameters used to start persistent task
+ * 持久化任务所需要的参数
  */
 public interface PersistentTaskParams extends VersionedNamedWriteable, ToXContentObject {
 

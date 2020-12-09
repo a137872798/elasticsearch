@@ -631,6 +631,7 @@ public class ActionModule extends AbstractModule {
         actions.register(IndexAction.INSTANCE, TransportIndexAction.class);
         // 查询某个doc
         actions.register(GetAction.INSTANCE, TransportGetAction.class);
+        // 查询词向量信息
         actions.register(TermVectorsAction.INSTANCE, TransportTermVectorsAction.class);
         // 查询词向量信息
         actions.register(MultiTermVectorsAction.INSTANCE, TransportMultiTermVectorsAction.class);
@@ -652,6 +653,7 @@ public class ActionModule extends AbstractModule {
         actions.register(SearchScrollAction.INSTANCE, TransportSearchScrollAction.class);
         actions.register(MultiSearchAction.INSTANCE, TransportMultiSearchAction.class);
         actions.register(ExplainAction.INSTANCE, TransportExplainAction.class);
+        // 清理画卷的请求
         actions.register(ClearScrollAction.INSTANCE, TransportClearScrollAction.class);
         // 获取索引当前的恢复状态信息
         actions.register(RecoveryAction.INSTANCE, TransportRecoveryAction.class);

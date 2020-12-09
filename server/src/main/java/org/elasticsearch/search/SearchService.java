@@ -757,6 +757,11 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
         }
     }
 
+    /**
+     * 清理某个上下文
+     * @param contextId
+     * @return
+     */
     public boolean freeContext(SearchContextId contextId) {
         if (getContext(contextId) != null) {
             try (SearchContext context = removeContext(contextId.getId())) {
@@ -769,6 +774,10 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
         return false;
     }
 
+    /**
+     * 当某个上下文被释放时会触发钩子
+     * @param context
+     */
     private void onFreeContext(SearchContext context) {
         assert context.refCount() > 0 : " refCount must be > 0: " + context.refCount();
         assert activeContexts.containsKey(context.id().getId()) == false;
@@ -778,6 +787,9 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
         }
     }
 
+    /**
+     * 清理所有画卷
+     */
     public void freeAllScrollContexts() {
         for (SearchContext searchContext : activeContexts.values()) {
             if (searchContext.scrollContext() != null) {

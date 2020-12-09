@@ -291,6 +291,8 @@ public class SearchTransportService {
                 channel.sendResponse(new SearchFreeContextResponse(freed));
         });
         TransportActionProxy.registerProxyAction(transportService, FREE_CONTEXT_ACTION_NAME, SearchFreeContextResponse::new);
+
+        // 这里注册了清理画卷的处理器
         transportService.registerRequestHandler(CLEAR_SCROLL_CONTEXTS_ACTION_NAME, ThreadPool.Names.SAME,
             TransportRequest.Empty::new,
             (request, channel, task) -> {

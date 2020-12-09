@@ -35,24 +35,49 @@ import java.util.function.Predicate;
 
 /**
  * Represents a executor node operation that corresponds to a persistent task
+ * 代表一个正在执行的持久化任务  该任务本身是可以被关闭的
  */
 public class AllocatedPersistentTask extends CancellableTask {
 
     private static final Logger logger = LogManager.getLogger(AllocatedPersistentTask.class);
+
+    /**
+     * 任务当前状态
+     */
     private final AtomicReference<State> state;
 
     private volatile String persistentTaskId;
     private volatile long allocationId;
     private volatile @Nullable Exception failure;
+    /**
+     * 任务对象本身是被持久化服务调控的
+     */
     private volatile PersistentTasksService persistentTasksService;
+
+    /**
+     * 任务在执行时会插入到任务管理器中
+     */
     private volatile TaskManager taskManager;
 
+    /**
+     *
+     * @param id
+     * @param type
+     * @param action
+     * @param description
+     * @param parentTask  每个task对象可能会有父任务
+     * @param headers   也可能会有一些任务头信息
+     */
     public AllocatedPersistentTask(long id, String type, String action, String description, TaskId parentTask,
                                    Map<String, String> headers) {
         super(id, type, action, description, parentTask, headers);
         this.state = new AtomicReference<>(State.STARTED);
     }
 
+    /**
+     * 当该任务被关闭时 会将子任务一起关闭
+     * @return
+     */
     @Override
     public boolean shouldCancelChildrenOnCancellation() {
         return true;
@@ -76,9 +101,13 @@ public class AllocatedPersistentTask extends CancellableTask {
      * Updates the persistent state for the corresponding persistent task.
      * <p>
      * This doesn't affect the status of this allocated task.
+     * @param state
+     * @param listener
+     * 当需要更新任务状态的时候会调用该方法
      */
     public void updatePersistentTaskState(final PersistentTaskState state,
                                           final ActionListener<PersistentTasksCustomMetadata.PersistentTask<?>> listener) {
+        // 借由持久化服务发送一个更新任务状态的请求
         persistentTasksService.sendUpdateStateRequest(persistentTaskId, allocationId, state, listener);
     }
 
@@ -86,6 +115,13 @@ public class AllocatedPersistentTask extends CancellableTask {
         return persistentTaskId;
     }
 
+    /**
+     * 对该任务做初始化工作
+     * @param persistentTasksService
+     * @param taskManager   负责维护该任务的管理器
+     * @param persistentTaskId  通过persistent服务为当前task分配一个id
+     * @param allocationId
+     */
     protected void init(PersistentTasksService persistentTasksService, TaskManager taskManager,
                         String persistentTaskId, long allocationId) {
         this.persistentTasksService = persistentTasksService;
@@ -105,9 +141,10 @@ public class AllocatedPersistentTask extends CancellableTask {
     /**
      * Waits for a given persistent task to comply with a given predicate, then call back the listener accordingly.
      *
-     * @param predicate the persistent task predicate to evaluate
+     * @param predicate the persistent task predicate to evaluate  通过该谓语判断此时是否满足条件
      * @param timeout a timeout for waiting
      * @param listener the callback listener
+     *                 等待任务状态直到满足某个条件
      */
     public void waitForPersistentTask(final Predicate<PersistentTasksCustomMetadata.PersistentTask<?>> predicate,
                                       final @Nullable TimeValue timeout,
@@ -135,6 +172,10 @@ public class AllocatedPersistentTask extends CancellableTask {
         }
     }
 
+    /**
+     * 将当前任务标记成完成状态
+     * @param failure
+     */
     private void completeAndNotifyIfNeeded(@Nullable Exception failure) {
         final State prevState = state.getAndSet(State.COMPLETED);
         if (prevState == State.COMPLETED) {
@@ -145,6 +186,7 @@ public class AllocatedPersistentTask extends CancellableTask {
             }
             try {
                 this.failure = failure;
+                // 只有当任务首次从started转换时 才需要做处理工作
                 if (prevState == State.STARTED) {
                     logger.trace("sending notification for completed task [{}] with id [{}]", getAction(), getPersistentTaskId());
                     persistentTasksService.sendCompletionRequest(getPersistentTaskId(), getAllocationId(), failure, new
@@ -163,11 +205,15 @@ public class AllocatedPersistentTask extends CancellableTask {
                             });
                 }
             } finally {
+                // 因为当前任务已经完成了 所以需要从管理器中注销
                 taskManager.unregister(this);
             }
         }
     }
 
+    /**
+     * 描述 persistentTask此时的运行状态
+     */
     public enum State {
         STARTED,  // the task is currently running
         PENDING_CANCEL, // the task is cancelled on master, cancelling it locally

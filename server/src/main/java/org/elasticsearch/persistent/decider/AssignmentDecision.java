@@ -26,6 +26,7 @@ import java.util.Objects;
  * assigning a persistent task to a node of the cluster.
  *
  * @see EnableAssignmentDecider
+ * 分配决策对象
  */
 public final class AssignmentDecision {
 

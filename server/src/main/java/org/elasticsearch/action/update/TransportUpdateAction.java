@@ -116,10 +116,18 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
         }
     }
 
+    /**
+     * 处理逻辑会转发到该方法
+     * 此时对处理的节点还没有要求  也就是非leader也可以处理
+     * @param task
+     * @param request
+     * @param listener
+     */
     @Override
     protected void doExecute(Task task, final UpdateRequest request, final ActionListener<UpdateResponse> listener) {
         // if we don't have a master, we don't have metadata, that's fine, let it find a master using create index API
         if (autoCreateIndex.shouldAutoCreate(request.index(), clusterService.state())) {
+            // 如果此时集群中还没有这个index的信息 那么先发送请求到leader节点以创建index
             client.admin().indices().create(new CreateIndexRequest()
                 .index(request.index())
                 .cause("auto(update api)")
@@ -150,10 +158,23 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
         }
     }
 
+    /**
+     * 由父类执行任务
+     * @param task
+     * @param request
+     * @param listener
+     */
     private void innerExecute(final Task task, final UpdateRequest request, final ActionListener<UpdateResponse> listener) {
         super.doExecute(task, request, listener);
     }
 
+    /**
+     * 更新操作仅允许作用在 primary上
+     * 有些操作好像是先作用到primary 之后作用到所有replica
+     * @param clusterState
+     * @param request
+     * @return
+     */
     @Override
     protected ShardIterator shards(ClusterState clusterState, UpdateRequest request) {
         if (request.getShardId() != null) {
@@ -163,6 +184,7 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
                 .indexShards(clusterState, request.concreteIndex(), request.id(), request.routing());
         ShardRouting shard;
         while ((shard = shardIterator.nextOrNull()) != null) {
+            // 仅返回primary
             if (shard.primary()) {
                 return new PlainShardIterator(shardIterator.shardId(), Collections.singletonList(shard));
             }
@@ -175,11 +197,20 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
         shardOperation(request, listener, 0);
     }
 
+    /**
+     * 在主分片上执行update请求
+     * @param request
+     * @param listener
+     * @param retryCount
+     */
     protected void shardOperation(final UpdateRequest request, final ActionListener<UpdateResponse> listener, final int retryCount) {
         final ShardId shardId = request.getShardId();
         final IndexService indexService = indicesService.indexServiceSafe(shardId.getIndex());
         final IndexShard indexShard = indexService.getShard(shardId.getId());
+        // 通过req中的id查询doc 如果req中携带doc信息 那么还需要进行合并 当做完这些准备工作后 返回result
         final UpdateHelper.Result result = updateHelper.prepare(request, indexShard, threadPool::absoluteTimeInMillis);
+
+        // 下面又转换成bulk请求了  处理bulk请求时 会先将在primary处理 之后会扩散到所有replica进行处理
         switch (result.getResponseResult()) {
             case CREATED:
                 IndexRequest upsertRequest = result.action();

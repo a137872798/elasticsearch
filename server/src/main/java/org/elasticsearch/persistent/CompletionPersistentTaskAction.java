@@ -46,6 +46,7 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
 /**
  * ActionType that is used by executor node to indicate that the persistent action finished or failed on the node and needs to be
  * removed from the cluster state in case of successful completion or restarted on some other node in case of failure.
+ * 发出一个 持久化任务完成的action
  */
 public class CompletionPersistentTaskAction extends ActionType<PersistentTaskResponse> {
 
@@ -123,6 +124,9 @@ public class CompletionPersistentTaskAction extends ActionType<PersistentTaskRes
         }
     }
 
+    /**
+     * 该任务只能在leader节点上执行
+     */
     public static class TransportAction extends TransportMasterNodeAction<Request, PersistentTaskResponse> {
 
         private final PersistentTasksClusterService persistentTasksClusterService;
@@ -153,6 +157,13 @@ public class CompletionPersistentTaskAction extends ActionType<PersistentTaskRes
             return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA_WRITE);
         }
 
+        /**
+         * 当收到请求 就代表原任务已经完成
+         * @param ignoredTask
+         * @param request
+         * @param state
+         * @param listener
+         */
         @Override
         protected final void masterOperation(Task ignoredTask, final Request request, ClusterState state,
                                              final ActionListener<PersistentTaskResponse> listener) {

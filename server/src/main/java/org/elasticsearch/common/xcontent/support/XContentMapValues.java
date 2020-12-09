@@ -42,10 +42,13 @@ public class XContentMapValues {
     /**
      * Extracts raw values (string, int, and so on) based on the path provided returning all of them
      * as a single list.
+     * @param path 本次要获取的某个field
+     * @param map doc.source 解析后的map
      */
     public static List<Object> extractRawValues(String path, Map<String, Object> map) {
         List<Object> values = new ArrayList<>();
         String[] pathElements = path.split("\\.");
+        // 没有指定field 返回空列表
         if (pathElements.length == 0) {
             return values;
         }
@@ -53,6 +56,13 @@ public class XContentMapValues {
         return values;
     }
 
+    /**
+     *
+     * @param values  数据会存储到这个列表中
+     * @param part  存储相关数据
+     * @param pathElements  通过path数组 定位到具体的field
+     * @param index
+     */
     @SuppressWarnings({"unchecked"})
     private static void extractRawValues(List values, Map<String, Object> part, String[] pathElements, int index) {
         if (index == pathElements.length) {
@@ -62,6 +72,7 @@ public class XContentMapValues {
         String key = pathElements[index];
         Object currentValue = part.get(key);
         int nextIndex = index + 1;
+        // 不断进行匹配 直到整个path都匹配完
         while (currentValue == null && nextIndex != pathElements.length) {
             key += "." + pathElements[nextIndex];
             currentValue = part.get(key);
