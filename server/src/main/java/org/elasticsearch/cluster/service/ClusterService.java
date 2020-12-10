@@ -76,7 +76,7 @@ public class ClusterService extends AbstractLifecycleComponent {
      *
      * @param settings      从配置文件中抽取的配置 (包含cli)
      * @param clusterSettings    集群相关配置
-     * @param threadPool  管理node下所有线程池
+     * @param threadPool
      */
     public ClusterService(Settings settings, ClusterSettings clusterSettings, ThreadPool threadPool) {
         this(settings, clusterSettings, new MasterService(settings, clusterSettings, threadPool),
@@ -88,7 +88,7 @@ public class ClusterService extends AbstractLifecycleComponent {
      * @param settings      从配置文件中抽取的配置
      * @param clusterSettings   集群相关配置
      * @param masterService
-     * @param clusterApplierService   处理集群状态变化的service
+     * @param clusterApplierService   发布集群状态更新的服务
      */
     public ClusterService(Settings settings, ClusterSettings clusterSettings, MasterService masterService,
                           ClusterApplierService clusterApplierService) {

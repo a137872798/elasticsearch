@@ -70,10 +70,6 @@ import java.util.stream.Stream;
 
 import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
 
-/**
- * 应用层集群状态服务  即使在CP中更新了最新的集群state 也必须经由commit请求将state暴露到应用层 此时还会触发各种监听器
- * 需要注意的一点就是每个节点都会与 state中记录的所有节点建立连接
- */
 public class ClusterApplierService extends AbstractLifecycleComponent implements ClusterApplier {
     private static final Logger logger = LogManager.getLogger(ClusterApplierService.class);
 
@@ -157,6 +153,8 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         this.clusterSettings = clusterSettings;
         this.threadPool = threadPool;
         this.state = new AtomicReference<>();
+
+        // 监控当前节点是否为leader节点  在变化时触发相关钩子
         this.localNodeMasterListeners = new LocalNodeMasterListeners(threadPool);
         this.nodeName = nodeName;
 

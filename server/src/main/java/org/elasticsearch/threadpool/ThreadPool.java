@@ -193,7 +193,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
     /**
      *
      * @param settings      从配置文件，cli 中抽取出来的配置信息
-     * @param customBuilders     外部自定义的线程池builder 比如来自于插件    同时该对象在初始化时 会生成 es内置的 线程池builder
+     * @param customBuilders     外部自定义的线程池builder 比如来自于插件
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
     public ThreadPool(final Settings settings, final ExecutorBuilder<?>... customBuilders) {
@@ -232,7 +232,7 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         builders.put(Names.FETCH_SHARD_STORE,
                 new ScalingExecutorBuilder(Names.FETCH_SHARD_STORE, 1, 2 * allocatedProcessors, TimeValue.timeValueMinutes(5)));
 
-        // 追加自定义builder  builder之间是依靠 key进行去重的
+        // 自定义的线程池 不允许覆盖内置的线程池
         for (final ExecutorBuilder<?> builder : customBuilders) {
             if (builders.containsKey(builder.name())) {
                 throw new IllegalArgumentException("builder with name [" + builder.name() + "] already exists");
@@ -241,12 +241,13 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
         }
         this.builders = Collections.unmodifiableMap(builders);
 
-        // 从配置中获取不同请求头对应的value  以及 请求头数量和 请求头长度
+        // 从配置项中取出相关参数来初始化上下文对象
         threadContext = new ThreadContext(settings);
 
         final Map<String, ExecutorHolder> executors = new HashMap<>();
+
+        // 这里开始初始化自定义线程池
         for (final Map.Entry<String, ExecutorBuilder> entry : builders.entrySet()) {
-            // 抽取只关于创建线程池的配置
             final ExecutorBuilder.ExecutorSettings executorSettings = entry.getValue().getSettings(settings);
             // 构建线程池
             final ExecutorHolder executorHolder = entry.getValue().build(executorSettings, threadContext);
@@ -270,8 +271,9 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
                         .map(holder -> holder.info)
                         .collect(Collectors.toList());
         this.threadPoolInfo = new ThreadPoolInfo(infos);
-        // 创建定时器对象
+        // 该对象有一个内置的定时器
         this.scheduler = Scheduler.initScheduler(settings);
+
         // 基于当前间隔时间 创建一个定时更新当前时间的线程
         TimeValue estimatedTimeInterval = ESTIMATED_TIME_INTERVAL_SETTING.get(settings);
         this.cachedTimeThread = new CachedTimeThread(EsExecutors.threadName(settings, "[timer]"), estimatedTimeInterval.millis());
@@ -397,11 +399,11 @@ public class ThreadPool implements ReportingService<ThreadPoolInfo>, Scheduler {
      *         the ScheduledFuture will cannot interact with it.
      * @throws org.elasticsearch.common.util.concurrent.EsRejectedExecutionException if the task cannot be scheduled for execution
      * 执行定时任务
+     * 可以看到 scheduler本身只是作为一个触发器  当执行任务时会通过executor寻找对应的线程池执行任务
      */
     @Override
     public ScheduledCancellable schedule(Runnable command, TimeValue delay, String executor) {
 
-        // 在预备执行某个任务时 对任务本身进行封装
         command = threadContext.preserveContext(command);
         // SAME 代表使用当前线程 直接执行任务
         if (!Names.SAME.equals(executor)) {

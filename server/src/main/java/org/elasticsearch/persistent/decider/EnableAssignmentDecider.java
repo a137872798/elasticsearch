@@ -38,6 +38,7 @@ import static org.elasticsearch.common.settings.Setting.Property.NodeScope;
  * </ul>
  *
  * @see Allocation
+ * 该对象可以限制/允许 persistentTask在集群上进行分配
  */
 public class EnableAssignmentDecider {
 

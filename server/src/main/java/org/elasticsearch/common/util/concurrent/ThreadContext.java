@@ -78,7 +78,7 @@ import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_MAX_WARN
  *     }
  *     // previous context is restored on StoredContext#close()
  * </pre>
- * 在这里有创建线程池需要的各种参数
+ * 除了维护一些静态属性外 每个线程都可以利用它存储一些 线程本地变量
  */
 public final class ThreadContext implements Writeable {
 
@@ -100,14 +100,13 @@ public final class ThreadContext implements Writeable {
     /**
      * Creates a new ThreadContext instance
      * @param settings the settings to read the default request headers from
-     *
      */
     public ThreadContext(Settings settings) {
-        // 从配置中抽取 使用 request.headers. 作为配置key的所有value值 每个请求api 都对应一种请求头
-        // 因为与es的交互是通过http请求的
+        // 从配置中抽取 使用 request.headers. 作为配置key的所有value值
         this.defaultHeader = buildDefaultHeaders(settings);
+        // 此时为当前线程创建一个线程本地变量
         this.threadLocal = ThreadLocal.withInitial(() -> DEFAULT_CONTEXT);
-        // 标记请求头的数量以及长度
+        // 当请求头的数量 以及内容长度 达到什么程度会发出警告
         this.maxWarningHeaderCount = SETTING_HTTP_MAX_WARNING_HEADER_COUNT.get(settings);
         this.maxWarningHeaderSize = SETTING_HTTP_MAX_WARNING_HEADER_SIZE.get(settings).getBytes();
     }

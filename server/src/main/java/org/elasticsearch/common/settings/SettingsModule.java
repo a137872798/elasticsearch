@@ -62,9 +62,9 @@ public class SettingsModule implements Module {
     /**
      *
      * @param settings   从es环境/配置文件 中解析出来的配置
-     * @param additionalSettings   插件需要的额外配置
-     * @param settingsFilter      对应 pluginsService.getPluginSettingsFilter()
-     * @param settingUpgraders    升级相关的配置
+     * @param additionalSettings   后面加入的额外配置 比如插件的/线程池的
+     * @param settingsFilter      插件服务会有一组配置过滤器
+     * @param settingUpgraders    插件服务中支持动态更新的配置项
      */
     public SettingsModule(
             Settings settings,

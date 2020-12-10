@@ -355,12 +355,11 @@ public abstract class AbstractClient implements Client {
 
     /**
      * @param settings 从配置文件 命令行等地方解析的关于本es节点的配置项
-     * @param threadPool 指定处理不同api的线程池
+     * @param threadPool 可以通过name获取到不同的线程池
      */
     public AbstractClient(Settings settings, ThreadPool threadPool) {
         this.settings = settings;
         this.threadPool = threadPool;
-        // 生成该client相关的管理对象  管理对象本身也是一个client  用于读取当前节点在集群中的信息
         this.admin = new Admin(this);
         this.logger =LogManager.getLogger(this.getClass());
     }
@@ -646,13 +645,8 @@ public abstract class AbstractClient implements Client {
      */
     static class Admin implements AdminClient {
 
-        /**
-         * 集群监控对象
-         */
+        // 2个admin对象负责不同的职能
         private final ClusterAdmin clusterAdmin;
-        /**
-         * 索引管理对象  该 client是专门处理有关索引的请求
-         */
         private final IndicesAdmin indicesAdmin;
 
         Admin(ElasticsearchClient client) {

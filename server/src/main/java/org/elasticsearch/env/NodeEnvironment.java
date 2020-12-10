@@ -218,7 +218,7 @@ public final class NodeEnvironment  implements Closeable {
          * Tries to acquire a node lock for a node id, throws {@code IOException} if it is unable to acquire it
          * @param pathFunction function to check node path before attempt of acquiring a node lock
          *                     初始化节点锁对象
-         * @param subPathMapping  提供了一个对path进行映射的钩子
+         * @param subPathMapping  提供了一个对path进行映射的钩子   默认为Function.identity()
          */
         public NodeLock(final Logger logger,
                         final Environment environment,
@@ -278,7 +278,7 @@ public final class NodeEnvironment  implements Closeable {
         boolean success = false;
 
         try {
-            // 找到分片数据的目录
+            // 共享数据路径
             sharedDataPath = environment.sharedDataFile();
 
             // 找到数据目录
@@ -310,7 +310,7 @@ public final class NodeEnvironment  implements Closeable {
 
             applySegmentInfosTrace(settings);
 
-            // 检测能否正常创建临时文件 以及进行原子化移动
+            // 检测在dataPath下能否正常创建临时文件 以及进行原子化移动
             assertCanWrite();
             ensureAtomicMoveSupported(nodePaths);
 
@@ -319,19 +319,21 @@ public final class NodeEnvironment  implements Closeable {
                 assertCanWrite();
             }
 
-            // 从配置文件中的信息判断当前node是否是数据节点
+            // 如果当前节点不是数据节点
             if (DiscoveryNode.isDataNode(settings) == false) {
+                // 如果当前节点也不是参与选举的节点
                 if (DiscoveryNode.isMasterNode(settings) == false) {
-                    // 当该节点既不是数据节点也不是主节点时   代表该节点不存在索引数据
-                    // 如果监测到了 _state (应该是存储索引数据元数据的文件)  则抛出异常  好严格的校验啊 不使用不就好了吗
+                    // 非选举节点不应该持久化元数据信息  集群中确实是每个节点都可以获取到元数据 但是持久化只应该在几个参与选举的节点
+                    // 文件夹名为 /{data_node}/indices/{indexName}/_state
                     ensureNoIndexMetadata(nodePaths);
                 }
 
-                // 只要不是数据节点 就不应该存在分片相关的元数据  这里分片相关的元数据被认为是纯数字的文件夹
+                // 如果不是dataNode 不应该存在数据文件 (数据不应该在该节点被持久化)
+                // 文件夹名为 /{data_node}/indices/{indexName}/纯数字
                 ensureNoShardData(nodePaths);
             }
 
-            // 从 所有数据目录下的_state 下找到所有segment_N 并抽取nodeId 和lucene版本信息 合并成metadata
+            // 获取本节点的元数据信息 (nodeId,nodeVersion)
             this.nodeMetadata = loadNodeMetadata(settings, logger, nodePaths);
 
             success = true;
@@ -561,6 +563,8 @@ public final class NodeEnvironment  implements Closeable {
                 metadata = legacyMetadata;
             }
         }
+
+        // 如果元数据中的版本号 低于当前应用的版本 比如8.0 那么就更新版本号
         metadata = metadata.upgradeToCurrentVersion();
         assert metadata.nodeVersion().equals(Version.CURRENT) : metadata.nodeVersion() + " != " + Version.CURRENT;
 
@@ -1242,7 +1246,7 @@ public final class NodeEnvironment  implements Closeable {
     }
 
     /**
-     * 检测不存在分片数据
+     * 确保当前节点没有对分片数据做持久化
      * @param nodePaths
      * @throws IOException
      */
@@ -1259,7 +1263,8 @@ public final class NodeEnvironment  implements Closeable {
     }
 
     /**
-     * 检测是否所有数据文件路径下都不包含索引数据
+     * 有关索引的元数据信息 保存在_state文件下
+     * 因为本节点不是masterNode 所以不应该对indexMetadata进行持久化
      * @param nodePaths
      * @throws IOException
      */
@@ -1289,16 +1294,16 @@ public final class NodeEnvironment  implements Closeable {
     /**
      * Collect the paths containing index meta data in the indicated node paths. The returned paths will point to the
      * {@link MetadataStateFormat#STATE_DIR_NAME} folder
-     * 找到每个 dir下的 data目录 并获取  _state文件夹
+     * 找到每个 dir下的 data目录 并获取  /{data_node}/indices/{indexName}/_state文件夹
      */
     static List<Path> collectIndexMetadataPaths(NodePath[] nodePaths) throws IOException {
         return collectIndexSubPaths(nodePaths, NodeEnvironment::isIndexMetadataPath);
     }
 
     /**
-     * 找到目录目录下所有的  索引文件夹 并生成路径后返回
+     * 在相关目录下 找到所有符合条件的路径
      * @param nodePaths
-     * @param subPathPredicate   检测目标是否包含元数据文件
+     * @param subPathPredicate   谓语条件
      * @return
      * @throws IOException
      */
@@ -1310,7 +1315,7 @@ public final class NodeEnvironment  implements Closeable {
             if (Files.isDirectory(indicesPath)) {
                 try (DirectoryStream<Path> indexStream = Files.newDirectoryStream(indicesPath)) {
                     for (Path indexPath : indexStream) {
-                        // 挨个检测 /indices 下所有的文件路径 找到 索引文件夹
+                        // 挨个检测 /indices/{indexName} 下所有的文件路径 找到满足条件的path
                         if (Files.isDirectory(indexPath)) {
                             try (Stream<Path> shardStream = Files.list(indexPath)) {
                                 shardStream.filter(subPathPredicate)
@@ -1336,6 +1341,12 @@ public final class NodeEnvironment  implements Closeable {
             && path.getFileName().toString().chars().allMatch(Character::isDigit);
     }
 
+    /**
+     * 检测当前目录是否是存储indexMetadata的路径
+     * 也就是文件名为 "_state"
+     * @param path
+     * @return
+     */
     private static boolean isIndexMetadataPath(Path path) {
         return Files.isDirectory(path)
             && path.getFileName().toString().equals(MetadataStateFormat.STATE_DIR_NAME);

@@ -127,7 +127,7 @@ public class MasterService extends AbstractLifecycleComponent {
         this.nodeName = Objects.requireNonNull(Node.NODE_NAME_SETTING.get(settings));
 
         this.slowTaskLoggingThreshold = MASTER_SERVICE_SLOW_TASK_LOGGING_THRESHOLD_SETTING.get(settings);
-        // 应该是注册了随时会刷新的集群配置
+        // 注册当配置发生变化时的处理逻辑
         clusterSettings.addSettingsUpdateConsumer(MASTER_SERVICE_SLOW_TASK_LOGGING_THRESHOLD_SETTING, this::setSlowTaskLoggingThreshold);
 
         this.threadPool = threadPool;

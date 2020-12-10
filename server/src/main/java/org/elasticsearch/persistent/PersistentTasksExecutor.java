@@ -53,8 +53,10 @@ public abstract class PersistentTasksExecutor<Params extends PersistentTaskParam
      * Returns the node id where the params has to be executed,
      * <p>
      * The default implementation returns the least loaded data node
+     * 通过 PersistentTaskParams 以及当前的集群状态  生成一个分配对象
      */
     public Assignment getAssignment(Params params, ClusterState clusterState) {
+        // 找到一个负载最小的节点
         DiscoveryNode discoveryNode = selectLeastLoadedNode(clusterState, DiscoveryNode::isDataNode);
         if (discoveryNode == null) {
             return NO_NODE_FOUND;
@@ -65,6 +67,7 @@ public abstract class PersistentTasksExecutor<Params extends PersistentTaskParam
 
     /**
      * Finds the least loaded node that satisfies the selector criteria
+     * 持久化任务只应该在 dataNode上运行
      */
     protected DiscoveryNode selectLeastLoadedNode(ClusterState clusterState, Predicate<DiscoveryNode> selector) {
         long minLoad = Long.MAX_VALUE;
@@ -72,10 +75,13 @@ public abstract class PersistentTasksExecutor<Params extends PersistentTaskParam
         PersistentTasksCustomMetadata persistentTasks = clusterState.getMetadata().custom(PersistentTasksCustomMetadata.TYPE);
         for (DiscoveryNode node : clusterState.getNodes()) {
             if (selector.test(node)) {
+                // 如果此时没有正在运行的任务 直接返回当前节点
                 if (persistentTasks == null) {
                     // We don't have any task running yet, pick the first available node
                     return node;
                 }
+                // 如果这个节点已经在执行持久化任务了  找到负载最小的节点
+                // TODO 持久化任务 一次只在一个节点上执行吗
                 long numberOfTasks = persistentTasks.getNumberOfTasksOnNode(node.getId(), taskName);
                 if (minLoad > numberOfTasks) {
                     minLoad = numberOfTasks;

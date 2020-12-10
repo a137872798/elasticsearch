@@ -318,10 +318,11 @@ public class Node implements Closeable {
                     initialEnvironment.logsFile(), initialEnvironment.pluginsFile());
             }
 
+            // TODO 先忽略插件相关的
             // 初始化插件服务  插件服务的主要作用就是将 .module/.plugin  下所有的插件信息加载出来
             this.pluginsService = new PluginsService(tmpSettings, initialEnvironment.configFile(), initialEnvironment.modulesFile(),
                 initialEnvironment.pluginsFile(), classpathPlugins);
-            // 从插件中获取配置 并追加到settings中
+            // 因为某些插件项可能会有自己的配置 将他们与之前环境中解析出来的配合整合
             final Settings settings = pluginsService.updatedSettings();
 
             // 从插件中判断当前node 可能出现的角色  除了系统内置的DATA_ROLE 等 插件可能会定义当前node 的角色
@@ -337,7 +338,7 @@ public class Node implements Closeable {
             /*
              * Create the environment based on the finalized view of the settings. This is to ensure that components get the same setting
              * values, no matter they ask for them from.
-             * 使用新的settings 重新设置一次环境
+             * 这个时候由于加载了插件 settings已经发生了变化 所以重新生成一次环境对象
              */
             this.environment = new Environment(settings, initialEnvironment.configFile());
             // 确保存储文件的路径没有被修改 (modulePath pluginPath etc..)
@@ -349,18 +350,18 @@ public class Node implements Closeable {
                 NODE_NAME_SETTING.get(tmpSettings), nodeEnvironment.nodeId(), ClusterName.CLUSTER_NAME_SETTING.get(tmpSettings).value());
             resourcesToClose.add(nodeEnvironment);
 
-            // LocalNodeFactory负责设置 DiscoveryNode 信息
+            // 该工厂对象负责生成本地节点
             localNodeFactory = new LocalNodeFactory(settings, nodeEnvironment.nodeId());
 
             // 这里的含义是 某些插件可能运行在自己定义的线程池中 这时 插件会通过getExecutorBuilders 返回它定制的线程池builder
             // 我们将这些builder 与 es自带的线程池builder 统统交由 ThreadPool 来管理
             final List<ExecutorBuilder<?>> executorBuilders = pluginsService.getExecutorBuilders(settings);
 
-            // 创建es 封装的线程池
+            // ES.ThreadPool 内部维护了各种线程池 通过传入Name可以获取对应的线程池对象
             final ThreadPool threadPool = new ThreadPool(settings, executorBuilders.toArray(new ExecutorBuilder[0]));
             resourcesToClose.add(() -> ThreadPool.terminate(threadPool, 10, TimeUnit.SECONDS));
 
-            // 初始化监控资源的服务对象
+            // 初始化监控资源的服务对象   内部按照频率生成了3个监控器 每个一定的时间检测资源是否发生了变化  并根据变化情况做不同的处理
             final ResourceWatcherService resourceWatcherService = new ResourceWatcherService(settings, threadPool);
             resourcesToClose.add(resourceWatcherService);
             // adds the context to the DeprecationLogger so that it does not need to be injected everywhere
@@ -369,48 +370,52 @@ public class Node implements Closeable {
             DeprecationLogger.setThreadContext(threadPool.getThreadContext());
             resourcesToClose.add(() -> DeprecationLogger.removeThreadContext(threadPool.getThreadContext()));
 
-            // 存储获取到的额外配置
+            // 获取插件的额外配置
             final List<Setting<?>> additionalSettings = new ArrayList<>(pluginsService.getPluginSettings());
             final List<String> additionalSettingsFilter = new ArrayList<>(pluginsService.getPluginSettingsFilter());
 
-            // 每个插件自定义的线程池配置是有前缀名的
+            // 这里将每个线程池对应的配置项加入到 additionalSettings中
             for (final ExecutorBuilder<?> builder : threadPool.builders()) {
                 additionalSettings.addAll(builder.getRegisteredSettings());
             }
-            // client 就是一个任务处理器 基于http接收的请求最终都会交由client处理
+
+            // 通过配置项 以及线程池对象 初始化client  该client会在ES集群内部转发请求  比如某些action会在leader节点执行 就需要通过该对象转发请求
             client = new NodeClient(settings, threadPool);
 
-            // TODO 先忽略解析脚本
+            // TODO 忽略脚本模块  就是利用脚本将本次更新的数据 与之前index内部的数据进行结合
             final ScriptModule scriptModule = new ScriptModule(settings, pluginsService.filterPlugins(ScriptPlugin.class));
             final ScriptService scriptService = newScriptService(settings, scriptModule.engines, scriptModule.contexts);
-            // TODO 先忽略
+
+            // TODO 先忽略分析用的插件
             AnalysisModule analysisModule = new AnalysisModule(this.environment, pluginsService.filterPlugins(AnalysisPlugin.class));
             // this is as early as we can validate settings at this point. we already pass them to ScriptModule as well as ThreadPool
             // so we might be late here already
-
-            // TODO 先忽略升级插件
+            // 获取所有插件下的支持动态更新的配置
             final Set<SettingUpgrader<?>> settingsUpgraders = pluginsService.filterPlugins(Plugin.class)
                     .stream()
                     .map(Plugin::getSettingUpgraders)
                     .flatMap(List::stream)
                     .collect(Collectors.toSet());
 
-            // 这里出现了实现 guice Module接口的类 将不同的配置实例绑定在不同的类上
+            // 该对象实现了 guice.Model接口
+            // 将所有配置项交由 settingsModule管理 并且会在IOC容器中绑定关联关系 当其他组件需要使用相关参数的时候 使用@Inject即可
             final SettingsModule settingsModule =
                     new SettingsModule(settings, additionalSettings, additionalSettingsFilter, settingsUpgraders);
             scriptModule.registerClusterSettingsListeners(scriptService, settingsModule.getClusterSettings());
 
-            // 找到地址发现服务  在NetworkService内置了最基本的解析逻辑
+            // 找到地址发现服务  在NetworkService内置了最基本的解析逻辑  TODO 如果不借助插件机制 一些简单的解析能力 比如解析"local"
             final NetworkService networkService = new NetworkService(
                 getCustomNameResolvers(pluginsService.filterPlugins(DiscoveryPlugin.class)));
 
+            // TODO 忽略集群插件
             List<ClusterPlugin> clusterPlugins = pluginsService.filterPlugins(ClusterPlugin.class);
-            // 生成集群服务对象
+            // 生成集群服务对象  内部包含 MasterService/ClusterApplierService
             final ClusterService clusterService = new ClusterService(settings, settingsModule.getClusterSettings(), threadPool);
+            // TODO 脚本服务会监听集群变化事件 但是脚本服务没有默认实现 先不看
             clusterService.addStateApplier(scriptService);
             resourcesToClose.add(clusterService);
 
-            // 增加一个用于同步 clusterState的对象
+            // 在集群服务上
             clusterService.addLocalNodeMasterListener(
                     new ConsistentSettingsService(settings, clusterService, settingsModule.getConsistentSettings())
                             .newHashPublisher());
@@ -1188,7 +1193,7 @@ public class Node implements Closeable {
         /**
          *
          * @param settings  存储了配置信息
-         * @param persistentNodeId   当前nodeId
+         * @param persistentNodeId   本地节点id
          */
         private LocalNodeFactory(Settings settings, String persistentNodeId) {
             this.persistentNodeId = persistentNodeId;

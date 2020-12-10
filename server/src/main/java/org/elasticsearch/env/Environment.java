@@ -90,7 +90,7 @@ public class Environment {
     private final Path modulesFile;
 
     /**
-     * 存储数据分片的路径
+     * 存储共享数据的路径
      */
     private final Path sharedDataFile;
 

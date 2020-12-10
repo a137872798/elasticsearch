@@ -87,6 +87,7 @@ public final class NetworkService {
     }
 
     /**
+     * 通过插件机制可以增加一组自定义的解析器
      * 将字符串解析成ip地址
      */
     private final List<CustomNameResolver> customNameResolvers;

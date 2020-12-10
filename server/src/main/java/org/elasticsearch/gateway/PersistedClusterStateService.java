@@ -252,22 +252,21 @@ public class PersistedClusterStateService {
     /**
      * Returns the node metadata for the given data paths, and checks if the node ids are unique
      * @param dataPaths the data paths to scan
-     *                  根据数据文件夹 生成一个元数据
+     *
      */
     @Nullable
     public static NodeMetadata nodeMetadata(Path... dataPaths) throws IOException {
         String nodeId = null;
         Version version = null;
         for (final Path dataPath : dataPaths) {
-            // 找到元数据文件夹  _state
+            // 对应 /{data_node}/_state 文件夹    而索引级的文件夹下也有一个 _state 文件夹  内部存储的是indexMetadata
             final Path indexPath = dataPath.resolve(METADATA_DIRECTORY_NAME);
             if (Files.exists(indexPath)) {
-                // 默认创建的 就是StandardDirectoryReader 啊  这是一个具备随时更新内部 segmentInfos 能力的对象 这样就能及时读取到最新写入lucene的数据了
-                // 从 _state 下寻找 segment_N 文件 并生成 directoryReader对象 注意这时liveDoc == hardLiveDoc 也就是感应不到软删除  软删除到底怎么用???
-                // 在读取segmentInfos 的过程中 会读取Codec类 (基于SPI机制  这样就可以跳过lucene的默认编解码策略 Lucene84Codec 这样就可以自定义索引格式了)
-                // es会简单遵循lucene的编解码方式 还是会自己进行改造呢 ???
+                // 读取 _state 内部的数据  在这个目录下包含 segment_N文件
                 try (DirectoryReader reader = DirectoryReader.open(new SimpleFSDirectory(dataPath.resolve(METADATA_DIRECTORY_NAME)))) {
-                    // IndexCommit 是 segmentInfos 和 directory封装后的类 这里获取写入时的用户信息
+                    // TODO 什么时候会在这一层写入数据呢 又是在什么时候更新
+                    // ES写入数据是先创建index    但是与lucene的index含义不一致  这里的 indexCommit应该指的是最近一次刷盘后更新的数据  而每次更新可能会同时影响到多个ES.index吧
+
                     final Map<String, String> userData = reader.getIndexCommit().getUserData();
                     assert userData.get(NODE_VERSION_KEY) != null;
 
@@ -287,6 +286,8 @@ public class PersistedClusterStateService {
                 }
             }
         }
+
+        // 代表此时还没有存储有关该节点的元数据信息
         if (nodeId == null) {
             return null;
         }

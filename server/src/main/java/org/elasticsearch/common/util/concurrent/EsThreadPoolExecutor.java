@@ -34,7 +34,7 @@ import java.util.stream.Stream;
 public class EsThreadPoolExecutor extends ThreadPoolExecutor {
 
     /**
-     * 在执行任务中 线程的上下文信息
+     * 在转发到不同的线程执行任务时 会暂存当前线程上下文信息 当任务执行完毕后 会还原到之前的上下文
      */
     private final ThreadContext contextHolder;
 

@@ -252,9 +252,19 @@ public final class PersistentTasksCustomMetadata extends AbstractNamedDiffable<M
         return ClusterState.builder(clusterState).metadata(metadataBuilder).build();
     }
 
+    /**
+     * 描述某个 persistentTask此时的分配状况
+     */
     public static class Assignment {
+
+        /**
+         * 这个task 将会在哪个node上执行
+         */
         @Nullable
         private final String executorNode;
+        /**
+         * 描述信息
+         */
         private final String explanation;
 
         public Assignment(String executorNode, String explanation) {

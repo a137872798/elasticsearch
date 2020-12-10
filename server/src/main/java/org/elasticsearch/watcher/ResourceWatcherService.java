@@ -94,12 +94,12 @@ public class ResourceWatcherService implements Closeable {
     /**
      *
      * @param settings  包含所有配置的对象
-     * @param threadPool  所有使用的线程池的总控对象
+     * @param threadPool  内部包含各种线程池
      */
     public ResourceWatcherService(Settings settings, ThreadPool threadPool) {
         this.enabled = ENABLED.get(settings);
 
-        // 重新检测资源的间隔时间
+        // 首次启动的时间间隔
         TimeValue interval = RELOAD_INTERVAL_LOW.get(settings);
 
         // 这里以3种不同的时间间隔 创建了3个资源监视器
@@ -108,7 +108,7 @@ public class ResourceWatcherService implements Closeable {
         mediumMonitor = new ResourceMonitor(interval, Frequency.MEDIUM);
         interval = RELOAD_INTERVAL_HIGH.get(settings);
         highMonitor = new ResourceMonitor(interval, Frequency.HIGH);
-        // 使用指定的线程池 执行任务   注意他们使用的线程池name 都是 SAME 代表直接在当前线程执行任务 (scheduleWithFixedDelay 通过2层线程池实现 外层是基于JDK内置的线程池实现定时功能  内层执行任务逻辑时还有一层专门的线程池)
+
         if (enabled) {
             lowFuture = threadPool.scheduleWithFixedDelay(lowMonitor, lowMonitor.interval, Names.SAME);
             mediumFuture = threadPool.scheduleWithFixedDelay(mediumMonitor, mediumMonitor.interval, Names.SAME);
