@@ -128,7 +128,7 @@ public class IndexingMemoryController implements IndexingOperationListener, Clos
      * 内存控制对象
      * @param settings
      * @param threadPool
-     * @param indexServices  在初始过程中 先传入了一组分片对象
+     * @param indexServices  从indicesService中可以获取到一组 IndexShard
      */
     IndexingMemoryController(Settings settings, ThreadPool threadPool, Iterable<IndexShard> indexServices) {
         this.indexShards = indexServices;

@@ -49,7 +49,7 @@ public class MonitorService extends AbstractLifecycleComponent {
      * @param settings
      * @param nodeEnvironment
      * @param threadPool
-     * @param clusterInfoService
+     * @param clusterInfoService  通过该对象可以获取到集群信息  主要就是一些统计信息 通过数据节点此时的数据承载量之类来判断
      * @throws IOException
      */
     public MonitorService(Settings settings, NodeEnvironment nodeEnvironment, ThreadPool threadPool,

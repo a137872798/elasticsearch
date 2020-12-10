@@ -43,6 +43,12 @@ public final class MapperRegistry {
     private final Function<String, Predicate<String>> fieldFilter;
 
 
+    /**
+     * 通过一组 Mapper 和 fieldMapper对象进行初始化
+     * @param mapperParsers
+     * @param metadataMapperParsers
+     * @param fieldFilter
+     */
     public MapperRegistry(Map<String, Mapper.TypeParser> mapperParsers,
             Map<String, MetadataFieldMapper.TypeParser> metadataMapperParsers, Function<String, Predicate<String>> fieldFilter) {
         this.mapperParsers = Collections.unmodifiableMap(new LinkedHashMap<>(mapperParsers));

@@ -113,7 +113,7 @@ import java.util.function.Supplier;
  * +---------------------------+-------------------------+-------------------------------------------------------------------------------+
  *
  * (the last-accepted term is recorded in Metadata → CoordinationMetadata so does not need repeating here)
- * 描述集群状态的 服务
+ * 对集群状态做持久化的服务
  */
 public class PersistedClusterStateService {
     private static final Logger logger = LogManager.getLogger(PersistedClusterStateService.class);
@@ -147,6 +147,15 @@ public class PersistedClusterStateService {
             relativeTimeMillisSupplier);
     }
 
+    /**
+     *
+     * @param dataPaths 存储数据的路径
+     * @param nodeId  当前节点id
+     * @param namedXContentRegistry  通过name可以找到对应的 reader对象 定义了如何将数据流反序列化成对象
+     * @param bigArrays
+     * @param clusterSettings
+     * @param relativeTimeMillisSupplier
+     */
     public PersistedClusterStateService(Path[] dataPaths, String nodeId, NamedXContentRegistry namedXContentRegistry, BigArrays bigArrays,
                                         ClusterSettings clusterSettings, LongSupplier relativeTimeMillisSupplier) {
         this.dataPaths = dataPaths;

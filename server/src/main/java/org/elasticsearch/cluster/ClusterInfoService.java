@@ -23,6 +23,7 @@ import java.util.function.Consumer;
 
 /**
  * Interface for a class used to gather information about a cluster periodically.
+ * 可以获取当前集群信息
  */
 @FunctionalInterface
 public interface ClusterInfoService {

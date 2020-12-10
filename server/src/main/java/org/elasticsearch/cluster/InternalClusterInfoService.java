@@ -83,6 +83,9 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
     private volatile ImmutableOpenMap<String, DiskUsage> mostAvailableSpaceUsages;
     private volatile ImmutableOpenMap<ShardRouting, String> shardRoutingToDataPath;
     private volatile ImmutableOpenMap<String, Long> shardSizes;
+    /**
+     * 标识当前节点是否是leader节点
+     */
     private volatile boolean isMaster = false;
     private volatile boolean enabled;
     private volatile TimeValue fetchTimeout;
@@ -95,12 +98,11 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
     /**
      *
      * @param settings    包含所有配置信息
-     * @param clusterService    集群服务
+     * @param clusterService   本对象初始化后会注册到集群服务上 监听集群的变化
      * @param threadPool   包含所有线程池
      * @param client   当前节点作为client暴露到集群的对象
      */
     public InternalClusterInfoService(Settings settings, ClusterService clusterService, ThreadPool threadPool, NodeClient client) {
-        // TODO 高效集合实现 先不管
         this.leastAvailableSpaceUsages = ImmutableOpenMap.of();
         this.mostAvailableSpaceUsages = ImmutableOpenMap.of();
         this.shardRoutingToDataPath = ImmutableOpenMap.of();
@@ -108,17 +110,20 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
         this.clusterService = clusterService;
         this.threadPool = threadPool;
         this.client = client;
-        // 每30秒尝试同步一次集群状态么 ???
+        // 每30秒 获取一次集群信息
         this.updateFrequency = INTERNAL_CLUSTER_INFO_UPDATE_INTERVAL_SETTING.get(settings);
-        // 这个是 ???
+        // 更新超时时间
         this.fetchTimeout = INTERNAL_CLUSTER_INFO_TIMEOUT_SETTING.get(settings);
         this.enabled = DiskThresholdSettings.CLUSTER_ROUTING_ALLOCATION_DISK_THRESHOLD_ENABLED_SETTING.get(settings);
         ClusterSettings clusterSettings = clusterService.getClusterSettings();
+
+        // 监听配置项的变化
         clusterSettings.addSettingsUpdateConsumer(INTERNAL_CLUSTER_INFO_TIMEOUT_SETTING, this::setFetchTimeout);
         clusterSettings.addSettingsUpdateConsumer(INTERNAL_CLUSTER_INFO_UPDATE_INTERVAL_SETTING, this::setUpdateFrequency);
         clusterSettings.addSettingsUpdateConsumer(DiskThresholdSettings.CLUSTER_ROUTING_ALLOCATION_DISK_THRESHOLD_ENABLED_SETTING,
                                                   this::setEnabled);
 
+        // 同时监听 leader事件 以及集群状态变更事件
         // Add InternalClusterInfoService to listen for Master changes
         this.clusterService.addLocalNodeMasterListener(this);
         // Add to listen for state changes (when nodes are added)
@@ -138,7 +143,7 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
     }
 
     /**
-     * 该对象会注册到集群服务中 监听状态变化
+     * 当本对象变成leader节点后触发该方法
      */
     @Override
     public void onMaster() {
@@ -148,10 +153,11 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
         }
 
         // Submit a job that will reschedule itself after running
+        // 启动一个定时任务
         threadPool.scheduleUnlessShuttingDown(updateFrequency, executorName(), new SubmitReschedulingClusterInfoUpdatedJob());
 
         try {
-            // 当前节点成为master节点后 并且集群中数据节点超过1  这里在刷新数据   之后需要细看
+            // 当本节点变成leader节点后  并且集群内的数据节点数量超过1
             if (clusterService.state().getNodes().getDataNodes().size() > 1) {
                 // Submit an info update job to be run immediately
                 threadPool.executor(executorName()).execute(this::maybeRefresh);
@@ -171,6 +177,10 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
         return ThreadPool.Names.MANAGEMENT;
     }
 
+    /**
+     * 当集群状态发生了变化 也要更新数据
+     * @param event
+     */
     @Override
     public void clusterChanged(ClusterChangedEvent event) {
         if (!this.enabled) {
@@ -178,6 +188,7 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
         }
 
         // Check whether it was a data node that was added
+        // 检测是否增加了dataNode
         boolean dataNodeAdded = false;
         for (DiscoveryNode addedNode : event.nodesDelta().addedNodes()) {
             if (addedNode.isDataNode()) {
@@ -186,6 +197,7 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
             }
         }
 
+        // 首先只有leader节点才需要执行 refresh方法 其次必须是增加新的dataNode
         if (this.isMaster && dataNodeAdded && event.state().getNodes().getDataNodes().size() > 1) {
             if (logger.isDebugEnabled()) {
                 logger.debug("data node was added, retrieving new cluster info");
@@ -194,11 +206,13 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
         }
 
         if (this.isMaster && event.nodesRemoved()) {
+            // 如果此时移除的是某个dataNode
             for (DiscoveryNode removedNode : event.nodesDelta().removedNodes()) {
                 if (removedNode.isDataNode()) {
                     if (logger.isTraceEnabled()) {
                         logger.trace("Removing node from cluster info: {}", removedNode.getId());
                     }
+                    // 将该节点的相关信息从该对象移除
                     if (leastAvailableSpaceUsages.containsKey(removedNode.getId())) {
                         ImmutableOpenMap.Builder<String, DiskUsage> newMaxUsages = ImmutableOpenMap.builder(leastAvailableSpaceUsages);
                         newMaxUsages.remove(removedNode.getId());
@@ -224,6 +238,7 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
      * {@link InternalClusterInfoService} threadpool, these jobs will
      * reschedule themselves by placing a new instance of this class onto the
      * scheduled threadpool.
+     * 该对象负责刷新集群信息
      */
     public class SubmitReschedulingClusterInfoUpdatedJob implements Runnable {
         @Override
@@ -236,6 +251,7 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
                     try {
                         maybeRefresh();
                     } finally { //schedule again after we refreshed
+                        // 当前是leader节点的情况 会在下一个时间节点再次执行任务
                         if (isMaster) {
                             if (logger.isTraceEnabled()) {
                                 logger.trace("Scheduling next run for updating cluster info in: {}", updateFrequency.toString());
@@ -281,6 +297,9 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
         return latch;
     }
 
+    /**
+     * 刷新当前集群信息
+     */
     private void maybeRefresh() {
         // Short-circuit if not enabled
         if (enabled) {
@@ -299,6 +318,7 @@ public class InternalClusterInfoService implements ClusterInfoService, LocalNode
 
     /**
      * Refreshes the ClusterInfo in a blocking fashion
+     * 刷新当前集群信息
      */
     public final ClusterInfo refresh() {
         if (logger.isTraceEnabled()) {

@@ -98,8 +98,8 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
      * @param clusterService   集群服务
      * @param threadPool       线程池总控对象
      * @param env              环境中包含需要的各种配置
-     * @param scriptService
-     * @param analysisRegistry
+     * @param scriptService    脚本服务
+     * @param analysisRegistry   该对象以field为单位 注册了不同的analyzer
      * @param ingestPlugins
      * @param client
      */
@@ -109,7 +109,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         this.clusterService = clusterService;
         this.scriptService = scriptService;
 
-        // 大概是从插件中 抽取什么processor
+        // 大概是从插件中 抽取什么processor   如果插件为空 processorFactories 为空列表
         this.processorFactories = processorFactories(
             ingestPlugins,
             new Processor.Parameters(
@@ -125,7 +125,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
     }
 
     /**
-     * 进程工厂
+     * 处理器工厂
      *
      * @param ingestPlugins
      * @param parameters

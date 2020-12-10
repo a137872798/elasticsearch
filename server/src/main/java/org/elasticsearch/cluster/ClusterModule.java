@@ -90,7 +90,7 @@ import java.util.function.Supplier;
 
 /**
  * Configures classes and services that affect the entire cluster.
- * 各个服务会被包装成模块对象 之后模块会被包装成注入点(Injector)
+ * 集群模块本身也实现了 AbstractModule  可以配置接口与注入实例的关系
  */
 public class ClusterModule extends AbstractModule {
 
@@ -112,7 +112,7 @@ public class ClusterModule extends AbstractModule {
      *
      * @param settings
      * @param clusterService   集群服务对象
-     * @param clusterPlugins    集群相关插件
+     * @param clusterPlugins    先忽略集群插件
      * @param clusterInfoService   集群信息服务对象
      */
     public ClusterModule(Settings settings, ClusterService clusterService, List<ClusterPlugin> clusterPlugins,
@@ -251,11 +251,19 @@ public class ClusterModule extends AbstractModule {
         }
     }
 
+    /**
+     * 分片分配器 ES内置的只有balanceShardsAllocator 一个分配器
+     * @param settings
+     * @param clusterSettings
+     * @param clusterPlugins
+     * @return
+     */
     private static ShardsAllocator createShardsAllocator(Settings settings, ClusterSettings clusterSettings,
                                                          List<ClusterPlugin> clusterPlugins) {
         Map<String, Supplier<ShardsAllocator>> allocators = new HashMap<>();
         allocators.put(BALANCED_ALLOCATOR, () -> new BalancedShardsAllocator(settings, clusterSettings));
 
+        // TODO 先忽略插件
         for (ClusterPlugin plugin : clusterPlugins) {
             plugin.getShardsAllocators(settings, clusterSettings).forEach((k, v) -> {
                 if (allocators.put(k, v) != null) {
@@ -276,6 +284,9 @@ public class ClusterModule extends AbstractModule {
         return allocationService;
     }
 
+    /**
+     * 这里会定义绑定关系
+     */
     @Override
     protected void configure() {
         bind(GatewayAllocator.class).asEagerSingleton();

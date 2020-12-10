@@ -386,7 +386,7 @@ public class Node implements Closeable {
             final ScriptModule scriptModule = new ScriptModule(settings, pluginsService.filterPlugins(ScriptPlugin.class));
             final ScriptService scriptService = newScriptService(settings, scriptModule.engines, scriptModule.contexts);
 
-            // TODO 先忽略分析用的插件
+            // 该模块中 维护了各个field使用的分词器
             AnalysisModule analysisModule = new AnalysisModule(this.environment, pluginsService.filterPlugins(AnalysisPlugin.class));
             // this is as early as we can validate settings at this point. we already pass them to ScriptModule as well as ThreadPool
             // so we might be late here already
@@ -415,7 +415,7 @@ public class Node implements Closeable {
             clusterService.addStateApplier(scriptService);
             resourcesToClose.add(clusterService);
 
-            // 在集群服务上
+            // 在集群服务上设置一个leader监听器  当感知到当前节点变成leader节点后 会往metadata中插入一个唯一值
             clusterService.addLocalNodeMasterListener(
                     new ConsistentSettingsService(settings, clusterService, settingsModule.getConsistentSettings())
                             .newHashPublisher());
@@ -424,15 +424,15 @@ public class Node implements Closeable {
             final IngestService ingestService = new IngestService(clusterService, threadPool, this.environment,
                 scriptService, analysisModule.getAnalysisRegistry(),
                 pluginsService.filterPlugins(IngestPlugin.class), client);
-            // 集群信息服务
+            // 生成集群信息服务  内部多是请求获取 stat信息 所以先忽略
             final ClusterInfoService clusterInfoService = newClusterInfoService(settings, clusterService, threadPool, client);
-            // 有关内存使用率的 service
+            // 有关内存使用率的 service  先忽略 不影响主流程
             final UsageService usageService = new UsageService();
 
-            // 添加各种module对象 并生成注入点对象
+            // 该对象具备IOC容器的能力
             ModulesBuilder modules = new ModulesBuilder();
 
-            // 监控服务
+            // 监控服务  主要就是监控当前节点的 FS OS 使用情况
             final MonitorService monitorService = new MonitorService(settings, nodeEnvironment, threadPool, clusterInfoService);
 
             // 生成集群模块
@@ -442,20 +442,21 @@ public class Node implements Closeable {
             IndicesModule indicesModule = new IndicesModule(pluginsService.filterPlugins(MapperPlugin.class));
             modules.add(indicesModule);
 
-            // 查询模块
+            // 查询模块  初始化时 除了创建一些内置的查询组件 还会从plugin中获取一些组件
             SearchModule searchModule = new SearchModule(settings, pluginsService.filterPlugins(SearchPlugin.class));
-            // 还具备断路功能吗
+            // 熔断器
             CircuitBreakerService circuitBreakerService = createCircuitBreakerService(settingsModule.getSettings(),
                 settingsModule.getClusterSettings());
             resourcesToClose.add(circuitBreakerService);
+            // 注入网关的依赖关系
             modules.add(new GatewayModule());
 
-
+            // 这个是内存页的缓存对象  避免重复创建和销毁对象带来的开销
             PageCacheRecycler pageCacheRecycler = createPageCacheRecycler(settings);
-            // 将分页器和 断路器包装成 BigArrays对象
+            // BigArray对外开放了分配内存的api 底层是依靠 pageCacheRecycle来分配内存
             BigArrays bigArrays = createBigArrays(pageCacheRecycler, circuitBreakerService);
             modules.add(settingsModule);
-            // 将之前所有的 Entry抽取出来
+            // 这里维护了一组名称与 reader的关系
             List<NamedWriteableRegistry.Entry> namedWriteables = Stream.of(
                 NetworkModule.getNamedWriteables().stream(),
                 IndicesModule.getNamedWriteables().stream(),
@@ -464,7 +465,7 @@ public class Node implements Closeable {
                     .flatMap(p -> p.getNamedWriteables().stream()),
                 ClusterModule.getNamedWriteables().stream())
                 .flatMap(Function.identity()).collect(Collectors.toList());
-            // 将抽取出来的entry 包装成registry对象
+            // 包装成一个 registry工厂
             final NamedWriteableRegistry namedWriteableRegistry = new NamedWriteableRegistry(namedWriteables);
             NamedXContentRegistry xContentRegistry = new NamedXContentRegistry(Stream.of(
                 NetworkModule.getNamedXContents().stream(),
@@ -483,8 +484,9 @@ public class Node implements Closeable {
                 threadPool::relativeTimeInMillis);
 
             // collect engine factory providers from server and from plugins
+            // TODO 插件类先不管
             final Collection<EnginePlugin> enginePlugins = pluginsService.filterPlugins(EnginePlugin.class);
-            // 抽取引擎工厂
+            // 抽取引擎工厂 在不考虑插件的情况下默认为空
             final Collection<Function<IndexSettings, Optional<EngineFactory>>> engineFactoryProviders =
                     Stream.concat(
                             indicesModule.getEngineFactories().stream(),
@@ -492,7 +494,7 @@ public class Node implements Closeable {
                     .collect(Collectors.toList());
 
 
-            // 获取索引存储插件工厂
+            // 从插件中加载索引存储工厂  默认也是空
             final Map<String, IndexStorePlugin.DirectoryFactory> indexStoreFactories =
                     pluginsService.filterPlugins(IndexStorePlugin.class)
                             .stream()
@@ -500,21 +502,21 @@ public class Node implements Closeable {
                             .flatMap(m -> m.entrySet().stream())
                             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-            // 系统索引插件
+            // 忽略系统索引插件
             final Map<String, Collection<SystemIndexDescriptor>> systemIndexDescriptorMap = pluginsService
                 .filterPlugins(SystemIndexPlugin.class)
                 .stream()
                 .collect(Collectors.toUnmodifiableMap(
                     plugin -> plugin.getClass().getSimpleName(),
                     plugin -> plugin.getSystemIndexDescriptors(settings)));
-            // TODO 检测性代码先忽略
+            // TODO 忽略检测代码
             SystemIndexDescriptor.checkForOverlappingPatterns(systemIndexDescriptorMap);
 
             final List<SystemIndexDescriptor> systemIndexDescriptors = systemIndexDescriptorMap.values().stream()
                 .flatMap(Collection::stream)
                 .collect(Collectors.toList());
 
-            // 索引服务  在初始化阶段基本只是做一些简单的赋值操作
+            // 通过之前各个服务 生成索引服务对象
             final IndicesService indicesService =
                 new IndicesService(settings, pluginsService, nodeEnvironment, xContentRegistry, analysisModule.getAnalysisRegistry(),
                     clusterModule.getIndexNameExpressionResolver(), indicesModule.getMapperRegistry(), namedWriteableRegistry,
@@ -1169,7 +1171,10 @@ public class Node implements Closeable {
         return customNameResolvers;
     }
 
-    /** Constructs a ClusterInfoService which may be mocked for tests. */
+    /**
+     * Constructs a ClusterInfoService which may be mocked for tests.
+     * 新建一个集群信息服务
+     */
     protected ClusterInfoService newClusterInfoService(Settings settings, ClusterService clusterService,
                                                        ThreadPool threadPool, NodeClient client) {
         return new InternalClusterInfoService(settings, clusterService, threadPool, client);

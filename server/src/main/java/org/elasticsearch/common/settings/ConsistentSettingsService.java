@@ -52,7 +52,7 @@ import javax.crypto.spec.PBEKeySpec;
  * Used to publish secure setting hashes in the cluster state and to validate those hashes against the local values of those same settings.
  * This is colloquially referred to as the secure setting consistency check. It will publish and verify hashes only for the collection
  * of settings passed in the constructor. The settings have to have the {@link Setting.Property#Consistent} property.
- * 一致性配置服务  难道一个集群下 所有node都会与master的settings做同步吗
+ * 该服务当感知到自身变成leader节点后 会往metadata中设置一个唯一值
  */
 public final class ConsistentSettingsService {
     private static final Logger logger = LogManager.getLogger(ConsistentSettingsService.class);
@@ -65,7 +65,7 @@ public final class ConsistentSettingsService {
     /**
      *
      * @param settings    从配置文件中抽取的配置
-     * @param clusterService    集群相关的配置
+     * @param clusterService
      * @param secureSettingsCollection  一致性相关的配置
      */
     public ConsistentSettingsService(Settings settings, ClusterService clusterService,

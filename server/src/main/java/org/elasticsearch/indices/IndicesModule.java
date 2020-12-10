@@ -84,7 +84,7 @@ public class IndicesModule extends AbstractModule {
 
     /**
      * 映射相关插件
-     * @param mapperPlugins
+     * @param mapperPlugins  先忽略插件
      */
     public IndicesModule(List<MapperPlugin> mapperPlugins) {
         this.mapperRegistry = new MapperRegistry(getMappers(mapperPlugins), getMetadataMappers(mapperPlugins),
@@ -110,7 +110,7 @@ public class IndicesModule extends AbstractModule {
     }
 
     /**
-     * 生成映射对象
+     * 这里会将插件的映射关系 以及一些内置的映射关系插入到map中
      * @param mapperPlugins
      * @return
      */
@@ -175,6 +175,11 @@ public class IndicesModule extends AbstractModule {
         return Collections.unmodifiableMap(builtInMetadataMappers);
     }
 
+    /**
+     * 除了插入一些内置的 fieldMapper对象外 还会插入一些插件
+     * @param mapperPlugins
+     * @return
+     */
     public static Map<String, MetadataFieldMapper.TypeParser> getMetadataMappers(List<MapperPlugin> mapperPlugins) {
         Map<String, MetadataFieldMapper.TypeParser> metadataMappers = new LinkedHashMap<>();
 

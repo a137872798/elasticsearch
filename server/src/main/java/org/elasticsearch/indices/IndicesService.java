@@ -251,7 +251,7 @@ public class IndicesService extends AbstractLifecycleComponent
     }
 
     /**
-     * 初始化管理所有索引的服务
+     * 在初始化Node的过程中 会创建一系列的服务  并在初始化索引服务的时候将这些参数传入
      *
      * @param settings
      * @param pluginsService
