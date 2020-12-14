@@ -106,6 +106,7 @@ public final class NetworkModule {
     /**
      * Creates a network module that custom networking classes can be plugged into.
      * @param settings The settings for the node
+     * @param plugins 有关插件的逻辑可以先忽略
      *                 构建网络模块
      */
     public NetworkModule(Settings settings, List<NetworkPlugin> plugins, ThreadPool threadPool,
@@ -117,6 +118,7 @@ public final class NetworkModule {
                          NetworkService networkService, HttpServerTransport.Dispatcher dispatcher,
                          ClusterSettings clusterSettings) {
         this.settings = settings;
+
         for (NetworkPlugin plugin : plugins) {
             Map<String, Supplier<HttpServerTransport>> httpTransportFactory = plugin.getHttpTransports(settings, threadPool, bigArrays,
                 pageCacheRecycler, circuitBreakerService, xContentRegistry, networkService, dispatcher, clusterSettings);
@@ -128,6 +130,7 @@ public final class NetworkModule {
             for (Map.Entry<String, Supplier<Transport>> entry : transportFactory.entrySet()) {
                 registerTransport(entry.getKey(), entry.getValue());
             }
+            // 默认的NIO实现 没有设置拦截器
             List<TransportInterceptor> transportInterceptors = plugin.getTransportInterceptors(namedWriteableRegistry,
                 threadPool.getThreadContext());
             for (TransportInterceptor interceptor : transportInterceptors) {

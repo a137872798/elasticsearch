@@ -203,6 +203,7 @@ public class ShardStateAction {
 
     /**
      * Send a shard failed request to the master node to update the cluster state when a shard on the local node failed.
+     * 代表本地某个分片无法正常处理 需要上报给leader节点
      */
     public void localShardFailed(final ShardRouting shardRouting, final String message, @Nullable final Exception failure,
                                  ActionListener<Void> listener, final ClusterState currentState) {
@@ -567,6 +568,13 @@ public class ShardStateAction {
         }
     }
 
+    /**
+     * 通知leader 某个分片处于start状态了 比如init的分片在通过recoverySource恢复数据后
+     * @param shardRouting
+     * @param primaryTerm
+     * @param message
+     * @param listener
+     */
     public void shardStarted(final ShardRouting shardRouting,
                              final long primaryTerm,
                              final String message,
@@ -574,6 +582,15 @@ public class ShardStateAction {
         shardStarted(shardRouting, primaryTerm, message, listener, clusterService.state());
     }
 
+    /**
+     * 目前只看到在IndicesClusterStateService中 CS标记该分片为init状态 但是在node上为start或者 recovery post 会发送该请求
+     * 应该是分片在数据恢复后通知的 这种情况就代表数据已经恢复完成
+     * @param shardRouting
+     * @param primaryTerm
+     * @param message
+     * @param listener
+     * @param currentState
+     */
     public void shardStarted(final ShardRouting shardRouting,
                              final long primaryTerm,
                              final String message,

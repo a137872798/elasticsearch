@@ -29,7 +29,7 @@ import org.elasticsearch.common.unit.TimeValue;
 public interface TimeoutClusterStateListener extends ClusterStateListener {
 
     /**
-     * 代表监听器通过线程池成功执行
+     * 当监听器插入到列表后触发
      */
     void postAdded();
 

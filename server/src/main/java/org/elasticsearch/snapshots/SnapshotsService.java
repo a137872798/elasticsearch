@@ -146,8 +146,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      *
      * @param settings
      * @param clusterService
-     * @param indexNameExpressionResolver
-     * @param repositoriesService
+     * @param indexNameExpressionResolver  可以将包含通配符的indexName 定位到准确的索引名
+     * @param repositoriesService   快照服务 依赖存储服务
      * @param threadPool
      */
     public SnapshotsService(Settings settings, ClusterService clusterService, IndexNameExpressionResolver indexNameExpressionResolver,

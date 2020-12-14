@@ -42,10 +42,13 @@ import java.util.Collections;
 import java.util.Map;
 
 /**
- * 该对象负责管理集群中各种元数据
- * 核心api都是转发给masterService 和 clusterApplierService的
+ * ClusterService 的核心是更新clusterState 或者接收clusterState的更新信息并通知到内部其他组件上
  */
 public class ClusterService extends AbstractLifecycleComponent {
+
+    /**
+     * 负责执行更新clusterState 因为只有leader节点能提交更新任务 所以又被称为 masterService
+     */
     private final MasterService masterService;
 
     /**
@@ -151,6 +154,7 @@ public class ClusterService extends AbstractLifecycleComponent {
 
     /**
      * Adds a high priority applier of updated cluster states.
+     * 有关集群状态变化的通知都是委托给 clusterApplierService
      */
     public void addHighPriorityApplier(ClusterStateApplier applier) {
         clusterApplierService.addHighPriorityApplier(applier);
@@ -239,10 +243,10 @@ public class ClusterService extends AbstractLifecycleComponent {
      * Submits a cluster state update task; unlike {@link #submitStateUpdateTask(String, Object, ClusterStateTaskConfig,
      * ClusterStateTaskExecutor, ClusterStateTaskListener)}, submitted updates will not be batched.
      *
-     * @param source     the source of the cluster state update task    表明该任务是由谁创建的
+     * @param source     the source of the cluster state update task    创建该任务的场景
      * @param updateTask the full context for the cluster state update
      *                   task
-     *
+     *                  提交更新集群状态的任务
      */
     public <T extends ClusterStateTaskConfig & ClusterStateTaskExecutor<T> & ClusterStateTaskListener>
         void submitStateUpdateTask(String source, T updateTask) {
@@ -286,6 +290,7 @@ public class ClusterService extends AbstractLifecycleComponent {
      *                 that share the same executor will be executed          执行任务的线程池
      *                 batches on this executor
      * @param <T>      the type of the cluster state update task state
+     *           有关更新集群状态的操作会委托给 masterService
      *
      */
     public <T> void submitStateUpdateTasks(final String source,

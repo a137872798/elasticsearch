@@ -24,6 +24,9 @@ import com.carrotsearch.hppc.IntArrayList;
 
 import java.util.StringTokenizer;
 
+/**
+ * 描述一个端口的范围字符串
+ */
 public class PortsRange {
 
     private final String portRange;

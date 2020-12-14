@@ -253,7 +253,7 @@ allprojects {
           project.evaluationDependsOn(upstreamProject.path)
           project.javadoc.source += upstreamProject.javadoc.source
           /*
-           * Instead we need the upstream project's javadoc classpath so
+           * Instead we need the upstream project's javadoc path so
            * we don't barf on the classes that it references.
            */
           project.javadoc.classpath += upstreamProject.javadoc.classpath

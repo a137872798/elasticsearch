@@ -453,7 +453,7 @@ public class DiscoveryNodes extends AbstractDiffable<DiscoveryNodes> implements 
 
     /**
      * Returns the changes comparing this nodes to the provided nodes.
-     * 将当前集群节点与另一个集群节点对象做比较 并叫不同处封装成 Delta 返回
+     * 将当前集群节点与另一个集群节点对象做比较 比较不同处封装成 Delta 返回
      */
     public Delta delta(DiscoveryNodes other) {
         final List<DiscoveryNode> removed = new ArrayList<>();

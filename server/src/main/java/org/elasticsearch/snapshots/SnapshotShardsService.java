@@ -148,13 +148,14 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
         this.transportService = transportService;
         this.clusterService = clusterService;
         this.threadPool = threadPool;
-        // 当本节点是数据节点时 会监听CS 变化
+        // 当本节点是数据节点时 会监听ClusterState变化
         if (DiscoveryNode.isDataNode(settings)) {
             // this is only useful on the nodes that can hold data
             clusterService.addListener(this);
         }
 
         // The constructor of UpdateSnapshotStatusAction will register itself to the TransportService.
+        // 将更新快照状态的请求注册到 请求处理器上
         this.updateSnapshotStatusHandler =
             new UpdateSnapshotStatusAction(transportService, clusterService, threadPool, actionFilters, indexNameExpressionResolver);
     }
@@ -735,6 +736,9 @@ public class SnapshotShardsService extends AbstractLifecycleComponent implements
         public void writeTo(StreamOutput out) throws IOException {}
     }
 
+    /**
+     * 更新快照状态
+     */
     private class UpdateSnapshotStatusAction
         extends TransportMasterNodeAction<UpdateIndexShardSnapshotStatusRequest, UpdateIndexShardSnapshotStatusResponse> {
         UpdateSnapshotStatusAction(TransportService transportService, ClusterService clusterService,

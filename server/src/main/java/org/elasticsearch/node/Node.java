@@ -19,6 +19,8 @@
 
 package org.elasticsearch.node;
 
+import static java.util.stream.Collectors.toList;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.util.Constants;
@@ -162,7 +164,6 @@ import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.usage.UsageService;
 import org.elasticsearch.watcher.ResourceWatcherService;
 
-import javax.net.ssl.SNIHostName;
 import java.io.BufferedWriter;
 import java.io.Closeable;
 import java.io.IOException;
@@ -187,7 +188,7 @@ import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static java.util.stream.Collectors.toList;
+import javax.net.ssl.SNIHostName;
 
 /**
  * A node represent a node within a cluster ({@code cluster.name}). The {@link #client()} can be used
@@ -217,7 +218,7 @@ public class Node implements Closeable {
                 try {
                     new SNIHostName(value);
                 } catch (IllegalArgumentException e) {
-                    throw new IllegalArgumentException("invalid node.attr.server_name [" + value + "]", e );
+                    throw new IllegalArgumentException("invalid node.attr.server_name [" + value + "]", e);
                 }
             }
             return value;
@@ -259,7 +260,8 @@ public class Node implements Closeable {
 
     /**
      * 使用环境对象完成node的初始化
-     * @param environment  该对象抽取了各种配置信息
+     *
+     * @param environment 该对象抽取了各种配置信息
      */
     public Node(Environment environment) {
         this(environment, Collections.emptyList(), true);
@@ -327,12 +329,12 @@ public class Node implements Closeable {
 
             // 从插件中判断当前node 可能出现的角色  除了系统内置的DATA_ROLE 等 插件可能会定义当前node 的角色
             final Set<DiscoveryNodeRole> possibleRoles = Stream.concat(
-                    DiscoveryNodeRole.BUILT_IN_ROLES.stream(),
-                    pluginsService.filterPlugins(Plugin.class)
-                            .stream()
-                            .map(Plugin::getRoles)
-                            .flatMap(Set::stream))
-                    .collect(Collectors.toSet());
+                DiscoveryNodeRole.BUILT_IN_ROLES.stream(),
+                pluginsService.filterPlugins(Plugin.class)
+                    .stream()
+                    .map(Plugin::getRoles)
+                    .flatMap(Set::stream))
+                .collect(Collectors.toSet());
             DiscoveryNode.setPossibleRoles(possibleRoles);
 
             /*
@@ -392,15 +394,15 @@ public class Node implements Closeable {
             // so we might be late here already
             // 获取所有插件下的支持动态更新的配置
             final Set<SettingUpgrader<?>> settingsUpgraders = pluginsService.filterPlugins(Plugin.class)
-                    .stream()
-                    .map(Plugin::getSettingUpgraders)
-                    .flatMap(List::stream)
-                    .collect(Collectors.toSet());
+                .stream()
+                .map(Plugin::getSettingUpgraders)
+                .flatMap(List::stream)
+                .collect(Collectors.toSet());
 
             // 该对象实现了 guice.Model接口
             // 将所有配置项交由 settingsModule管理 并且会在IOC容器中绑定关联关系 当其他组件需要使用相关参数的时候 使用@Inject即可
             final SettingsModule settingsModule =
-                    new SettingsModule(settings, additionalSettings, additionalSettingsFilter, settingsUpgraders);
+                new SettingsModule(settings, additionalSettings, additionalSettingsFilter, settingsUpgraders);
             scriptModule.registerClusterSettingsListeners(scriptService, settingsModule.getClusterSettings());
 
             // 找到地址发现服务  在NetworkService内置了最基本的解析逻辑  TODO 如果不借助插件机制 一些简单的解析能力 比如解析"local"
@@ -417,8 +419,8 @@ public class Node implements Closeable {
 
             // 在集群服务上设置一个leader监听器  当感知到当前节点变成leader节点后 会往metadata中插入一个唯一值
             clusterService.addLocalNodeMasterListener(
-                    new ConsistentSettingsService(settings, clusterService, settingsModule.getConsistentSettings())
-                            .newHashPublisher());
+                new ConsistentSettingsService(settings, clusterService, settingsModule.getConsistentSettings())
+                    .newHashPublisher());
 
             // 摄取服务
             final IngestService ingestService = new IngestService(clusterService, threadPool, this.environment,
@@ -488,19 +490,19 @@ public class Node implements Closeable {
             final Collection<EnginePlugin> enginePlugins = pluginsService.filterPlugins(EnginePlugin.class);
             // 抽取引擎工厂 在不考虑插件的情况下默认为空
             final Collection<Function<IndexSettings, Optional<EngineFactory>>> engineFactoryProviders =
-                    Stream.concat(
-                            indicesModule.getEngineFactories().stream(),
-                            enginePlugins.stream().map(plugin -> plugin::getEngineFactory))
+                Stream.concat(
+                    indicesModule.getEngineFactories().stream(),
+                    enginePlugins.stream().map(plugin -> plugin::getEngineFactory))
                     .collect(Collectors.toList());
 
 
             // 从插件中加载索引存储工厂  默认也是空
             final Map<String, IndexStorePlugin.DirectoryFactory> indexStoreFactories =
-                    pluginsService.filterPlugins(IndexStorePlugin.class)
-                            .stream()
-                            .map(IndexStorePlugin::getDirectoryFactories)
-                            .flatMap(m -> m.entrySet().stream())
-                            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+                pluginsService.filterPlugins(IndexStorePlugin.class)
+                    .stream()
+                    .map(IndexStorePlugin::getDirectoryFactories)
+                    .flatMap(m -> m.entrySet().stream())
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
             // 忽略系统索引插件
             final Map<String, Collection<SystemIndexDescriptor>> systemIndexDescriptorMap = pluginsService
@@ -524,33 +526,33 @@ public class Node implements Closeable {
                     clusterService, client, metaStateService, engineFactoryProviders, indexStoreFactories,
                     searchModule.getValuesSourceRegistry());
 
-            // 别名校验器
+            // 别名校验器 TODO 先忽略
             final AliasValidator aliasValidator = new AliasValidator();
 
-            // 创建索引元数据的服务对象
+            // 创建索引的服务
             final MetadataCreateIndexService metadataCreateIndexService = new MetadataCreateIndexService(
-                    settings,
-                    clusterService,
-                    indicesService,
-                    clusterModule.getAllocationService(),
-                    aliasValidator,
-                    environment,
-                    settingsModule.getIndexScopedSettings(),
-                    threadPool,
-                    xContentRegistry,
-                    systemIndexDescriptors,
-                    forbidPrivateIndexSettings);
+                settings,
+                clusterService,
+                indicesService,
+                clusterModule.getAllocationService(),
+                aliasValidator,
+                environment,
+                settingsModule.getIndexScopedSettings(),
+                threadPool,
+                xContentRegistry,
+                systemIndexDescriptors,
+                forbidPrivateIndexSettings);
 
             final SetOnce<RepositoriesService> repositoriesServiceReference = new SetOnce<>();
-            // 使用这些参数构建插件需要的组件
+            // TODO 先忽略插件
             Collection<Object> pluginComponents = pluginsService.filterPlugins(Plugin.class).stream()
                 .flatMap(p -> p.createComponents(client, clusterService, threadPool, resourceWatcherService,
-                                                 scriptService, xContentRegistry, environment, nodeEnvironment,
-                                                 namedWriteableRegistry, clusterModule.getIndexNameExpressionResolver(),
-                                                 repositoriesServiceReference::get).stream())
+                    scriptService, xContentRegistry, environment, nodeEnvironment,
+                    namedWriteableRegistry, clusterModule.getIndexNameExpressionResolver(),
+                    repositoriesServiceReference::get).stream())
                 .collect(Collectors.toList());
 
-            // 这个应该是指令模块吧
+            // 外部发起的REST请求 在Client处理时 会对应到一个handler对象  关联关系就是在ActionModule中建立的
             ActionModule actionModule = new ActionModule(settings, clusterModule.getIndexNameExpressionResolver(),
                 settingsModule.getIndexScopedSettings(), settingsModule.getClusterSettings(), settingsModule.getSettingsFilter(),
                 threadPool, pluginsService.filterPlugins(ActionPlugin.class), client, circuitBreakerService, usageService, clusterService);
@@ -558,24 +560,26 @@ public class Node implements Closeable {
 
             // 处理http请求 以及分发请求
             final RestController restController = actionModule.getRestController();
-            // 创建网络模块
+            // 创建网络模块  这里传入 restController作为dispatch
             final NetworkModule networkModule = new NetworkModule(settings, pluginsService.filterPlugins(NetworkPlugin.class),
                 threadPool, bigArrays, pageCacheRecycler, circuitBreakerService, namedWriteableRegistry, xContentRegistry,
                 networkService, restController, clusterService.getClusterSettings());
 
-            // 索引模板是什么 ???
+            // 忽略插件携带的索引模板
             Collection<UnaryOperator<Map<String, IndexTemplateMetadata>>> indexTemplateMetadataUpgraders =
                 pluginsService.filterPlugins(Plugin.class).stream()
                     .map(Plugin::getIndexTemplateMetadataUpgrader)
                     .collect(Collectors.toList());
-            // 元数据升级对象
+            // TODO 元数据升级对象
             final MetadataUpgrader metadataUpgrader = new MetadataUpgrader(indexTemplateMetadataUpgraders);
             final MetadataIndexUpgradeService metadataIndexUpgradeService = new MetadataIndexUpgradeService(settings, xContentRegistry,
                 indicesModule.getMapperRegistry(), settingsModule.getIndexScopedSettings());
 
-            // 该对象在创建时 会将自己作为监听器注册到集群对象上 所以这里不需要维护它的引用
+            // 先忽略升级对象
             new TemplateUpgradeService(client, clusterService, threadPool, indexTemplateMetadataUpgraders);
             final Transport transport = networkModule.getTransportSupplier().get();
+
+            // 除开插件外 默认情况下task请求只需要追踪一个链路id
             Set<String> taskHeaders = Stream.concat(
                 pluginsService.filterPlugins(ActionPlugin.class).stream().flatMap(p -> p.getTaskHeaders().stream()),
                 Stream.of(Task.X_OPAQUE_ID)
@@ -585,16 +589,15 @@ public class Node implements Closeable {
                 networkModule.getTransportInterceptor(), localNodeFactory, settingsModule.getClusterSettings(), taskHeaders);
             // 网关元数据对象
             final GatewayMetaState gatewayMetaState = new GatewayMetaState();
-            // 同样将自己作为监听器注册到集群对象上
+            // 用于采集与其他节点交互数据的服务  在初始化时也会将自身注册到 clusterService上
             final ResponseCollectorService responseCollectorService = new ResponseCollectorService(clusterService);
-            // 查询传输层服务
-            final SearchTransportService searchTransportService =  new SearchTransportService(transportService,
+            // 在查询过程中 会统计相关数据
+            final SearchTransportService searchTransportService = new SearchTransportService(transportService,
                 SearchExecutionStatsCollector.makeWrapper(responseCollectorService));
             // 生成http传输层服务
             final HttpServerTransport httpServerTransport = newHttpTransport(networkModule);
 
-
-            // 存储模块
+            // 存储模块 基于FS有默认实现 TODO 先忽略插件
             RepositoriesModule repositoriesModule = new RepositoriesModule(this.environment,
                 pluginsService.filterPlugins(RepositoryPlugin.class), transportService, clusterService, threadPool, xContentRegistry);
             RepositoriesService repositoryService = repositoriesModule.getRepositoryService();
@@ -606,32 +609,37 @@ public class Node implements Closeable {
             SnapshotShardsService snapshotShardsService = new SnapshotShardsService(settings, clusterService, repositoryService,
                 threadPool, transportService, indicesService, actionModule.getActionFilters(),
                 clusterModule.getIndexNameExpressionResolver());
-            // 恢复服务
+            // 数据恢复服务
             RestoreService restoreService = new RestoreService(clusterService, repositoryService, clusterModule.getAllocationService(),
                 metadataCreateIndexService, metadataIndexUpgradeService, clusterService.getClusterSettings());
 
-            // 重路由服务
+            // 批量路由服务
             final RerouteService rerouteService
                 = new BatchedRerouteService(clusterService, clusterModule.getAllocationService()::reroute);
-            // 磁盘阀值监控器
+            // 监控磁盘使用情况的先忽略
             final DiskThresholdMonitor diskThresholdMonitor = new DiskThresholdMonitor(settings, clusterService::state,
                 clusterService.getClusterSettings(), client, threadPool::relativeTimeInMillis, rerouteService);
+            // clusterInfoService 每隔一定时间会重新采集当前节点的信息  diskThresholdMonitor专门处理有关磁盘使用的信息
             clusterInfoService.addListener(diskThresholdMonitor::onNewInfo);
 
-            // 自主发现新增节点么
+            // 注册发现模块 内部包含注册中心 Coordinator
             final DiscoveryModule discoveryModule = new DiscoveryModule(settings, transportService, namedWriteableRegistry,
                 networkService, clusterService.getMasterService(), clusterService.getClusterApplierService(),
                 clusterService.getClusterSettings(), pluginsService.filterPlugins(DiscoveryPlugin.class),
                 clusterModule.getAllocationService(), environment.configFile(), gatewayMetaState, rerouteService);
+
+            // 通过相关参数初始化node服务  可以反映当前node的信息
             this.nodeService = new NodeService(settings, threadPool, monitorService, discoveryModule.getDiscovery(),
                 transportService, indicesService, pluginsService, circuitBreakerService, scriptService,
                 httpServerTransport, ingestService, clusterService, settingsModule.getSettingsFilter(), responseCollectorService,
                 searchTransportService);
 
+            // 搜索服务
             final SearchService searchService = newSearchService(clusterService, indicesService,
                 threadPool, scriptService, bigArrays, searchModule.getFetchPhase(),
                 responseCollectorService, circuitBreakerService);
 
+            // TODO ES没有内置实现 先忽略
             final List<PersistentTasksExecutor<?>> tasksExecutors = pluginsService
                 .filterPlugins(PersistentTaskPlugin.class).stream()
                 .map(p -> p.getPersistentTasksExecutor(clusterService, threadPool, client, settingsModule,
@@ -645,11 +653,10 @@ public class Node implements Closeable {
             resourcesToClose.add(persistentTasksClusterService);
             final PersistentTasksService persistentTasksService = new PersistentTasksService(clusterService, threadPool, client);
 
-            // 将相关对象注册到IOC 容器中
+            // module包含一个api 将接口与实例的绑定关系设置到binder中  这样就可以利用@Inject注解实现依赖注入了
             modules.add(
                 // 该函数对应 Module.configure
                 b -> {
-                    // 将各个组件绑定到  Binder上
                     b.bind(Node.class).toInstance(this);
                     b.bind(NodeService.class).toInstance(nodeService);
                     b.bind(NamedXContentRegistry.class).toInstance(xContentRegistry);
@@ -691,9 +698,9 @@ public class Node implements Closeable {
                         RecoverySettings recoverySettings = new RecoverySettings(settings, settingsModule.getClusterSettings());
                         processRecoverySettings(settingsModule.getClusterSettings(), recoverySettings);
                         b.bind(PeerRecoverySourceService.class).toInstance(new PeerRecoverySourceService(transportService,
-                                indicesService, recoverySettings, bigArrays));
+                            indicesService, recoverySettings, bigArrays));
                         b.bind(PeerRecoveryTargetService.class).toInstance(new PeerRecoveryTargetService(threadPool,
-                                transportService, recoverySettings, clusterService));
+                            transportService, recoverySettings, clusterService));
                     }
                     b.bind(HttpServerTransport.class).toInstance(httpServerTransport);
                     pluginComponents.stream().forEach(p -> b.bind((Class) p.getClass()).toInstance(p));
@@ -717,14 +724,18 @@ public class Node implements Closeable {
             // reroute, which needs to call into the allocation service. We close the loop here:
             clusterModule.setExistingShardsAllocators(injector.getInstance(GatewayAllocator.class));
 
+            // TODO
             List<LifecycleComponent> pluginLifecycleComponents = pluginComponents.stream()
                 .filter(p -> p instanceof LifecycleComponent)
                 .map(p -> (LifecycleComponent) p).collect(Collectors.toList());
             resourcesToClose.addAll(pluginLifecycleComponents);
             resourcesToClose.add(injector.getInstance(PeerRecoverySourceService.class));
             this.pluginLifecycleComponents = Collections.unmodifiableList(pluginLifecycleComponents);
-            client.initialize(injector.getInstance(new Key<Map<ActionType, TransportAction>>() {}), transportService.getTaskManager(),
-                    () -> clusterService.localNode().getId(), transportService.getRemoteClusterService());
+
+            // 这里是从IOC容器中找到所有 ActionType与对应处理器
+            client.initialize(injector.getInstance(new Key<Map<ActionType, TransportAction>>() {
+                }), transportService.getTaskManager(),
+                () -> clusterService.localNode().getId(), transportService.getRemoteClusterService());
             this.namedWriteableRegistry = namedWriteableRegistry;
 
             logger.debug("initializing HTTP handlers ...");
@@ -784,7 +795,7 @@ public class Node implements Closeable {
 
     /**
      * Start the node. If the node is already started, this method is no-op.
-     * 启动节点
+     * 当节点初始化完成后  在Bootstrap中会执行node.start()
      */
     public Node start() throws NodeValidationException {
         if (!lifecycle.moveToStarted()) {
@@ -792,12 +803,13 @@ public class Node implements Closeable {
         }
 
         logger.info("starting ...");
-        // 挨个启动所有生命周期组件
+        // 优先启动所有具备生命周期钩子的函数  TODO 先忽略钩子相关的
         pluginLifecycleComponents.forEach(LifecycleComponent::start);
 
-        // 手动启动一些服务
         injector.getInstance(MappingUpdatedAction.class).setClient(client);
+        // 启动一个清理缓存的定时任务
         injector.getInstance(IndicesService.class).start();
+        // 监听CS中 index/shard的分配情况
         injector.getInstance(IndicesClusterStateService.class).start();
         injector.getInstance(SnapshotsService.class).start();
         injector.getInstance(SnapshotShardsService.class).start();
@@ -871,7 +883,9 @@ public class Node implements Closeable {
                 final CountDownLatch latch = new CountDownLatch(1);
                 observer.waitForNextChange(new ClusterStateObserver.Listener() {
                     @Override
-                    public void onNewClusterState(ClusterState state) { latch.countDown(); }
+                    public void onNewClusterState(ClusterState state) {
+                        latch.countDown();
+                    }
 
                     @Override
                     public void onClusterServiceClose() {
@@ -1046,7 +1060,7 @@ public class Node implements Closeable {
             // that run on shards run in the threadpool, indices should be effectively closed by now.
             if (nodeService.awaitClose(0, TimeUnit.MILLISECONDS) == false) {
                 throw new IllegalStateException("Some shards are still open after the threadpool terminated. " +
-                        "Something is leaking index readers or store references.");
+                    "Something is leaking index readers or store references.");
             }
         }
         return terminated;
@@ -1079,7 +1093,9 @@ public class Node implements Closeable {
         final BoundTransportAddress boundTransportAddress, List<BootstrapCheck> bootstrapChecks) throws NodeValidationException {
     }
 
-    /** Writes a file to the logs dir containing the ports for the given transport type */
+    /**
+     * Writes a file to the logs dir containing the ports for the given transport type
+     */
     private void writePortsFile(String type, BoundTransportAddress boundAddress) {
         Path tmpPortsFile = environment.logsFile().resolve(type + ".ports.tmp");
         try (BufferedWriter writer = Files.newBufferedWriter(tmpPortsFile, Charset.forName("UTF-8"))) {
@@ -1107,6 +1123,7 @@ public class Node implements Closeable {
 
     /**
      * Creates a new {@link CircuitBreakerService} based on the settings provided.
+     *
      * @see #BREAKER_TYPE_KEY
      * 目前仅支持 hierarchy 断路器
      */
@@ -1139,6 +1156,7 @@ public class Node implements Closeable {
 
     /**
      * Creates a new the SearchService. This method can be overwritten by tests to inject mock implementations.
+     * 创建一个新的搜索服务
      */
     protected SearchService newSearchService(ClusterService clusterService, IndicesService indicesService,
                                              ThreadPool threadPool, ScriptService scriptService, BigArrays bigArrays,
@@ -1157,6 +1175,7 @@ public class Node implements Closeable {
 
     /**
      * Get Custom Name Resolvers list based on a Discovery Plugins list
+     *
      * @param discoveryPlugins Discovery plugins list
      *                         找到每个插件下的地址服务并返回
      */
@@ -1180,7 +1199,9 @@ public class Node implements Closeable {
         return new InternalClusterInfoService(settings, clusterService, threadPool, client);
     }
 
-    /** Constructs a {@link org.elasticsearch.http.HttpServerTransport} which may be mocked for tests. */
+    /**
+     * Constructs a {@link org.elasticsearch.http.HttpServerTransport} which may be mocked for tests.
+     */
     protected HttpServerTransport newHttpTransport(NetworkModule networkModule) {
         return networkModule.getHttpServerTransportSupplier().get();
     }
@@ -1196,9 +1217,8 @@ public class Node implements Closeable {
         private final Settings settings;
 
         /**
-         *
-         * @param settings  存储了配置信息
-         * @param persistentNodeId   本地节点id
+         * @param settings         存储了配置信息
+         * @param persistentNodeId 本地节点id
          */
         private LocalNodeFactory(Settings settings, String persistentNodeId) {
             this.persistentNodeId = persistentNodeId;
@@ -1207,6 +1227,7 @@ public class Node implements Closeable {
 
         /**
          * 当指定对外暴露的地址时 就可以创建能被集群发现的node了
+         *
          * @param boundTransportAddress
          * @return
          */

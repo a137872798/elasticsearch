@@ -75,6 +75,7 @@ import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadF
  * the state being loaded when constructing the instance of this class is not necessarily the state that will be used as {@link
  * ClusterState#metadata()} because it might be stale or incomplete. Master-eligible nodes must perform an election to find a complete and
  * non-stale state, and master-ineligible nodes receive the real cluster state from the elected master after joining the cluster.
+ * Coordinator 在选举时需要通过该对象获取选举状态
  */
 public class GatewayMetaState implements Closeable {
 

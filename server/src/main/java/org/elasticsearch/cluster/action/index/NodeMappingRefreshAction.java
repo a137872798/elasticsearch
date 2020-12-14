@@ -57,6 +57,11 @@ public class NodeMappingRefreshAction {
            ThreadPool.Names.SAME,  NodeMappingRefreshRequest::new, new NodeMappingRefreshTransportHandler());
     }
 
+    /**
+     * 当某节点下 某索引的映射信息发生了变化  通知leader节点
+     * @param masterNode
+     * @param request
+     */
     public void nodeMappingRefresh(final DiscoveryNode masterNode, final NodeMappingRefreshRequest request) {
         if (masterNode == null) {
             logger.warn("can't send mapping refresh for [{}], no master known.", request.index());

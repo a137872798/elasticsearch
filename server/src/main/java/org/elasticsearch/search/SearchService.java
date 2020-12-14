@@ -132,6 +132,9 @@ import static org.elasticsearch.common.unit.TimeValue.timeValueHours;
 import static org.elasticsearch.common.unit.TimeValue.timeValueMillis;
 import static org.elasticsearch.common.unit.TimeValue.timeValueMinutes;
 
+/**
+ * 搜索服务
+ */
 public class SearchService extends AbstractLifecycleComponent implements IndexEventListener {
     private static final Logger logger = LogManager.getLogger(SearchService.class);
 
@@ -179,6 +182,9 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
 
     private final DfsPhase dfsPhase = new DfsPhase();
 
+    /**
+     * 查询操作本身分为多个阶段
+     */
     private final QueryPhase queryPhase;
 
     private final FetchPhase fetchPhase;
@@ -201,10 +207,24 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
 
     private final ConcurrentMapLong<SearchContext> activeContexts = ConcurrentCollections.newConcurrentMapLongWithAggressiveConcurrency();
 
+    /**
+     * 多bucket消费服务
+     */
     private final MultiBucketConsumerService multiBucketConsumerService;
 
     private final AtomicInteger openScrollContexts = new AtomicInteger();
 
+    /**
+     * 初始化搜索服务
+     * @param clusterService
+     * @param indicesService
+     * @param threadPool
+     * @param scriptService
+     * @param bigArrays
+     * @param fetchPhase  在拉取过程中会经历一些阶段  ES会内置一些fetchPhase对象   也可以从插件中获取
+     * @param responseCollectorService
+     * @param circuitBreakerService
+     */
     public SearchService(ClusterService clusterService, IndicesService indicesService,
                          ThreadPool threadPool, ScriptService scriptService, BigArrays bigArrays, FetchPhase fetchPhase,
                          ResponseCollectorService responseCollectorService, CircuitBreakerService circuitBreakerService) {
@@ -220,17 +240,21 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
         this.multiBucketConsumerService = new MultiBucketConsumerService(clusterService, settings,
             circuitBreakerService.getBreaker(CircuitBreaker.REQUEST));
 
+        // 每次生成的查询上下文有一个存活时间
         TimeValue keepAliveInterval = KEEPALIVE_INTERVAL_SETTING.get(settings);
         setKeepAlives(DEFAULT_KEEPALIVE_SETTING.get(settings), MAX_KEEPALIVE_SETTING.get(settings));
 
         clusterService.getClusterSettings().addSettingsUpdateConsumer(DEFAULT_KEEPALIVE_SETTING, MAX_KEEPALIVE_SETTING,
             this::setKeepAlives, this::validateKeepAlives);
 
+        // 该后台任务就是定期检测所有上下文  将长时间不被使用的上下文对象关闭
         this.keepAliveReaper = threadPool.scheduleWithFixedDelay(new Reaper(), keepAliveInterval, Names.SAME);
 
+        // 获取单次查询的超时时间
         defaultSearchTimeout = DEFAULT_SEARCH_TIMEOUT_SETTING.get(settings);
         clusterService.getClusterSettings().addSettingsUpdateConsumer(DEFAULT_SEARCH_TIMEOUT_SETTING, this::setDefaultSearchTimeout);
 
+        // 是否允许分区查询结果
         defaultAllowPartialSearchResults = DEFAULT_ALLOW_PARTIAL_SEARCH_RESULTS.get(settings);
         clusterService.getClusterSettings().addSettingsUpdateConsumer(DEFAULT_ALLOW_PARTIAL_SEARCH_RESULTS,
                 this::setDefaultAllowPartialSearchResults);
@@ -758,7 +782,7 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
     }
 
     /**
-     * 清理某个上下文
+     * 释放查询上下文
      * @param contextId
      * @return
      */
@@ -1092,6 +1116,9 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
         return this.responseCollectorService;
     }
 
+    /**
+     * 检测所有上下文对象 如果发现长时间未使用 则进行释放
+     */
     class Reaper implements Runnable {
         @Override
         public void run() {

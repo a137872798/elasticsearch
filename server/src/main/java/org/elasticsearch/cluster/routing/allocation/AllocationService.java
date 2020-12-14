@@ -103,7 +103,7 @@ public class AllocationService {
 
     /**
      * Inject the {@link ExistingShardsAllocator}s to use. May only be called once.
-     * 设置某种分片分配器
+     * 在Node初始化阶段  完成IOC容器的构建后 会将此时已经存在的分片分配器设置到 AllocationService中
      */
     public void setExistingShardsAllocators(Map<String, ExistingShardsAllocator> existingShardsAllocators) {
         assert this.existingShardsAllocators == null : "cannot set allocators " + existingShardsAllocators + " twice";

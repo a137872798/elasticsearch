@@ -272,6 +272,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     private Optional<CoordinatorPublication> currentPublication = Optional.empty();
 
     /**
+     * @param persistedStateSupplier 获取持久化状态 通过 gatewayMetaState::getPersistedState
      * @param nodeName         The name of the node, used to name the {@link java.util.concurrent.ExecutorService} of the {@link SeedHostsResolver}.
      * @param onJoinValidators A collection of join validators to restrict which nodes may join the cluster.
      *                         在构造函数中只是做了一些赋值操作

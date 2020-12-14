@@ -75,7 +75,7 @@ public final class ConnectionProfile {
      * @return the connection profile
      */
     public static ConnectionProfile buildDefaultConnectionProfile(Settings settings) {
-        // 代表每种节点支持的连接数
+        // 不同的操作类型会生成不同数量的channel
         int connectionsPerNodeRecovery = TransportSettings.CONNECTIONS_PER_NODE_RECOVERY.get(settings);
         int connectionsPerNodeBulk = TransportSettings.CONNECTIONS_PER_NODE_BULK.get(settings);
         int connectionsPerNodeReg = TransportSettings.CONNECTIONS_PER_NODE_REG.get(settings);

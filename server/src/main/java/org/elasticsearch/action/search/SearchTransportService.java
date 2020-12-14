@@ -82,6 +82,11 @@ public class SearchTransportService {
     private final BiFunction<Transport.Connection, SearchActionListener, ActionListener> responseWrapper;
     private final Map<String, Long> clientConnections = ConcurrentCollections.newConcurrentMapWithAggressiveConcurrency();
 
+    /**
+     *
+     * @param transportService
+     * @param responseWrapper  通过传入指定的connection 可以转换成一个 SearchExecutionStatsCollector 对象 会采集收到的结果
+     */
     public SearchTransportService(TransportService transportService,
                                   BiFunction<Transport.Connection, SearchActionListener, ActionListener> responseWrapper) {
         this.transportService = transportService;

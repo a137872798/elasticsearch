@@ -72,6 +72,9 @@ public class FsRepository extends BlobStoreRepository {
 
     /**
      * Constructs a shared file system repository.
+     * @param metadata 描述存储层的元数据信息
+     * @param environment 当前环境
+     * 初始化基于文件的存储层
      */
     public FsRepository(RepositoryMetadata metadata, Environment environment, NamedXContentRegistry namedXContentRegistry,
                         ClusterService clusterService) {

@@ -881,6 +881,7 @@ public class RestoreService implements ClusterStateApplier {
 
     /**
      * 清理恢复状态的任务
+     * 会在更新集群状态的时候使用
      */
     static class CleanRestoreStateTaskExecutor implements ClusterStateTaskExecutor<CleanRestoreStateTaskExecutor.Task>,
         ClusterStateTaskListener {

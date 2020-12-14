@@ -44,7 +44,7 @@ public interface ClusterApplier {
 
     /**
      * Listener for results of cluster state application
-     * 处理集群状态的结果
+     * 更新集群状态结果的监听器  在UpdateTask 内部
      */
     interface ClusterApplyListener {
         /**

@@ -109,9 +109,7 @@ import static java.util.Collections.unmodifiableMap;
 /**
  * 索引服务
  * 每个节点下包含一个  IndicesService 之后针对每个index 会单独生成一个 IndexService
- * 核心功能就是生成IndexShard 和移除IndexShard 看来跟lucene有关的还是要看IndexShard本身
- *
- * AllocatedIndex 接口代表着indexService对应的index 已经分配完成 并且该对象在indexMetadata发生变化时 可以作出处理 以及根据shardId 移除/获取 shard
+ * 核心功能就是生成IndexShard 和移除IndexShard
  */
 public class IndexService extends AbstractIndexComponent implements IndicesClusterStateService.AllocatedIndex<IndexShard> {
 
@@ -799,7 +797,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     }
 
     /**
-     * 当元数据发生变化时 检测是否需要更新
+     * 当元数据发生变化时
+     * 更新映射信息
      * @param currentIndexMetadata
      * @param newIndexMetadata
      * @return
@@ -927,7 +926,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
 
 
     /**
-     * 根据前后变化的元数据 更新indexService
+     * 更新索引元数据
      * @param currentIndexMetadata the current index metadata
      * @param newIndexMetadata the new index metadata
      */

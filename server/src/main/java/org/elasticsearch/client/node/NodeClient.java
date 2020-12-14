@@ -70,11 +70,10 @@ public class NodeClient extends AbstractClient {
     }
 
     /**
-     * 在初始化时 会将当前能接收的所有命令填充到内部
-     * @param actions
-     * @param taskManager
+     * @param actions 从IOC容器中获取所有键值对
+     * @param taskManager 任务管理器 每当client处理请求前 都会在注册到该对象上
      * @param localNodeId
-     * @param remoteClusterService
+     * @param remoteClusterService  与远端集群通信的服务
      */
     @SuppressWarnings("rawtypes")
     public void initialize(Map<ActionType, TransportAction> actions, TaskManager taskManager, Supplier<String> localNodeId,

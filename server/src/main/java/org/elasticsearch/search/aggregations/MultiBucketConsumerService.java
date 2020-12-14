@@ -36,6 +36,7 @@ import java.util.function.IntConsumer;
  * The consumer is used by {@link BucketsAggregator} and {@link InternalMultiBucketAggregation} to limit the number of buckets created
  * in {@link Aggregator#buildAggregation} and {@link InternalAggregation#reduce}.
  * The limit can be set by changing the `search.max_buckets` cluster setting and defaults to 10000.
+ * 支持并发查询  bucket可能就是指并发度
  */
 public class MultiBucketConsumerService {
     public static final int DEFAULT_MAX_BUCKETS = 10000;

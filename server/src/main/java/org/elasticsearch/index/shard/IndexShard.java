@@ -630,16 +630,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
 
     /**
-     * TODO 当理解了主从节点的分配规则后再看这个
-     * 更新分片的状态    应该是在集群服务层 感知到分片的变化 更新本地分片   那么谁来发起更新
      *
      * @param newRouting
      * @param newPrimaryTerm              当前主分片的 term 每个在集群中更替 主分片在集群中的位置 就会增加term
      * @param primaryReplicaSyncer        the primary-replica resync action to trigger when a term is increased on a primary
      * @param applyingClusterStateVersion the cluster state version being applied when updating the allocation IDs from the master
-     * @param inSyncAllocationIds         the allocation ids of the currently in-sync shard copies
+     * @param inSyncAllocationIds         the allocation ids of the currently in-sync shard copies    同步该分片数据的所有节点
      * @param routingTable                the shard routing table     某个shard在整个集群中最新的分布情况
      * @throws IOException
+     * 更新分片的状态   在IndicesClusterStateService中 会监听CS的变化
      */
     @Override
     public void updateShardState(final ShardRouting newRouting,
@@ -2552,11 +2551,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 某个分片的刷盘操作被延后时触发
+     * 将当前分片标记为阻塞状态  场景就是 IndexingMemoryController 定期检测 发现内存使用量超标 会将几个特别大的分片标记成阻塞状态
      */
     public void activateThrottling() {
         try {
-            // 开启阀门 这样 throttling内部的lock 会替换成一个有效的锁对象 否则是一个NOOP锁
             getEngine().activateThrottling();
         } catch (AlreadyClosedException ex) {
             // ignore
@@ -2564,7 +2562,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 当此时buffer中有足够的空间 将阀门内部的lock重置修改成NOOP
+     * IndexMemoryController 会定期检测内存使用是否超量 是的话会将使用量比较高的几个分片标记成阻塞状态
+     * 当内存使用量降下来时 会取消标记
      */
     public void deactivateThrottling() {
         try {
@@ -2599,7 +2598,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Called when our shard is using too much heap and should move buffered indexed/deleted documents to disk.
-     * 实际上是将数据写入到磁盘
+     * 当此时分片消耗了太多内存时 会通过该方法将数据强制刷盘
      */
     public void writeIndexingBuffer() {
         try {

@@ -25,6 +25,7 @@ import java.util.List;
 
 /**
  * A pluggable provider of the list of seed hosts to use for discovery.
+ * 获取种子地址
  */
 public interface SeedHostsProvider {
 

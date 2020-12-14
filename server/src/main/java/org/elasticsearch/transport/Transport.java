@@ -223,7 +223,9 @@ public interface Transport extends LifecycleComponent {
      */
     final class ResponseHandlers {
 
-        // 这个有点像命令池啊
+        /**
+         * 每个请求id 会绑定一个resContext 内部包含了如何处理res的逻辑
+         */
         private final ConcurrentMapLong<ResponseContext<? extends TransportResponse>> handlers = ConcurrentCollections
             .newConcurrentMapLongWithAggressiveConcurrency();
         private final AtomicLong requestIdGenerator = new AtomicLong();

@@ -73,6 +73,18 @@ public class NioTransport extends TcpTransport {
      */
     private volatile Function<DiscoveryNode, TcpChannelFactory> clientChannelFactory;
 
+
+    /**
+     * 初始化基于原生NIO 的传输层对象
+     * @param settings
+     * @param version
+     * @param threadPool
+     * @param networkService
+     * @param pageCacheRecycler
+     * @param namedWriteableRegistry
+     * @param circuitBreakerService
+     * @param groupFactory
+     */
     protected NioTransport(Settings settings, Version version, ThreadPool threadPool, NetworkService networkService,
                            PageCacheRecycler pageCacheRecycler, NamedWriteableRegistry namedWriteableRegistry,
                            CircuitBreakerService circuitBreakerService, NioGroupFactory groupFactory) {

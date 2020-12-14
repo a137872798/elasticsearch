@@ -309,10 +309,15 @@ public class ClusterModule extends AbstractModule {
         bind(ShardsAllocator.class).toInstance(shardsAllocator);
     }
 
+    /**
+     * 将 网关分配器设置到 集群模块中
+     * @param gatewayAllocator
+     */
     public void setExistingShardsAllocators(GatewayAllocator gatewayAllocator) {
         final Map<String, ExistingShardsAllocator> existingShardsAllocators = new HashMap<>();
         existingShardsAllocators.put(GatewayAllocator.ALLOCATOR_NAME, gatewayAllocator);
 
+        // TODO 先忽略插件
         for (ClusterPlugin clusterPlugin : clusterPlugins) {
             for (Map.Entry<String, ExistingShardsAllocator> existingShardsAllocatorEntry
                 : clusterPlugin.getExistingShardsAllocators().entrySet()) {

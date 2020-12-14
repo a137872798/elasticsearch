@@ -51,10 +51,18 @@ public final class NioGroupFactory {
 
     private final Logger logger;
     private final Settings settings;
+    /**
+     * worker数量 (事件循环线程数量)
+     */
     private final int httpWorkerCount;
 
     private RefCountedNioGroup refCountedGroup;
 
+    /**
+     *
+     * @param settings 内部包含相关配置
+     * @param logger
+     */
     public NioGroupFactory(Settings settings, Logger logger) {
         this.logger = logger;
         this.settings = settings;

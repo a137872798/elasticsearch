@@ -91,6 +91,14 @@ public class RestController implements HttpServerTransport.Dispatcher {
     private final Set<RestHeaderDefinition> headersToCopy;
     private final UsageService usageService;
 
+    /**
+     * 在ActionModule模块 会创建Rest请求分发器  通过指定的path 在Trie树中找到匹配的handler 并转发处理
+     * @param headersToCopy
+     * @param handlerWrapper
+     * @param client
+     * @param circuitBreakerService
+     * @param usageService
+     */
     public RestController(Set<RestHeaderDefinition> headersToCopy, UnaryOperator<RestHandler> handlerWrapper,
             NodeClient client, CircuitBreakerService circuitBreakerService, UsageService usageService) {
         this.headersToCopy = headersToCopy;
@@ -191,7 +199,7 @@ public class RestController implements HttpServerTransport.Dispatcher {
      */
     @Override
     public void dispatchRequest(RestRequest request, RestChannel channel, ThreadContext threadContext) {
-        // TODO
+        // 处理获取图标的请求
         if (request.rawPath().equals("/favicon.ico")) {
             handleFavicon(request.method(), request.uri(), channel);
             return;

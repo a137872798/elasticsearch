@@ -60,9 +60,8 @@ public final class RepositoriesModule {
         // 基于文件系统是默认实现  也有按照google云   hdfs（好像是大数据相关的）实现的
         factories.put(FsRepository.TYPE, metadata -> new FsRepository(metadata, env, namedXContentRegistry, clusterService));
 
+        // TODO 先忽略插件
         for (RepositoryPlugin repoPlugin : repoPlugins) {
-            // 每个插件都可以包含不止一种实现
-            // TODO 先忽略吧  只需要关注如何基于本地文件实现快照功能
             Map<String, Repository.Factory> newRepoTypes = repoPlugin.getRepositories(env, namedXContentRegistry, clusterService);
             for (Map.Entry<String, Repository.Factory> entry : newRepoTypes.entrySet()) {
                 if (factories.put(entry.getKey(), entry.getValue()) != null) {
@@ -71,7 +70,7 @@ public final class RepositoriesModule {
             }
         }
 
-        // 内部工厂是什么鬼
+        // TODO 插件下才会有内部工厂 先忽略
         Map<String, Repository.Factory> internalFactories = new HashMap<>();
         for (RepositoryPlugin repoPlugin : repoPlugins) {
             Map<String, Repository.Factory> newRepoTypes = repoPlugin.getInternalRepositories(env, namedXContentRegistry, clusterService);

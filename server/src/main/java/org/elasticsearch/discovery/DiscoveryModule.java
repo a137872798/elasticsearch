@@ -60,6 +60,7 @@ import static org.elasticsearch.node.Node.NODE_NAME_SETTING;
 
 /**
  * A module for loading classes for node discovery.
+ * 集群中注册发现模块
  */
 public class DiscoveryModule {
     private static final Logger logger = LogManager.getLogger(DiscoveryModule.class);
@@ -79,19 +80,45 @@ public class DiscoveryModule {
     public static final Setting<String> ELECTION_STRATEGY_SETTING =
         new Setting<>("cluster.election.strategy", DEFAULT_ELECTION_STRATEGY, Function.identity(), Property.NodeScope);
 
+    /**
+     * 注册中心
+     */
     private final Discovery discovery;
 
+
+    /**
+     * 注册发现模块
+     * @param settings
+     * @param transportService
+     * @param namedWriteableRegistry
+     * @param networkService
+     * @param masterService
+     * @param clusterApplier
+     * @param clusterSettings
+     * @param plugins
+     * @param allocationService
+     * @param configFile
+     * @param gatewayMetaState
+     * @param rerouteService
+     */
     public DiscoveryModule(Settings settings, TransportService transportService,
                            NamedWriteableRegistry namedWriteableRegistry, NetworkService networkService, MasterService masterService,
                            ClusterApplier clusterApplier, ClusterSettings clusterSettings, List<DiscoveryPlugin> plugins,
                            AllocationService allocationService, Path configFile, GatewayMetaState gatewayMetaState,
                            RerouteService rerouteService) {
         final Collection<BiConsumer<DiscoveryNode, ClusterState>> joinValidators = new ArrayList<>();
+        // 种子地址就是获取最基础地址信息的服务 比如节点刚启动时 完全不知道整个集群的情况  这时就会先从种子服务器上获取基础信息
         final Map<String, Supplier<SeedHostsProvider>> hostProviders = new HashMap<>();
+
+        // 一种是基于文件获取种子信息 还有一种是基于配置项获取种子信息
         hostProviders.put("settings", () -> new SettingsBasedSeedHostsProvider(settings, transportService));
         hostProviders.put("file", () -> new FileBasedSeedHostsProvider(configFile));
+
+        // 选举策略 应该是决定当集群中节点达到多少数量才选举成功吧 默认就是超过1/2
         final Map<String, ElectionStrategy> electionStrategies = new HashMap<>();
         electionStrategies.put(DEFAULT_ELECTION_STRATEGY, ElectionStrategy.DEFAULT_INSTANCE);
+
+        // TODO 先忽略插件
         for (DiscoveryPlugin plugin : plugins) {
             plugin.getSeedHostProviders(transportService, networkService).forEach((key, value) -> {
                 if (hostProviders.put(key, value) != null) {
@@ -111,6 +138,7 @@ public class DiscoveryModule {
 
         List<String> seedProviderNames = DISCOVERY_SEED_PROVIDERS_SETTING.get(settings);
         // for bwc purposes, add settings provider even if not explicitly specified
+        // 如果没有settings 追加
         if (seedProviderNames.contains("settings") == false) {
             List<String> extendedSeedProviderNames = new ArrayList<>();
             extendedSeedProviderNames.add("settings");
@@ -124,11 +152,13 @@ public class DiscoveryModule {
             throw new IllegalArgumentException("Unknown seed providers " + missingProviderNames);
         }
 
+        // 通过这些名字找到对应的 seedProvider
         List<SeedHostsProvider> filteredSeedProviders = seedProviderNames.stream()
             .map(hostProviders::get).map(Supplier::get).collect(Collectors.toList());
 
         String discoveryType = DISCOVERY_TYPE_SETTING.get(settings);
 
+        // 将List<SeedHostsProvider> 合并成一个 SeedHostsProvider
         final SeedHostsProvider seedHostsProvider = hostsResolver -> {
             final List<TransportAddress> addresses = new ArrayList<>();
             for (SeedHostsProvider provider : filteredSeedProviders) {

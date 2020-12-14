@@ -40,8 +40,7 @@ import java.util.concurrent.ConcurrentMap;
  * Collects statistics about queue size, response time, and service time of
  * tasks executed on each node, making the EWMA of the values available to the
  * coordinating node.
- * 统计节点的响应数据
- * 应该是当前节点为master节点时 与其他节点通信的相关数据
+ * TODO 统计相关的先忽略 不影响主流程
  */
 public final class ResponseCollectorService implements ClusterStateListener {
 

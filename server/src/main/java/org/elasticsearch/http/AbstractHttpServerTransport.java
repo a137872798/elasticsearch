@@ -69,7 +69,13 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
     private static final Logger logger = LogManager.getLogger(AbstractHttpServerTransport.class);
 
     protected final Settings settings;
+    /**
+     * http协议相关的配置项
+     */
     public final HttpHandlingSettings handlingSettings;
+    /**
+     * 负责解析地址
+     */
     protected final NetworkService networkService;
     protected final BigArrays bigArrays;
     protected final ThreadPool threadPool;
@@ -77,6 +83,9 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
     protected final CorsHandler.Config corsConfig;
     private final NamedXContentRegistry xContentRegistry;
 
+    /**
+     * 描述port范围的字符串
+     */
     protected final PortsRange port;
     protected final ByteSizeValue maxContentLength;
     private final String[] bindHosts;
@@ -84,6 +93,10 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
 
     private volatile BoundTransportAddress boundAddress;
     private final AtomicLong totalChannelsAccepted = new AtomicLong();
+
+    /**
+     * 当前服务器维护的所有
+     */
     private final Set<HttpChannel> httpChannels = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final Set<HttpServerChannel> httpServerChannels = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
@@ -101,10 +114,12 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
         this.corsConfig = CorsHandler.fromSettings(settings);
 
         // we can't make the network.bind_host a fallback since we already fall back to http.host hence the extra conditional here
+        // 获取作为Rest服务器
         List<String> httpBindHost = SETTING_HTTP_BIND_HOST.get(settings);
         this.bindHosts = (httpBindHost.isEmpty() ? NetworkService.GLOBAL_NETWORK_BIND_HOST_SETTING.get(settings) : httpBindHost)
             .toArray(Strings.EMPTY_ARRAY);
         // we can't make the network.publish_host a fallback since we already fall back to http.host hence the extra conditional here
+        // 对外暴露的地址
         List<String> httpPublishHost = SETTING_HTTP_PUBLISH_HOST.get(settings);
         this.publishHosts = (httpPublishHost.isEmpty() ? NetworkService.GLOBAL_NETWORK_PUBLISH_HOST_SETTING.get(settings) : httpPublishHost)
             .toArray(Strings.EMPTY_ARRAY);

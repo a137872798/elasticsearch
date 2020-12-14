@@ -69,6 +69,7 @@ public class BatchedRerouteService implements RerouteService {
 
     /**
      * @param reroute Function that computes the updated cluster state after it has been rerouted.
+     *                重路由函数 对应allocationService::reroute   在重路由过程中会更新 CS
      */
     public BatchedRerouteService(ClusterService clusterService, BiFunction<ClusterState, String, ClusterState> reroute) {
         this.clusterService = clusterService;

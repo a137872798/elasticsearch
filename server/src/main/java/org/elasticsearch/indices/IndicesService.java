@@ -242,7 +242,7 @@ public class IndicesService extends AbstractLifecycleComponent
 
 
     /**
-     * 启动时 开启缓存清理线程
+     * 在ES启动过程中 首个调用start的组件就是indicesService
      */
     @Override
     protected void doStart() {
@@ -269,8 +269,8 @@ public class IndicesService extends AbstractLifecycleComponent
      * @param clusterService
      * @param client
      * @param metaStateService
-     * @param engineFactoryProviders
-     * @param directoryFactories
+     * @param engineFactoryProviders  默认为空  会使用ES内置的引擎工厂
+     * @param directoryFactories  默认也为空 会使用默认的存储对象 基于FS
      * @param valuesSourceRegistry
      */
     public IndicesService(Settings settings, PluginsService pluginsService, NodeEnvironment nodeEnv, NamedXContentRegistry xContentRegistry,
@@ -295,7 +295,7 @@ public class IndicesService extends AbstractLifecycleComponent
         this.indicesQueryCache = new IndicesQueryCache(settings);
         this.mapperRegistry = mapperRegistry;
         this.namedWriteableRegistry = namedWriteableRegistry;
-        // 该对象根据当前可用内存量 控制分片的写入操作
+        // 该对象会监控内存使用量 当某些分片占用内存比较大时 强制触发刷盘 以及将这些分片设置成阻塞状态
         indexingMemoryController = new IndexingMemoryController(settings, threadPool,
             // ensure we pull an iter with new shards - flatten makes a copy
             () -> Iterables.flatten(this).iterator());
@@ -378,7 +378,7 @@ public class IndicesService extends AbstractLifecycleComponent
         // 是否要写入摇摆索引信息
         nodeWriteDanglingIndicesInfo = WRITE_DANGLING_INDICES_INFO_SETTING.get(settings);
 
-        // 为什么手动开一个线程池啊
+        // 针对操作摇摆索引 会单独使用一个线程池
         danglingIndicesThreadPoolExecutor = nodeWriteDanglingIndicesInfo ? EsExecutors.newScaling(
             nodeName + "/" + DANGLING_INDICES_UPDATE_THREAD_NAME,
             1, 1,
@@ -386,7 +386,7 @@ public class IndicesService extends AbstractLifecycleComponent
             daemonThreadFactory(nodeName, DANGLING_INDICES_UPDATE_THREAD_NAME),
             threadPool.getThreadContext()) : null;
 
-        // 是否允许昂贵的查询???  可能就是比较耗时的查询
+        // 是否允许执行比较耗资源的查询
         this.allowExpensiveQueries = ALLOW_EXPENSIVE_QUERIES.get(clusterService.getSettings());
         clusterService.getClusterSettings().addSettingsUpdateConsumer(ALLOW_EXPENSIVE_QUERIES, this::setAllowExpensiveQueries);
     }
@@ -935,11 +935,10 @@ public class IndicesService extends AbstractLifecycleComponent
     }
 
     /**
-     * 当某个索引不再使用时触发
-     * 当indicesService终止时 也会触发该方法 将所有索引移除
      * @param index the index to remove
      * @param reason the reason to remove the index
      * @param extraInfo extra information that will be used for logging and reporting
+     *                  当某个索引不再使用时 触发该方法
      */
     @Override
     public void removeIndex(final Index index, final IndexRemovalReason reason, final String extraInfo) {
@@ -1036,7 +1035,7 @@ public class IndicesService extends AbstractLifecycleComponent
     /**
      * Deletes an index that is not assigned to this node. This method cleans up all disk folders relating to the index
      * but does not deal with in-memory structures. For those call {@link #removeIndex(Index, IndexRemovalReason, String)}
-     * 删除某些为分配的index
+     * 某个索引没有分配到该节点  尝试清理一些残留数据
      */
     @Override
     public void deleteUnassignedIndex(String reason, IndexMetadata metadata, ClusterState clusterState) {
@@ -1390,7 +1389,7 @@ public class IndicesService extends AbstractLifecycleComponent
      *
      * @param index   the index to process the pending deletes for
      * @param timeout the timeout used for processing pending deletes
-     *                处理待删除的对象
+     *                处理 pendingDelete
      */
     @Override
     public void processPendingDeletes(Index index, IndexSettings indexSettings, TimeValue timeout)

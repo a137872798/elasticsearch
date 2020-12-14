@@ -48,6 +48,9 @@ import java.util.function.Supplier;
 
 import static org.elasticsearch.common.settings.Setting.intSetting;
 
+/**
+ * 只看如何基于原生NIO实现HTTP服务器
+ */
 public class NioTransportPlugin extends Plugin implements NetworkPlugin {
 
     public static final String NIO_TRANSPORT_NAME = "nio-transport";
@@ -72,6 +75,16 @@ public class NioTransportPlugin extends Plugin implements NetworkPlugin {
         );
     }
 
+    /**
+     * 插件中包含了生成传输层的工厂对象
+     * @param settings
+     * @param threadPool
+     * @param pageCacheRecycler
+     * @param circuitBreakerService
+     * @param namedWriteableRegistry
+     * @param networkService  需要插入一个NetworkService对象 该对象负责对地址进行解析
+     * @return
+     */
     @Override
     public Map<String, Supplier<Transport>> getTransports(Settings settings, ThreadPool threadPool, PageCacheRecycler pageCacheRecycler,
                                                           CircuitBreakerService circuitBreakerService,
@@ -81,6 +94,19 @@ public class NioTransportPlugin extends Plugin implements NetworkPlugin {
                 circuitBreakerService, getNioGroupFactory(settings)));
     }
 
+    /**
+     * 返回基于NIO的 http层
+     * @param settings
+     * @param threadPool
+     * @param bigArrays
+     * @param pageCacheRecycler
+     * @param circuitBreakerService
+     * @param xContentRegistry
+     * @param networkService
+     * @param dispatcher
+     * @param clusterSettings
+     * @return
+     */
     @Override
     public Map<String, Supplier<HttpServerTransport>> getHttpTransports(Settings settings, ThreadPool threadPool, BigArrays bigArrays,
                                                                         PageCacheRecycler pageCacheRecycler,
@@ -94,6 +120,11 @@ public class NioTransportPlugin extends Plugin implements NetworkPlugin {
                 dispatcher, getNioGroupFactory(settings), clusterSettings));
     }
 
+    /**
+     * 通过配置项信息 获取线程组工厂 会创建事件循环线程 监听IO事件
+     * @param settings
+     * @return
+     */
     private synchronized NioGroupFactory getNioGroupFactory(Settings settings) {
         NioGroupFactory nioGroupFactory = groupFactory.get();
         if (nioGroupFactory != null) {

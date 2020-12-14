@@ -289,7 +289,7 @@ public class MetadataCreateIndexService {
      * @param request
      * @param listener
      */
-    private void  onlyCreateIndex(final CreateIndexClusterStateUpdateRequest request,
+    private void onlyCreateIndex(final CreateIndexClusterStateUpdateRequest request,
                                  final ActionListener<ClusterStateUpdateResponse> listener) {
         Settings.Builder updatedSettingsBuilder = Settings.builder();
         // 将req中的所有配置都加上 "index." 前缀

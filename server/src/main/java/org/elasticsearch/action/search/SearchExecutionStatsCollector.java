@@ -32,6 +32,7 @@ import java.util.function.BiFunction;
  * A wrapper of search action listeners (search results) that unwraps the query
  * result to get the piggybacked queue size and service time EWMA, adding those
  * values to the coordinating nodes' {@link ResponseCollectorService}.
+ * 这个也是数据统计相关的
  */
 public final class SearchExecutionStatsCollector implements ActionListener<SearchPhaseResult> {
 

@@ -115,6 +115,12 @@ public class TaskManager implements ClusterStateApplier {
      */
     private final ByteSizeValue maxHeaderSize;
 
+    /**
+     *
+     * @param settings
+     * @param threadPool
+     * @param taskHeaders  任务应该携带的请求头
+     */
     public TaskManager(Settings settings, ThreadPool threadPool, Set<String> taskHeaders) {
         this.threadPool = threadPool;
         this.taskHeaders = new ArrayList<>(taskHeaders);

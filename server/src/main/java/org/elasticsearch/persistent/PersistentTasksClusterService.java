@@ -72,6 +72,13 @@ public class PersistentTasksClusterService implements ClusterStateListener, Clos
      */
     private final PeriodicRechecker periodicRechecker;
 
+    /**
+     *
+     * @param settings
+     * @param registry  内部注册了一组 PersistentTaskExecutor
+     * @param clusterService
+     * @param threadPool
+     */
     public PersistentTasksClusterService(Settings settings, PersistentTasksExecutorRegistry registry, ClusterService clusterService,
                                          ThreadPool threadPool) {
         this.clusterService = clusterService;

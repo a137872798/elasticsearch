@@ -41,7 +41,7 @@ import org.elasticsearch.threadpool.ThreadPool;
 import java.io.IOException;
 
 /**
- * 该对象总结起来就是生成合适的对象 并通过channel将数据发出
+ * 定义了将数据发送到 channel的逻辑
  */
 final class OutboundHandler {
 
@@ -159,6 +159,7 @@ final class OutboundHandler {
     private void internalSend(TcpChannel channel, SendContext sendContext) throws IOException {
         // 更新该channel的最后活跃时间 这样在心跳任务对象中就可以节省部分开销
         channel.getChannelStats().markAccessed(threadPool.relativeTimeInMillis());
+        // 获取要发送的数据流
         BytesReference reference = sendContext.get();
         try {
             channel.sendMessage(reference, sendContext);

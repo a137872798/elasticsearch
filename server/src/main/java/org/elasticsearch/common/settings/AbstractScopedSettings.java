@@ -70,23 +70,23 @@ public abstract class AbstractScopedSettings {
     private Settings lastSettingsApplied;
 
     /**
-     * @param settings  所有配置信息
-     * @param settingsSet  仅仅包含某个scope 的配置
-     * @param settingUpgraders  升级相关的配置
-     * @param scope   范围类型  cluster/index
+     * @param settings         所有配置信息
+     * @param settingsSet      仅仅包含某个scope 的配置
+     * @param settingUpgraders 升级相关的配置
+     * @param scope            范围类型  cluster/index
      */
     protected AbstractScopedSettings(
-            final Settings settings,
-            final Set<Setting<?>> settingsSet,
-            final Set<SettingUpgrader<?>> settingUpgraders,
-            final Setting.Property scope) {
+        final Settings settings,
+        final Set<Setting<?>> settingsSet,
+        final Set<SettingUpgrader<?>> settingUpgraders,
+        final Setting.Property scope) {
         this.logger = LogManager.getLogger(this.getClass());
         this.settings = settings;
         this.lastSettingsApplied = Settings.EMPTY;
 
         this.settingUpgraders =
-                Collections.unmodifiableMap(
-                        settingUpgraders.stream().collect(Collectors.toMap(SettingUpgrader::getSetting, Function.identity())));
+            Collections.unmodifiableMap(
+                settingUpgraders.stream().collect(Collectors.toMap(SettingUpgrader::getSetting, Function.identity())));
 
 
         this.scope = scope;
@@ -181,11 +181,13 @@ public abstract class AbstractScopedSettings {
      * Applies the given settings to all the settings consumers or to none of them. The settings
      * will be merged with the node settings before they are applied while given settings override existing node
      * settings.
+     *
      * @param newSettings the settings to apply
      * @return the unmerged applied settings
-     * 更新本地配置  一般是从集群中检测到 cluterState发生了变化 那么使用内部的settings 来更新本地配置
-    */
+     * 更新配置项信息
+     */
     public synchronized Settings applySettings(Settings newSettings) {
+        // 代表配置项没有变化
         if (lastSettingsApplied != null && newSettings.equals(lastSettingsApplied)) {
             // nothing changed in the settings, ignore
             return newSettings;
@@ -194,7 +196,7 @@ public abstract class AbstractScopedSettings {
         final Settings previous = Settings.builder().put(this.settings).put(this.lastSettingsApplied).build();
         try {
             List<Runnable> applyRunnables = new ArrayList<>();
-            // 遍历所有配置更新的函数
+            // 遍历所有支持动态更新的配置 并进行更新
             for (SettingUpdater<?> settingUpdater : settingUpdaters) {
                 try {
                     applyRunnables.add(settingUpdater.updater(current, previous));
@@ -218,6 +220,7 @@ public abstract class AbstractScopedSettings {
      * <p>
      * Note: Only settings registered in {@link SettingsModule} can be changed dynamically.
      * </p>
+     *
      * @param validator an additional validator that is only applied to updates of this setting.
      *                  This is useful to add additional validation to settings at runtime compared to at startup time.
      *                  追加一组会监听集群状态变化的配置  当检测到配置发生变化时 使用 consumer处理
@@ -232,7 +235,7 @@ public abstract class AbstractScopedSettings {
     /**
      * Adds a settings consumer that is only executed if any setting in the supplied list of settings is changed. In that case all the
      * settings are specified in the argument are returned.
-     *
+     * <p>
      * Also automatically adds empty consumers for all settings in order to activate logging
      */
     public synchronized void addSettingsUpdateConsumer(Consumer<Settings> consumer, List<? extends Setting<?>> settings) {
@@ -243,7 +246,7 @@ public abstract class AbstractScopedSettings {
      * Adds a settings consumer that is only executed if any setting in the supplied list of settings is changed. In that case all the
      * settings are specified in the argument are returned.  The validator is run across all specified settings before the settings are
      * applied.
-     *
+     * <p>
      * Also automatically adds empty consumers for all settings in order to activate logging
      */
     public synchronized void addSettingsUpdateConsumer(Consumer<Settings> consumer, List<? extends Setting<?>> settings,
@@ -255,7 +258,7 @@ public abstract class AbstractScopedSettings {
      * Adds a settings consumer for affix settings. Affix settings have a namespace associated to it that needs to be available to the
      * consumer in order to be processed correctly.
      */
-    public synchronized <T> void addAffixUpdateConsumer(Setting.AffixSetting<T> setting,  BiConsumer<String, T> consumer,
+    public synchronized <T> void addAffixUpdateConsumer(Setting.AffixSetting<T> setting, BiConsumer<String, T> consumer,
                                                         BiConsumer<String, T> validator) {
         ensureSettingIsRegistered(setting);
         addSettingsUpdater(setting.newAffixUpdater(consumer, logger, validator));
@@ -270,15 +273,19 @@ public abstract class AbstractScopedSettings {
      * This method registers a compound updater that is useful if two settings are depending on each other.
      * The consumer is always provided with both values even if only one of the two changes.
      */
-    public synchronized <A,B> void addAffixUpdateConsumer(Setting.AffixSetting<A> settingA, Setting.AffixSetting<B> settingB,
-                                                          BiConsumer<String, Tuple<A, B>> consumer,
-                                                          BiConsumer<String, Tuple<A, B>> validator) {
+    public synchronized <A, B> void addAffixUpdateConsumer(Setting.AffixSetting<A> settingA, Setting.AffixSetting<B> settingB,
+                                                           BiConsumer<String, Tuple<A, B>> consumer,
+                                                           BiConsumer<String, Tuple<A, B>> validator) {
         // it would be awesome to have a generic way to do that ie. a set of settings that map to an object with a builder
         // down the road this would be nice to have!
         ensureSettingIsRegistered(settingA);
         ensureSettingIsRegistered(settingB);
-        SettingUpdater<Map<SettingUpdater<A>, A>> affixUpdaterA = settingA.newAffixUpdater((a,b)-> {}, logger, (a,b)-> {});
-        SettingUpdater<Map<SettingUpdater<B>, B>> affixUpdaterB = settingB.newAffixUpdater((a,b)-> {}, logger, (a,b)-> {});
+        SettingUpdater<Map<SettingUpdater<A>, A>> affixUpdaterA = settingA.newAffixUpdater((a, b) -> {
+        }, logger, (a, b) -> {
+        });
+        SettingUpdater<Map<SettingUpdater<B>, B>> affixUpdaterB = settingB.newAffixUpdater((a, b) -> {
+        }, logger, (a, b) -> {
+        });
 
         addSettingsUpdater(new SettingUpdater<Map<String, Tuple<A, B>>>() {
 
@@ -305,8 +312,10 @@ public abstract class AbstractScopedSettings {
                         map.put(key, new Tuple<>(settingA.getConcreteSettingForNamespace(key).get(current), value));
                     }
                 };
-                SettingUpdater<Map<SettingUpdater<A>, A>> affixUpdaterA = settingA.newAffixUpdater(aConsumer, logger, (a,b) ->{});
-                SettingUpdater<Map<SettingUpdater<B>, B>> affixUpdaterB = settingB.newAffixUpdater(bConsumer, logger, (a,b) ->{});
+                SettingUpdater<Map<SettingUpdater<A>, A>> affixUpdaterA = settingA.newAffixUpdater(aConsumer, logger, (a, b) -> {
+                });
+                SettingUpdater<Map<SettingUpdater<B>, B>> affixUpdaterB = settingB.newAffixUpdater(bConsumer, logger, (a, b) -> {
+                });
                 affixUpdaterA.apply(current, previous);
                 affixUpdaterB.apply(current, previous);
                 for (Map.Entry<String, Tuple<A, B>> entry : map.entrySet()) {
@@ -336,7 +345,9 @@ public abstract class AbstractScopedSettings {
         List<SettingUpdater> affixUpdaters = new ArrayList<>(settings.size());
         for (Setting.AffixSetting<?> setting : settings) {
             ensureSettingIsRegistered(setting);
-            affixUpdaters.add(setting.newAffixUpdater((a,b)-> {}, logger, (a,b)-> {}));
+            affixUpdaters.add(setting.newAffixUpdater((a, b) -> {
+            }, logger, (a, b) -> {
+            }));
         }
 
         addSettingsUpdater(new SettingUpdater<Map<String, Settings>>() {
@@ -350,7 +361,8 @@ public abstract class AbstractScopedSettings {
             public Map<String, Settings> getValue(Settings current, Settings previous) {
                 Set<String> namespaces = new HashSet<>();
                 for (Setting.AffixSetting<?> setting : settings) {
-                    SettingUpdater affixUpdaterA = setting.newAffixUpdater((k, v) -> namespaces.add(k), logger, (a, b) ->{});
+                    SettingUpdater affixUpdaterA = setting.newAffixUpdater((k, v) -> namespaces.add(k), logger, (a, b) -> {
+                    });
                     affixUpdaterA.apply(current, previous);
                 }
                 Map<String, Settings> namespaceToSettings = new HashMap<>(namespaces.size());
@@ -403,7 +415,8 @@ public abstract class AbstractScopedSettings {
      * See {@link #addSettingsUpdateConsumer(Setting, Setting, BiConsumer, BiConsumer)} for details.
      */
     public synchronized <A, B> void addSettingsUpdateConsumer(Setting<A> a, Setting<B> b, BiConsumer<A, B> consumer) {
-        addSettingsUpdateConsumer(a, b, consumer, (i, j) -> {} );
+        addSettingsUpdateConsumer(a, b, consumer, (i, j) -> {
+        });
     }
 
     /**
@@ -433,7 +446,8 @@ public abstract class AbstractScopedSettings {
      * </p>
      */
     public synchronized <T> void addSettingsUpdateConsumer(Setting<T> setting, Consumer<T> consumer) {
-       addSettingsUpdateConsumer(setting, consumer, (s) -> {});
+        addSettingsUpdateConsumer(setting, consumer, (s) -> {
+        });
     }
 
     /**
@@ -470,10 +484,10 @@ public abstract class AbstractScopedSettings {
      * @see Setting#getSettingsDependencies(String)
      */
     public final void validate(
-            final Settings settings,
-            final boolean validateDependencies,
-            final boolean ignorePrivateSettings,
-            final boolean ignoreArchivedSettings) {
+        final Settings settings,
+        final boolean validateDependencies,
+        final boolean ignorePrivateSettings,
+        final boolean ignoreArchivedSettings) {
         validate(settings, validateDependencies, ignorePrivateSettings, ignoreArchivedSettings, false);
     }
 
@@ -489,11 +503,11 @@ public abstract class AbstractScopedSettings {
      * 对配置进行校验
      */
     public final void validate(
-            final Settings settings,
-            final boolean validateDependencies,
-            final boolean ignorePrivateSettings,  // 是否要忽略私有配置
-            final boolean ignoreArchivedSettings,  // 是否要忽略存档配置
-            final boolean validateInternalOrPrivateIndex) {
+        final Settings settings,
+        final boolean validateDependencies,
+        final boolean ignorePrivateSettings,  // 是否要忽略私有配置
+        final boolean ignoreArchivedSettings,  // 是否要忽略存档配置
+        final boolean validateInternalOrPrivateIndex) {
         final List<RuntimeException> exceptions = new ArrayList<>();
         for (final String key : settings.keySet()) { // settings iterate in deterministic fashion
             final Setting<?> setting = getRaw(key);
@@ -516,8 +530,8 @@ public abstract class AbstractScopedSettings {
     /**
      * Validates that the settings is valid.
      *
-     * @param key the key of the setting to validate
-     * @param settings the settings
+     * @param key                  the key of the setting to validate
+     * @param settings             the settings
      * @param validateDependencies true if dependent settings should be validated
      * @throws IllegalArgumentException if the setting is invalid
      */
@@ -533,10 +547,10 @@ public abstract class AbstractScopedSettings {
      * @param validateDependencies           true if dependent settings should be validated
      * @param validateInternalOrPrivateIndex true if internal index settings should be validated
      * @throws IllegalArgumentException if the setting is invalid
-     * 对相关配置进行校验
+     *                                  对相关配置进行校验
      */
     void validate(
-            final String key, final Settings settings, final boolean validateDependencies, final boolean validateInternalOrPrivateIndex) {
+        final String key, final Settings settings, final boolean validateDependencies, final boolean validateInternalOrPrivateIndex) {
         Setting<?> setting = getRaw(key);
         // TODO LevenshteinDistance 啥玩意???
         if (setting == null) {
@@ -548,7 +562,7 @@ public abstract class AbstractScopedSettings {
                     scoredKeys.add(new Tuple<>(distance, k));
                 }
             }
-            CollectionUtil.timSort(scoredKeys, (a,b) -> b.v1().compareTo(a.v1()));
+            CollectionUtil.timSort(scoredKeys, (a, b) -> b.v1().compareTo(a.v1()));
             String msgPrefix = "unknown setting";
             SecureSettings secureSettings = settings.getSecureSettings();
             if (secureSettings != null && settings.getSecureSettings().getSettingNames().contains(key)) {
@@ -557,13 +571,13 @@ public abstract class AbstractScopedSettings {
             String msg = msgPrefix + " [" + key + "]";
             List<String> keys = scoredKeys.stream().map((a) -> a.v2()).collect(Collectors.toList());
             if (keys.isEmpty() == false) {
-                msg += " did you mean " + (keys.size() == 1 ? "[" + keys.get(0) + "]": "any of " + keys.toString()) + "?";
+                msg += " did you mean " + (keys.size() == 1 ? "[" + keys.get(0) + "]" : "any of " + keys.toString()) + "?";
             } else {
                 msg += " please check that any required plugins are installed, or check the breaking changes documentation for removed " +
                     "settings";
             }
             throw new IllegalArgumentException(msg);
-        } else  {
+        } else {
             // 获取该配置依赖的所有配置
             Set<Setting.SettingDependency> settingsDependencies = setting.getSettingsDependencies(key);
             // TODO
@@ -578,10 +592,10 @@ public abstract class AbstractScopedSettings {
                     // 当依赖项没有在新的配置中找到时 代表依赖项校验失败
                     if (dependency.existsOrFallbackExists(settings) == false) {
                         final String message = String.format(
-                                Locale.ROOT,
-                                "missing required setting [%s] for setting [%s]",
-                                dependency.getKey(),
-                                setting.getKey());
+                            Locale.ROOT,
+                            "missing required setting [%s] for setting [%s]",
+                            dependency.getKey(),
+                            setting.getKey());
                         throw new IllegalArgumentException(message);
                     }
                     // validate the dependent setting value
@@ -594,10 +608,10 @@ public abstract class AbstractScopedSettings {
             if (validateInternalOrPrivateIndex) {
                 if (setting.isInternalIndex()) {
                     throw new IllegalArgumentException(
-                            "can not update internal setting [" + setting.getKey() + "]; this setting is managed via a dedicated API");
+                        "can not update internal setting [" + setting.getKey() + "]; this setting is managed via a dedicated API");
                 } else if (setting.isPrivateIndex()) {
                     throw new IllegalArgumentException(
-                            "can not update private setting [" + setting.getKey() + "]; this setting is managed by Elasticsearch");
+                        "can not update private setting [" + setting.getKey() + "]; this setting is managed by Elasticsearch");
                 }
             }
         }
@@ -607,15 +621,17 @@ public abstract class AbstractScopedSettings {
 
     /**
      * Transactional interface to update settings.
-     * @see Setting
+     *
      * @param <T> the type of the value of the setting
-     *           监听配置的变化 并进行相应的处理
+     *            监听配置的变化 并进行相应的处理
+     * @see Setting
      */
     public interface SettingUpdater<T> {
 
         /**
          * Returns true if this updaters setting has changed with the current update
-         * @param current the current settings
+         *
+         * @param current  the current settings
          * @param previous the previous setting
          * @return true if this updaters setting has changed with the current update
          */
@@ -634,6 +650,7 @@ public abstract class AbstractScopedSettings {
 
         /**
          * Updates this updaters value if it has changed.
+         *
          * @return <code>true</code> iff the value has been updated.
          */
         default boolean apply(Settings current, Settings previous) {
@@ -653,9 +670,12 @@ public abstract class AbstractScopedSettings {
         default Runnable updater(Settings current, Settings previous) {
             if (hasChanged(current, previous)) {
                 T value = getValue(current, previous);
-                return () -> { apply(value, current, previous);};
+                return () -> {
+                    apply(value, current, previous);
+                };
             }
-            return () -> {};
+            return () -> {
+            };
         }
     }
 
@@ -666,7 +686,8 @@ public abstract class AbstractScopedSettings {
         Setting<?> raw = getRaw(key);
         if (raw == null) {
             return null;
-        } if (raw.hasComplexMatcher()) {
+        }
+        if (raw.hasComplexMatcher()) {
             return raw.getConcreteSetting(key);
         } else {
             return raw;
@@ -697,7 +718,7 @@ public abstract class AbstractScopedSettings {
             }
         }
         assert list.size() == numComplexMatchers : "Expected " + numComplexMatchers + " complex matchers to match key [" +
-            key + "] but got: "  + list.toString();
+            key + "] but got: " + list.toString();
         return true;
     }
 
@@ -755,10 +776,10 @@ public abstract class AbstractScopedSettings {
      * </p>
      *
      * @param toApply the new settings to apply     本次所有的更新项
-     * @param target the target settings builder that the updates are applied to. All keys that have explicit null value in toApply will be
-     *        removed from this builder
+     * @param target  the target settings builder that the updates are applied to. All keys that have explicit null value in toApply will be
+     *                removed from this builder
      * @param updates a settings builder that holds all updates applied to target    空容器 存储本次被更新的配置项
-     * @param type a free text string to allow better exceptions messages
+     * @param type    a free text string to allow better exceptions messages
      * @return <code>true</code> if the target has changed otherwise <code>false</code>
      */
     public boolean updateDynamicSettings(Settings toApply, Settings.Builder target, Settings.Builder updates, String type) {
@@ -769,10 +790,10 @@ public abstract class AbstractScopedSettings {
      * Updates a target settings builder with new, updated or deleted settings from a given settings builder.
      *
      * @param toApply the new settings to apply
-     * @param target the target settings builder that the updates are applied to. All keys that have explicit null value in toApply will be
-     *        removed from this builder
+     * @param target  the target settings builder that the updates are applied to. All keys that have explicit null value in toApply will be
+     *                removed from this builder
      * @param updates a settings builder that holds all updates applied to target
-     * @param type a free text string to allow better exceptions messages
+     * @param type    a free text string to allow better exceptions messages
      * @return <code>true</code> if the target has changed otherwise <code>false</code>
      */
     public boolean updateSettings(Settings toApply, Settings.Builder target, Settings.Builder updates, String type) {
@@ -781,8 +802,9 @@ public abstract class AbstractScopedSettings {
 
     /**
      * Returns <code>true</code> if the given key is a valid delete key
+     *
      * @param onlyDynamic 代表仅处理动态配置
-     * 检测某个配置能否被移除
+     *                    检测某个配置能否被移除
      */
     private boolean isValidDelete(String key, boolean onlyDynamic) {
         // 首先final配置项是不能被删除的
@@ -799,13 +821,13 @@ public abstract class AbstractScopedSettings {
     /**
      * Updates a target settings builder with new, updated or deleted settings from a given settings builder.
      *
-     * @param toApply the new settings to apply    本次会作用的新配置
-     * @param target the target settings builder that the updates are applied to. All keys that have explicit null value in toApply will be
-     *        removed from this builder      本次更新将会作用到这个容器中  如果更新项对应的value为null 从target中移除该配置项
-     * @param updates a settings builder that holds all updates applied to target   本次成功作用的所有更新项会存储到这个builder中
-     * @param type a free text string to allow better exceptions messages
+     * @param toApply     the new settings to apply    本次会作用的新配置
+     * @param target      the target settings builder that the updates are applied to. All keys that have explicit null value in toApply will be
+     *                    removed from this builder      本次更新将会作用到这个容器中  如果更新项对应的value为null 从target中移除该配置项
+     * @param updates     a settings builder that holds all updates applied to target   本次成功作用的所有更新项会存储到这个builder中
+     * @param type        a free text string to allow better exceptions messages
      * @param onlyDynamic if <code>false</code> all settings are updated otherwise only dynamic settings are updated. if set to
-     *        <code>true</code> and a non-dynamic setting is updated an exception is thrown.    代表仅更新 属性为Dynamic的settings  默认为true
+     *                    <code>true</code> and a non-dynamic setting is updated an exception is thrown.    代表仅更新 属性为Dynamic的settings  默认为true
      * @return <code>true</code> if the target has changed otherwise <code>false</code>
      */
     private boolean updateSettings(Settings toApply, Settings.Builder target, Settings.Builder updates, String type, boolean onlyDynamic) {
@@ -858,9 +880,10 @@ public abstract class AbstractScopedSettings {
 
     /**
      * 处理之前所有待删除的配置
-     * @param deletes  本次要被删除的所有key   这个key可能包含了通配符
-     * @param builder  删除动作会被作用到这个容器中
-     * @param canRemove  检测能否支持删除
+     *
+     * @param deletes   本次要被删除的所有key   这个key可能包含了通配符
+     * @param builder   删除动作会被作用到这个容器中
+     * @param canRemove 检测能否支持删除
      * @return
      */
     private static boolean applyDeletes(Set<String> deletes, Settings.Builder builder, Predicate<String> canRemove) {

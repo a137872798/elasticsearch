@@ -721,6 +721,10 @@ public class SearchModule {
             SignificanceHeuristic.class, spec.getName().getPreferredName(), spec.getReader()));
     }
 
+    /**
+     * 除了插件以外会注册一组默认的 phase
+     * @param plugins
+     */
     private void registerFetchSubPhases(List<SearchPlugin> plugins) {
         registerFetchSubPhase(new ExplainPhase());
         registerFetchSubPhase(new FetchDocValuesPhase());

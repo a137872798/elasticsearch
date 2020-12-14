@@ -58,6 +58,7 @@ public class ClusterChangedEvent {
         this.source = source;
         this.state = state;
         this.previousState = previousState;
+        // 比较节点前后变化 生成delta对象
         this.nodesDelta = state.nodes().delta(previousState.nodes());
     }
 
@@ -140,7 +141,7 @@ public class ClusterChangedEvent {
      * 找到本次删除的索引信息
      */
     public List<Index> indicesDeleted() {
-        // TODO 先忽略
+        // 如果此时数据还没有恢复
         if (previousState.blocks().hasGlobalBlock(GatewayService.STATE_NOT_RECOVERED_BLOCK)) {
             // working off of a non-initialized previous state, so use the tombstones for index deletions
             return indicesDeletedFromTombstones();
@@ -292,7 +293,7 @@ public class ClusterChangedEvent {
     }
 
     /**
-     * TODO 先忽略
+     * 当数据还没有恢复的时候 选择从墓碑中找到被删除的索引
      * @return
      */
     private List<Index> indicesDeletedFromTombstones() {

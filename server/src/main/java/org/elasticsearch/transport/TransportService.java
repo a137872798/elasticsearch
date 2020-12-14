@@ -70,7 +70,8 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
- * 传输层服务  该对象本身实现了监听连接状态变化的接口 以及处理接受请求/发送响应结果时的api
+ * 传输层服务
+ * 本身还会监听发送消息的结果
  */
 public class TransportService extends AbstractLifecycleComponent implements ReportingService<TransportInfo>, TransportMessageListener,
     TransportConnectionListener {
@@ -203,6 +204,8 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      *
      * @param clusterSettings if non null, the {@linkplain TransportService} will register with the {@link ClusterSettings} for settings
      *    updates for {@link TransportSettings#TRACE_LOG_EXCLUDE_SETTING} and {@link TransportSettings#TRACE_LOG_INCLUDE_SETTING}.
+     * @param  transport 传输层对象
+     * @param localNodeFactory 提供本地节点的工厂
      */
     public TransportService(Settings settings, Transport transport, ThreadPool threadPool, TransportInterceptor transportInterceptor,
                             Function<BoundTransportAddress, DiscoveryNode> localNodeFactory, @Nullable ClusterSettings clusterSettings,
@@ -214,9 +217,9 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     /**
      * 初始化传输层服务对象
      * @param settings
-     * @param transport
+     * @param transport  传输层对象 目前只看基于原生NIO实现的 NioTransport
      * @param threadPool
-     * @param transportInterceptor
+     * @param transportInterceptor  传输层拦截器 是由传输层实现类自己携带的  现在只关注NioTransport
      * @param localNodeFactory
      * @param clusterSettings
      * @param taskHeaders
@@ -238,8 +241,10 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
         taskManager = createTaskManager(settings, threadPool, taskHeaders);
         this.interceptor = transportInterceptor;
 
-        // sendRequestInternal 就是一个发送请求的模板
+        // 对发送请求的方法进行加工 默认是 NOOP
         this.asyncSender = interceptor.interceptSender(this::sendRequestInternal);
+
+        // 是否需要与其他集群通讯
         this.remoteClusterClient = Node.NODE_REMOTE_CLUSTER_CLIENT.get(settings);
         remoteClusterService = new RemoteClusterService(settings, this);
 
@@ -1045,6 +1050,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
                                                                           TransportRequestHandler<Request> handler) {
         validateActionName(action);
         handler = interceptor.interceptHandler(action, executor, forceExecution, handler);
+        // 将相关信息包装成一个 registry对象
         RequestHandlerRegistry<Request> reg = new RequestHandlerRegistry<>(
             action, requestReader, taskManager, handler, executor, forceExecution, canTripCircuitBreaker);
         transport.registerRequestHandler(reg);

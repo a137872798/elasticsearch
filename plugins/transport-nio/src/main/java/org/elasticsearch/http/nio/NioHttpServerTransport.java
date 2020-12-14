@@ -66,6 +66,9 @@ import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_TCP_REUS
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_TCP_SEND_BUFFER_SIZE;
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_PIPELINING_MAX_EVENTS;
 
+/**
+ * 基于原生NIO封装的 Http层
+ */
 public class NioHttpServerTransport extends AbstractHttpServerTransport {
     private static final Logger logger = LogManager.getLogger(NioHttpServerTransport.class);
 
@@ -84,11 +87,26 @@ public class NioHttpServerTransport extends AbstractHttpServerTransport {
     private volatile NioGroup nioGroup;
     private ChannelFactory<NioHttpServerChannel, NioHttpChannel> channelFactory;
 
+
+    /**
+     * 初始化http层对象
+     * @param settings
+     * @param networkService
+     * @param bigArrays
+     * @param pageCacheRecycler
+     * @param threadPool
+     * @param xContentRegistry
+     * @param dispatcher  对应 RestController
+     * @param nioGroupFactory
+     * @param clusterSettings
+     */
     public NioHttpServerTransport(Settings settings, NetworkService networkService, BigArrays bigArrays,
                                   PageCacheRecycler pageCacheRecycler, ThreadPool threadPool, NamedXContentRegistry xContentRegistry,
                                   Dispatcher dispatcher, NioGroupFactory nioGroupFactory, ClusterSettings clusterSettings) {
         super(settings, networkService, bigArrays, threadPool, xContentRegistry, dispatcher, clusterSettings);
         this.pageAllocator = new PageAllocator(pageCacheRecycler);
+
+        // 也是基于事件循环组 实现网络数据读取和写入
         this.nioGroupFactory = nioGroupFactory;
 
         ByteSizeValue maxChunkSize = SETTING_HTTP_MAX_CHUNK_SIZE.get(settings);

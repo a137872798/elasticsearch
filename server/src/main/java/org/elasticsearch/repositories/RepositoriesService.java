@@ -91,7 +91,7 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
     private volatile Map<String, Repository> repositories = Collections.emptyMap();
 
     /**
-     *
+     * 存储层服务本身同时维护多个 repository实现  基于不同的工厂
      * @param settings
      * @param clusterService
      * @param transportService
@@ -112,7 +112,7 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
         if (DiscoveryNode.isDataNode(settings) || DiscoveryNode.isMasterNode(settings)) {
             clusterService.addStateApplier(this);
         }
-        // 初始化认证器对象
+        // 某些操作需要先进行认证 这里注册处理认证请求的handler
         this.verifyAction = new VerifyNodeRepositoryAction(transportService, clusterService, this);
     }
 

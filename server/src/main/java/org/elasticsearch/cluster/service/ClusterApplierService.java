@@ -70,6 +70,9 @@ import java.util.stream.Stream;
 
 import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
 
+/**
+ * 专门负责将最新的集群状态变化通知到其他组件
+ */
 public class ClusterApplierService extends AbstractLifecycleComponent implements ClusterApplier {
     private static final Logger logger = LogManager.getLogger(ClusterApplierService.class);
 
@@ -89,6 +92,10 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
      * 集群相关配置
      */
     private final ClusterSettings clusterSettings;
+
+    /**
+     * 触发监听器一般是放在线程池中执行的  这样通知其他组件这件事本身就不会被阻塞  比如某个listener耗时特别长 那么就无法通知到下一个listener
+     */
     protected final ThreadPool threadPool;
 
     private volatile TimeValue slowTaskLoggingThreshold;
@@ -114,19 +121,20 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
      */
     private final Collection<ClusterStateListener> clusterStateListeners = new CopyOnWriteArrayList<>();
 
+
     /**
-     * 存储一组会在一定延时后自动关闭的监听器
+     * 这里为 ClusterStateListener 追加了一组钩子
      */
     private final Collection<TimeoutClusterStateListener> timeoutClusterStateListeners =
         Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     /**
-     * 该对象维护了 所有监听集群变化的监听器 (onMaster offMaster)  该对象也会设置到 clusterStateListeners中
+     * 内部专门管理有关该节点是否晋升/降级的监听器
      */
     private final LocalNodeMasterListeners localNodeMasterListeners;
 
     /**
-     * NotifyTimeout 用于定义超时任务 同时还包含关闭超时任务的功能
+     * 赋予监听器超时功能 比如某个监听器只希望监听一段时间  没有正常的触发 就支持以onTimeout触发监听器
      */
     private final Queue<NotifyTimeout> onGoingTimeouts = ConcurrentCollections.newQueue();
 
@@ -135,10 +143,14 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
      */
     private final AtomicReference<ClusterState> state; // last applied state
 
+    /**
+     * 当前服务运行的节点名
+     */
     private final String nodeName;
 
     /**
-     * 该服务管理节点间的连接 或者说创建连接   以及处理req/res
+     * 每个节点都会与集群中的其他节点连接    比如在处理某些action时 需要转发请求
+     * 每当clusterState发生了变化 就要与新增的节点建立连接
      */
     private NodeConnectionsService nodeConnectionsService;
 
@@ -174,7 +186,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
-     * 当 Coordinator 首次启动时 通过localNode和相关配置初始化 clusterState 会触发该函数
+     * 在集群中首次获取到 clusterState时触发该方法
      * @param initialState the initial state to set
      */
     @Override
@@ -203,15 +215,26 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
-     * SourcePrioritizedRunnable 具备一个优先级属性
+     * PrioritizedRunnable 具备一个优先级属性
      */
     class UpdateTask extends SourcePrioritizedRunnable implements Function<ClusterState, ClusterState> {
+
+        /**
+         * 当更新任务完成后 触发监听器
+         */
         final ClusterApplyListener listener;
         /**
          * 集群状态的更新函数
          */
         final Function<ClusterState, ClusterState> updateFunction;
 
+        /**
+         *
+         * @param priority 标注该任务的优先级
+         * @param source
+         * @param listener
+         * @param updateFunction
+         */
         UpdateTask(Priority priority, String source, ClusterApplyListener listener,
                    Function<ClusterState, ClusterState> updateFunction) {
             super(priority, source);
@@ -311,6 +334,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
 
     /**
      * Removes a timeout listener for updated cluster states.
+     * 每个超时监听器 都会维护一个 NotifyTimeout 负责触发超时钩子  所以当监听器被移除时 要将NotifyTimeout一起移除
      */
     public void removeTimeoutListener(TimeoutClusterStateListener listener) {
         timeoutClusterStateListeners.remove(listener);
@@ -335,7 +359,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
      * If provided, the listener will be notified once a specific time has elapsed.
      *
      * NOTE: the listener is not removed on timeout. This is the responsibility of the caller.
-     * 插入的超时监听器会直接执行
+     * 插入一个只监听一段时间的listener
      */
     public void addTimeoutListener(@Nullable final TimeValue timeout, final TimeoutClusterStateListener listener) {
         if (lifecycle.stoppedOrClosed()) {
@@ -344,9 +368,11 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         }
         // call the post added notification on the same event thread
         try {
+            // 插入监听器本身有一个优先级概念
             threadPoolExecutor.execute(new SourcePrioritizedRunnable(Priority.HIGH, "_add_listener_") {
                 @Override
                 public void run() {
+                    // 在插入同时先开启一个超时任务
                     if (timeout != null) {
                         NotifyTimeout notifyTimeout = new NotifyTimeout(listener, timeout);
                         notifyTimeout.cancellable = threadPool.schedule(notifyTimeout, timeout, ThreadPool.Names.GENERIC);
@@ -367,6 +393,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
+     * 使用具备优先级概念的线程池执行更新任务
      * @param source
      * @param clusterStateConsumer   处理集群状态的函数
      * @param listener
@@ -413,11 +440,11 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
-     * 提交一个监听集群状态的任务
+     * 提交一个更新集群状态的任务
      * @param source
      * @param config   使用的配置信息 比如 任务的优先级，超时时间
      * @param executor   如何将state更新
-     * @param listener  监听处理结果
+     * @param listener  当任务执行完成后的监听器
      */
     private void submitStateUpdateTask(final String source, final ClusterStateTaskConfig config,
                                        final Function<ClusterState, ClusterState> executor,
@@ -426,11 +453,11 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
             return;
         }
         try {
-            // 将处理函数包装成一个 updateTask 对象   这个不是批任务 可以直接执行
+            // 将相关信息包装成 updateTask对象
             UpdateTask updateTask = new UpdateTask(config.priority(), source, new SafeClusterApplyListener(listener, logger), executor);
             if (config.timeout() != null) {
                 threadPoolExecutor.execute(updateTask, config.timeout(),
-                    // 超时时全部统一由 generic线程池执行任务
+                    // 当任务超时时 触发 failure钩子
                     () -> threadPool.generic().execute(
                         () -> listener.onFailure(source, new ProcessClusterEventTimeoutException(config.timeout(), source))));
             } else {
@@ -471,7 +498,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
-     * 当集群中的节点收到 commit请求时 将之前在 pub收到的集群状态通过该对象进行处理
+     * 执行 updateTask时 转发到该方法
      * @param task
      */
     private void runTask(UpdateTask task) {
@@ -516,6 +543,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
                 logger.debug("cluster state updated, version [{}], source [{}]", newClusterState.version(), task.source);
             }
             try {
+                // 处理变化
                 applyChanges(task, previousClusterState, newClusterState, stopWatch);
                 TimeValue executionTime = TimeValue.timeValueMillis(Math.max(0, currentTimeInMillis() - startTimeMS));
                 logger.debug("processing [{}]: took [{}] done applying updated cluster state (version: {}, uuid: {})", task.source,
@@ -543,8 +571,8 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
-     * 这里只是触发一组监听器 先不管
-     * @param task
+     * 处理集群变化
+     * @param task  本次执行的任务
      * @param previousClusterState
      * @param newClusterState
      * @param stopWatch
@@ -563,26 +591,29 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         }
 
         logger.trace("connecting to nodes of cluster state with version {}", newClusterState.version());
+        // 如果本次新增了某些节点  需要进行连接
         try (Releasable ignored = stopWatch.timing("connecting to new nodes")) {
             connectToNodesAndWait(newClusterState);
         }
 
         // nothing to do until we actually recover from the gateway or any other block indicates we need to disable persistency
-        // 更新动态配置
+        // 如果元数据发生了变化  并且clusterState持久化的block没有设置
+        // 尝试更新集群配置项
         if (clusterChangedEvent.state().blocks().disableStatePersistence() == false && clusterChangedEvent.metadataChanged()) {
             logger.debug("applying settings from cluster state with version {}", newClusterState.version());
             final Settings incomingSettings = clusterChangedEvent.state().metadata().settings();
             try (Releasable ignored = stopWatch.timing("applying settings")) {
-                // 更新本地配置
+                // 更新动态配置
                 clusterSettings.applySettings(incomingSettings);
             }
         }
 
         logger.debug("apply cluster state with version {}", newClusterState.version());
 
+        // 触发所有监听器
         callClusterStateAppliers(clusterChangedEvent, stopWatch);
 
-        // 与旧的集群state中过时的节点断开连接
+        // 某些节点此时已经从集群中剔除了 这里断开连接
         nodeConnectionsService.disconnectFromNodesExcept(newClusterState.nodes());
 
         logger.debug("set locally applied cluster state to version {}", newClusterState.version());
@@ -594,7 +625,7 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
     }
 
     /**
-     * 为了将集群状态的变化通知到其他节点  这里进行直连
+     * 如果集群变化后 增加了某些节点  需要进行连接
      * @param newClusterState
      */
     protected void connectToNodesAndWait(ClusterState newClusterState) {
@@ -618,6 +649,11 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
         });
     }
 
+    /**
+     * 这里同时触发包含超时属性的监听器和 普通监听器
+     * @param clusterChangedEvent
+     * @param stopWatch
+     */
     private void callClusterStateListeners(ClusterChangedEvent clusterChangedEvent, StopWatch stopWatch) {
         Stream.concat(clusterStateListeners.stream(), timeoutClusterStateListeners.stream()).forEach(listener -> {
             try {
@@ -675,15 +711,16 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
 
 
     /**
-     * 该对象会在一定延时后触发
+     * 为监听器增加了超时的概念 比如为某个任务设置一个监听器 但是只希望监听一段时间
+     * 就可以将监听器包装成该对象 当该任务触发时就会以超时形式关闭监听器
      */
     class NotifyTimeout implements Runnable {
         /**
-         * 定义了处理逻辑的模板
+         * 该监听器在  applierStateListener上追加了一些钩子
          */
         final TimeoutClusterStateListener listener;
         /**
-         * 在多久后触发
+         * 在多久
          */
         final TimeValue timeout;
         /**
@@ -696,6 +733,9 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
             this.timeout = timeout;
         }
 
+        /**
+         * 代表任务是从外部被关闭的
+         */
         public void cancel() {
             if (cancellable != null) {
                 cancellable.cancel();
@@ -710,10 +750,11 @@ public class ClusterApplierService extends AbstractLifecycleComponent implements
             if (cancellable != null && cancellable.isCancelled()) {
                 return;
             }
-            // 检测ClusterApplierService 生命周期是否已经结束 是的话触发 onClose 否则触发超时
+            // 如果本组件已经被关闭了 那么以 onClose的形式触发监听器
             if (lifecycle.stoppedOrClosed()) {
                 listener.onClose();
             } else {
+                // 代表监听器在预期的时间内没有获取想要的结果
                 listener.onTimeout(this.timeout);
             }
             // note, we rely on the listener to remove itself in case of timeout if needed

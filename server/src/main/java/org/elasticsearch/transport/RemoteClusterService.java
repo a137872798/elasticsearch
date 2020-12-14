@@ -120,7 +120,7 @@ public final class RemoteClusterService extends RemoteClusterAware implements Cl
     /**
      *
      * @param settings
-     * @param transportService   该对象是由哪个传输层对象创建的
+     * @param transportService  关联的传输层服务对象
      */
     RemoteClusterService(Settings settings, TransportService transportService) {
         super(settings);
@@ -219,6 +219,10 @@ public final class RemoteClusterService extends RemoteClusterAware implements Cl
         return this.remoteClusters.keySet();
     }
 
+    /**
+     * 将一组 remote相关的配置加入到 clusterSettings
+     * @param clusterSettings
+     */
     @Override
     public void listenForUpdates(ClusterSettings clusterSettings) {
         super.listenForUpdates(clusterSettings);

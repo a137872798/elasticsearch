@@ -71,7 +71,7 @@ import java.util.stream.Collectors;
 import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
 
 /**
- * 当本节点作为leader节点时 才可以使用这个服务 更新集群状态
+ * 执行更新集群状态变化的任务
  */
 public class MasterService extends AbstractLifecycleComponent {
     private static final Logger logger = LogManager.getLogger(MasterService.class);
@@ -84,7 +84,7 @@ public class MasterService extends AbstractLifecycleComponent {
 
     /**
      * 集群状态发布对象
-     * 每当updateTask 使得ClusterState发生变化时 就需要 通过该对象通知集群中的其他节点
+     * 实际上就是 Coordinator  负责通知到集群的其他节点
      */
     ClusterStatePublisher clusterStatePublisher;
 

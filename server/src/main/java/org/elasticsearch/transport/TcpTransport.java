@@ -198,7 +198,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
      * @param pageCacheRecycler  该对象内部存储了各种数组
      * @param circuitBreakerService  该对象负责管理熔断器
      * @param namedWriteableRegistry  这里定义了一系列class 以及如何读取读取的reader对象
-     * @param networkService
+     * @param networkService  该对象主要是负责地址解析的
      */
     public TcpTransport(Settings settings, Version version, ThreadPool threadPool, PageCacheRecycler pageCacheRecycler,
                         CircuitBreakerService circuitBreakerService, NamedWriteableRegistry namedWriteableRegistry,
@@ -211,9 +211,10 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
         this.circuitBreakerService = circuitBreakerService;
         this.networkService = networkService;
         String nodeName = Node.NODE_NAME_SETTING.get(settings);
-        // 该对象是负责将res/req 序列化的
+        // 传输数据时管理使用的内存对象
         BigArrays bigArrays = new BigArrays(pageCacheRecycler, circuitBreakerService, CircuitBreaker.IN_FLIGHT_REQUESTS);
 
+        // 该对象主要就是向外发送数据
         this.outboundHandler = new OutboundHandler(nodeName, version, statsTracker, threadPool, bigArrays);
 
         this.handshaker = new TransportHandshaker(version, threadPool,
@@ -224,7 +225,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
         // 该对象会定期为当前维护的所有channel 发送心跳包
         this.keepAlive = new TransportKeepAlive(threadPool, this.outboundHandler::sendBytes);
-        // inboundHandler 需要 outboundHandler 将res 发送到对端
+        // 定义接收消息 以及分配给不同handler进行处理的逻辑  只处理已经拼装好的消息  因为在传输层需要解决拆包/粘包问题
         this.inboundHandler = new InboundHandler(threadPool, outboundHandler, namedWriteableRegistry, handshaker, keepAlive,
             requestHandlers, responseHandlers);
     }
