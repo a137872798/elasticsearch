@@ -470,6 +470,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
     }
 
     /**
+     * 根据profile信息 绑定本地端口
      * @param profileSettings
      */
     protected void bindServer(ProfileSettings profileSettings) {
@@ -478,7 +479,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
         // 获取允许绑定的一组地址
         List<String> profileBindHosts = profileSettings.bindHosts;
         try {
-            // 将地址解析成 InetAddress
+            // networkService 就是解析地址用的  先忽略地址是怎么解析的
             hostAddresses = networkService.resolveBindHostAddresses(profileBindHosts.toArray(Strings.EMPTY_ARRAY));
         } catch (IOException e) {
             throw new BindTransportException("Failed to resolve host " + profileBindHosts, e);

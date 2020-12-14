@@ -96,7 +96,7 @@ public class NioSelector implements Closeable {
 
     /**
      *
-     * @param eventHandler
+     * @param eventHandler  感知到的事件 会委托给该对象处理
      * @param selector  通过分配合理的时间监听io密集型/cpu密集型
      */
     public NioSelector(EventHandler eventHandler, Selector selector) {
@@ -128,6 +128,10 @@ public class NioSelector implements Closeable {
         return isClosed.get() == false;
     }
 
+    /**
+     * 未锁定状态 就代表selector还没有启动
+     * @return
+     */
     public boolean isRunning() {
         return runLock.isLocked();
     }

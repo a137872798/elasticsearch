@@ -56,6 +56,10 @@ public class NioSelectorGroup implements NioGroup {
 
     // 只负责处理读写请求的选择器
     private final List<NioSelector> selectors;
+
+    /**
+     * 内部是一个 Selector[] 但是调用get()每次只会返回一个selector
+     */
     private final RoundRobinSupplier<NioSelector> selectorSupplier;
 
     private final AtomicBoolean isOpen = new AtomicBoolean(true);
@@ -65,10 +69,9 @@ public class NioSelectorGroup implements NioGroup {
      * same selectors that are handling child channels.
      *
      * @param threadFactory factory to create selector threads
-     * @param selectorCount the number of selectors to be created
-     * @param eventHandlerFunction function for creating event handlers
+     * @param selectorCount the number of selectors to be created  事件循环组将会有多少条线程
+     * @param eventHandlerFunction function for creating event handlers  事件处理器
      * @throws IOException occurs if there is a problem while opening a java.nio.Selector
-     * 默认情况下是不创建 acceptorThread的
      */
     public NioSelectorGroup(ThreadFactory threadFactory, int selectorCount,
                             Function<Supplier<NioSelector>, EventHandler> eventHandlerFunction) throws IOException {
@@ -80,8 +83,8 @@ public class NioSelectorGroup implements NioGroup {
      * of selectors dedicated to accepting channels. These accepted channels will be handed off the
      * non-server selectors.
      *
-     * @param acceptorThreadFactory factory to create acceptor selector threads
-     * @param dedicatedAcceptorCount the number of dedicated acceptor selectors to be created
+     * @param acceptorThreadFactory factory to create acceptor selector threads  默认情况下不设置
+     * @param dedicatedAcceptorCount the number of dedicated acceptor selectors to be created  默认情况下不设置
      * @param selectorThreadFactory factory to create non-acceptor selector threads
      * @param selectorCount the number of non-acceptor selectors to be created
      * @param eventHandlerFunction function for creating event handlers
@@ -95,19 +98,22 @@ public class NioSelectorGroup implements NioGroup {
         selectors = new ArrayList<>(selectorCount);
 
         try {
-            // 内部每个RoundRobinSupplier 使用的 selector[] 都是一样的
+            // 这容器是干嘛用的???
             List<RoundRobinSupplier<NioSelector>> suppliersToSet = new ArrayList<>(selectorCount);
             for (int i = 0; i < selectorCount; ++i) {
                 RoundRobinSupplier<NioSelector> supplier = new RoundRobinSupplier<>();
                 suppliersToSet.add(supplier);
+                // 通过 eventHandler对象初始化 selector   事件处理器定义了如何处理选择器检测到的IO事件
                 NioSelector selector = new NioSelector(eventHandlerFunction.apply(supplier));
                 selectors.add(selector);
             }
+            // 内部每个RoundRobinSupplier 使用的 selector[] 都是一样的
             for (RoundRobinSupplier<NioSelector> supplierToSet : suppliersToSet) {
                 supplierToSet.setSelectors(selectors.toArray(new NioSelector[0]));
                 assert supplierToSet.count() == selectors.size() : "Supplier should have same count as selector list.";
             }
 
+            // TODO 忽略 accept相关的
             for (int i = 0; i < dedicatedAcceptorCount; ++i) {
                 RoundRobinSupplier<NioSelector> supplier = new RoundRobinSupplier<>(selectors.toArray(new NioSelector[0]));
                 NioSelector acceptor = new NioSelector(eventHandlerFunction.apply(supplier));
@@ -117,6 +123,7 @@ public class NioSelectorGroup implements NioGroup {
             if (dedicatedAcceptorCount != 0) {
                 acceptorSupplier = new RoundRobinSupplier<>(dedicatedAcceptors.toArray(new NioSelector[0]));
             } else {
+                // 当没有指定 acceptor线程组时与普通selector共用
                 acceptorSupplier = new RoundRobinSupplier<>(selectors.toArray(new NioSelector[0]));
             }
             selectorSupplier = new RoundRobinSupplier<>(selectors.toArray(new NioSelector[0]));

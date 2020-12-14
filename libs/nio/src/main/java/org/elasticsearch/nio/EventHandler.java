@@ -26,16 +26,17 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * 定义了一套获取选择器 并使用 异常处理器处理Exception的模板
+ * 事件处理器 就是处理事件循环组接收到的各种事件
  */
 public class EventHandler {
 
     /**
-     * 该对象处理异常
+     * 处理异常的函数
      */
     protected final Consumer<Exception> exceptionHandler;
     /**
      * 该对象负责获取选择器
+     * 对应 RouondRobinSupplier
      */
     private final Supplier<NioSelector> selectorSupplier;
 

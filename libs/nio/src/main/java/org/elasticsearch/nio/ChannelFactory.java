@@ -71,7 +71,15 @@ public abstract class ChannelFactory<ServerSocket extends NioServerSocketChannel
         this.rawChannelFactory = rawChannelFactory;
     }
 
+    /**
+     * 生成一个客户端channel 并通过profile配置进行加工
+     * @param remoteAddress
+     * @param supplier 实际上就是事件循环组 每次get只会随机返回一个selector
+     * @return
+     * @throws IOException
+     */
     public Socket openNioChannel(InetSocketAddress remoteAddress, Supplier<NioSelector> supplier) throws IOException {
+        // 创建一个客户端channel 可以连接到某个ip:port
         SocketChannel rawChannel = rawChannelFactory.openNioChannel();
         setNonBlocking(rawChannel);
         NioSelector selector = supplier.get();
@@ -153,7 +161,7 @@ public abstract class ChannelFactory<ServerSocket extends NioServerSocketChannel
     }
 
     /**
-     * 使用相关参数生成 channel对象
+     * 根据相关信息包装成ES.channel
      * @param selector
      * @param rawChannel
      * @param config

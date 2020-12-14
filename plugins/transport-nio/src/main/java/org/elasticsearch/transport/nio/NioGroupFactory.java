@@ -96,10 +96,12 @@ public final class NioGroupFactory {
             // 获取线程工程  该工厂创建的线程都是守护线程
             ThreadFactory threadFactory = daemonThreadFactory(this.settings, TcpTransport.TRANSPORT_WORKER_THREAD_NAME_PREFIX);
             NioSelectorGroup nioGroup = new NioSelectorGroup(threadFactory, NioTransportPlugin.NIO_WORKER_COUNT.get(settings),
+                // 当selector感知到事件后 交由该对象进行处理
                 (s) -> new EventHandler(this::onException, s));
             this.refCountedGroup = new RefCountedNioGroup(nioGroup);
             return new WrappedNioGroup(refCountedGroup);
         } else {
+            // 当重复调用该方法时 不会创建更多的线程组 而是复用之前的 因为受到底层IO的限制 所以提高线程数并不能提高性能
             refCountedGroup.incRef();
             return new WrappedNioGroup(refCountedGroup);
         }

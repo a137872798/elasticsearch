@@ -43,13 +43,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Once the connection is opened, this class manages the connection. This includes closing the connection when
  * the connection manager is closed.
  * 管理当前集群中与其他节点的所有连接
+ * 被 TransportService持有
  */
 public class ClusterConnectionManager implements ConnectionManager {
 
     private static final Logger logger = LogManager.getLogger(ClusterConnectionManager.class);
 
     /**
-     * key 代表本节点连接的目标节点    Connection代表与该节点的连接  在底层是由多条channel组合成的  每次发送请求时会随机选择一个channel发送
+     * key 代表本节点连接的目标节点
+     * Connection代表与该节点的连接  在底层是由多条channel组合成的  每次发送请求时会随机选择一个channel发送
+     * 当NodeConnectionsService建立了与某个node的连接后就会存储到这个容器中
      */
     private final ConcurrentMap<DiscoveryNode, Transport.Connection> connectedNodes = ConcurrentCollections.newConcurrentMap();
 

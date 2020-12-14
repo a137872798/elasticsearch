@@ -37,13 +37,14 @@ public class NioSocketChannel extends NioChannel {
     private volatile InetSocketAddress remoteAddress;
     private volatile InetSocketAddress localAddress;
     /**
-     * 通道上绑定的上下文对象
+     * 通道上绑定的上下文对象 内部还包含了readWriterHandler 用于处理读写请求
      */
     private volatile SocketChannelContext context;
 
     public NioSocketChannel(SocketChannel socketChannel) {
         this.socketChannel = socketChannel;
     }
+
 
     public void setContext(SocketChannelContext context) {
         if (contextSet.compareAndSet(false, true)) {

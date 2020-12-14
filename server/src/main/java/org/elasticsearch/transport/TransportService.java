@@ -71,7 +71,9 @@ import java.util.function.Supplier;
 
 /**
  * 传输层服务
- * 本身还会监听发送消息的结果
+ * 同时当接收/发送消息
+ * 以及建立连接时会触发相关钩子
+ * 该对象本身只是一个中枢对象 底层通信交由 Transport对象
  */
 public class TransportService extends AbstractLifecycleComponent implements ReportingService<TransportInfo>, TransportMessageListener,
     TransportConnectionListener {
@@ -81,7 +83,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     public static final String HANDSHAKE_ACTION_NAME = "internal:transport/handshake";
 
     /**
-     * 该标识代表是否允许处理请求  ap模式???  这种套路有点像是eureka的 在节点数据同步前无法处理请求
+     * 该标识代表是否允许处理请求
      */
     private final AtomicBoolean handleIncomingRequests = new AtomicBoolean();
 
@@ -94,15 +96,18 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      * 该对象负责建立连接 以及处理发送/接收数据
      */
     protected final Transport transport;
+    /**
+     * 管理连接
+     */
     protected final ConnectionManager connectionManager;
     protected final ThreadPool threadPool;
     /**
-     * 该节点所在集群的名字
+     * 该节点所在集群的name
      */
     protected final ClusterName clusterName;
 
     /**
-     * 下层接收到的req都会转换成某种action 并交由taskManager处理
+     * 任务管理器负责记录收到的请求
      */
     protected final TaskManager taskManager;
 
@@ -113,20 +118,25 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     private final TransportInterceptor.AsyncSender asyncSender;
 
     /**
-     * 将地址转换成 node
+     * 将本地地址转换成 node节点
      */
     private final Function<BoundTransportAddress, DiscoveryNode> localNodeFactory;
 
     /**
      * 是否需要访问远端集群  如果需要的话 还支持从远端集群监听配置的变化
+     * TODO 先忽略远端集群功能吧
      */
     private final boolean remoteClusterClient;
 
     /**
      * 维护了所有待处理的req 以及对应的res处理器
+     * 类型于一个响应池
      */
     private final Transport.ResponseHandlers responseHandlers;
 
+    /**
+     * 默认实现为 NOOP
+     */
     private final TransportInterceptor interceptor;
 
     // An LRU (don't really care about concurrency here) that holds the latest timed out requests so if they
@@ -160,12 +170,13 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
 
     /**
      * 管理与远端集群的通讯
+     * TODO 先忽略与远端集群的通讯
      */
     private final RemoteClusterService remoteClusterService;
 
     /**
      * if set will call requests sent to this id to shortcut and executed locally
-     * 本地节点 如果需要将请求发往本地节点 会直接调用相关指令 而不需要通过网络  在某些node即作为es集群中的服务节点又作为请求节点时使用
+     * 本地节点 如果需要将请求发往本地节点 会直接调用相关指令 而不需要通过网络
      * */
     volatile DiscoveryNode localNode = null;
 
@@ -223,7 +234,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      * @param localNodeFactory
      * @param clusterSettings
      * @param taskHeaders
-     * @param connectionManager
+     * @param connectionManager  连接管理器
      */
     public TransportService(Settings settings, Transport transport, ThreadPool threadPool, TransportInterceptor transportInterceptor,
                             Function<BoundTransportAddress, DiscoveryNode> localNodeFactory, @Nullable ClusterSettings clusterSettings,
@@ -304,11 +315,11 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
     }
 
     /**
-     * 启动传输层服务
+     * 在调用node.start() 后会触发该方法
      */
     @Override
     protected void doStart() {
-        // 使用当前对象监听接受发送的 req/res
+        // 将自身设置到 transport/connectionManager中 方便监听变化
         transport.setMessageListener(this);
         connectionManager.addListener(this);
         // 这里其实就是开启客户端channel 组装工厂和 服务端channel组装工厂  (其中包含了将channel注册到事件循环对应的selector的逻辑)
@@ -424,6 +435,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      *
      * @param node the node to connect to
      * @param listener the action listener to notify
+     *                 连接到目标节点
      */
     public void connectToNode(DiscoveryNode node, ActionListener<Void> listener) throws ConnectTransportException {
         connectToNode(node, null, listener);

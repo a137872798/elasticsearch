@@ -55,16 +55,17 @@ public class TcpReadWriteHandler extends BytesWriteHandler {
 
     /**
      *
-     * @param channel
+     * @param channel  已经封装过的ESchannel
      * @param recycler 对象池 就是重复利用各种数组对象
-     * @param transport
+     * @param transport  该对象是由哪个传输层对象创建的
      */
     public TcpReadWriteHandler(NioTcpChannel channel, PageCacheRecycler recycler, TcpTransport transport) {
         this.channel = channel;
         // 从传输层对象获取各种参数
         final ThreadPool threadPool = transport.getThreadPool();
+        // 针对发送请求有一个熔断器对象
         final Supplier<CircuitBreaker> breaker = transport.getInflightBreaker();
-        // 存储了所有请求处理器
+        // 以action作为key 存储了处理请求的handle对象
         final Transport.RequestHandlers requestHandlers = transport.getRequestHandlers();
         this.pipeline = new InboundPipeline(transport.getVersion(), transport.getStatsTracker(), recycler, threadPool::relativeTimeInMillis,
             breaker, requestHandlers::getHandler, transport::inboundMessage);

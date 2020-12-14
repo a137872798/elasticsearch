@@ -70,13 +70,13 @@ public class InboundPipeline implements Releasable {
     private boolean isClosed = false;
 
     /**
-     *
+     * 当接受到一条新的消息时会通过pipeline进行处理  就跟netty的contextPipeline一样
      * @param version
      * @param statsTracker
-     * @param recycler
+     * @param recycler 通过该对象反复创建数组可以节省开销 利用了对象池技术
      * @param relativeTimeInMillis
      * @param circuitBreaker  该对象负责获取熔断器
-     * @param registryFunction  通过actionName 可以获取到对应的请求处理器   这里主要是检测处理消息时是否应该触发熔断
+     * @param registryFunction  通过actionName 可以获取到对应的请求处理器
      * @param messageHandler   定义了如何处理消息的逻辑
      */
     public InboundPipeline(Version version, StatsTracker statsTracker, PageCacheRecycler recycler, LongSupplier relativeTimeInMillis,

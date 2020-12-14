@@ -94,7 +94,7 @@ public class NioTransport extends TcpTransport {
     }
 
     /**
-     * 将服务端channel 注册到事件循环组中 同时绑定目标地址
+     * 从不同profile信息对应的channel工厂中生成服务端channel 并绑定到目标端口上
      * @param name    the profile name
      * @param address the address to bind to
      * @return
@@ -135,11 +135,12 @@ public class NioTransport extends TcpTransport {
         try {
             // 生成一个事件循环组
             // 对应NettyTransport的  eventLoopGroup = new NioEventLoopGroup(workerCount, threadFactory);
+            // 这个时候已经启动事件循环组了
             nioGroup = groupFactory.getTransportGroup();
 
             ProfileSettings clientProfileSettings = new ProfileSettings(settings, TransportSettings.DEFAULT_PROFILE);
 
-            // 专门生成 clientChannel的工厂 对应 Bootstrap
+            // 生成客户端工厂 ES中哪个节点都同时作为client/server存在 一旦通过ClusterApplierService感知到其他节点就会通过transportService进行连接
             clientChannelFactory = clientChannelFactoryFunction(clientProfileSettings);
 
             // 如果当前节点作为服务端 那么根据配置创建各种不同的channel装配工厂
@@ -149,6 +150,7 @@ public class NioTransport extends TcpTransport {
                     String profileName = profileSettings.profileName;
                     TcpChannelFactory factory = serverChannelFactory(profileSettings);
                     profileToChannelFactory.putIfAbsent(profileName, factory);
+                    // 这里多了一步 绑定本地端口
                     bindServer(profileSettings);
                 }
             }
@@ -183,7 +185,6 @@ public class NioTransport extends TcpTransport {
     }
 
     /**
-     * 该对象根据传入的node 自动生成channel工厂   注意channel与绑定哪个地址 或者连接哪个地址是没有直接关系的
      * @param profileSettings
      * @return
      */
@@ -222,11 +223,18 @@ public class NioTransport extends TcpTransport {
             this.profileName = profileSettings.profileName;
         }
 
+        /**
+         * 将普通的channel 封装成ESchannel
+         * @param selector     the channel will be registered with channel会绑定在哪个选择器上
+         * @param channel      the raw channel  JAVA原生channel
+         * @param socketConfig the socket config  该channel相关的配置 还包含了remoteAddress(目标服务器地址)
+         * @return
+         */
         @Override
         public NioTcpChannel createChannel(NioSelector selector, SocketChannel channel, Config.Socket socketConfig) {
             NioTcpChannel nioChannel = new NioTcpChannel(isClient == false, profileName, channel);
             Consumer<Exception> exceptionHandler = (e) -> onException(nioChannel, e);
-            // 用于处理tcp读取请求的handler
+            // 专门负责往该channel中写数据的writerHandler 对象
             TcpReadWriteHandler handler = new TcpReadWriteHandler(nioChannel, pageCacheRecycler, NioTransport.this);
             // 将相关对象包装成context  设置到channel后返回channel
             BytesChannelContext context = new BytesChannelContext(nioChannel, selector, socketConfig, exceptionHandler, handler,
