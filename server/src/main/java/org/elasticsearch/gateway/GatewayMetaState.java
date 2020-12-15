@@ -116,15 +116,18 @@ public class GatewayMetaState implements Closeable {
         // 当本节点是数据节点或者是 参选节点时
         if (DiscoveryNode.isMasterNode(settings) || DiscoveryNode.isDataNode(settings)) {
             try {
+                // 从dataPath中读取最新的元数据信息    metadata/indexMetadata 数据都以lucene.doc的形式存储在_state目录下
                 final PersistedClusterStateService.OnDiskState onDiskState = persistedClusterStateService.loadBestOnDiskState();
 
                 Metadata metadata = onDiskState.metadata;
                 long lastAcceptedVersion = onDiskState.lastAcceptedVersion;
                 long currentTerm = onDiskState.currentTerm;
 
+                // 代表此时磁盘中没有相关数据
                 if (onDiskState.empty()) {
                     assert Version.CURRENT.major <= Version.V_7_0_0.major + 1 :
                         "legacy metadata loader is not needed anymore from v9 onwards";
+                    // TODO 忽略兼容性代码
                     final Tuple<Manifest, Metadata> legacyState = metaStateService.loadFullState();
                     if (legacyState.v1().isEmpty() == false) {
                         metadata = legacyState.v2();
@@ -136,23 +139,29 @@ public class GatewayMetaState implements Closeable {
                 PersistedState persistedState = null;
                 boolean success = false;
                 try {
+                    // prepareInitialClusterState 就是为CS追加一些额外信息 可以先忽略
                     final ClusterState clusterState = prepareInitialClusterState(transportService, clusterService,
                         ClusterState.builder(ClusterName.CLUSTER_NAME_SETTING.get(settings))
                             .version(lastAcceptedVersion)
+                            // 忽略metadata的升级逻辑
                             .metadata(upgradeMetadataForNode(metadata, metadataIndexUpgradeService, metadataUpgrader))
                             .build());
+                    // PersistedState 代表将某些状态信息持久化
                     if (DiscoveryNode.isMasterNode(settings)) {
                         persistedState = new LucenePersistedState(persistedClusterStateService, currentTerm, clusterState);
                     } else {
+                        // 非MasterNode 生成一个异步持久化对象 一开始将CS存储在内存中 在合适的时机才会将数据持久化
                         persistedState = new AsyncLucenePersistedState(settings, transportService.getThreadPool(),
                             new LucenePersistedState(persistedClusterStateService, currentTerm, clusterState));
                     }
+                    // TODO 这个好像是兼容老代码的 先不管吧
                     if (DiscoveryNode.isDataNode(settings)) {
                         metaStateService.unreferenceAll(); // unreference legacy files (only keep them for dangling indices functionality)
                     } else {
                         metaStateService.deleteAll(); // delete legacy files
                     }
                     // write legacy node metadata to prevent accidental downgrades from spawning empty cluster state
+                    // 将最新的NodeMetadata写入到指定目录 并且删除旧数据
                     NodeMetadata.FORMAT.writeAndCleanup(new NodeMetadata(persistedClusterStateService.getNodeId(), Version.CURRENT),
                         persistedClusterStateService.getDataPaths());
                     success = true;
@@ -162,16 +171,19 @@ public class GatewayMetaState implements Closeable {
                     }
                 }
 
+                // 设置此时持久化的 state对象
                 this.persistedState.set(persistedState);
             } catch (IOException e) {
                 throw new ElasticsearchException("failed to load metadata", e);
             }
         } else {
+            // 代表role 不是 Master 也不是 Data
             final long currentTerm = 0L;
             final ClusterState clusterState = ClusterState.builder(ClusterName.CLUSTER_NAME_SETTING.get(settings)).build();
             if (persistedClusterStateService.getDataPaths().length > 0) {
                 // write empty cluster state just so that we have a persistent node id. There is no need to write out global metadata with
                 // cluster uuid as coordinating-only nodes do not snap into a cluster as they carry no state
+                // 只写入了一个名字
                 try (PersistedClusterStateService.Writer persistenceWriter = persistedClusterStateService.createWriter()) {
                     persistenceWriter.writeFullStateAndCommit(currentTerm, clusterState);
                 } catch (IOException e) {
@@ -187,23 +199,30 @@ public class GatewayMetaState implements Closeable {
                     throw new UncheckedIOException(e);
                 }
             }
+            // 因为其余role不需要对CS持久化 所以使用了一个内存对象
             persistedState.set(new InMemoryPersistedState(currentTerm, clusterState));
         }
     }
 
     // exposed so it can be overridden by tests
+    // 通过传入的信息初始化 ClusterState
     ClusterState prepareInitialClusterState(TransportService transportService, ClusterService clusterService, ClusterState clusterState) {
         assert clusterState.nodes().getLocalNode() == null : "prepareInitialClusterState must only be called once";
         assert transportService.getLocalNode() != null : "transport service is not yet started";
         return Function.<ClusterState>identity()
+            // 为CS追加 尚未恢复数据 的block
             .andThen(ClusterStateUpdaters::addStateNotRecoveredBlock)
+            // 为CS追加localNode
             .andThen(state -> ClusterStateUpdaters.setLocalNode(state, transportService.getLocalNode()))
+            // 升级相关的先忽略
             .andThen(state -> ClusterStateUpdaters.upgradeAndArchiveUnknownOrInvalidSettings(state, clusterService.getClusterSettings()))
+            // 为索引增加block信息
             .andThen(ClusterStateUpdaters::recoverClusterBlocks)
             .apply(clusterState);
     }
 
     // exposed so it can be overridden by tests
+    // 尝试升级元数据
     Metadata upgradeMetadataForNode(
             Metadata metadata,
             MetadataIndexUpgradeService metadataIndexUpgradeService,
@@ -276,6 +295,11 @@ public class GatewayMetaState implements Closeable {
         }
     }
 
+    /**
+     * 异步持久化对象
+     * CS首先暂存在内存中 当CS发布成功后会通知其他节点进行持久化
+     * 也就是每个节点还是需要在本地存储CS数据 便于快速启动
+     */
     static class AsyncLucenePersistedState extends InMemoryPersistedState {
 
         private static final Logger logger = LogManager.getLogger(AsyncLucenePersistedState.class);
@@ -283,6 +307,10 @@ public class GatewayMetaState implements Closeable {
         static final String THREAD_NAME = "AsyncLucenePersistedState#updateTask";
 
         private final EsThreadPoolExecutor threadPoolExecutor;
+
+        /**
+         * 该对象可以对CS做持久化
+         */
         private final PersistedState persistedState;
 
         boolean newCurrentTermQueued = false;
@@ -290,6 +318,12 @@ public class GatewayMetaState implements Closeable {
 
         private final Object mutex = new Object();
 
+        /**
+         *
+         * @param settings
+         * @param threadPool
+         * @param persistedState  该对象可以持久化CS
+         */
         AsyncLucenePersistedState(Settings settings, ThreadPool threadPool, PersistedState persistedState) {
             super(persistedState.getCurrentTerm(), persistedState.getLastAcceptedState());
             final String nodeName = Objects.requireNonNull(Node.NODE_NAME_SETTING.get(settings));
@@ -412,18 +446,29 @@ public class GatewayMetaState implements Closeable {
 
     /**
      * Encapsulates the incremental writing of metadata to a {@link PersistedClusterStateService.Writer}.
-     * clusterState 是存储在lucene中的 每个节点底层应该都是直接关联到 lucene上的 (可以把它看作jraft中的 rocksDB)
+     * 当本节点是 masterNode时 生成该对象
      */
     static class LucenePersistedState implements PersistedState {
 
         private long currentTerm;
         private ClusterState lastAcceptedState;
+
+        /**
+         * 该对象可以将CS持久化到磁盘中
+         */
         private final PersistedClusterStateService persistedClusterStateService;
 
         // As the close method can be concurrently called to the other PersistedState methods, this class has extra protection in place.
         private final AtomicReference<PersistedClusterStateService.Writer> persistenceWriter = new AtomicReference<>();
         boolean writeNextStateFully;
 
+        /**
+         *
+         * @param persistedClusterStateService  该服务负责将集群信息持久化
+         * @param currentTerm   当前集群任期
+         * @param lastAcceptedState  最后认可的CS
+         * @throws IOException
+         */
         LucenePersistedState(PersistedClusterStateService persistedClusterStateService, long currentTerm, ClusterState lastAcceptedState)
             throws IOException {
             this.persistedClusterStateService = persistedClusterStateService;
@@ -438,6 +483,7 @@ public class GatewayMetaState implements Closeable {
             // by this version of Elasticsearch. TODO TBD should we avoid indexing when possible?
             final PersistedClusterStateService.Writer writer = persistedClusterStateService.createWriter();
             try {
+                // 将此时最新的状态持久化到磁盘中
                 writer.writeFullStateAndCommit(currentTerm, lastAcceptedState);
             } catch (Exception e) {
                 try {

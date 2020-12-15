@@ -133,6 +133,9 @@ public class PersistedClusterStateService {
     public static final Setting<TimeValue> SLOW_WRITE_LOGGING_THRESHOLD = Setting.timeSetting("gateway.slow_write_logging_threshold",
         TimeValue.timeValueSeconds(10), TimeValue.ZERO, Setting.Property.NodeScope, Setting.Property.Dynamic);
 
+    /**
+     * 存储数据的路径 从env中获取
+     */
     private final Path[] dataPaths;
     private final String nodeId;
     private final NamedXContentRegistry namedXContentRegistry;
@@ -177,6 +180,7 @@ public class PersistedClusterStateService {
 
     /**
      * Creates a new disk-based writer for cluster states
+     * 这里创建一个负责持久化 CS的writer对象
      */
     public Writer createWriter() throws IOException {
         final List<MetadataIndexWriter> metadataIndexWriters = new ArrayList<>();
@@ -184,9 +188,11 @@ public class PersistedClusterStateService {
         boolean success = false;
         try {
             for (final Path path : dataPaths) {
+                // 给每个dataPath创建 存储metadata的目录
                 final Directory directory = createDirectory(path.resolve(METADATA_DIRECTORY_NAME));
                 closeables.add(directory);
 
+                // 生成对应的indexWriter对象
                 final IndexWriter indexWriter = createIndexWriter(directory, false);
                 closeables.add(indexWriter);
                 metadataIndexWriters.add(new MetadataIndexWriter(directory, indexWriter));
@@ -197,9 +203,17 @@ public class PersistedClusterStateService {
                 IOUtils.closeWhileHandlingException(closeables);
             }
         }
+        // 将一组 metadataIndexWriter合并成writer对象
         return new Writer(metadataIndexWriters, nodeId, bigArrays, relativeTimeMillisSupplier, () -> slowWriteLoggingThreshold);
     }
 
+    /**
+     * 创建一个 indexWriter对象 在之后负责写metadata
+     * @param directory
+     * @param openExisting
+     * @return
+     * @throws IOException
+     */
     private static IndexWriter createIndexWriter(Directory directory, boolean openExisting) throws IOException {
         final IndexWriterConfig indexWriterConfig = new IndexWriterConfig(new KeywordAnalyzer());
         // start empty since we re-write the whole cluster state to ensure it is all using the same format version
@@ -236,6 +250,9 @@ public class PersistedClusterStateService {
         return dataPaths;
     }
 
+    /**
+     * 描述从磁盘中某个地方读取到的 metadata
+     */
     public static class OnDiskState {
         private static final OnDiskState NO_ON_DISK_STATE = new OnDiskState(null, null, 0L, 0L, Metadata.EMPTY_METADATA);
 
@@ -273,7 +290,6 @@ public class PersistedClusterStateService {
             if (Files.exists(indexPath)) {
                 // 读取 _state 内部的数据  在这个目录下包含 segment_N文件
                 try (DirectoryReader reader = DirectoryReader.open(new SimpleFSDirectory(dataPath.resolve(METADATA_DIRECTORY_NAME)))) {
-                    // TODO 什么时候会在这一层写入数据呢 又是在什么时候更新
                     // ES写入数据是先创建index    但是与lucene的index含义不一致  这里的 indexCommit应该指的是最近一次刷盘后更新的数据  而每次更新可能会同时影响到多个ES.index吧
 
                     final Map<String, String> userData = reader.getIndexCommit().getUserData();
@@ -343,21 +359,26 @@ public class PersistedClusterStateService {
         // sufficient to read _any_ copy. "Mostly" sufficient because the user can change the set of data paths when restarting, and may
         // add a data path containing a stale copy of the metadata. We deal with this by using the freshest copy we can find.
         for (final Path dataPath : dataPaths) {
+            // 这个是外层的 _state目录 每个index 还专门有一个_state目录
             final Path indexPath = dataPath.resolve(METADATA_DIRECTORY_NAME);
             if (Files.exists(indexPath)) {
                 try (Directory directory = createDirectory(indexPath);
                      DirectoryReader directoryReader = DirectoryReader.open(directory)) {
+                    // 从目录加载数据
                     final OnDiskState onDiskState = loadOnDiskState(dataPath, directoryReader);
 
+                    // 当读取出来的nodeId不一致时 抛出异常
                     if (nodeId.equals(onDiskState.nodeId) == false) {
                         throw new IllegalStateException("unexpected node ID in metadata, found [" + onDiskState.nodeId +
                             "] in [" + dataPath + "] but expected [" + nodeId + "]");
                     }
 
+                    // 代表集群的最新状态已经通过了publish的commit阶段 也就是已经生效了
                     if (onDiskState.metadata.clusterUUIDCommitted()) {
                         if (committedClusterUuid == null) {
                             committedClusterUuid = onDiskState.metadata.clusterUUID();
                             committedClusterUuidPath = dataPath;
+                            // 集群id不一致时也要抛出异常
                         } else if (committedClusterUuid.equals(onDiskState.metadata.clusterUUID()) == false) {
                             throw new IllegalStateException("mismatched cluster UUIDs in metadata, found [" + committedClusterUuid +
                                 "] in [" + committedClusterUuidPath + "] and [" + onDiskState.metadata.clusterUUID() + "] in ["
@@ -365,12 +386,14 @@ public class PersistedClusterStateService {
                         }
                     }
 
+                    // 多个dataPath下可能会有多个metadata 只使用term最大的
                     if (maxCurrentTermOnDiskState.empty() || maxCurrentTermOnDiskState.currentTerm < onDiskState.currentTerm) {
                         maxCurrentTermOnDiskState = onDiskState;
                     }
 
                     long acceptedTerm = onDiskState.metadata.coordinationMetadata().term();
                     long maxAcceptedTerm = bestOnDiskState.metadata.coordinationMetadata().term();
+                    // 这里就是尽可能获取最新的 OnDiskState  简化理解的话 可以当作只有一个dataPath
                     if (bestOnDiskState.empty()
                         || acceptedTerm > maxAcceptedTerm
                         || (acceptedTerm == maxAcceptedTerm
@@ -394,16 +417,26 @@ public class PersistedClusterStateService {
         return bestOnDiskState;
     }
 
+    /**
+     *
+     * @param dataPath  外层的数据目录
+     * @param reader  已经定位到_state目录 并生成输入流
+     * @return
+     * @throws IOException
+     */
     private OnDiskState loadOnDiskState(Path dataPath, DirectoryReader reader) throws IOException {
         final IndexSearcher searcher = new IndexSearcher(reader);
         searcher.setQueryCache(null);
 
         final SetOnce<Metadata.Builder> builderReference = new SetOnce<>();
+        // 通过lucene查找type=global的所有doc 并获取data数据
         consumeFromType(searcher, GLOBAL_TYPE_NAME, bytes ->
         {
+            // 反序列化成 metadata对象
             final Metadata metadata = Metadata.Builder.fromXContent(XContentFactory.xContent(XContentType.SMILE)
                 .createParser(namedXContentRegistry, LoggingDeprecationHandler.INSTANCE, bytes.bytes, bytes.offset, bytes.length));
             logger.trace("found global metadata with last-accepted term [{}]", metadata.coordinationMetadata().term());
+            // 这里认为metadata 应该只存储了一个
             if (builderReference.get() != null) {
                 throw new IllegalStateException("duplicate global metadata found in [" + dataPath + "]");
             }
@@ -412,12 +445,14 @@ public class PersistedClusterStateService {
 
         final Metadata.Builder builder = builderReference.get();
         if (builder == null) {
+            // 当没有查询到 metadata时抛出异常
             throw new IllegalStateException("no global metadata found in [" + dataPath + "]");
         }
 
         logger.trace("got global metadata, now reading index metadata");
 
         final Set<String> indexUUIDs = new HashSet<>();
+        // 这里读取type为index的data数据   这里有多个数据 每个index对应一个doc
         consumeFromType(searcher, INDEX_TYPE_NAME, bytes ->
         {
             final IndexMetadata indexMetadata = IndexMetadata.fromXContent(XContentFactory.xContent(XContentType.SMILE)
@@ -429,6 +464,7 @@ public class PersistedClusterStateService {
             builder.put(indexMetadata, false);
         });
 
+        // 从 segment_N 的用户数据中读取相关属性
         final Map<String, String> userData = reader.getIndexCommit().getUserData();
         logger.trace("loaded metadata [{}] from [{}]", userData, reader.directory());
         assert userData.size() == COMMIT_DATA_SIZE : userData;
@@ -440,6 +476,13 @@ public class PersistedClusterStateService {
             Long.parseLong(userData.get(LAST_ACCEPTED_VERSION_KEY)), builder.build());
     }
 
+    /**
+     * 根据type查询数据
+     * @param indexSearcher
+     * @param type
+     * @param bytesRefConsumer
+     * @throws IOException
+     */
     private static void consumeFromType(IndexSearcher indexSearcher, String type,
                                         CheckedConsumer<BytesRef, IOException> bytesRefConsumer) throws IOException {
 
@@ -447,16 +490,19 @@ public class PersistedClusterStateService {
         final Weight weight = indexSearcher.createWeight(query, ScoreMode.COMPLETE_NO_SCORES, 0.0f);
         logger.trace("running query [{}]", query);
 
+        // 查询所有type=global的doc
         for (LeafReaderContext leafReaderContext : indexSearcher.getIndexReader().leaves()) {
             logger.trace("new leafReaderContext: {}", leafReaderContext);
             final Scorer scorer = weight.scorer(leafReaderContext);
             if (scorer != null) {
                 final Bits liveDocs = leafReaderContext.reader().getLiveDocs();
+                // 检测某个doc是否还存活
                 final IntPredicate isLiveDoc = liveDocs == null ? i -> true : liveDocs::get;
                 final DocIdSetIterator docIdSetIterator = scorer.iterator();
                 while (docIdSetIterator.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
                     if (isLiveDoc.test(docIdSetIterator.docID())) {
                         logger.trace("processing doc {}", docIdSetIterator.docID());
+                        // 找到文档并获取 data field
                         bytesRefConsumer.accept(
                             leafReaderContext.reader().document(docIdSetIterator.docID()).getBinaryValue(DATA_FIELD_NAME));
                     }
@@ -500,6 +546,7 @@ public class PersistedClusterStateService {
     /**
      * Encapsulates a single {@link IndexWriter} with its {@link Directory} for ease of closing, and a {@link Logger}. There is one of these
      * for each data path.
+     * 该对象负责将 metadata写入到lucene中
      */
     private static class MetadataIndexWriter implements Closeable {
 
@@ -507,6 +554,11 @@ public class PersistedClusterStateService {
         private final Directory directory;
         private final IndexWriter indexWriter;
 
+        /**
+         * 通过一个要使用的目录 以及一个写入对象初始化
+         * @param directory
+         * @param indexWriter
+         */
         MetadataIndexWriter(Directory directory, IndexWriter indexWriter) {
             this.directory = directory;
             this.indexWriter = indexWriter;
@@ -525,6 +577,7 @@ public class PersistedClusterStateService {
 
         void updateGlobalMetadata(Document globalMetadataDocument) throws IOException {
             this.logger.trace("updating global metadata doc");
+            // 当某个doc命中了这个query将会更新数据
             indexWriter.updateDocument(new Term(TYPE_FIELD_NAME, GLOBAL_TYPE_NAME), globalMetadataDocument);
         }
 
@@ -538,6 +591,13 @@ public class PersistedClusterStateService {
             this.indexWriter.flush();
         }
 
+        /**
+         * 将最新的描述信息填充到 userData中  并进入prepareCommit阶段
+         * @param nodeId
+         * @param currentTerm
+         * @param lastAcceptedVersion
+         * @throws IOException
+         */
         void prepareCommit(String nodeId, long currentTerm, long lastAcceptedVersion) throws IOException {
             final Map<String, String> commitData = new HashMap<>(COMMIT_DATA_SIZE);
             commitData.put(CURRENT_TERM_KEY, Long.toString(currentTerm));
@@ -558,8 +618,15 @@ public class PersistedClusterStateService {
         }
     }
 
+
+    /**
+     * 负责持久化CS
+     */
     public static class Writer implements Closeable {
 
+        /**
+         * 每个对象对应一个 dataPath
+         */
         private final List<MetadataIndexWriter> metadataIndexWriters;
         private final String nodeId;
         private final BigArrays bigArrays;
@@ -601,14 +668,19 @@ public class PersistedClusterStateService {
 
         /**
          * Overrides and commits the given current term and cluster state
+         * 将此时最新的CS持久化到磁盘中
          */
         public void writeFullStateAndCommit(long currentTerm, ClusterState clusterState) throws IOException {
             ensureOpen();
             try {
                 final long startTimeMillis = relativeTimeMillisSupplier.getAsLong();
+                // 先清理旧数据 之后写入新数据  stats可以理解为结果对象   这里完成了flush 但是没有完成commit
                 final WriterStats stats = overwriteMetadata(clusterState.metadata());
+                // flush 好像只是做了数据的持久化 但是lucene只能读取到commit后的数据 也就是还需要执行一步commit 具体记不清了 需要复习下
                 commit(currentTerm, clusterState.version());
                 fullStateWritten = true;
+
+                // 以下打印日志 忽略
                 final long durationMillis = relativeTimeMillisSupplier.getAsLong() - startTimeMillis;
                 final TimeValue finalSlowWriteLoggingThreshold = slowWriteLoggingThresholdSupplier.get();
                 if (durationMillis >= finalSlowWriteLoggingThreshold.getMillis()) {
@@ -716,6 +788,7 @@ public class PersistedClusterStateService {
 
         /**
          * Update the persisted metadata to match the given cluster state by removing all existing documents and then adding new documents.
+         * 先清理之前的所有数据 之后插入新数据
          */
         private WriterStats overwriteMetadata(Metadata metadata) throws IOException {
             for (MetadataIndexWriter metadataIndexWriter : metadataIndexWriters) {
@@ -728,16 +801,20 @@ public class PersistedClusterStateService {
          * Add documents for the metadata of the given cluster state, assuming that there are currently no documents.
          */
         private WriterStats addMetadata(Metadata metadata) throws IOException {
+            // metadata对应的doc.type是 global
             try (ReleasableDocument globalMetadataDocument = makeGlobalMetadataDocument(metadata)) {
+                // 在每个dataPath下 使用最新的metadata doc 去覆盖之前的数据
                 for (MetadataIndexWriter metadataIndexWriter : metadataIndexWriters) {
                     metadataIndexWriter.updateGlobalMetadata(globalMetadataDocument.getDocument());
                 }
             }
 
+            // 每个indexMetadata对应的doc.type是 index   这里流程跟上面一样
             for (ObjectCursor<IndexMetadata> cursor : metadata.indices().values()) {
                 final IndexMetadata indexMetadata = cursor.value;
                 try (ReleasableDocument indexMetadataDocument = makeIndexMetadataDocument(indexMetadata)) {
                     for (MetadataIndexWriter metadataIndexWriter : metadataIndexWriters) {
+                        // 将indexMetadata 转换成doc后写入到 dataPath._state目录下
                         metadataIndexWriter.updateIndexMetadataDocument(indexMetadataDocument.getDocument(), indexMetadata.getIndex());
                     }
                 }
@@ -745,6 +822,7 @@ public class PersistedClusterStateService {
 
             // Flush, to try and expose a failure (e.g. out of disk space) before committing, because we can handle a failure here more
             // gracefully than one that occurs during the commit process.
+            // 将之前写入的数据刷盘
             for (MetadataIndexWriter metadataIndexWriter : metadataIndexWriters) {
                 metadataIndexWriter.flush();
             }
@@ -752,6 +830,12 @@ public class PersistedClusterStateService {
             return new WriterStats(true, metadata.indices().size(), 0);
         }
 
+        /**
+         * 将之前写入的 metadata/indexMetadata 数据commit 这样就可以更新到Segment_N中
+         * @param currentTerm
+         * @param lastAcceptedVersion
+         * @throws IOException
+         */
         public void commit(long currentTerm, long lastAcceptedVersion) throws IOException {
             ensureOpen();
             try {
@@ -770,6 +854,7 @@ public class PersistedClusterStateService {
                 closeIfAnyIndexWriterHasTragedyOrIsClosed();
             }
             try {
+                // 将数据写入到segment_N中
                 for (MetadataIndexWriter metadataIndexWriter : metadataIndexWriters) {
                     metadataIndexWriter.commit();
                 }
@@ -796,8 +881,17 @@ public class PersistedClusterStateService {
             }
         }
 
+        /**
+         * 可以作为一次写入的结果
+         */
         static class WriterStats {
+            /**
+             * 本次是否写入了新的 global数据
+             */
             final boolean globalMetaUpdated;
+            /**
+             * 写入了多少index数据
+             */
             final long numIndicesUpdated;
             final long numIndicesUnchanged;
 
@@ -808,12 +902,19 @@ public class PersistedClusterStateService {
             }
         }
 
+        /**
+         * 将某个indexMetadata 转换成lucene.doc
+         * @param indexMetadata
+         * @return
+         * @throws IOException
+         */
         private ReleasableDocument makeIndexMetadataDocument(IndexMetadata indexMetadata) throws IOException {
             final ReleasableDocument indexMetadataDocument = makeDocument(INDEX_TYPE_NAME, indexMetadata);
             boolean success = false;
             try {
                 final String indexUUID = indexMetadata.getIndexUUID();
                 assert indexUUID.equals(IndexMetadata.INDEX_UUID_NA_VALUE) == false;
+                // 这里还会追加一个 uuid的field
                 indexMetadataDocument.getDocument().add(new StringField(INDEX_UUID_FIELD_NAME, indexUUID, Field.Store.NO));
                 success = true;
                 return indexMetadataDocument;
@@ -824,12 +925,27 @@ public class PersistedClusterStateService {
             }
         }
 
+        /**
+         * 将metadata转换成 一个doc.type=global 的doc对象
+         * @param metadata
+         * @return
+         * @throws IOException
+         */
         private ReleasableDocument makeGlobalMetadataDocument(Metadata metadata) throws IOException {
             return makeDocument(GLOBAL_TYPE_NAME, metadata);
         }
 
+        /**
+         * 将数据转换成doc
+         * @param typeName  doc.type对应的名称
+         *
+         * @param metadata
+         * @return
+         * @throws IOException
+         */
         private ReleasableDocument makeDocument(String typeName, ToXContent metadata) throws IOException {
             final Document document = new Document();
+            // 这里插入一个string类型的field
             document.add(new StringField(TYPE_FIELD_NAME, typeName, Field.Store.NO));
 
             boolean success = false;
@@ -846,6 +962,7 @@ public class PersistedClusterStateService {
                     metadata.toXContent(xContentBuilder, FORMAT_PARAMS);
                     xContentBuilder.endObject();
                 }
+                // 将数据设置到data中
                 document.add(new StoredField(DATA_FIELD_NAME, releasableBytesStreamOutput.bytes().toBytesRef()));
                 final ReleasableDocument releasableDocument = new ReleasableDocument(document, releasableBytesStreamOutput);
                 success = true;

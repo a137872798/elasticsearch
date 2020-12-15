@@ -258,7 +258,7 @@ public class Lucene {
         ))
         {
             // do nothing and close this will kick of IndexFileDeleter which will remove all pending files
-            // 通过IndexFileDeleter 删除文件
+            // 触发IndexWriter.close() 删除文件
         }
     }
 

@@ -839,8 +839,9 @@ public class Node implements Closeable {
         injector.getInstance(PeerRecoverySourceService.class).start();
 
         // Load (and maybe upgrade) the metadata stored on disk
-        // GatewayMetaState 该对象负责加载Metadata 以及持久化  TODO 什么时机
+        // GatewayMetaState 该对象负责加载Metadata 以及持久化
         final GatewayMetaState gatewayMetaState = injector.getInstance(GatewayMetaState.class);
+        // 先从磁盘中读取metadata 之后才启动注册中心 让自身被其他节点发现
         gatewayMetaState.start(settings(), transportService, clusterService, injector.getInstance(MetaStateService.class),
             injector.getInstance(MetadataIndexUpgradeService.class), injector.getInstance(MetadataUpgrader.class),
             injector.getInstance(PersistedClusterStateService.class));
@@ -858,6 +859,7 @@ public class Node implements Closeable {
         }
         // we load the global state here (the persistent part of the cluster state stored on disk) to
         // pass it to the bootstrap checks to allow plugins to enforce certain preconditions based on the recovered state.
+        // 因为之前已经从磁盘中加载完元数据信息了 这里可以直接获取
         final Metadata onDiskMetadata = gatewayMetaState.getPersistedState().getLastAcceptedState().metadata();
         assert onDiskMetadata != null : "metadata is null but shouldn't"; // this is never null
         validateNodeBeforeAcceptingRequests(new BootstrapContext(environment, onDiskMetadata), transportService.boundAddress(),
@@ -866,6 +868,7 @@ public class Node implements Closeable {
 
         clusterService.addStateApplier(transportService.getTaskManager());
         // start after transport service so the local disco is known
+        // 在从本地磁盘加载完metadata后 可以启动注册中心了
         discovery.start(); // start before cluster service so that it can set initial state on ClusterApplierService
         clusterService.start();
         assert clusterService.localNode().equals(localNodeFactory.getNode())

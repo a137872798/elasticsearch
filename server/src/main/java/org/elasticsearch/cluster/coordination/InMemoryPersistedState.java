@@ -20,9 +20,15 @@ package org.elasticsearch.cluster.coordination;
 
 import org.elasticsearch.cluster.ClusterState;
 
+/**
+ * 代表最新的 CS会暂存在内存中 并在合适的时机进行刷盘
+ */
 public class InMemoryPersistedState implements CoordinationState.PersistedState {
 
     private long currentTerm;
+    /**
+     * 此时从 Coordinator接收到的最新的CS
+     */
     private ClusterState acceptedState;
 
     public InMemoryPersistedState(long term, ClusterState acceptedState) {
