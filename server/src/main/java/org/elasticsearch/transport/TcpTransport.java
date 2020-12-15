@@ -18,6 +18,11 @@
  */
 package org.elasticsearch.transport;
 
+import static java.util.Collections.unmodifiableMap;
+import static org.elasticsearch.common.transport.NetworkExceptionHelper.isCloseConnectionException;
+import static org.elasticsearch.common.transport.NetworkExceptionHelper.isConnectException;
+import static org.elasticsearch.common.util.concurrent.ConcurrentCollections.newConcurrentMap;
+
 import com.carrotsearch.hppc.IntHashSet;
 import com.carrotsearch.hppc.IntSet;
 import org.apache.logging.log4j.LogManager;
@@ -87,11 +92,6 @@ import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-
-import static java.util.Collections.unmodifiableMap;
-import static org.elasticsearch.common.transport.NetworkExceptionHelper.isCloseConnectionException;
-import static org.elasticsearch.common.transport.NetworkExceptionHelper.isConnectException;
-import static org.elasticsearch.common.util.concurrent.ConcurrentCollections.newConcurrentMap;
 
 /**
  * 基于TCP协议实现传输层功能
@@ -192,13 +192,14 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * 创建基于tcp协议实现的传输层
+     *
      * @param settings
      * @param version
      * @param threadPool
-     * @param pageCacheRecycler  该对象内部存储了各种数组
+     * @param pageCacheRecycler      该对象内部存储了各种数组
      * @param circuitBreakerService  该对象负责管理熔断器
-     * @param namedWriteableRegistry  这里定义了一系列class 以及如何读取读取的reader对象
-     * @param networkService  该对象主要是负责地址解析的
+     * @param namedWriteableRegistry 这里定义了一系列class 以及如何读取读取的reader对象
+     * @param networkService         该对象主要是负责地址解析的
      */
     public TcpTransport(Settings settings, Version version, ThreadPool threadPool, PageCacheRecycler pageCacheRecycler,
                         CircuitBreakerService circuitBreakerService, NamedWriteableRegistry namedWriteableRegistry,
@@ -244,6 +245,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * 针对不同的业务会有不同的熔断器 比如传输层对象需要的就是 IN_FLIGHT_REQUESTS 对应的熔断器
+     *
      * @return
      */
     public Supplier<CircuitBreaker> getInflightBreaker() {
@@ -256,6 +258,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * 消息监听器会拦截接收到的 req res
+     *
      * @param listener
      */
     @Override
@@ -278,6 +281,9 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
          * 目标节点信息
          */
         private final DiscoveryNode node;
+        /**
+         * 对端节点的版本号
+         */
         private final Version version;
         private final boolean compress;
         private final AtomicBoolean isClosing = new AtomicBoolean(false);
@@ -308,6 +314,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
         /**
          * 根据执行的类型 获取由多条channel组成的 handle对象
+         *
          * @param type
          * @return
          */
@@ -341,10 +348,11 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
         /**
          * 当需要往某个node 发送请求时 通过channel组 随机选择一个channel 并发送数据
+         *
          * @param requestId see {@link ResponseHandlers#add(ResponseContext)} for details   请求的id
-         * @param action the action to execute     请求的api
-         * @param request the request to send    请求体
-         * @param options request options to apply   描述请求体的特殊信息
+         * @param action    the action to execute     请求的api
+         * @param request   the request to send    请求体
+         * @param options   request options to apply   描述请求体的特殊信息
          * @throws IOException
          * @throws TransportException
          */
@@ -369,9 +377,11 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * 连接到目标node
+     * 在ConnectionManager中检测是否已建立与某个node的连接 如果未建立会转发给transport进行连接
+     *
      * @param node
-     * @param profile 描述连接的详情
-     * @param listener  定义了处理Connection 对象的逻辑
+     * @param profile  描述连接的详情
+     * @param listener 定义了处理Connection 对象的逻辑
      */
     @Override
     public void openConnection(DiscoveryNode node, ConnectionProfile profile, ActionListener<Transport.Connection> listener) {
@@ -392,15 +402,16 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
     }
 
     /**
-     * 初始化连接对象
+     * 这里才是实现连接的核心逻辑
+     *
      * @param node
      * @param connectionProfile
-     * @param listener   这个监听器要处理无法正常连接到某个node的逻辑 包含了因为版本号不兼容导致的失败
+     * @param listener
      * @return
      */
     private List<TcpChannel> initiateConnection(DiscoveryNode node, ConnectionProfile connectionProfile,
                                                 ActionListener<Transport.Connection> listener) {
-        // 代表要针对某个node建立多条channel 能够提高性能么
+        // 获取单个连接需要的channel数量
         int numConnections = connectionProfile.getNumConnections();
         assert numConnections > 0 : "A connection profile must be configured with at least one connection";
 
@@ -423,7 +434,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
             }
         }
 
-        // 此时已经为目标节点创建了多条channel了  但是连接不一定完成
+        // 等待连接完成 因为连接本身是异步的
         ChannelsConnectedListener channelsConnectedListener = new ChannelsConnectedListener(node, connectionProfile, channels,
             new ThreadedActionListener<>(logger, threadPool, ThreadPool.Names.GENERIC, listener, false));
 
@@ -440,6 +451,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * 当前节点绑定的地址  BoundTransportAddress 对象内部包含了一组地址 TODO 为什么 怎么使用
+     *
      * @return
      */
     @Override
@@ -471,6 +483,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * 根据profile信息 绑定本地端口
+     *
      * @param profileSettings
      */
     protected void bindServer(ProfileSettings profileSettings) {
@@ -512,6 +525,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * 从给定的port范围中进行绑定 返回首个绑定成功的地址
+     *
      * @param name
      * @param hostAddress
      * @param port
@@ -556,9 +570,8 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
     }
 
     /**
-     *
-     * @param profileSettings    一些描述tcp配置的信息
-     * @param boundAddresses   本地被绑定的地址
+     * @param profileSettings 一些描述tcp配置的信息
+     * @param boundAddresses  本地被绑定的地址
      * @return
      */
     private BoundTransportAddress createBoundTransportAddress(ProfileSettings profileSettings,
@@ -595,9 +608,10 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * 获取绑定的端口
+     *
      * @param profileSettings
-     * @param boundAddresses   当前绑定的地址
-     * @param publishInetAddress  打算对外暴露的地址
+     * @param boundAddresses     当前绑定的地址
+     * @param publishInetAddress 打算对外暴露的地址
      * @return
      */
     static int resolvePublishPort(ProfileSettings profileSettings, List<InetSocketAddress> boundAddresses,
@@ -809,6 +823,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * 代表获取到一个新的连接到本机的客户端管道
+     *
      * @param channel
      */
     protected void serverAcceptedChannel(TcpChannel channel) {
@@ -863,10 +878,10 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
      *
      * @param networkBytes the will be read
      * @return the length of the message
-     * @throws StreamCorruptedException              if the message header format is not recognized
-     * @throws HttpRequestOnTransportException       if the message header appears to be an HTTP message
-     * @throws IllegalArgumentException              if the message length is greater that the maximum allowed frame size.
-     *                                               This is dependent on the available memory.
+     * @throws StreamCorruptedException        if the message header format is not recognized
+     * @throws HttpRequestOnTransportException if the message header appears to be an HTTP message
+     * @throws IllegalArgumentException        if the message length is greater that the maximum allowed frame size.
+     *                                         This is dependent on the available memory.
      */
     public static int readMessageLength(BytesReference networkBytes) throws IOException {
         if (networkBytes.length() < BYTES_NEEDED_FOR_MESSAGE_SIZE) {
@@ -886,14 +901,14 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
             if (appearsToBeHTTPResponse(headerBuffer)) {
                 throw new StreamCorruptedException("received HTTP response on transport port, ensure that transport port (not " +
-                        "HTTP port) of a remote node is specified in the configuration");
+                    "HTTP port) of a remote node is specified in the configuration");
             }
 
             String firstBytes = "("
-                    + Integer.toHexString(headerBuffer.get(0) & 0xFF) + ","
-                    + Integer.toHexString(headerBuffer.get(1) & 0xFF) + ","
-                    + Integer.toHexString(headerBuffer.get(2) & 0xFF) + ","
-                    + Integer.toHexString(headerBuffer.get(3) & 0xFF) + ")";
+                + Integer.toHexString(headerBuffer.get(0) & 0xFF) + ","
+                + Integer.toHexString(headerBuffer.get(1) & 0xFF) + ","
+                + Integer.toHexString(headerBuffer.get(2) & 0xFF) + ","
+                + Integer.toHexString(headerBuffer.get(3) & 0xFF) + ")";
 
             // 忽略加密报文
             if (appearsToBeTLS(headerBuffer)) {
@@ -975,6 +990,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * 发送一个探测请求
+     *
      * @param node
      * @param channel
      * @param profile
@@ -1016,6 +1032,7 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
 
     /**
      * 获取当前传输层的使用状态
+     *
      * @return
      */
     @Override
@@ -1115,6 +1132,12 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
         private final ActionListener<Transport.Connection> listener;
         private final CountDown countDown;
 
+        /**
+         * @param node              本次要连接的目标节点
+         * @param connectionProfile 描述连接信息
+         * @param channels          本连接由多少channel组成
+         * @param listener          当连接完成后会触发这个监听器
+         */
         private ChannelsConnectedListener(DiscoveryNode node, ConnectionProfile connectionProfile, List<TcpChannel> channels,
                                           ActionListener<Transport.Connection> listener) {
             this.node = node;
@@ -1125,33 +1148,36 @@ public abstract class TcpTransport extends AbstractLifecycleComponent implements
         }
 
         /**
-         * 每当某个channel 成功连接时触发
+         * 只有当计数器归0时 才会真正触发逻辑
+         *
          * @param v
          */
         @Override
         public void onResponse(Void v) {
             // Returns true if all connections have completed successfully
-            // 返回ture 代表本次使得闭锁被打开  之后继续调用该方法都是返回false    也就是仅有所有达到要求的channel数量连接完成时才发起握手请求 检测节点间的兼容性
             if (countDown.countDown()) {
+                // 这里随便选了一条channel 发送请求
                 final TcpChannel handshakeChannel = channels.get(0);
                 try {
-                    // 发送探测信息 检测2个节点间能否兼容  避免某些请求无法处理的情况
+                    // 在触发真正的监听器之前 需要先通过握手请求 检测版本是否兼容
                     executeHandshake(node, handshakeChannel, connectionProfile,
                         // 定义了如何处理对端的版本号   当不兼容时会以失败形式触发
                         ActionListener.wrap(version -> {
                             // 将相关信息包装成 NodeChannels
-                        NodeChannels nodeChannels = new NodeChannels(node, channels, connectionProfile, version);
-                        long relativeMillisTime = threadPool.relativeTimeInMillis();
-                        nodeChannels.channels.forEach(ch -> {
-                            // Mark the channel init time
-                            ch.getChannelStats().markAccessed(relativeMillisTime);
-                            ch.addCloseListener(ActionListener.wrap(nodeChannels::close));
-                        });
-                        keepAlive.registerNodeConnection(nodeChannels.channels, connectionProfile);
-                        listener.onResponse(nodeChannels);
-                        // 代表版本号不兼容  关闭所有连接
-                    }, e -> closeAndFail(e instanceof ConnectTransportException ?
-                        e : new ConnectTransportException(node, "general node connection failure", e))));
+                            NodeChannels nodeChannels = new NodeChannels(node, channels, connectionProfile, version);
+                            long relativeMillisTime = threadPool.relativeTimeInMillis();
+                            nodeChannels.channels.forEach(ch -> {
+                                // Mark the channel init time
+                                ch.getChannelStats().markAccessed(relativeMillisTime);
+                                ch.addCloseListener(ActionListener.wrap(nodeChannels::close));
+                            });
+
+                            // keepAlive 负责发送心跳 保证连接不被断开
+                            keepAlive.registerNodeConnection(nodeChannels.channels, connectionProfile);
+                            listener.onResponse(nodeChannels);
+                            // 代表版本号不兼容  关闭所有连接
+                        }, e -> closeAndFail(e instanceof ConnectTransportException ?
+                            e : new ConnectTransportException(node, "general node connection failure", e))));
                 } catch (Exception ex) {
                     closeAndFail(ex);
                 }

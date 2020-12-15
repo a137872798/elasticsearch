@@ -90,7 +90,7 @@ public class ServerChannelContext extends ChannelContext<ServerSocketChannel> {
      */
     public void acceptChannels(Supplier<NioSelector> selectorSupplier) throws IOException {
         SocketChannel acceptedChannel;
-        // 这里不断循环 直到接收到新的客户端
+        // 获取监听到的所有新连接
         while ((acceptedChannel = accept(rawChannel)) != null) {
             // 封装成ESchannel
             NioSocketChannel nioChannel = channelFactory.acceptNioChannel(acceptedChannel, selectorSupplier);
@@ -103,7 +103,7 @@ public class ServerChannelContext extends ChannelContext<ServerSocketChannel> {
     }
 
     /**
-     * 针对服务端通道 当调用bind时会阻塞直到绑定成功
+     * 针对服务端通道 当调用bind时会阻塞当前线程(事件循环线程)直到绑定成功
      * @throws IOException
      */
     @Override
@@ -146,7 +146,8 @@ public class ServerChannelContext extends ChannelContext<ServerSocketChannel> {
     }
 
     /**
-     * 处于非阻塞模式 调用accept 并立即返回
+     * 因为是在 selector中发现accept事件后 通过eventHandler转发到这里的 所以此时调用accept至少可以获取到一个socketChannel
+     * 当然还有可能接受到多个连接 所以调用 while(accept)
      * @param serverSocketChannel
      * @return
      * @throws IOException

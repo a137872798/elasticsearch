@@ -70,7 +70,7 @@ final class TransportHandshaker {
     }
 
     /**
-     * 发送一个握手请求到目标节点
+     * 当首次连接到某个节点时 需要先进行握手探测 只有探测成功后 才会回调一开始传入的连接监听器
      * @param requestId
      * @param node   目标节点
      * @param channel
@@ -177,6 +177,10 @@ final class TransportHandshaker {
             return new HandshakeResponse(in);
         }
 
+        /**
+         * 当符合兼容性后 才会正常触发监听器
+         * @param response
+         */
         @Override
         public void handleResponse(HandshakeResponse response) {
             if (isDone.compareAndSet(false, true)) {

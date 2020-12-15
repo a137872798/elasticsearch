@@ -278,6 +278,9 @@ public class NodeConnectionsService extends AbstractLifecycleComponent {
         }
     }
 
+    /**
+     * 启动时开启检测
+     */
     @Override
     protected void doStart() {
         final ConnectionChecker connectionChecker = new ConnectionChecker();

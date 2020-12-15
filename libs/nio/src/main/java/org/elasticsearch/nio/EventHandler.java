@@ -51,6 +51,7 @@ public class EventHandler {
      *
      * @param context that can accept a connection
      *                当ServerSocketChannel 接收到新的连接时 会触发该方法
+     *                为接收到的客户端连接生成一个socketChannel 并且注册的选择器上
      */
     protected void acceptChannel(ServerChannelContext context) throws IOException {
         context.acceptChannels(selectorSupplier);
@@ -104,6 +105,7 @@ public class EventHandler {
                 // 注册读写事件
                 SelectionKeyUtils.setConnectReadAndWriteInterested(context.getSelectionKey());
             } else {
+                // 首次注册socketChannel时 发起socketChannel.connect()后 需要注册连接事件 监听连接完成动作
                 // 注册读取以及连接事件
                 SelectionKeyUtils.setConnectAndReadInterested(context.getSelectionKey());
             }
@@ -219,6 +221,7 @@ public class EventHandler {
             }
         } else {
             SelectionKey selectionKey = context.getSelectionKey();
+            // 默认写入是不需要注册写事件的  但是如果有数据囤积没写入 代表之前缓冲区已满 就需要通过注册写事件感知缓冲区变化
             // 当前是否包含写事件
             boolean currentlyWriteInterested = SelectionKeyUtils.isWriteInterested(selectionKey);
             boolean pendingWrites = context.readyForFlush();

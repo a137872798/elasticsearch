@@ -82,8 +82,10 @@ public abstract class ChannelFactory<ServerSocket extends NioServerSocketChannel
         // 创建一个客户端channel 可以连接到某个ip:port
         SocketChannel rawChannel = rawChannelFactory.openNioChannel();
         setNonBlocking(rawChannel);
+        // 从事件循环组中随机获取一个selector对象
         NioSelector selector = supplier.get();
         Socket channel = internalCreateChannel(selector, rawChannel, createSocketConfig(remoteAddress, false));
+        // 将channel 绑定在选择器上
         scheduleChannel(channel, selector);
         return channel;
     }

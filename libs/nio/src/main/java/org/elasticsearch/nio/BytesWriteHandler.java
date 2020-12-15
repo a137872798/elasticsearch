@@ -29,7 +29,7 @@ public abstract class BytesWriteHandler implements NioChannelHandler {
     private static final List<FlushOperation> EMPTY_LIST = Collections.emptyList();
 
     /**
-     * 将某个待发送的消息包装成一个 WriteOp对象
+     * 将此时上下文信息(包含使用的channel)  发送的消息  还有监听器包装成一个operation对象
      * @param context the channel context
      * @param message the message
      * @param listener the listener to be called when the message is sent

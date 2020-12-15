@@ -106,7 +106,6 @@ public class TaskResultsService {
      */
     public void storeResult(TaskResult taskResult, ActionListener<Void> listener) {
 
-        // 获取此时的集群状态  包含了此时有多少node等信息
         ClusterState state = clusterService.state();
 
         // 如果此时不包含有关 .tasks的路由表
@@ -120,7 +119,6 @@ public class TaskResultsService {
             createIndexRequest.mapping(taskResultIndexMapping());
             createIndexRequest.cause("auto(task api)");
 
-            // TODO 先不管请求是如何发送的  当创建索引完成时 触发监听器的逻辑 也就是再发送一个添加索引数据的信息
             client.admin().indices().create(createIndexRequest, new ActionListener<CreateIndexResponse>() {
                 @Override
                 public void onResponse(CreateIndexResponse result) {
@@ -186,7 +184,7 @@ public class TaskResultsService {
     }
 
     /**
-     * 将创建索引的请求发往各个节点 当失败时 在等待一定时间后进行重试
+     * 发送一个存储数据的请求
      * @param backoff
      * @param index
      * @param listener
@@ -220,7 +218,6 @@ public class TaskResultsService {
         return Settings.builder()
             // taskResult的分片数量为1
             .put(IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.getKey(), 1)
-            // 在复制时自动扩充???
             .put(IndexMetadata.INDEX_AUTO_EXPAND_REPLICAS_SETTING.getKey(), "0-1")
             // 最高优先级
             .put(IndexMetadata.SETTING_PRIORITY, Integer.MAX_VALUE)

@@ -223,6 +223,7 @@ public class InboundPipeline implements Releasable {
         if (pending.size() == 1) {
             return pending.peekFirst().retain();
         } else {
+            // 如果是多个包 将数据合并后返回
             final ReleasableBytesReference[] bytesReferences = new ReleasableBytesReference[pending.size()];
             int index = 0;
             for (ReleasableBytesReference pendingReference : pending) {

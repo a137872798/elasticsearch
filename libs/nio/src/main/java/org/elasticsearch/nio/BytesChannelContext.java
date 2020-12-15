@@ -63,7 +63,7 @@ public class BytesChannelContext extends SocketChannelContext {
         FlushOperation flushOperation;
         while (lastOpCompleted && (flushOperation = getPendingFlush()) != null) {
             try {
-                // 将当前flushOp的数据全部通过channel写出  当返回true时代表数据被写完
+                // 代表这个op一次性全部写入了   否则代表写满了
                 if (singleFlush(flushOperation)) {
                     // 触发Op相关的监听器
                     currentFlushOperationComplete();

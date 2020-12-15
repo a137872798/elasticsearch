@@ -119,6 +119,8 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
         // 将socket相关配置注册到 Socket对象上
         configureSocket(rawChannel.socket(), false);
 
+        // true 代表是服务端接收到client连接请求后被动生成的 socketChannel
+        // false 代表是client发起连接 所以要调用connect
         if (socketConfig.isAccepted() == false) {
             InetSocketAddress remoteAddress = socketConfig.getRemoteAddress();
             try {
@@ -164,6 +166,8 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
             }
         }
 
+        // 通过channel判断是否连接完成 如果是服务器被动生成的channel应该是已经完成连接的
+        // 如果是客户端生成的channel 在接收到connect事件时 应该也会修改成true
         boolean isConnected = rawChannel.isConnected();
         if (isConnected == false) {
             try {
@@ -184,7 +188,7 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
 
 
     /**
-     * 这里尽可能泛化了 发送消息的参数  这样更加灵活
+     * 这里将消息写入到事件循环组中
      * @param message
      * @param listener
      */
@@ -394,6 +398,12 @@ public abstract class SocketChannelContext extends ChannelContext<SocketChannel>
         return totalBytesFlushed;
     }
 
+    /**
+     * 当生成一条channel注册到selector后 还需要进行装配
+     * @param socket
+     * @param isConnectComplete
+     * @throws IOException
+     */
     private void configureSocket(Socket socket, boolean isConnectComplete) throws IOException {
         if (socketOptionsSet) {
             return;

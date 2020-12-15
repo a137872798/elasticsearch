@@ -125,6 +125,11 @@ public interface ClusterStateTaskExecutor<T> {
                 return this;
             }
 
+            /**
+             * 更新后的集群状态
+             * @param resultingState
+             * @return
+             */
             public ClusterTasksResult<T> build(ClusterState resultingState) {
                 return new ClusterTasksResult<>(resultingState, executionResults);
             }

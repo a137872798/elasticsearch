@@ -204,7 +204,7 @@ public class DiscoveryNode implements Writeable, ToXContentFragment {
         // 获取描述节点的状态信息
         Map<String, String> attributes = Node.NODE_ATTRIBUTES.getAsMap(settings);
 
-        // 根据当下配置信息 检测这些角色对应的配置项是否为true
+        // 根据当下配置信息 获取角色列表
         Set<DiscoveryNodeRole> roles = getRolesFromSettings(settings);
         return new DiscoveryNode(Node.NODE_NAME_SETTING.get(settings), nodeId, publishAddress, attributes, roles, Version.CURRENT);
     }

@@ -101,7 +101,7 @@ final class TransportKeepAlive implements Closeable {
 
     /**
      * 针对所有需要检测的channel 生成一个任务对象
-     * @param nodeChannels
+     * @param nodeChannels   每个channel 都需要确保存活
      * @param connectionProfile  该对象维护了心跳检测间隔
      */
     void registerNodeConnection(List<TcpChannel> nodeChannels, ConnectionProfile connectionProfile) {
@@ -110,6 +110,7 @@ final class TransportKeepAlive implements Closeable {
             return;
         }
 
+        // 这里以不同的时间间隔 维护ScheduledPing对象 每当执行定时任务时 就是往所有channel发送心跳包
         final ScheduledPing scheduledPing = pingIntervals.computeIfAbsent(pingInterval, ScheduledPing::new);
         scheduledPing.ensureStarted();
 
@@ -126,12 +127,12 @@ final class TransportKeepAlive implements Closeable {
      * this method does nothing as the client initiated the ping in the first place.
      *
      * @param channel that received the keep alive ping
-     *                当某个服务端无法正常返回心跳包时会怎么样呢
+     *
      */
     void receiveKeepAlive(TcpChannel channel) {
         // The client-side initiates pings and the server-side responds. So if this is a client channel, this
         // method is a no-op.
-        // 当前服务端收到某个client的心跳请求时 返回响应信息
+        // 因为是客户端发送心跳 服务器负责接收 所以只有服务端需要处理 这里只是回复一个ping
         if (channel.isServerChannel()) {
             sendPing(channel);
         }

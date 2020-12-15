@@ -146,7 +146,7 @@ public class NioSelectorGroup implements NioGroup {
     public <S extends NioServerSocketChannel> S bindServerChannel(InetSocketAddress address, ChannelFactory<S, ?> factory)
         throws IOException {
         ensureOpen();
-        // 如果在这里单独为 acceptor定义了一组selector 就可以将 接收连接的事件循环组 与处于跟client交互的事件循环组隔离开
+        // 将 serverChannel 与selector合并
         return factory.openNioServerSocketChannel(address, acceptorSupplier);
     }
 

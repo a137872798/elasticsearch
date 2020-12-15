@@ -191,7 +191,7 @@ public abstract class TaskBatcher {
     /**
      * Action to be implemented by the specific batching implementation
      * All tasks have the given batching key.
-     * @param batchingKey 标识批任务的key
+     * @param batchingKey 标识批任务的key  一般就是执行任务的 executor
      * @param tasks  本次所有任务对象
      * @param tasksSummary 有关任务的描述信息
      * 执行批量任务

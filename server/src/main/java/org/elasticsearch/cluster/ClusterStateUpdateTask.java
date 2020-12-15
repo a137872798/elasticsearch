@@ -27,8 +27,7 @@ import java.util.List;
 
 /**
  * A task that can update the cluster state.
- * 描述集群状态更新的任务
- * 这个对象本身实现了 ClusterStateTaskExecutor 接口 定义了如何执行任务
+ * 集群状态更新任务的执行器
  */
 public abstract class ClusterStateUpdateTask
         implements ClusterStateTaskConfig, ClusterStateTaskExecutor<ClusterStateUpdateTask>, ClusterStateTaskListener {
@@ -43,6 +42,13 @@ public abstract class ClusterStateUpdateTask
         this.priority = priority;
     }
 
+    /**
+     * 这是一个骨架类
+     * @param currentState  当前集群状态
+     * @param tasks  将要执行的一组任务
+     * @return
+     * @throws Exception
+     */
     @Override
     public final ClusterTasksResult<ClusterStateUpdateTask> execute(ClusterState currentState, List<ClusterStateUpdateTask> tasks)
             throws Exception {
@@ -58,6 +64,7 @@ public abstract class ClusterStateUpdateTask
     /**
      * Update the cluster state based on the current state. Return the *same instance* if no state
      * should be changed.
+     * 开放钩子给子类实现
      */
     public abstract ClusterState execute(ClusterState currentState) throws Exception;
 

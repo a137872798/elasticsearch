@@ -75,7 +75,6 @@ import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadF
  * the state being loaded when constructing the instance of this class is not necessarily the state that will be used as {@link
  * ClusterState#metadata()} because it might be stale or incomplete. Master-eligible nodes must perform an election to find a complete and
  * non-stale state, and master-ineligible nodes receive the real cluster state from the elected master after joining the cluster.
- * Coordinator 在选举时需要通过该对象获取选举状态
  */
 public class GatewayMetaState implements Closeable {
 
@@ -99,11 +98,22 @@ public class GatewayMetaState implements Closeable {
         return getPersistedState().getLastAcceptedState().metadata();
     }
 
+    /**
+     * 通过一组相关的组件进行初始化
+     * @param settings
+     * @param transportService
+     * @param clusterService
+     * @param metaStateService
+     * @param metadataIndexUpgradeService
+     * @param metadataUpgrader
+     * @param persistedClusterStateService
+     */
     public void start(Settings settings, TransportService transportService, ClusterService clusterService,
                       MetaStateService metaStateService, MetadataIndexUpgradeService metadataIndexUpgradeService,
                       MetadataUpgrader metadataUpgrader, PersistedClusterStateService persistedClusterStateService) {
         assert persistedState.get() == null : "should only start once, but already have " + persistedState.get();
 
+        // 当本节点是数据节点或者是 参选节点时
         if (DiscoveryNode.isMasterNode(settings) || DiscoveryNode.isDataNode(settings)) {
             try {
                 final PersistedClusterStateService.OnDiskState onDiskState = persistedClusterStateService.loadBestOnDiskState();

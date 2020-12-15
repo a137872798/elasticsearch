@@ -331,6 +331,7 @@ public class PersistedClusterStateService {
 
     /**
      * Loads the best available on-disk cluster state. Returns {@link OnDiskState#NO_ON_DISK_STATE} if no such state was found.
+     * 从磁盘上加载最新的metadata
      */
     public OnDiskState loadBestOnDiskState() throws IOException {
         String committedClusterUuid = null;

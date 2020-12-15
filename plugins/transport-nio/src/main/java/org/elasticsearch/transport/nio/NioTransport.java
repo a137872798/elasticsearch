@@ -115,7 +115,7 @@ public class NioTransport extends TcpTransport {
     }
 
     /**
-     * 建立一条连接到目标节点的channel
+     * 将目标节点变成一个  socketChannel
      * @param node for the initiated connection
      * @return
      * @throws IOException
@@ -146,11 +146,12 @@ public class NioTransport extends TcpTransport {
             // 如果当前节点作为服务端 那么根据配置创建各种不同的channel装配工厂
             if (NetworkService.NETWORK_SERVER.get(settings)) {
                 // loop through all profiles and start them up, special handling for default one
+                // 针对服务器配置允许使用多套 profile信息
                 for (ProfileSettings profileSettings : profileSettings) {
                     String profileName = profileSettings.profileName;
                     TcpChannelFactory factory = serverChannelFactory(profileSettings);
                     profileToChannelFactory.putIfAbsent(profileName, factory);
-                    // 这里多了一步 绑定本地端口
+                    // 这里已经将serverChannel 绑定到本地了
                     bindServer(profileSettings);
                 }
             }
@@ -243,6 +244,13 @@ public class NioTransport extends TcpTransport {
             return nioChannel;
         }
 
+        /**
+         * 将绑定的事件循环对象  java服务端通道  和配置项信息包装成ESServerChannel
+         * @param selector the channel will be registered with
+         * @param channel  the raw channel
+         * @param socketConfig the socket config
+         * @return
+         */
         @Override
         public NioTcpServerChannel createServerChannel(NioSelector selector, ServerSocketChannel channel,
                                                        Config.ServerSocket socketConfig) {
@@ -250,6 +258,7 @@ public class NioTransport extends TcpTransport {
             Consumer<Exception> exceptionHandler = (e) -> onServerException(nioChannel, e);
             // 当接收到一条新的连接时 触发acceptChannel  当前逻辑仅是打印一条日志
             Consumer<NioSocketChannel> acceptor = NioTransport.this::acceptChannel;
+            // 将相关信息包装成上下文后 绑定到channel上
             ServerChannelContext context = new ServerChannelContext(nioChannel, this, selector, socketConfig, acceptor, exceptionHandler);
             nioChannel.setContext(context);
             return nioChannel;

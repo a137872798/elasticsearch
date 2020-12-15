@@ -605,6 +605,10 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
             return this;
         }
 
+        /**
+         * 一般是当 MasterService更新集群状态后触发该方法
+         * @return
+         */
         public Builder incrementVersion() {
             this.version = version + 1;
             this.uuid = UNKNOWN_UUID;

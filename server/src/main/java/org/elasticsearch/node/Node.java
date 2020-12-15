@@ -819,6 +819,7 @@ public class Node implements Closeable {
 
         final ClusterService clusterService = injector.getInstance(ClusterService.class);
 
+        // 其他组件不会直接与transport交互  而是通过该组件管理与其他node的连接
         final NodeConnectionsService nodeConnectionsService = injector.getInstance(NodeConnectionsService.class);
         nodeConnectionsService.start();
         clusterService.setNodeConnectionsService(nodeConnectionsService);
@@ -829,6 +830,7 @@ public class Node implements Closeable {
 
         // Start the transport service now so the publish address will be added to the local disco node in ClusterService
         TransportService transportService = injector.getInstance(TransportService.class);
+        // TaskResultsService 本身就是利用ES存储task的处理结果
         transportService.getTaskManager().setTaskResultsService(injector.getInstance(TaskResultsService.class));
         transportService.start();
         assert localNodeFactory.getNode() != null;
@@ -837,6 +839,7 @@ public class Node implements Closeable {
         injector.getInstance(PeerRecoverySourceService.class).start();
 
         // Load (and maybe upgrade) the metadata stored on disk
+        // GatewayMetaState 该对象负责加载Metadata 以及持久化  TODO 什么时机
         final GatewayMetaState gatewayMetaState = injector.getInstance(GatewayMetaState.class);
         gatewayMetaState.start(settings(), transportService, clusterService, injector.getInstance(MetaStateService.class),
             injector.getInstance(MetadataIndexUpgradeService.class), injector.getInstance(MetadataUpgrader.class),
@@ -1208,8 +1211,7 @@ public class Node implements Closeable {
 
 
     /**
-     * 本地node 工厂
-     * node应该是一个功能上的抽象 而DiscoveryNode 则是在集群层面的节点 能够被其他节点感知到
+     * 该对象会在TransportService初始化时被传入  当ServerChannel
      */
     private static class LocalNodeFactory implements Function<BoundTransportAddress, DiscoveryNode> {
         private final SetOnce<DiscoveryNode> localNode = new SetOnce<>();

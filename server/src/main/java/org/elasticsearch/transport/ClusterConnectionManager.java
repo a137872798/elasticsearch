@@ -81,7 +81,7 @@ public class ClusterConnectionManager implements ConnectionManager {
     };
 
     /**
-     * 传输层是一套网络框架 实现节点间发送/读取消息  建立新连接等能力  (包含channel的心跳检测 还有握手请求)
+     * 连接管理器自身也包含了传输对象 可以实现连接节点的功能
      */
     private final Transport transport;
     /**
@@ -124,7 +124,7 @@ public class ClusterConnectionManager implements ConnectionManager {
     }
 
     /**
-     * 开启一条通往指定node 的连接
+     * 与指定的node建立连接  不会操作connectToNode
      * @param node
      * @param connectionProfile  使用传入的profile信息去填充默认信息  并使用新的信息去创建连接
      * @param listener
@@ -140,13 +140,14 @@ public class ClusterConnectionManager implements ConnectionManager {
      * Connects to a node with the given connection profile. If the node is already connected this method has no effect.
      * Once a successful is established, it can be validated before being exposed.
      * The ActionListener will be called on the calling thread or the generic thread pool.
-     * 创建通往指定node的连接  这里针对单个node 仅允许存在一条连接
-     * 这里触发的钩子以node为级别 同时对应某个node的连接已经存在时 无法继续添加连接
+     * @param connectionValidator 当连接完成后 需要通过这个校验器进行校验
+     * 连接到某个node
      */
     @Override
     public void connectToNode(DiscoveryNode node, ConnectionProfile connectionProfile,
                               ConnectionValidator connectionValidator,
                               ActionListener<Void> listener) throws ConnectTransportException {
+        // 生成连接的描述信息
         ConnectionProfile resolvedProfile = ConnectionProfile.resolveConnectionProfile(connectionProfile, defaultProfile);
         if (node == null) {
             listener.onFailure(new ConnectTransportException(null, "can't connect to a null node"));
@@ -167,6 +168,7 @@ public class ClusterConnectionManager implements ConnectionManager {
         }
 
         final ListenableFuture<Void> currentListener = new ListenableFuture<>();
+        // 尝试新增一个连接到目标节点的任务
         final ListenableFuture<Void> existingListener = pendingConnections.putIfAbsent(node, currentListener);
         // 追加新的监听器
         if (existingListener != null) {
@@ -185,17 +187,17 @@ public class ClusterConnectionManager implements ConnectionManager {
         // 当任务执行完毕时 恢复引用计数 这里使用引用计数的目的是为了避免还有正在尝试连接的节点 程序却被直接停止
         final RunOnce releaseOnce = new RunOnce(connectingRefCounter::decRef);
 
-        // 连接本身是委派给 transport对象的
+        // 连接还是通过 transport完成
         internalOpenConnection(node, resolvedProfile,
-            // 处理连接结果的对象
             ActionListener.wrap(conn -> {
+            // 当完成连接后 第一步就是要对连接进行校验
             connectionValidator.validate(conn, resolvedProfile,
                 // 校验完成后继续流程
                 ActionListener.wrap(
                 ignored -> {
                     assert Transports.assertNotTransportThread("connection validator success");
                     try {
-                        // 针对该方法的调用 不允许为某个node创建多个连接
+                        // 正常情况是不会发生的 忽略
                         if (connectedNodes.putIfAbsent(node, conn) != null) {
                             logger.debug("existing connection to node [{}], closing new redundant connection", node);
                             IOUtils.closeWhileHandlingException(conn);
@@ -310,7 +312,7 @@ public class ClusterConnectionManager implements ConnectionManager {
     }
 
     /**
-     * 创建连接的实现   这里针对的钩子是connection级别
+     * 通过transport进行连接
      * @param node
      * @param connectionProfile
      * @param listener

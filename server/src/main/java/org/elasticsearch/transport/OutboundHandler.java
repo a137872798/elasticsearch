@@ -100,7 +100,7 @@ final class OutboundHandler {
         // 根据相关信息生成 message对象
         OutboundMessage.Request message =
             new OutboundMessage.Request(threadPool.getThreadContext(), request, version, action, requestId, isHandshake, compressRequest);
-        // 将messageListener 包装成监听器
+        // 当发送消息完成时 触发 messageListener的钩子  对应的实现类就是transportService  ES内部都是空实现
         ActionListener<Void> listener = ActionListener.wrap(() ->
             messageListener.onRequestSent(node, requestId, action, request, options));
         // 使用channel 发送消息
@@ -145,6 +145,7 @@ final class OutboundHandler {
      * @throws IOException
      */
     private void sendMessage(TcpChannel channel, OutboundMessage networkMessage, ActionListener<Void> listener) throws IOException {
+        // 因为频繁的数据发送 经常性会需要分配数组 所以这里会使用内存池技术
         MessageSerializer serializer = new MessageSerializer(networkMessage, bigArrays);
         SendContext sendContext = new SendContext(channel, serializer, listener, serializer);
         internalSend(channel, sendContext);
@@ -157,7 +158,7 @@ final class OutboundHandler {
      * @throws IOException
      */
     private void internalSend(TcpChannel channel, SendContext sendContext) throws IOException {
-        // 更新该channel的最后活跃时间 这样在心跳任务对象中就可以节省部分开销
+        // 记录channel 最后发送消息的时间
         channel.getChannelStats().markAccessed(threadPool.relativeTimeInMillis());
         // 获取要发送的数据流
         BytesReference reference = sendContext.get();

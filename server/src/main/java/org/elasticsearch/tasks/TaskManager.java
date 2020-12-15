@@ -290,10 +290,10 @@ public class TaskManager implements ClusterStateApplier {
     /**
      * Register a node on which a child task will execute. The returned {@link Releasable} must be called
      * to unregister the child node once the child task is completed or failed.
-     * 注册某个任务衍生出的子任务请求 发送到了哪个节点
+     * 注册子任务
      */
     public Releasable registerChildNode(long taskId, DiscoveryNode node) {
-        // 看来存在父子关系的task 本身一定是一个可关闭的task
+        // 检测是否是一个可关闭的任务
         final CancellableTaskHolder holder = cancellableTasks.get(taskId);
         if (holder != null) {
             logger.trace("register child node [{}] task [{}]", node, taskId);

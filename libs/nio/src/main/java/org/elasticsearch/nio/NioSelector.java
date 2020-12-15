@@ -193,7 +193,9 @@ public class NioSelector implements Closeable {
      */
     void singleLoop() {
         try {
-            // 检测绑定在该选择器上所有关闭的channel 并进行处理     当外部线程添加一个close任务时 就会唤醒选择器 这样事件循环线程就可以立即醒来 并处理事件 提高了事件循环线程的利用率 也使得外部线程更快返回 因为close/register等任务本身就可以以异步方式实现
+            // 检测绑定在该选择器上所有关闭的channel 并进行处理
+            // 当外部线程添加一个close任务时 就会唤醒选择器 这样事件循环线程就可以立即醒来 并处理事件 提高了事件循环线程的利用率
+            // 也使得外部线程更快返回 因为close/register等任务本身就可以以异步方式实现
             closePendingChannels();
             // 做一些准备工作
             preSelect();
@@ -278,7 +280,7 @@ public class NioSelector implements Closeable {
      */
     void processKey(SelectionKey selectionKey) {
         ChannelContext<?> context = (ChannelContext<?>) selectionKey.attachment();
-        // 代表接收到了新的连接
+        // 代表服务器收到了某个socketChannel的连接请求
         if (selectionKey.isAcceptable()) {
             assert context instanceof ServerChannelContext : "Only server channels can receive accept events";
             ServerChannelContext serverChannelContext = (ServerChannelContext) context;
@@ -291,7 +293,7 @@ public class NioSelector implements Closeable {
             assert context instanceof SocketChannelContext : "Only sockets channels can receive non-accept events";
             SocketChannelContext channelContext = (SocketChannelContext) context;
             int ops = selectionKey.readyOps();
-            // 检测连接是否完成
+            // 代表已经成功连接到服务器了
             if ((ops & SelectionKey.OP_CONNECT) != 0) {
                 attemptConnect(channelContext, true);
             }
@@ -431,7 +433,7 @@ public class NioSelector implements Closeable {
             // the write operation is queued.
             boolean shouldFlushAfterQueuing = context.readyForFlush() == false;
             try {
-                // 使用 handler处理写入操作后 并存储到刷盘队列
+                // 将任务设置到 pendingFlush队列中
                 context.queueWriteOperation(writeOperation);
             } catch (Exception e) {
                 shouldFlushAfterQueuing = false;
@@ -514,11 +516,12 @@ public class NioSelector implements Closeable {
     /**
      * 检测连接是否完成
      * @param context
-     * @param connectEvent  是否准备好连接事件
+     * @param connectEvent  代表本次方法是收到connect事件后触发的 那么连接就应该完成了
      */
     private void attemptConnect(SocketChannelContext context, boolean connectEvent) {
         try {
             eventHandler.handleConnect(context);
+            // 所以这里连接未完成就应该抛出异常
             if (connectEvent && context.isConnectComplete() == false) {
                 eventHandler.connectException(context, new IOException("Received OP_CONNECT but connect failed"));
             }
@@ -543,6 +546,7 @@ public class NioSelector implements Closeable {
         try {
             if (newChannel.isOpen()) {
                 // 在这里将channel注册到了 selector上
+                // 如果是serverChannel 会确保bind成功后才从这个方法返回 所以在channelActive中直接监听accept事件就好
                 eventHandler.handleRegistration(newChannel);
                 // 触发钩子函数
                 channelActive(newChannel);
@@ -561,7 +565,7 @@ public class NioSelector implements Closeable {
     }
 
     /**
-     * 在基于原生nio开发的 连接框架中 当channel注册到选择器上时 认为channel处于活跃状态
+     * 在基于原生nio开发的connection框架中 当channel注册到选择器上时 认为channel处于活跃状态
      * @param newChannel
      */
     private void channelActive(ChannelContext<?> newChannel) {
@@ -589,6 +593,7 @@ public class NioSelector implements Closeable {
      */
     private void closeChannel(final ChannelContext<?> channelContext) {
         try {
+            // 会调用底层 javaChannel.close()
             eventHandler.handleClose(channelContext);
         } catch (Exception e) {
             eventHandler.closeException(channelContext, e);
