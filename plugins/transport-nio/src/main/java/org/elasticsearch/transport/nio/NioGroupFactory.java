@@ -52,7 +52,7 @@ public final class NioGroupFactory {
     private final Logger logger;
     private final Settings settings;
     /**
-     * worker数量 (事件循环线程数量)
+     * 如果开放rest端口 使用的事件循环组数量 为0代表复用接收ES内部节点的事件循环组
      */
     private final int httpWorkerCount;
 
@@ -77,7 +77,13 @@ public final class NioGroupFactory {
         return getGenericGroup();
     }
 
+    /**
+     * http事件循环组 和 普通的 tcp事件循环组是分开的
+     * @return
+     * @throws IOException
+     */
     public synchronized NioGroup getHttpGroup() throws IOException {
+        // 复用ES集群内部节点相互通信使用的事件循环组
         if (httpWorkerCount == 0) {
             return getGenericGroup();
         } else {

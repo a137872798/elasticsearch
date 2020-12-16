@@ -69,7 +69,9 @@ import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
-
+/**
+ * 处理 join阶段的对象
+ */
 public class JoinHelper {
 
     private static final Logger logger = LogManager.getLogger(JoinHelper.class);

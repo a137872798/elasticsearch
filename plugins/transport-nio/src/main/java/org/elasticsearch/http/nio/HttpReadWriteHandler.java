@@ -48,6 +48,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.LongSupplier;
 
+/**
+ * http层处理读请求与TCP层不一致
+ */
 public class HttpReadWriteHandler implements NioChannelHandler {
 
     private final NettyAdaptor adaptor;
@@ -60,6 +63,16 @@ public class HttpReadWriteHandler implements NioChannelHandler {
     private boolean requestSinceReadTimeoutTrigger = false;
     private int inFlightRequests = 0;
 
+
+    /**
+     *
+     * @param nioHttpChannel  httpChannel
+     * @param transport  使用的是http的传输层对象
+     * @param settings
+     * @param corsConfig  TODO 先忽略跨域相关的
+     * @param taskScheduler  就是一个可以执行定时任务的对象
+     * @param nanoClock  获取当前时间
+     */
     public HttpReadWriteHandler(NioHttpChannel nioHttpChannel, NioHttpServerTransport transport, HttpHandlingSettings settings,
                                 CorsHandler.Config corsConfig, TaskScheduler taskScheduler, LongSupplier nanoClock) {
         this.nioHttpChannel = nioHttpChannel;
@@ -69,6 +82,7 @@ public class HttpReadWriteHandler implements NioChannelHandler {
         this.readTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(settings.getReadTimeoutMillis());
 
         List<ChannelHandler> handlers = new ArrayList<>(5);
+        // 在这里将数据流解析成http 就不细看了
         HttpRequestDecoder decoder = new HttpRequestDecoder(settings.getMaxInitialLineLength(), settings.getMaxHeaderSize(),
             settings.getMaxChunkSize());
         decoder.setCumulator(ByteToMessageDecoder.COMPOSITE_CUMULATOR);
@@ -88,6 +102,9 @@ public class HttpReadWriteHandler implements NioChannelHandler {
         adaptor.addCloseListener((v, e) -> nioHttpChannel.close());
     }
 
+    /**
+     * 当channel 被注册到 selector时 就会触发该方法了
+     */
     @Override
     public void channelActive() {
         channelActive = true;
@@ -96,6 +113,11 @@ public class HttpReadWriteHandler implements NioChannelHandler {
         }
     }
 
+    /**
+     * 当收到消息时就是通过该方法进行处理  最终会委托给 dispatcher
+     * @param channelBuffer of bytes read from the network
+     * @return
+     */
     @Override
     public int consumeReads(InboundChannelBuffer channelBuffer) {
         assert channelActive : "channelActive should have been called";
@@ -109,6 +131,11 @@ public class HttpReadWriteHandler implements NioChannelHandler {
 
         return bytesConsumed;
     }
+
+    // 写入操作分为3个阶段  第一阶段将消息体包装设置到 selector的列表中
+    // 第二阶段 当事件循环发现有未写入的writeOp 会将起设置到 writerHandler的flush队列中   这个flush队列是检测缓冲区是否准备好的 因为写事件没准备完成才会有flushOp残留
+    // 第三阶段 才是真正将数据写入到缓冲区
+    // 而httpHandler只是重写了前面2步
 
     @Override
     public WriteOperation createWriteOperation(SocketChannelContext context, Object message, BiConsumer<Void, Exception> listener) {
@@ -152,6 +179,10 @@ public class HttpReadWriteHandler implements NioChannelHandler {
         }
     }
 
+    /**
+     * 先接收外部用户传入的请求信息
+     * @param msg
+     */
     @SuppressWarnings("unchecked")
     private void handleRequest(Object msg) {
         final HttpPipelinedRequest<FullHttpRequest> pipelinedRequest = (HttpPipelinedRequest<FullHttpRequest>) msg;
@@ -168,6 +199,7 @@ public class HttpReadWriteHandler implements NioChannelHandler {
                     transport.incomingRequestError(httpRequest, nioHttpChannel, (Exception) cause);
                 }
             } else {
+                // 转发到 httpTransport
                 transport.incomingRequest(httpRequest, nioHttpChannel);
             }
             success = true;
@@ -178,8 +210,14 @@ public class HttpReadWriteHandler implements NioChannelHandler {
         }
     }
 
+    /**
+     * 当连接建立后 会开启一个定时任务 检测是否有读取到数据 如果没有读取到数据自动抛出异常
+     * 因为在http协议中认为只有要发送数据时才会建立连接
+     */
     private void maybeReadTimeout() {
+        // 既没有发送数据 也没有收到数据
         if (requestSinceReadTimeoutTrigger == false && inFlightRequests == 0) {
+            // 自动断开连接
             transport.onException(nioHttpChannel, new HttpReadTimeoutException(TimeValue.nsecToMSec(readTimeoutNanos)));
         } else {
             requestSinceReadTimeoutTrigger = false;

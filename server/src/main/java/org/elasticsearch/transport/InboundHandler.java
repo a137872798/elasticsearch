@@ -200,7 +200,7 @@ public class InboundHandler {
             final TransportChannel transportChannel = new TcpTransportChannel(outboundHandler, channel, action, requestId, version,
                 header.isCompressed(), header.isHandshake(), message.takeBreakerReleaseControl());
             try {
-                // 触发监听器 虽然默认情况下是一个空的监听器
+                // 触发监听器 TransportService就是一个messageListener 需要设置handleIncomingRequests 标识才能正常处理请求 代表本节点此时完成了基础的信息初始化
                 messageListener.onRequestReceived(requestId, action);
                 // 该消息在处理前由于触发了熔断 不需要处理
                 if (message.isShortCircuit()) {

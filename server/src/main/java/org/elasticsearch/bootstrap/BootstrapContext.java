@@ -24,15 +24,18 @@ import org.elasticsearch.env.Environment;
 
 /**
  * Context that is passed to every bootstrap check to make decisions on.
+ * 在调用 node.start()时 生成的上下文对象
  */
 public class BootstrapContext {
     /**
      * The node's environment
+     * 当前运行环境  内部包含了各种配置
      */
     private final Environment environment;
 
     /**
      * The node's local state metadata loaded on startup
+     * 在初始阶段 通过PersistedClusterStateService 从lucene中读取元数据信息
      */
     private final Metadata metadata;
 

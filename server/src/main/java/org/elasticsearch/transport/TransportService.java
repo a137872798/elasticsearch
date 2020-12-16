@@ -393,6 +393,7 @@ public class TransportService extends AbstractLifecycleComponent implements Repo
      * when the transport layer starts up it will block any incoming requests until
      * this method is called
      * 只有当调用了该方法后 才允许处理请求
+     * 在node.start中  为ClusterApplyService 设置了 CS 并触发ClusterService.start()后 才算是完成最基本的处理 才可以开始处理请求
      */
     public final void acceptIncomingRequests() {
         handleIncomingRequests.set(true);

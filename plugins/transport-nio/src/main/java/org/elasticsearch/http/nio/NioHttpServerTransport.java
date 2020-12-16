@@ -133,6 +133,9 @@ public class NioHttpServerTransport extends AbstractHttpServerTransport {
         return logger;
     }
 
+    /**
+     * 当本节点加入到集群后并完成选举  会对外开放REST端口
+     */
     @Override
     protected void doStart() {
         boolean success = false;
@@ -159,8 +162,14 @@ public class NioHttpServerTransport extends AbstractHttpServerTransport {
         }
     }
 
+    /**
+     * @param socketAddress  绑定到该地址 对外开放端口
+     * @return
+     * @throws IOException
+     */
     @Override
     protected HttpServerChannel bind(InetSocketAddress socketAddress) throws IOException {
+        // 这里的操作实际上都和 TCP层的绑定一致  此时已经生成了 HttpChannel 并且已经注册到了selector上
         NioHttpServerChannel httpServerChannel = nioGroup.bindServerChannel(socketAddress, channelFactory);
         PlainActionFuture<Void> future = PlainActionFuture.newFuture();
         httpServerChannel.addBindListener(ActionListener.toBiConsumer(future));
@@ -183,6 +192,8 @@ public class NioHttpServerTransport extends AbstractHttpServerTransport {
                 tcpReceiveBufferSize);
         }
 
+        // 这里创建的channel 是 httpchannel 之后的套路一致 也是注册到事件循环线程上
+        // 处理http读请求时 使用的handler 与 tcp层的不一样
         @Override
         public NioHttpChannel createChannel(NioSelector selector, SocketChannel channel, Config.Socket socketConfig) {
             NioHttpChannel httpChannel = new NioHttpChannel(channel);

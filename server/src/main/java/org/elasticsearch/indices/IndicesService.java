@@ -615,9 +615,10 @@ public class IndicesService extends AbstractLifecycleComponent
      * @param indexMetadata    the index metadata to create the index for
      * @param builtInListeners a list of built-in lifecycle {@link IndexEventListener} that should should be used along side with the
      *                         per-index listeners
-     * @param writeDanglingIndices 是否是摇摆索引
+     *                         本次索引构建完成后 会触发的一组监听器  实际上一些核心服务都实现了这个接口 (peerRecoverySourceService, recoveryTargetService, searchService, snapshotShardsService)
+     * @param writeDanglingIndices 是否是摇摆索引  默认为true
      * @throws ResourceAlreadyExistsException if the index already exists.
-     * 每当传入一个索引相关的元数据时 就可以创建对应的IndexService对象
+     * 当 indicesClusterStateService 感知到一个新的索引时 会创建对应的索引服务
      */
     @Override
     public synchronized IndexService createIndex(
@@ -626,6 +627,8 @@ public class IndicesService extends AbstractLifecycleComponent
 
         // 首先检测服务是否还在启用中
         ensureChangesAllowed();
+
+        // 检验 索引uuid的有效性
         if (indexMetadata.getIndexUUID().equals(IndexMetadata.INDEX_UUID_NA_VALUE)) {
             throw new IllegalArgumentException("index must have a real UUID found value: [" + indexMetadata.getIndexUUID() + "]");
         }
@@ -634,8 +637,9 @@ public class IndicesService extends AbstractLifecycleComponent
         if (hasIndex(index)) {
             throw new ResourceAlreadyExistsException(index);
         }
-        // 这组监听器就是监听该index相关事件的
         List<IndexEventListener> finalListeners = new ArrayList<>(builtInListeners);
+
+        // 追加一个监听器 去维护 shard级别的缓存数据
         final IndexEventListener onStoreClose = new IndexEventListener() {
 
             /**
@@ -657,8 +661,9 @@ public class IndicesService extends AbstractLifecycleComponent
             }
         };
         finalListeners.add(onStoreClose);
-        // TODO 为啥都要加入这个特定的钩子
         finalListeners.add(oldShardsStats);
+
+        // 使用相关参数生成 IndexService
         final IndexService indexService =
             createIndexService(
                 CREATE_INDEX,
@@ -1005,14 +1010,13 @@ public class IndicesService extends AbstractLifecycleComponent
         final BulkStats bulkStats = new BulkStats();
 
         /**
-         * 当某个分片被关闭前触发
-         * @param shardId  每个分片都属于某个index  index到底是什么
+         * 在分片被关闭前 将信息汇总到该对象
+         * @param shardId
          * @param indexShard The index shard
          * @param indexSettings
          */
         @Override
         public synchronized void beforeIndexShardClosed(ShardId shardId, @Nullable IndexShard indexShard, Settings indexSettings) {
-            // TODO 都要关闭了为什么要把统计数据加上去啊
             if (indexShard != null) {
                 getStats.addTotals(indexShard.getStats());
                 indexingStats.addTotals(indexShard.indexingStats());

@@ -273,6 +273,10 @@ public class IndicesQueryCache implements QueryCache, Closeable {
         return stats.cacheSize == 0 && stats.ramBytesUsed == 0;
     }
 
+    /**
+     * 每当某个shard从对应的index被close时 移除缓存相关的统计信息
+     * @param shardId
+     */
     public void onClose(ShardId shardId) {
         assert empty(shardStats.get(shardId));
         shardStats.remove(shardId);

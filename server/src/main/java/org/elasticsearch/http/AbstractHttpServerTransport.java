@@ -149,6 +149,9 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
         return new HttpStats(httpChannels.size(), totalChannelsAccepted.get());
     }
 
+    /**
+     * 在开放rest端口时 需要绑定到本地
+     */
     protected void bindServer() {
         // Bind and start to accept incoming connections.
         InetAddress hostAddresses[];
@@ -176,12 +179,18 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
         logger.info("{}", boundAddress);
     }
 
+    /**
+     * 绑定到相关地址
+     * @param hostAddress
+     * @return
+     */
     private TransportAddress bindAddress(final InetAddress hostAddress) {
         final AtomicReference<Exception> lastException = new AtomicReference<>();
         final AtomicReference<InetSocketAddress> boundSocket = new AtomicReference<>();
         boolean success = port.iterate(portNumber -> {
             try {
                 synchronized (httpServerChannels) {
+                    // 尝试绑定到当前地址
                     HttpServerChannel httpServerChannel = bind(new InetSocketAddress(hostAddress, portNumber));
                     httpServerChannels.add(httpServerChannel);
                     boundSocket.set(httpServerChannel.getLocalAddress());
@@ -205,6 +214,12 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
         return new TransportAddress(boundSocket.get());
     }
 
+    /**
+     * 绑定逻辑由子类实现
+     * @param hostAddress
+     * @return
+     * @throws Exception
+     */
     protected abstract HttpServerChannel bind(InetSocketAddress hostAddress) throws Exception;
 
     @Override
@@ -273,6 +288,11 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
         return publishPort;
     }
 
+    /**
+     * 当长时间没有发送/收到请求时 自动断开连接
+     * @param channel
+     * @param e
+     */
     public void onException(HttpChannel channel, Exception e) {
         if (lifecycle.started() == false) {
             // just close and ignore - we are already stopped and just need to make sure we release all resources
@@ -318,6 +338,7 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
      *
      * @param httpRequest that is incoming
      * @param httpChannel that received the http request
+     *                    当底层httpReadWriteHandler 读取到请求后 交由该方法处理
      */
     public void incomingRequest(final HttpRequest httpRequest, final HttpChannel httpChannel) {
         handleIncomingRequest(httpRequest, httpChannel, null);
@@ -346,6 +367,12 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
         }
     }
 
+    /**
+     * 处理 http层收到的请求
+     * @param httpRequest
+     * @param httpChannel
+     * @param exception
+     */
     private void handleIncomingRequest(final HttpRequest httpRequest, final HttpChannel httpChannel, final Exception exception) {
         Exception badRequestCause = exception;
 
@@ -384,6 +411,7 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
             RestChannel innerChannel;
             ThreadContext threadContext = threadPool.getThreadContext();
             try {
+                // 返回的通道被包装过 会组装响应头 等信息
                 innerChannel =
                     new DefaultRestChannel(httpChannel, httpRequest, restRequest, bigArrays, handlingSettings, threadContext, trace);
             } catch (final IllegalArgumentException e) {
@@ -395,6 +423,7 @@ public abstract class AbstractHttpServerTransport extends AbstractLifecycleCompo
             channel = innerChannel;
         }
 
+        // 处理请求是委托给 dispatch
         dispatchRequest(restRequest, channel, badRequestCause);
     }
 

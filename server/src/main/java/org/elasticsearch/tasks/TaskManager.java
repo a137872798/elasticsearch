@@ -502,7 +502,7 @@ public class TaskManager implements ClusterStateApplier {
     }
 
     /**
-     * 该对象会监控集群的变化 主要就是获取此时集群中所有的node
+     * 该对象会监控集群的变化  当发现某些节点已经被移除了 就将关联的cancellable任务关闭
      * @param event
      */
     @Override

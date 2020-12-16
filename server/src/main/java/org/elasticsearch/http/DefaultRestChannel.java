@@ -80,9 +80,14 @@ public class DefaultRestChannel extends AbstractRestChannel implements RestChann
         return new ReleasableBytesStreamOutput(bigArrays);
     }
 
+    /**
+     * 通过该方法将 restHandler处理后的结果返回给客户端
+     * @param restResponse
+     */
     @Override
     public void sendResponse(RestResponse restResponse) {
         final ArrayList<Releasable> toClose = new ArrayList<>(4);
+        // 发送完成后释放内存
         toClose.add(httpRequest::release);
         if (isCloseConnection()) {
             toClose.add(() -> CloseableChannel.closeChannel(httpChannel));
@@ -135,6 +140,7 @@ public class DefaultRestChannel extends AbstractRestChannel implements RestChann
             }
 
             ActionListener<Void> listener = ActionListener.wrap(() -> Releasables.close(toClose));
+            // 最终通过httpChannel 发送结果
             httpChannel.sendResponse(httpResponse, listener);
             success = true;
         } finally {

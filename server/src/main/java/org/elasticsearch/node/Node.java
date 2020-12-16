@@ -862,10 +862,13 @@ public class Node implements Closeable {
         // 因为之前已经从磁盘中加载完元数据信息了 这里可以直接获取
         final Metadata onDiskMetadata = gatewayMetaState.getPersistedState().getLastAcceptedState().metadata();
         assert onDiskMetadata != null : "metadata is null but shouldn't"; // this is never null
+
+        // 默认是NOOP
         validateNodeBeforeAcceptingRequests(new BootstrapContext(environment, onDiskMetadata), transportService.boundAddress(),
             pluginsService.filterPlugins(Plugin.class).stream()
                 .flatMap(p -> p.getBootstrapChecks().stream()).collect(Collectors.toList()));
 
+        // 监听集群变化 当发现某些node 从集群被移除后 将相关的cancellableTask关闭
         clusterService.addStateApplier(transportService.getTaskManager());
         // start after transport service so the local disco is known
         // 在从本地磁盘加载完metadata后 可以启动注册中心了
@@ -873,17 +876,23 @@ public class Node implements Closeable {
         clusterService.start();
         assert clusterService.localNode().equals(localNodeFactory.getNode())
             : "clusterService has a different local node than the factory provided";
+
+        // 此时最基础的初始化工作已经完成 可以开始处理请求了
         transportService.acceptIncomingRequests();
+        // 开始参与选举
         discovery.startInitialJoin();
         final TimeValue initialStateTimeout = INITIAL_STATE_TIMEOUT_SETTING.get(settings());
+        // 这个对象负责监听 CS 变化 并更新 nodeId / clusterUUID
         configureNodeAndClusterIdStateListener(clusterService);
 
+        // 如果设置了初始化时间
         if (initialStateTimeout.millis() > 0) {
             final ThreadPool thread = injector.getInstance(ThreadPool.class);
             ClusterState clusterState = clusterService.state();
             ClusterStateObserver observer =
                 new ClusterStateObserver(clusterState, clusterService, null, logger, thread.getThreadContext());
 
+            // 当本节点还未感知到集群的leader节点  代表还没有加入到集群
             if (clusterState.nodes().getMasterNodeId() == null) {
                 logger.debug("waiting to join the cluster. timeout [{}]", initialStateTimeout);
                 final CountDownLatch latch = new CountDownLatch(1);
@@ -904,6 +913,7 @@ public class Node implements Closeable {
                             initialStateTimeout);
                         latch.countDown();
                     }
+                    // 当接收到CS 并且内部记录了集群中最新的leader节点  代表本对象成功加入到了集群中
                 }, state -> state.nodes().getMasterNodeId() != null, initialStateTimeout);
 
                 try {
@@ -914,8 +924,10 @@ public class Node implements Closeable {
             }
         }
 
+        // 选举完成后 才能开放rest端口  这里实际上就是在bind serverSocketChannel     httpServerTransport的handler对象做了特殊处理 会以http协议解析数据流
         injector.getInstance(HttpServerTransport.class).start();
 
+        // TODO
         if (WRITE_PORTS_FILE_SETTING.get(settings())) {
             TransportService transport = injector.getInstance(TransportService.class);
             writePortsFile("transport", transport.boundAddress());
@@ -925,6 +937,7 @@ public class Node implements Closeable {
 
         logger.info("started");
 
+        // TODO
         pluginsService.filterPlugins(ClusterPlugin.class).forEach(ClusterPlugin::onNodeStarted);
 
         return this;

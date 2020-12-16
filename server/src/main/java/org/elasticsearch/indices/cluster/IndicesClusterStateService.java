@@ -137,6 +137,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
 
     /**
      * 处理索引的相关事件 比如某个索引被创建/删除
+     * 几个核心服务都实现了  indexEventListener接口
      */
     private final List<IndexEventListener> buildInIndexListener;
     private final PrimaryReplicaSyncer primaryReplicaSyncer;
@@ -209,6 +210,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
             final RetentionLeaseSyncer retentionLeaseSyncer,
             final NodeClient client) {
         this.settings = settings;
+        // 这几个服务都会监听 shard/index的创建 关闭事件
         this.buildInIndexListener = Arrays.asList(peerRecoverySourceService, recoveryTargetService, searchService, snapshotShardsService);
         this.indicesService = indicesService;
         this.clusterService = clusterService;

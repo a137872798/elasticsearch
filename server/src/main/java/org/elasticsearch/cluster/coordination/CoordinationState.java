@@ -80,8 +80,8 @@ public class CoordinationState {
 
     /**
      *
-     * @param localNode
-     * @param persistedState  集群信息的持久化数据
+     * @param localNode 本节点信息
+     * @param persistedState  描述持久化后的CS信息
      * @param electionStrategy   采用的选举策略
      */
     public CoordinationState(DiscoveryNode localNode, PersistedState persistedState, ElectionStrategy electionStrategy) {

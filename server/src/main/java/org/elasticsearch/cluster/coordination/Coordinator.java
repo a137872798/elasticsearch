@@ -127,8 +127,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     private final TransportService transportService;
 
     /**
-     * MasterService 是要当前节点作为master时才可以使用
-     * 主要功能就是接收update请求更新集群状态 并将更新事件通知到集群中所有节点
+     * 更新CS时使用
      */
     private final MasterService masterService;
 
@@ -147,7 +146,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     private final NodeRemovalClusterStateTaskExecutor nodeRemovalExecutor;
 
     /**
-     * TODO 从实现类中可以看到 LUCENE???
+     * 代表被持久化的 CS
      */
     private final Supplier<CoordinationState.PersistedState> persistedStateSupplier;
 
@@ -212,7 +211,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     private final FollowersChecker followersChecker;
 
     /**
-     * 该对象会感知集群的状态变化
+     * 该对象负责将最新的CS通知给各个监听器
      */
     private final ClusterApplier clusterApplier;
     private final Collection<BiConsumer<DiscoveryNode, ClusterState>> onJoinValidators;
@@ -1053,9 +1052,10 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     protected void doStart() {
         // 确保单线程执行
         synchronized (mutex) {
-            // 应该是获取之前有关集群信息的持久化数据
+            // 在 node.start() 时  会通过GateStateService读取之前持久化的CS信息
             CoordinationState.PersistedState persistedState = persistedStateSupplier.get();
 
+            // 将相关信息包装成一个 选举状态对象
             coordinationState.set(new CoordinationState(getLocalNode(), persistedState, electionStrategy));
 
             // 从持久化数据中获取当前任期
@@ -1064,7 +1064,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             // 初始化地址解析对象内部的线程池
             configuredHostsResolver.start();
 
-            // 获取之前持久化的最近一次集群数据  (每次某个节点重启时肯定是根据之前持久化的数据尝试恢复)
+            // 获取之前持久化的最近一次集群数据
             final ClusterState lastAcceptedState = coordinationState.get().getLastAcceptedState();
 
             // 只是打印日志
@@ -1085,7 +1085,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             }
             ClusterState initialState = ClusterState.builder(ClusterName.CLUSTER_NAME_SETTING.get(settings))
                 .blocks(ClusterBlocks.builder()
-                    // TODO 这里加入了2个特殊的阻塞对象
+                    // 这里加入了2个阻塞对象   STATE_NOT_RECOVERED_BLOCK 代表集群此时还没有完成选举
                     .addGlobalBlock(STATE_NOT_RECOVERED_BLOCK)
                     .addGlobalBlock(noMasterBlockService.getNoMasterBlock()))
                 // 此时集群对象中 只有localNode
