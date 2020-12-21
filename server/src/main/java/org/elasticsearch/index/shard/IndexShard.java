@@ -432,8 +432,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param warmer                  暖机对象的意义就是提前将数据从磁盘加入到缓存中
      * @param searchOperationListener 监听查询并执行相关逻辑
      * @param listeners
-     * @param globalCheckpointSyncer  TODO 全局检查点同步器 是啥???
-     * @param retentionLeaseSyncer    TODO 续约同步器
+     * @param globalCheckpointSyncer
+     * @param retentionLeaseSyncer
      * @param circuitBreakerService
      * @throws IOException
      */
@@ -469,29 +469,42 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         Objects.requireNonNull(store, "Store must be provided to the index shard");
         this.engineFactory = Objects.requireNonNull(engineFactory);
         this.store = store;
+        // 通过该对象可以为查询结果排序
         this.indexSortSupplier = indexSortSupplier;
         this.indexEventListener = indexEventListener;
         this.threadPool = threadPool;
-        // 生成一个IO写入对象
+        // 该对象可以检测 一组location是否已经刷盘
         this.translogSyncProcessor = createTranslogSyncProcessor(logger, threadPool.getThreadContext(), this::getEngine);
         this.mapperService = mapperService;
         this.indexCache = indexCache;
+
+        // 在原有的监听器基础上追加一个记录统计信息的监听器
         this.internalIndexingStats = new InternalIndexingStats();
         final List<IndexingOperationListener> listenersList = new ArrayList<>(listeners);
         listenersList.add(internalIndexingStats);
+
+        // 将这组监听器合并成一个
         this.indexingOperationListeners = new IndexingOperationListener.CompositeListener(listenersList, logger);
         this.bulkOperationListener = new ShardBulkStats();
+
+        // 为全局检查点对象 以及续约对象赋值
         this.globalCheckpointSyncer = globalCheckpointSyncer;
         this.retentionLeaseSyncer = Objects.requireNonNull(retentionLeaseSyncer);
+
+        // 有关查询操作的监听器
         final List<SearchOperationListener> searchListenersList = new ArrayList<>(searchOperationListener);
         searchListenersList.add(searchStats);
         this.searchOperationListener = new SearchOperationListener.CompositeListener(searchListenersList, logger);
+
         // 通过该对象可以发起 获取某个分片数据的请求  实际上是通过engine实现的
         this.getService = new ShardGetService(indexSettings, this, mapperService);
+        // 4个数据统计对象
         this.shardWarmerService = new ShardIndexWarmerService(shardId, indexSettings);
         this.requestCacheStats = new ShardRequestCache();
         this.shardFieldData = new ShardFieldData();
         this.shardBitsetFilterCache = new ShardBitsetFilterCache(shardId, indexSettings);
+
+
         // 此时分片处于被创建的状态
         state = IndexShardState.CREATED;
         this.path = path;
@@ -499,13 +512,18 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         /* create engine config */
         logger.debug("state: [CREATED]");
 
+        // 是否要在启动shard时进行检查 默认是false
         this.checkIndexOnStartup = indexSettings.getValue(IndexSettings.INDEX_CHECK_ON_STARTUP);
         this.translogConfig = new TranslogConfig(shardId, shardPath().resolveTranslog(), indexSettings, bigArrays);
         final String aId = shardRouting.allocationId().getId();
+
+        // 从索引元数据中获取该分片对应的 term
         final long primaryTerm = indexSettings.getIndexMetadata().primaryTerm(shardId.id());
         this.pendingPrimaryTerm = primaryTerm;
+        // 该对象内部整合了一组全局检查点监听器
         this.globalCheckpointListeners =
             new GlobalCheckpointListeners(shardId, threadPool.scheduler(), logger);
+        // 存储正在执行复制的action
         this.pendingReplicationActions = new PendingReplicationActions(shardId, threadPool);
         this.replicationTracker = new ReplicationTracker(
             shardId,
@@ -521,7 +539,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
         // the query cache is a node-level thing, however we want the most popular filters
         // to be computed on a per-shard basis
-        // 缓存策略对象 默认情况下总是使用缓存
+        // 默认false
         if (IndexModule.INDEX_QUERY_CACHE_EVERYTHING_SETTING.get(settings)) {
             cachingPolicy = new QueryCachingPolicy() {
                 @Override
@@ -538,13 +556,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             // 使用根据频率来决定是否使用缓存的策略  实际上也是lru算法
             cachingPolicy = new UsageTrackingQueryCachingPolicy();
         }
-        // 通过该对象执行操作 需要先获取到门票
+        // 针对shard的某些操作也许可以并行 也许只能串行 通过该对象内部的permits实现隔离
         indexShardOperationPermits = new IndexShardOperationPermits(shardId, threadPool);
+        // 默认为空
         readerWrapper = indexReaderWrapper;
         refreshListeners = buildRefreshListeners();
         lastSearcherAccess.set(threadPool.relativeTimeInMillis());
-        // 在初始化完成后 将此时分片的元数据信息写入到相关目录中
+        // 在初始化完成后 将此时分片的元数据信息写入到相关目录中  写入的元数据是 ShardStateMetadata
         persistMetadata(path, indexSettings, shardRouting, null, logger);
+        // 默认为true
         this.useRetentionLeasesInPeerRecovery = replicationTracker.hasAllPeerRecoveryRetentionLeases();
         // 监听最新写入的operation的location 当超过了pending时 将pending置空
         this.refreshPendingLocationListener = new RefreshPendingLocationListener();
@@ -3140,11 +3160,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 开始从某个地方恢复本节点数据
+     * 每个indexShard在被创建后 就会通过recoverySource还原数据
      *
      * @param recoveryState         描述恢复相关的状态 比如现在所处的阶段
      * @param recoveryTargetService 当需要从其它节点获取数据时 会使用这个对象
-     * @param recoveryListener
+     * @param recoveryListener      通过在恢复数据的过程中插入钩子 实现一些功能
      * @param repositoriesService
      * @param mappingUpdateConsumer
      * @param indicesService
@@ -3356,11 +3376,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 writeReason = "routing changed from " + currentRouting + " to " + newRouting;
             }
             logger.trace("{} writing shard state, reason [{}]", shardId, writeReason);
+
+            // 描述分片状态的元数据信息
             final ShardStateMetadata newShardStateMetadata =
                 new ShardStateMetadata(newRouting.primary(), indexSettings.getUUID(), newRouting.allocationId());
             // 将最新的元数据信息写入到 shard对应的目录下
             // 这是文件存储的标准套路  类似于使用mysql存储数据  每个数据以一条记录的形式存在 而在基于文件系统做存储时 可以将每个记录/元数据/普通数据作为文件存储
-            // 文件本身成为了一种标识   TODO 写入文件操作就不细看了 在ShardStateMetadata中已经定义了如何将字段转换成数据流
+            // 文件本身成为了一种标识
             ShardStateMetadata.FORMAT.writeAndCleanup(newShardStateMetadata, shardPath.getShardStatePath());
         } else {
             logger.trace("{} skip writing shard state, has been written before", shardId);
@@ -3776,7 +3798,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return new AsyncIOProcessor<>(logger, 1024, threadContext) {
 
             /**
-             * TODO 先看其他的部分
              * @param candidates
              * @throws IOException
              */

@@ -59,6 +59,7 @@ import java.util.Objects;
 /**
  * Write action responsible for syncing retention leases to replicas. This action is deliberately a write action so that if a replica misses
  * a retention lease sync then that shard will be marked as stale.
+ * 保留续约同步信息
  */
 public class RetentionLeaseSyncAction extends
         TransportWriteAction<RetentionLeaseSyncAction.Request, RetentionLeaseSyncAction.Request, RetentionLeaseSyncAction.Response> {
@@ -70,6 +71,16 @@ public class RetentionLeaseSyncAction extends
         return LOGGER;
     }
 
+    /**
+     *
+     * @param settings
+     * @param transportService
+     * @param clusterService
+     * @param indicesService
+     * @param threadPool
+     * @param shardStateAction  该对象上注册了一个启动分片和关闭分片的action
+     * @param actionFilters
+     */
     @Inject
     public RetentionLeaseSyncAction(
             final Settings settings,

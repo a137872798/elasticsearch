@@ -171,9 +171,10 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     /**
      * @param shardId       代表本次目录对应的分片id
      * @param indexSettings
-     * @param directory     存储数据的目录
-     * @param shardLock     想要通过IndexService访问某个分片需要对应的shardLock 只有释放该对象后 其他线程才可以访问
+     * @param directory     对应存储shard数据的目录
+     * @param shardLock     shard锁对象
      * @param onClose       当本对象被关闭时触发的钩子
+     *                      当某个index下的某个shard被创建时 就会创建一个store对象
      */
     public Store(ShardId shardId, IndexSettings indexSettings, Directory directory, ShardLock shardLock,
                  OnClose onClose) {

@@ -330,6 +330,7 @@ public class ShardStateAction {
 
     /**
      * 任务处理器对象  定义了如何处理更新任务
+     * TODO 当某个分片无法被正常处理时  会通过该executor更新clusterState
      */
     public static class ShardFailedClusterStateTaskExecutor implements ClusterStateTaskExecutor<FailedShardEntry> {
         private final AllocationService allocationService;
@@ -362,7 +363,7 @@ public class ShardStateAction {
             // 检测到未完成数据同步的分片存储到这个列表中
             List<StaleShard> staleShardsToBeApplied = new ArrayList<>();
 
-            // 遍历处理 分片失败任务
+            // 每个task 都代表某个分片处理失败了
             for (FailedShardEntry task : tasks) {
                 IndexMetadata indexMetadata = currentState.metadata().index(task.shardId.getIndex());
                 if (indexMetadata == null) {

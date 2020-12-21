@@ -125,7 +125,9 @@ public final class ShardPath {
      * This method walks through the nodes shard paths to find the data and state path for the given shard. If multiple
      * directories with a valid shard state exist the one with the highest version will be used.
      * <b>Note:</b> this method resolves custom data locations for the shard if such a custom data path is provided.
-     * 根据当前环境 自定义数据路径 以及分片id 生成属于该分片的路径
+     * @param env 描述当前节点的环境信息
+     * @param shardId 当前要创建的分片id
+     * @param customDataPath 自定义数据的路径
      */
     public static ShardPath loadShardPath(Logger logger, NodeEnvironment env,
                                           ShardId shardId, String customDataPath) throws IOException {
@@ -154,7 +156,6 @@ public final class ShardPath {
             // EMPTY is safe here because we never call namedObject
             // 读取每个目录下的数据流 并转换成 metadata对象
             ShardStateMetadata load = ShardStateMetadata.FORMAT.loadLatestState(logger, NamedXContentRegistry.EMPTY, path);
-            // shardId 是由远端发来的请求 基于当前最新的clusterState 因为能发起该请求的就是leader节点  那么通过匹配uuid 可以得知此时正在被使用的node目录
             if (load != null) {
                 if (load.indexUUID.equals(indexUUID) == false && IndexMetadata.INDEX_UUID_NA_VALUE.equals(load.indexUUID) == false) {
                     logger.warn("{} found shard on path: [{}] with a different index UUID - this "
@@ -227,8 +228,9 @@ public final class ShardPath {
         final Path statePath;
 
         if (indexSettings.hasCustomDataPath()) {
+            // 生成存储数据的路径
             dataPath = env.resolveCustomLocation(indexSettings.customDataPath(), shardId);
-            // TODO 什么意思???
+            // 生成存储state信息的路径
             statePath = env.nodePaths()[0].resolve(shardId);
         } else {
             BigInteger totFreeSpace = BigInteger.ZERO;
@@ -277,7 +279,6 @@ public final class ShardPath {
                                     pathToShardCount.getOrDefault(p2, 0L));
                                 if (cmp == 0) {
                                     // if the number of shards is equal, tie-break with the number of total shards
-                                    // TODO 2个Map 有啥区别
                                     cmp = Integer.compare(dataPathToShardCount.getOrDefault(p1.path, 0),
                                             dataPathToShardCount.getOrDefault(p2.path, 0));
                                     if (cmp == 0) {

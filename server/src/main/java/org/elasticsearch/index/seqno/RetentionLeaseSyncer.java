@@ -33,6 +33,11 @@ public class RetentionLeaseSyncer {
     private final SyncAction syncAction;
     private final BackgroundSyncAction backgroundSyncAction;
 
+    /**
+     * 通过依赖注入的方式实现初始化
+     * @param syncAction
+     * @param backgroundSyncAction
+     */
     @Inject
     public RetentionLeaseSyncer(RetentionLeaseSyncAction syncAction, RetentionLeaseBackgroundSyncAction backgroundSyncAction) {
         this(syncAction::sync, backgroundSyncAction::backgroundSync);

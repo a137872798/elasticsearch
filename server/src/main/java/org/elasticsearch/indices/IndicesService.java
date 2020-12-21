@@ -240,6 +240,9 @@ public class IndicesService extends AbstractLifecycleComponent
 
     @Nullable
     private final EsThreadPoolExecutor danglingIndicesThreadPoolExecutor;
+    /**
+     * 当要更新某个摇摆索引时 会先加入到该容器 利用并发容器的特性解决并发问题
+     */
     private final Set<Index> danglingIndicesToWrite = Sets.newConcurrentHashSet();
     private final boolean nodeWriteDanglingIndicesInfo;
     private ValuesSourceRegistry valuesSourceRegistry;
@@ -689,6 +692,7 @@ public class IndicesService extends AbstractLifecycleComponent
             // 目前是 NOOP
             indexService.getIndexEventListener().afterIndexCreated(indexService);
             indices = Maps.copyMapWithAddedEntry(indices, index.getUUID(), indexService);
+            // 默认会生成摇摆索引
             if (writeDanglingIndices) {
                 if (nodeWriteDanglingIndicesInfo) {
                     updateDanglingIndicesInfo(index);
@@ -913,14 +917,14 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * 根据路由信息等 创建一个新的 indexShard
-     * @param shardRouting           the shard routing
-     * @param recoveryState          the recovery state
+     * @param shardRouting           the shard routing    该分片的路由信息
+     * @param recoveryState          the recovery state   描述回复流程的状态对象
      * @param recoveryTargetService  recovery service for the target
      * @param recoveryListener       a callback when recovery changes state (finishes or fails)
-     * @param repositoriesService    service responsible for snapshot/restore
+     * @param repositoriesService    service responsible for snapshot/restore   存储层服务 通过快照可以实现数据的快速恢复
      * @param onShardFailure         a callback when this shard fails
      * @param globalCheckpointSyncer a callback when this shard syncs the global checkpoint
-     * @param retentionLeaseSyncer   a callback when this shard syncs retention leases
+     * @param retentionLeaseSyncer   a callback when this shard syncs retention leases   处理有关同步续约信息的逻辑
      * @return
      * @throws IOException
      */
@@ -938,7 +942,10 @@ public class IndicesService extends AbstractLifecycleComponent
         ensureChangesAllowed();
         // 获取之前为该index 创建的 indexService
         IndexService indexService = indexService(shardRouting.index());
+        // 通过indexService创建 shard对象
         IndexShard indexShard = indexService.createShard(shardRouting, globalCheckpointSyncer, retentionLeaseSyncer);
+
+        // 追加一个失败钩子  当该分片处理失败时 会通知leader节点
         indexShard.addShardFailureCallback(onShardFailure);
         // 从某个地方恢复数据  当失败时触发相关钩子
         indexShard.startRecovery(recoveryState, recoveryTargetService, recoveryListener, repositoriesService,
@@ -1901,8 +1908,8 @@ public class IndicesService extends AbstractLifecycleComponent
     }
 
     /**
-     * 更新摇摆索引的数据
-     * 这里只是将数据写入到某个地方
+     * 更新摇摆索引的信息 当首次为摇摆索引生成indexService对象时 就会触发该方法
+     * TODO 为什么只有摇摆索引的信息需要做持久化
      * @param index
      */
     private void updateDanglingIndicesInfo(Index index) {
@@ -1931,6 +1938,7 @@ public class IndicesService extends AbstractLifecycleComponent
                             final long executedTimeMillis = threadPool.relativeTimeInMillis();
                             logger.trace("writing out dangling indices state for index {}, triggered {} ago", index,
                                 TimeValue.timeValueMillis(Math.min(0L, executedTimeMillis - triggeredTimeMillis)));
+                            // 摇摆索引的信息是会被记录到文件中的  并且在indexService中 每当接受到最新的metadata时 当发现摇摆索引信息发生变化就要进行更新
                             indexService.writeDanglingIndicesInfo();
                             final long completedTimeMillis = threadPool.relativeTimeInMillis();
                             logger.trace("writing out of dangling indices state for index {} completed after {}", index,

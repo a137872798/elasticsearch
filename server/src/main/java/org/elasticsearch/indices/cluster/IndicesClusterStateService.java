@@ -99,7 +99,7 @@ import static org.elasticsearch.indices.cluster.IndicesClusterStateService.Alloc
 
 /**
  * 通过监听集群状态的变化  操控indicesService修改索引
- * 因为交互逻辑比较复杂就没有当 indicesService去直接监听CS
+ * 因为交互逻辑比较复杂就没有让 indicesService去直接监听CS
  */
 public class IndicesClusterStateService extends AbstractLifecycleComponent implements ClusterStateApplier {
     private static final Logger logger = LogManager.getLogger(IndicesClusterStateService.class);
@@ -644,9 +644,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                     }
 
                     reason = "mapping update failed";
-                    // 使用最新的元数据去更新 mapping
+                    // 使用最新的元数据去更新 mapping   当更新成功后默认要通知leader节点
                     if (indexService.updateMapping(currentIndexMetadata, newIndexMetadata) && sendRefreshMapping) {
-                        // 当元数据更新成功 需要通知leader
                         nodeMappingRefreshAction.nodeMappingRefresh(state.nodes().getMasterNode(),
                             new NodeMappingRefreshAction.NodeMappingRefreshRequest(newIndexMetadata.getIndex().getName(),
                                 newIndexMetadata.getIndexUUID(), state.nodes().getLocalNodeId())
@@ -674,6 +673,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
      * @param state
      */
     private void createOrUpdateShards(final ClusterState state) {
+        // 每个index对应一个模板 被称为mapping  然后数据又被细化成shard
         RoutingNode localRoutingNode = state.getRoutingNodes().node(state.nodes().getLocalNodeId());
         if (localRoutingNode == null) {
             return;
@@ -700,9 +700,9 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
 
     /**
      * 创建新分片
-     * @param nodes
-     * @param routingTable
-     * @param shardRouting
+     * @param nodes  当前集群内所有节点
+     * @param routingTable  全局路由表
+     * @param shardRouting  某个分片的路由信息
      * @param state
      */
     private void createShard(DiscoveryNodes nodes, RoutingTable routingTable, ShardRouting shardRouting, ClusterState state) {
@@ -732,7 +732,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                     recoveryTargetService,
                     new RecoveryListener(shardRouting, primaryTerm),
                     repositoriesService,
-                    failedShardHandler,
+                    failedShardHandler, // 当某个shard处理失败时 使用该handler进行处理
                     this::updateGlobalCheckpointForShard,
                     retentionLeaseSyncer);
         } catch (Exception e) {
@@ -873,7 +873,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
     /**
      * 将某个分片从 indexService中移除
      * @param shardRouting
-     * @param sendShardFailure
+     * @param sendShardFailure  代表当该分片处理失败时 是否需要通知leader
      * @param message
      * @param failure
      * @param state
@@ -929,6 +929,9 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         }
     }
 
+    /**
+     * 当某个分片处理失败时 通过该函数进行处理
+     */
     private class FailedShardHandler implements Consumer<IndexShard.ShardFailure> {
         @Override
         public void accept(final IndexShard.ShardFailure shardFailure) {

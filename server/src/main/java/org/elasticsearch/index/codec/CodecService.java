@@ -48,6 +48,11 @@ public class CodecService {
      */
     public static final String LUCENE_DEFAULT_CODEC = "lucene_default";
 
+    /**
+     * 编解码器服务 通过映射服务初始化
+     * @param mapperService
+     * @param logger
+     */
     public CodecService(@Nullable MapperService mapperService, Logger logger) {
         final var codecs = new HashMap<String, Codec>();
         // 默认使用lucene自带的编解码器  同时codecs中包含了倾向点不同的2种编解码 一种使用的压缩算法以速度优先

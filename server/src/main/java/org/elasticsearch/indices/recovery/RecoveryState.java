@@ -119,6 +119,12 @@ public class RecoveryState implements ToXContentFragment, Writeable {
     private DiscoveryNode targetNode;
     private boolean primary;
 
+    /**
+     * 当需要创建一个 indexShard时 会创建一个recoveryState对象来记录此时数据的恢复状态
+     * @param shardRouting  在路由信息中会标识该分片数据通过什么途径进行恢复
+     * @param targetNode
+     * @param sourceNode
+     */
     public RecoveryState(ShardRouting shardRouting, DiscoveryNode targetNode, @Nullable DiscoveryNode sourceNode) {
         assert shardRouting.initializing() : "only allow initializing shard routing to be recovered: " + shardRouting;
         RecoverySource recoverySource = shardRouting.recoverySource();

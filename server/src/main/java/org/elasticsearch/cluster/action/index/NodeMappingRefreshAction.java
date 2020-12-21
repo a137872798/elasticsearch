@@ -70,6 +70,9 @@ public class NodeMappingRefreshAction {
         transportService.sendRequest(masterNode, ACTION_NAME, request, EmptyTransportResponseHandler.INSTANCE_SAME);
     }
 
+    /**
+     * 当其他节点上 更新了index.mapping 会通知leader节点进行refresh
+     */
     private class NodeMappingRefreshTransportHandler implements TransportRequestHandler<NodeMappingRefreshRequest> {
 
         @Override

@@ -953,11 +953,12 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             final IndexSettings indexSettings,
             final long operationPrimaryTerm,
             final long globalCheckpoint,
-            final LongConsumer onGlobalCheckpointUpdated,
+            final LongConsumer onGlobalCheckpointUpdated,  // 当更新全局检查点时  通过该函数来处理
             final LongSupplier currentTimeMillisSupplier,
-            final BiConsumer<RetentionLeases, ActionListener<ReplicationResponse>> onSyncRetentionLeases,
-            final Supplier<SafeCommitInfo> safeCommitInfoSupplier,
-            final Consumer<ReplicationGroup> onReplicationGroupUpdated) {
+            final BiConsumer<RetentionLeases, ActionListener<ReplicationResponse>> onSyncRetentionLeases,  // 当进行续约时 会触发该函数
+            final Supplier<SafeCommitInfo> safeCommitInfoSupplier,   // 获取安全提交点信息
+            final Consumer<ReplicationGroup> onReplicationGroupUpdated  // 当复制组发生变化时 触发该函数
+    ) {
         super(shardId, indexSettings);
         assert globalCheckpoint >= SequenceNumbers.UNASSIGNED_SEQ_NO : "illegal initial global checkpoint: " + globalCheckpoint;
         this.shardAllocationId = allocationId;

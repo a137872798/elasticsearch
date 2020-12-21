@@ -492,7 +492,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     }
 
     // method is synchronized so that IndexService can't be closed while we're writing out dangling indices information
-    // 首先本index是一个摇摆索引 并且当收到最新的 indexMetadata时 会触发该方法
+    // 将摇摆索引信息写入到指定目录
     public synchronized void writeDanglingIndicesInfo() {
         if (closed.get()) {
             return;
@@ -539,8 +539,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     /**
      * 创建一个新的分片
      * @param routing  描述分片路由信息
-     * @param globalCheckpointSyncer 全局检查点同步器是什么鬼
-     * @param retentionLeaseSyncer   续约同步器  TODO 先忽略续约吧
+     * @param globalCheckpointSyncer 全局检查点同步器
+     * @param retentionLeaseSyncer   续约同步器
      * @return
      * @throws IOException
      */
@@ -565,12 +565,12 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         IndexShard indexShard = null;
         ShardLock lock = null;
         try {
-            // 首先获取一个shard级别的锁   现在没有看到哪里调用了 shardLock.close  那么锁是什么时候释放的???
+            // 获取分片锁
             lock = nodeEnv.shardLock(shardId, "shard creation", TimeUnit.SECONDS.toMillis(5));
             eventListener.beforeIndexShardCreated(shardId, indexSettings);
             ShardPath path;
             try {
-                // 生成该分片对应的目录
+                // 找到数据应该存储的路径
                 path = ShardPath.loadShardPath(logger, nodeEnv, shardId, this.indexSettings.customDataPath());
             } catch (IllegalStateException ex) {
                 logger.warn("{} failed to load shard path, trying to remove leftover", shardId);
@@ -591,7 +591,6 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 // 寻找该index下其他分片的根路径
                 Map<Path, Integer> dataPathToShardCount = new HashMap<>();
                 for (IndexShard shard : this) {
-                    // TODO 这个是不一样的是吗  该index下所有分片分在了不同的 dataPath下
                     Path dataPath = shard.shardPath().getRootStatePath();
                     Integer curCount = dataPathToShardCount.get(dataPath);
                     if (curCount == null) {
@@ -599,6 +598,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                     }
                     dataPathToShardCount.put(dataPath, curCount + 1);
                 }
+                // 通过一系列规则选出最合适的path 内部的判断逻辑先不细看
                 path = ShardPath.selectNewPathForShard(nodeEnv, shardId, this.indexSettings,
                     // 当没有指定期望大小时 使用平均大小
                     routing.getExpectedShardSize() == ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE
@@ -616,15 +616,17 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
 
             logger.debug("creating shard_id {}", shardId);
             // if we are on a shared FS we only own the shard (ie. we can safely delete it) if we are the primary.
-            // 创建一个会针对reader 进行预热的对象
+            // 创建一个预热对象
             final Engine.Warmer engineWarmer = (reader) -> {
                 IndexShard shard =  getShardOrNull(shardId.getId());
                 if (shard != null) {
+                    // 委托给warmer对象
                     warmer.warm(reader, shard, IndexService.this.indexSettings);
                 }
             };
             // 通过路径打开目录对象
             Directory directory = directoryFactory.newDirectory(this.indexSettings, path);
+            // 应该是将这个目录作为存储数据的仓库
             store = new Store(shardId, this.indexSettings, directory, lock,
                     // 当该分片关联的store关闭时 触发监听器
                     new StoreCloseListener(shardId, () -> eventListener.onStoreClosed(shardId)));
@@ -651,6 +653,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                     () -> globalCheckpointSyncer.accept(shardId),
                     retentionLeaseSyncer,
                     circuitBreakerService);
+            // 目前钩子都是NOOP
             eventListener.indexShardStateChanged(indexShard, null, indexShard.state(), "shard created");
             eventListener.afterIndexShardCreated(indexShard);
             // 更新shards
@@ -813,8 +816,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     }
 
     /**
-     * 当元数据发生变化时
-     * 更新映射信息
+     * 当元数据发生变化时 更新映射信息
+     * 当首次创建indexService时 currentIndexMetadata为null  newIndexMetadata就是从集群中感知到的元数据对象
      * @param currentIndexMetadata
      * @param newIndexMetadata
      * @return
@@ -822,6 +825,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
      */
     @Override
     public boolean updateMapping(final IndexMetadata currentIndexMetadata, final IndexMetadata newIndexMetadata) throws IOException {
+        // 当非 CREATE_INDEX 的使用场景  该值为null
         if (mapperService == null) {
             return false;
         }
@@ -840,6 +844,10 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             this.toClose = toClose;
         }
 
+        /**
+         *
+         * @param lock
+         */
         @Override
         public void accept(ShardLock lock) {
             try {

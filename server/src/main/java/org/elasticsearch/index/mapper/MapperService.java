@@ -337,7 +337,7 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
                                                                    MergeReason reason, boolean onlyUpdateIfNeeded) {
         assert reason != MergeReason.MAPPING_UPDATE_PREFLIGHT;
         MappingMetadata mappingMetadata = indexMetadata.mapping();
-        // 首先新的索引元数据 必须包含mapping 才有更新的必要
+        // 首先新的索引元数据 必须包含mappingMetadata 才有更新的必要
         if (mappingMetadata != null) {
             if (onlyUpdateIfNeeded) {
                 // 该对象被初始化时 还未创建DocMapper对象
@@ -355,7 +355,7 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
 
     /**
      * 将内部数据 与 传入的mappings进行合并
-     * @param type
+     * @param type  MappingsMetadata.type信息
      * @param mappings  原本在创建index时 会传入一个json字符串 并且会和index匹配的template的mappings进行合并
      *                  该属性就可以看作是合并后的结果
      * @param reason

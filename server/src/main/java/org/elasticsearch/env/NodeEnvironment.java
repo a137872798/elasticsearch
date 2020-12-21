@@ -835,7 +835,7 @@ public final class NodeEnvironment  implements Closeable {
             }
         }
         logger.trace("successfully acquired shardlock for [{}]", shardId);
-        // 返回的lock包含一个 释放
+        // 返回lock
         return new ShardLock(shardId) { // new instance prevents double closing
             @Override
             protected void closeInternal() {

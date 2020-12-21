@@ -77,6 +77,9 @@ public class MetadataMappingService {
         this.indicesService = indicesService;
     }
 
+    /**
+     * 代表发起了有关某个索引的刷新任务
+     */
     static class RefreshTask {
         final String index;
         final String indexUUID;
@@ -92,6 +95,9 @@ public class MetadataMappingService {
         }
     }
 
+    /**
+     * 在主节点上执行 refreshMapping的任务
+     */
     class RefreshTaskExecutor implements ClusterStateTaskExecutor<RefreshTask> {
         @Override
         public ClusterTasksResult<RefreshTask> execute(ClusterState currentState, List<RefreshTask> tasks) throws Exception {
@@ -104,6 +110,7 @@ public class MetadataMappingService {
      * Batch method to apply all the queued refresh operations. The idea is to try and batch as much
      * as possible so we won't create the same index all the time for example for the updates on the same mapping
      * and generate a single cluster change event out of all of those.
+     * 执行刷新任务
      */
     ClusterState executeRefresh(final ClusterState currentState, final List<RefreshTask> allTasks) throws Exception {
         // break down to tasks per index, so we can optimize the on demand index service creation
@@ -119,6 +126,7 @@ public class MetadataMappingService {
         boolean dirty = false;
         Metadata.Builder mdBuilder = Metadata.builder(currentState.metadata());
 
+        // 可能在某个更新metadata后 会针对很多index的mapping进行更新 这里就会按组划分
         for (Map.Entry<String, List<RefreshTask>> entry : tasksPerIndex.entrySet()) {
             IndexMetadata indexMetadata = mdBuilder.get(entry.getKey());
             if (indexMetadata == null) {
@@ -138,6 +146,7 @@ public class MetadataMappingService {
                     logger.debug("{} ignoring task [{}] - index meta data doesn't match task uuid", index, task);
                 }
             }
+            // 可以看到针对单个index的多个refresh任务 只需要处理一次就行 只要确保uuid一致
             if (hasTaskWithRightUUID == false) {
                 continue;
             }
@@ -154,6 +163,7 @@ public class MetadataMappingService {
 
             IndexMetadata.Builder builder = IndexMetadata.builder(indexMetadata);
             try {
+                // 这里才开始刷新
                 boolean indexDirty = refreshIndexMapping(indexService, builder);
                 if (indexDirty) {
                     mdBuilder.put(builder);
@@ -172,6 +182,12 @@ public class MetadataMappingService {
         return ClusterState.builder(currentState).metadata(mdBuilder).build();
     }
 
+    /**
+     * 获取索引服务最新的映射数据 更新到metadata中
+     * @param indexService
+     * @param builder
+     * @return
+     */
     private boolean refreshIndexMapping(IndexService indexService, IndexMetadata.Builder builder) {
         boolean dirty = false;
         String index = indexService.index().getName();
@@ -198,6 +214,7 @@ public class MetadataMappingService {
 
     /**
      * Refreshes mappings if they are not the same between original and parsed version
+     * 当某节点的indexService的mapping信息更新后 会发送一个refresh到leader上
      */
     public void refreshMapping(final String index, final String indexUUID) {
         final RefreshTask refreshTask = new RefreshTask(index, indexUUID);
