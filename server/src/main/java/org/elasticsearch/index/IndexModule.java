@@ -93,6 +93,7 @@ import java.util.function.Function;
  *      <li>Settings update listener - Custom settings update listener can be registered via
  *      {@link #addSettingsUpdateConsumer(Setting, Consumer)}</li>
  * </ul>
+ * 当创建index时 以每个index为单位 生成一个module对象 负责维护单个index依赖的所有组件
  */
 public final class IndexModule {
 
@@ -140,7 +141,7 @@ public final class IndexModule {
      * via {@link org.elasticsearch.plugins.PluginsService#onIndexModule(IndexModule)}.
      *
      * @param indexSettings       the index settings
-     * @param analysisRegistry    the analysis registry
+     * @param analysisRegistry    the analysis registry  在node初始化时所有分词器都会从插件中被解析出来并且设置到registry对象中
      * @param engineFactory       the engine factory
      * @param directoryFactories the available store types
      */
@@ -154,6 +155,8 @@ public final class IndexModule {
         this.indexSettings = indexSettings;
         this.analysisRegistry = analysisRegistry;
         this.engineFactory = Objects.requireNonNull(engineFactory);
+
+        // 这里有内置的监听器
         this.searchOperationListeners.add(new SearchSlowLog(indexSettings));
         this.indexOperationListeners.add(new IndexingSlowLog(indexSettings));
         this.directoryFactories = Collections.unmodifiableMap(directoryFactories);
@@ -216,6 +219,7 @@ public final class IndexModule {
      * Once the node holds at least one shard of an index all modules are reloaded and listeners are registered again.
      * Listeners can't be unregistered they will stay alive for the entire time the index is allocated on a node.
      * </p>
+     * 针对索引事件的监听器 比如某个索引创建前后  分片的创建/删除
      */
     public void addIndexEventListener(IndexEventListener listener) {
         ensureNotFrozen();
@@ -262,6 +266,7 @@ public final class IndexModule {
      * Once the node holds at least one shard of an index all modules are reloaded and listeners are registered again.
      * Listeners can't be unregistered they will stay alive for the entire time the index is allocated on a node.
      * </p>
+     * 追加索引操作的监听器
      */
     public void addIndexOperationListener(IndexingOperationListener listener) {
         ensureNotFrozen();
@@ -310,6 +315,7 @@ public final class IndexModule {
      * via {@link FilterDirectoryReader#getDelegate()}.
      * The returned reader is closed once it goes out of scope.
      * </p>
+     * TODO 目前没有使用
      */
     public void setReaderWrapper(Function<IndexService,
                                     CheckedFunction<DirectoryReader, DirectoryReader, IOException>> indexReaderWrapperFactory) {
@@ -390,18 +396,18 @@ public final class IndexModule {
     }
 
     /**
-     * 根据相关属性生成 indexService
+     * 在 indicesService中 通过相关参数装配 indexModule后 通过该对象创建indexService
      * @param indexCreationContext
      * @param environment
      * @param xContentRegistry
-     * @param shardStoreDeleter
+     * @param shardStoreDeleter   实际上就是 indicesService
      * @param circuitBreakerService
      * @param bigArrays
      * @param threadPool
      * @param scriptService
      * @param clusterService
      * @param client
-     * @param indicesQueryCache
+     * @param indicesQueryCache 每个indicesService仅对应一个 indicesQueryCache   一个ES进程仅存在一个indicesService/indicesQueryCache
      * @param mapperRegistry
      * @param indicesFieldDataCache
      * @param namedWriteableRegistry
@@ -426,17 +432,27 @@ public final class IndexModule {
                                         NamedWriteableRegistry namedWriteableRegistry,
                                         BooleanSupplier idFieldDataEnabled,
                                         ValuesSourceRegistry valuesSourceRegistry) throws IOException {
+        // 将这组监听器组合成 CompositeIndexEventListener
         final IndexEventListener eventListener = freeze();
+        // 默认为空
         Function<IndexService, CheckedFunction<DirectoryReader, DirectoryReader, IOException>> readerWrapperFactory =
             indexReaderWrapper.get() == null ? (shard) -> null : indexReaderWrapper.get();
+        // 触发前置钩子  目前核心组件都还没有实现该钩子
         eventListener.beforeIndexCreated(indexSettings.getIndex(), indexSettings.getSettings());
+        // 默认就是获取 FSDirectoryFactory
         final IndexStorePlugin.DirectoryFactory directoryFactory = getDirectoryFactory(indexSettings, directoryFactories);
         QueryCache queryCache = null;
+
+        // 在解析插入到该index下的数据时使用的所有分词器(该对象内部包含多个分词器实例)
         IndexAnalyzers indexAnalyzers = null;
         boolean success = false;
         try {
+            // 检测查询index时 是否支持使用缓存    操作lucene是以index为单位的  同时每个index下分为多个shard 每个shard都可以有一组副本
             if (indexSettings.getValue(INDEX_QUERY_CACHE_ENABLED_SETTING)) {
+                // 默认为空
                 BiFunction<IndexSettings, IndicesQueryCache, QueryCache> queryCacheProvider = forceQueryCacheProvider.get();
+                // 可以看到 如果为该对象强制声明了工厂对象 那么优先级是比默认的缓存要高的
+                // 这里根据全局缓存indicesQueryCache 生成单个索引的缓存
                 if (queryCacheProvider == null) {
                     queryCache = new IndexQueryCache(indexSettings, indicesQueryCache);
                 } else {
@@ -445,10 +461,13 @@ public final class IndexModule {
             } else {
                 queryCache = new DisabledQueryCache(indexSettings);
             }
+            // 检测是否需要映射服务  当本次生成indexService的业务场景是生成上下文 就会需要 如果仅是校验元数据 那么不需要
             if (IndexService.needsMapperService(indexSettings, indexCreationContext)) {
                 indexAnalyzers = analysisRegistry.build(indexSettings);
             }
+            // 根据相关参数生成索引服务对象
             final IndexService indexService = new IndexService(indexSettings, indexCreationContext, environment, xContentRegistry,
+                // 有关lucene打分相关操作先忽略
                 new SimilarityService(indexSettings, scriptService, similarities), shardStoreDeleter, indexAnalyzers,
                 engineFactory, circuitBreakerService, bigArrays, threadPool, scriptService, clusterService, client, queryCache,
                 directoryFactory, eventListener, readerWrapperFactory, mapperRegistry, indicesFieldDataCache, searchOperationListeners,
@@ -463,11 +482,20 @@ public final class IndexModule {
         }
     }
 
+    /**
+     *
+     * @param indexSettings
+     * @param indexStoreFactories  默认为空
+     * @return
+     */
     private static IndexStorePlugin.DirectoryFactory getDirectoryFactory(
             final IndexSettings indexSettings, final Map<String, IndexStorePlugin.DirectoryFactory> indexStoreFactories) {
+        // 获取使用的store类型 默认为空
         final String storeType = indexSettings.getValue(INDEX_STORE_TYPE_SETTING);
         final Type type;
+        // 存储时是否使用内存映射技术
         final Boolean allowMmap = NODE_STORE_ALLOW_MMAP.get(indexSettings.getNodeSettings());
+        // 默认情况使用基于FS的存储结构
         if (storeType.isEmpty() || Type.FS.getSettingsKey().equals(storeType)) {
             type = defaultStoreType(allowMmap);
         } else {
@@ -477,10 +505,12 @@ public final class IndexModule {
                 type = null;
             }
         }
+        // 这几种类型必须支持 mmap  默认情况会使用simpleFS
         if (allowMmap == false && (type == Type.MMAPFS || type == Type.HYBRIDFS)) {
             throw new IllegalArgumentException("store type [" + storeType + "] is not allowed because mmap is disabled");
         }
         final IndexStorePlugin.DirectoryFactory factory;
+        // 默认使用基于FS的目录对象
         if (storeType.isEmpty() || isBuiltinType(storeType)) {
             factory = DEFAULT_DIRECTORY_FACTORY;
         } else {
@@ -510,6 +540,7 @@ public final class IndexModule {
      * NOTE: this can only be set once
      *
      * @see #INDEX_QUERY_CACHE_ENABLED_SETTING
+     * 默认是不调用该方法的
      */
     public void forceQueryCacheProvider(BiFunction<IndexSettings, IndicesQueryCache, QueryCache> queryCacheProvider) {
         ensureNotFrozen();

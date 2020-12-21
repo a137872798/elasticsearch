@@ -47,6 +47,7 @@ import java.util.function.Function;
  * index, get), throw {@link UnsupportedOperationException}. However, NoOpEngine
  * allows to trim any existing translog files through the usage of the
  * {{@link #trimUnreferencedTranslogFiles()}} method.
+ * 当indexMetadata的状态为 CLOSE时   获取对应的engineFactory时  返回该对象
  */
 public final class NoOpEngine extends ReadOnlyEngine {
 

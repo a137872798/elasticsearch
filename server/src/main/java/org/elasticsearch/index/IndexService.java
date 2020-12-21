@@ -114,7 +114,7 @@ import static java.util.Collections.unmodifiableMap;
 public class IndexService extends AbstractIndexComponent implements IndicesClusterStateService.AllocatedIndex<IndexShard> {
 
     /**
-     * 该对象监听 index 发生的各种事件
+     * 这里包含有关peerRecoverySourceService, recoveryTargetService, searchService, snapshotShardsService 等核心服务
      */
     private final IndexEventListener eventListener;
     /**
@@ -241,16 +241,16 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
      * @param nodeEnv
      * @param xContentRegistry
      * @param similarityService
-     * @param shardStoreDeleter
-     * @param indexAnalyzers
-     * @param engineFactory
-     * @param circuitBreakerService
-     * @param bigArrays
-     * @param threadPool
-     * @param scriptService
-     * @param clusterService
-     * @param client
-     * @param queryCache
+     * @param shardStoreDeleter  就是indicesService
+     * @param indexAnalyzers   本次索引服务涉及到的各种分词器对象
+     * @param engineFactory   当没有通过外部插件设置引擎工厂时 使用默认工厂 InternalEngineFactory
+     * @param circuitBreakerService   熔断器服务
+     * @param bigArrays     内存池对象
+     * @param threadPool    线程池
+     * @param scriptService   脚本服务
+     * @param clusterService   集群服务
+     * @param client     该对象通过ES开放的业务api执行处理逻辑 可能会涉及到请求在集群内的转发  非REST请求
+     * @param queryCache      大多数参数都是从indicesService传过来的 也就是它们是单ES进程共享
      * @param directoryFactory
      * @param eventListener
      * @param wrapperFactory   通过某个indexService  返回一个wrapper函数 负责将某个reader包装
@@ -300,9 +300,10 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         this.circuitBreakerService = circuitBreakerService;
         this.expressionResolver = expressionResolver;
         this.valuesSourceRegistry =  valuesSourceRegistry;
+        // 根据上下文信息 判断是否需要生成映射服务 CREATE_INDEX 就需要生成映射服务 如果是METADATA_VERIFICATION 则不需要
         if (needsMapperService(indexSettings, indexCreationContext)) {
             assert indexAnalyzers != null;
-            // 一个索引对应一个映射服务
+            // 一个索引对应一个映射服务   内部就是一个骨架对象 doc中哪个field会映射成json的哪个字段    ES默认生成的lucene.doc包含的field都是由mapperService决定的
             this.mapperService = new MapperService(indexSettings, indexAnalyzers, xContentRegistry, similarityService, mapperRegistry,
                 // we parse all percolator queries as they would be parsed on shard 0
                 () -> newQueryShardContext(0, null, System::currentTimeMillis, null), idFieldDataEnabled);
@@ -312,6 +313,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             if (indexSettings.getIndexSortConfig().hasIndexSort()) {
                 // we delay the actual creation of the sort order for this index because the mapping has not been merged yet.
                 // The sort order is validated right after the merge of the mapping later in the process.
+                // 通过排序配置内的信息 生成排序对象
                 this.indexSortSupplier = () -> indexSettings.getIndexSortConfig().buildIndexSort(
                     mapperService::fieldType,
                     indexFieldData::getForField
@@ -319,12 +321,14 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             } else {
                 this.indexSortSupplier = () -> null;
             }
+            // indexFieldDataService 整合了直接查询数据 以及依赖cache查询数据  FieldDataCacheListener 是用于统计数据的
             indexFieldData.setListener(new FieldDataCacheListener(this));
+            // BitsetFilterCache 也是进行数据统计
             this.bitsetFilterCache = new BitsetFilterCache(indexSettings, new BitsetCacheListener(this));
-            // 将bitsetFilterCache 的监听器设置到 indexWarmer中监听预热事件  之后会以query为单位预加载数据
+            // 内部会生成2个预热对象 一个是基于位图 还有个就是基于indexFieldDataService
             this.warmer = new IndexWarmer(threadPool, indexFieldData, bitsetFilterCache.createListener(threadPool));
 
-            // indexCache作为一个整合了内部所有cache的对象
+            // indexCache整合了 queryCache 位图缓存
             this.indexCache = new IndexCache(indexSettings, queryCache, bitsetFilterCache);
         } else {
             // 只有当前metadata == CLOSE 且 indexCreationContext == CREATE_INDEX 才会进入下面
@@ -337,6 +341,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             this.indexCache = null;
         }
 
+        // 对应indicesService
         this.shardStoreDeleter = shardStoreDeleter;
         this.bigArrays = bigArrays;
         this.threadPool = threadPool;
@@ -345,16 +350,27 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         this.client = client;
         this.eventListener = eventListener;
         this.nodeEnv = nodeEnv;
+        // 就是FSDirectoryFactory
         this.directoryFactory = directoryFactory;
+        // 就是 InternalEngineFactory
         this.engineFactory = Objects.requireNonNull(engineFactory);
         // initialize this last -- otherwise if the wrapper requires any other member to be non-null we fail with an NPE
+        // 默认为空  先忽略
         this.readerWrapper = wrapperFactory.apply(this);
+        // searchOperationListeners/indexingOperationListeners  除了2个日志类外 就是IndexingMemoryController 监控index的使用情况 并在合适的时机设置 throttle
         this.searchOperationListeners = Collections.unmodifiableList(searchOperationListeners);
         this.indexingOperationListeners = Collections.unmodifiableList(indexingOperationListeners);
         // kick off async ops for the first shard in this index
+
+        // 总计4个任务 定时刷新/定时裁剪过期日志/定期同步全局检查点/定期执行续约任务/定期持久化事务日志
+
+        // 定时刷新 针对indexShard
         this.refreshTask = new AsyncRefreshTask(this);
+        // 定期裁剪过期的事务日志
         this.trimTranslogTask = new AsyncTrimTranslogTask(this);
+        // 定期同步全局检查点
         this.globalCheckpointTask = new AsyncGlobalCheckpointTask(this);
+        // 执行续约任务
         this.retentionLeaseSyncTask = new AsyncRetentionLeaseSyncTask(this);
         // 刷盘任务需要检测是否要启动
         updateFsyncTaskIfNecessary();
@@ -760,7 +776,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         // 该对象是接收一个字符串 并从集群中获取所有indexName 并且判断与 index().getName() 是否匹配
         final SearchIndexNameMatcher indexNameMatcher =
             new SearchIndexNameMatcher(index().getName(), clusterAlias, clusterService, expressionResolver);
-        // 将查询会用到的所有参数 设置到context 中
+        // 将查询会用到的所有参数 设置到context中
         return new QueryShardContext(
             shardId, indexSettings, bigArrays, indexCache.bitsetFilterCache(), indexFieldData::getForField, mapperService(),
             similarityService(), scriptService, xContentRegistry, namedWriteableRegistry, client, searcher, nowInMillis, clusterAlias,
@@ -886,7 +902,6 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
 
         /**
-         * 获取到某个
          * @param shardId  每个reader对象对应一个shardId
          * @param fieldName
          * @param ramUsage
@@ -920,6 +935,10 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
 
     private final CopyOnWriteArrayList<Consumer<IndexMetadata>> metadataListeners = new CopyOnWriteArrayList<>();
 
+    /**
+     * 添加一个处理元数据的监听器   默认实现就是 indicesService::updateDanglingIndicesInfo  默认情况下创建的索引都是摇摆索引
+     * @param listener
+     */
     public void addMetadataListener(Consumer<IndexMetadata> listener) {
         metadataListeners.add(listener);
     }
@@ -996,7 +1015,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
      * 检测是否要开启 fsyncTask
      */
     private void updateFsyncTaskIfNecessary() {
-        // 代表基于API 调用才会执行刷盘操作
+        // 通过rest请求手动触发刷盘  不需要开启定时刷盘功能
         if (indexSettings.getTranslogDurability() == Translog.Durability.REQUEST) {
             try {
                 if (fsyncTask != null) {
@@ -1005,9 +1024,11 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             } finally {
                 fsyncTask = null;
             }
+        // 代表自动触发刷盘
         } else if (fsyncTask == null) {
             fsyncTask = new AsyncTranslogFSync(this);
         } else {
+            // 如果之前已经开启了刷盘任务 检测是否需要更新
             fsyncTask.updateIfNeeded();
         }
     }
@@ -1040,7 +1061,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     } // pkg private for testing
 
     private void maybeFSyncTranslogs() {
-        // 确保事务日志本身是异步的
+        // 确保采用的持久化方式是后台执行
         if (indexSettings.getTranslogDurability() == Translog.Durability.ASYNC) {
             for (IndexShard shard : this.shards.values()) {
                 try {
@@ -1074,6 +1095,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
 
     /**
      * 裁剪掉无用的事务日志
+     * 会通过一个定时器去触发
      */
     private void maybeTrimTranslog() {
         for (IndexShard shard : this.shards.values()) {
@@ -1197,7 +1219,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
 
         /**
-         * 看来是监听了动态配置  当配置发生变化时 更新定时任务
+         * 检测持久化任务是否需要更新  更新触发间隔
          */
         void updateIfNeeded() {
             final TimeValue newInterval = indexService.getIndexSettings().getTranslogSyncInterval();

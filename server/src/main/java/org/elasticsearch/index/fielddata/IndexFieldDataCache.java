@@ -85,6 +85,7 @@ public interface IndexFieldDataCache {
     }
 
     /**
+     * 空缓存 实际上还是直接从磁盘读取数据
      */
     class None implements IndexFieldDataCache {
 

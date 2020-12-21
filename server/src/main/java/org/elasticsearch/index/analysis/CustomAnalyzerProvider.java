@@ -31,11 +31,15 @@ import static org.elasticsearch.index.analysis.AnalyzerComponents.createComponen
 /**
  * A custom analyzer that is built out of a single {@link org.apache.lucene.analysis.Tokenizer} and a list
  * of {@link org.apache.lucene.analysis.TokenFilter}s.
+ * 自定义分词器
  */
 public class CustomAnalyzerProvider extends AbstractIndexAnalyzerProvider<Analyzer> {
 
     private final Settings analyzerSettings;
 
+    /**
+     * 分词器对象
+     */
     private Analyzer customAnalyzer;
 
     public CustomAnalyzerProvider(IndexSettings indexSettings,

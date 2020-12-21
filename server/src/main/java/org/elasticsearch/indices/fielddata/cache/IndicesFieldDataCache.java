@@ -38,9 +38,9 @@ import org.elasticsearch.common.settings.Setting.Property;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.index.Index;
-import org.elasticsearch.index.fielddata.LeafFieldData;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.fielddata.IndexFieldDataCache;
+import org.elasticsearch.index.fielddata.LeafFieldData;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.shard.ShardUtils;
 
@@ -50,9 +50,10 @@ import java.util.List;
 import java.util.function.ToLongBiFunction;
 
 /**
- * 这里的field是lucene中的field么 ???
+ * 二层缓存 首先这是一个总缓存对象
+ * 然后细化到每个field 还有一个子缓存
  */
-public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCache.Key, Accountable>, Releasable{
+public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCache.Key, Accountable>, Releasable {
 
     private static final Logger logger = LogManager.getLogger(IndicesFieldDataCache.class);
 
@@ -67,15 +68,15 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
 
 
     /**
-     *
      * @param settings
-     * @param indicesFieldDataCacheListener  该监听器包含 添加缓存/移除缓存时的钩子
+     * @param indicesFieldDataCacheListener 该监听器包含 添加缓存/移除缓存时的钩子
+     *                                      触发时减少熔断器此时使用量
      */
     public IndicesFieldDataCache(Settings settings, IndexFieldDataCache.Listener indicesFieldDataCacheListener) {
         this.indicesFieldDataCacheListener = indicesFieldDataCacheListener;
         final long sizeInBytes = INDICES_FIELDDATA_CACHE_SIZE_KEY.get(settings).getBytes();
         CacheBuilder<Key, Accountable> cacheBuilder = CacheBuilder.<Key, Accountable>builder()
-                .removalListener(this);
+            .removalListener(this);
         if (sizeInBytes > 0) {
             cacheBuilder.setMaximumWeight(sizeInBytes).weigher(new FieldDataWeigher());
         }
@@ -89,9 +90,11 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
 
     /**
      * 生成针对field 级别的缓存对象
-     * @param listener
-     * @param index
-     * @param fieldName
+     * 在通过 IndexFieldDataService 查询某个field的数据时 当允许使用缓存 而缓存未创建时 就会通过该方法生成field级别的缓存
+     *
+     * @param listener  就是 FieldDataCacheListener 只是做了一些数据统计工作
+     * @param index     本次针对哪个index生成缓存  因为所有indices 共用该对象
+     * @param fieldName 本次针对哪个field
      * @return
      */
     public IndexFieldDataCache buildIndexFieldDataCache(IndexFieldDataCache.Listener listener, Index index, String fieldName) {
@@ -104,6 +107,7 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
 
     /**
      * 当某个键值对从缓存中移除时触发
+     *
      * @param notification
      */
     @Override
@@ -163,14 +167,13 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
 
 
         /**
-         *
          * @param logger
-         * @param cache
-         * @param index  对应index
-         * @param fieldName  该缓存对应的field
-         * @param listeners
+         * @param cache     外层针对所有index的缓存
+         * @param index     对应index
+         * @param fieldName 该缓存对应的field
+         * @param listeners 这里包含 indicesFieldDataCache的默认监听器 以及由indexFieldDataCache构建field级别缓存时使用的监听器
          */
-        IndexFieldCache(Logger logger,final Cache<Key, Accountable> cache, Index index, String fieldName, Listener... listeners) {
+        IndexFieldCache(Logger logger, final Cache<Key, Accountable> cache, Index index, String fieldName, Listener... listeners) {
             this.logger = logger;
             this.listeners = listeners;
             this.index = index;
@@ -213,6 +216,7 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
         /**
          * 都是通过 indexFieldData 从某个reader中加载某个field的数据 并存储在缓存中
          * Global 对应的是所有segment    DirectoryReader 就能获取某个目录下所有的reader对象
+         *
          * @param indexReader
          * @param indexFieldData
          * @param <FD>
@@ -251,6 +255,7 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
 
         /**
          * 当某个field相关的数据被移除时 清除相关的缓存   在cache对象中每个数据都是某个fieldData
+         *
          * @param key
          */
         @Override

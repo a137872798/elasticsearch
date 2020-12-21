@@ -70,6 +70,9 @@ import java.util.concurrent.Executor;
  * Use this cache with care, only components that require that a filter is to be materialized as a {@link BitDocIdSet}
  * and require that it should always be around should use this cache, otherwise the
  * {@link org.elasticsearch.index.cache.query.QueryCache} should be used instead.
+ * 基于位图的缓存对象
+ * 该对象与index一一对应
+ * 而IndicesFieldDataCache与indicesService一一对应
  */
 public final class BitsetFilterCache extends AbstractIndexComponent
     implements IndexReader.ClosedListener, RemovalListener<IndexReader.CacheKey, Cache<Query, BitsetFilterCache.Value>>, Closeable {
@@ -88,11 +91,16 @@ public final class BitsetFilterCache extends AbstractIndexComponent
     private final Cache<IndexReader.CacheKey, Cache<Query, Value>> loadedFilters;
     private final Listener listener;
 
+    /**
+     * @param indexSettings  索引配置项
+     * @param listener  进行一些数据统计的监听器 先忽略
+     */
     public BitsetFilterCache(IndexSettings indexSettings, Listener listener) {
         super(indexSettings);
         if (listener == null) {
             throw new IllegalArgumentException("listener must not be null");
         }
+        // 是否渴望使用固定大小的位图 默认为true   对应的是稀疏位图
         this.loadRandomAccessFiltersEagerly = this.indexSettings.getValue(INDEX_LOAD_RANDOM_ACCESS_FILTERS_EAGERLY_SETTING);
         this.loadedFilters = CacheBuilder.<IndexReader.CacheKey, Cache<Query, Value>>builder().removalListener(this).build();
         this.listener = listener;

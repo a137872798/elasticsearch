@@ -33,7 +33,7 @@ import java.io.IOException;
  */
 public class IndexCache extends AbstractIndexComponent implements Closeable {
 
-    // 索引缓存内部包含2个下级缓存
+    // 索引缓存内部包含2个下级缓存   还有一个indexFieldDataCache没有包含在内
     /**
      * 以 query为单位存储数据
      */

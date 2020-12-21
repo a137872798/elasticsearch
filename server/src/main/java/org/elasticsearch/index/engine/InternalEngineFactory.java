@@ -21,6 +21,7 @@ package org.elasticsearch.index.engine;
 
 /**
  * ES内置的引擎工厂
+ * 在没有设置额外插件时 默认就是使用这个工厂
  */
 public class InternalEngineFactory implements EngineFactory {
     @Override

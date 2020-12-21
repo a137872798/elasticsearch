@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * 索引暖机对象
- * 实际上就是将field级别的数据 预先加载到内存中
+ * 实际上就是将field级别的数据 预先加载到缓存中
  */
 public final class IndexWarmer {
 
@@ -51,20 +51,21 @@ public final class IndexWarmer {
 
     /**
      * 监听器包含了预热的api
+     * 当在合适的时机会触发预热操作
      */
     private final List<Listener> listeners;
 
 
     /**
-     *
-     * @param threadPool 线程池
-     * @param indexFieldDataService  可以以field为单位查询数据
-     * @param listeners
+     * @param threadPool            线程池
+     * @param indexFieldDataService 可以以field为单位查询数据
+     * @param listeners             一组包含预热逻辑的监听器
      */
     IndexWarmer(ThreadPool threadPool, IndexFieldDataService indexFieldDataService,
                 Listener... listeners) {
         ArrayList<Listener> list = new ArrayList<>();
         final Executor executor = threadPool.executor(ThreadPool.Names.WARMER);
+        // 这里要追加一个基于 fieldData的预热对象 就是利用了IndexFieldDataService(该对象内部有缓存)
         list.add(new FieldDataWarmer(executor, indexFieldDataService));
 
         Collections.addAll(list, listeners);
@@ -73,8 +74,9 @@ public final class IndexWarmer {
 
     /**
      * 针对某个目录的reader 进行暖机工作 加快读取速度
+     *
      * @param reader
-     * @param shard 针对哪个分片进行暖机
+     * @param shard    针对哪个分片进行暖机
      * @param settings
      */
     void warm(ElasticsearchDirectoryReader reader, IndexShard shard, IndexSettings settings) {
@@ -115,12 +117,17 @@ public final class IndexWarmer {
         }
     }
 
-    /** A handle on the execution of  warm-up action. */
+    /**
+     * A handle on the execution of  warm-up action.
+     */
     public interface TerminationHandle {
 
-        TerminationHandle NO_WAIT = () -> {};
+        TerminationHandle NO_WAIT = () -> {
+        };
 
-        /** Wait until execution of the warm-up action completes. */
+        /**
+         * Wait until execution of the warm-up action completes.
+         */
         void awaitTermination() throws InterruptedException;
     }
 
@@ -128,8 +135,10 @@ public final class IndexWarmer {
      * 在 IndexWarmer中每个监听器有一个预热功能
      */
     public interface Listener {
-        /** Queue tasks to warm-up the given segments and return handles that allow to wait for termination of the
-         *  execution of those tasks. */
+        /**
+         * Queue tasks to warm-up the given segments and return handles that allow to wait for termination of the
+         * execution of those tasks.
+         */
         TerminationHandle warmReader(IndexShard indexShard, ElasticsearchDirectoryReader reader);
     }
 
@@ -140,6 +149,9 @@ public final class IndexWarmer {
     private static class FieldDataWarmer implements IndexWarmer.Listener {
 
         private final Executor executor;
+        /**
+         * 该对象内部定义了查询数据的逻辑 还是用到了缓存
+         */
         private final IndexFieldDataService indexFieldDataService;
 
         FieldDataWarmer(Executor executor, IndexFieldDataService indexFieldDataService) {
@@ -148,8 +160,8 @@ public final class IndexWarmer {
         }
 
         /**
-         *
-         * @param indexShard  分片有记录包含了哪些field数据么 不然怎么查询
+         * TODO 先不看暖机逻辑
+         * @param indexShard
          * @param reader
          * @return
          */

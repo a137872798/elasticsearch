@@ -31,9 +31,17 @@ import java.util.Map;
  */
 public final class AnalyzerComponents {
 
-    // 该对象内部包含了各种组件
+    /**
+     * 分词器
+     */
     private final TokenizerFactory tokenizerFactory;
+    /**
+     * 处理分词结果的过滤器
+     */
     private final CharFilterFactory[] charFilters;
+    /**
+     * 处理分词结果的过滤器
+     */
     private final TokenFilterFactory[] tokenFilters;
     /**
      * 这个分词模式是多个 tokenFilter共同处理的结果

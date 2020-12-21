@@ -44,6 +44,10 @@ import java.util.Map;
  * 该服务主要就是将获取数据的逻辑与缓存逻辑整合在一起
  */
 public class IndexFieldDataService extends AbstractIndexComponent implements Closeable {
+
+    /**
+     * 默认缓存项的配置是 node
+     */
     public static final String FIELDDATA_CACHE_VALUE_NODE = "node";
     public static final String FIELDDATA_CACHE_KEY = "index.fielddata.cache";
 
@@ -67,12 +71,11 @@ public class IndexFieldDataService extends AbstractIndexComponent implements Clo
     private final CircuitBreakerService circuitBreakerService;
 
     /**
-     * fieldData 支持使用缓存
-     * IndicesFieldDataCache 管理的是所有field的data
+     * 该对象对应多个index
      */
     private final IndicesFieldDataCache indicesFieldDataCache;
     // the below map needs to be modified under a lock
-    // 按照field 做划分
+    // 一个index下有多个doc  每个doc下有多个field  这里按照field做缓存
     private final Map<String, IndexFieldDataCache> fieldDataCaches = new HashMap<>();
 
     /**
@@ -92,10 +95,18 @@ public class IndexFieldDataService extends AbstractIndexComponent implements Clo
     /**
      * 初始状态 是一个空的监听器
      * 之后会将 FieldDataCacheListener 设置进来
+     * FieldDataCacheListener 本身只是进行一些数据统计
      */
     private volatile IndexFieldDataCache.Listener listener = DEFAULT_NOOP_LISTENER;
 
 
+    /**
+     *
+     * @param indexSettings
+     * @param indicesFieldDataCache  缓存
+     * @param circuitBreakerService  熔断器
+     * @param mapperService 映射服务 负责将lucene的数据映射成json数据
+     */
     public IndexFieldDataService(IndexSettings indexSettings, IndicesFieldDataCache indicesFieldDataCache,
                                  CircuitBreakerService circuitBreakerService, MapperService mapperService) {
         super(indexSettings);

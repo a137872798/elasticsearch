@@ -29,6 +29,8 @@ import org.elasticsearch.indices.IndicesQueryCache;
 /**
  * The index-level query cache. This class mostly delegates to the node-level
  * query cache: {@link IndicesQueryCache}.
+ * 适配器模式
+ * 内部是一个全局缓存对象 而这里仅开放index级别的入口
  */
 public class IndexQueryCache extends AbstractIndexComponent implements QueryCache {
 

@@ -52,6 +52,7 @@ import java.util.function.Predicate;
 
 /**
  * 查询索引数据时的缓存
+ * 每个 indicesService仅对应一个 indicesQueryCache
  */
 public class IndicesQueryCache implements QueryCache, Closeable {
 

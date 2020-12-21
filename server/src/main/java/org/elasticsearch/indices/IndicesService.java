@@ -220,6 +220,10 @@ public class IndicesService extends AbstractLifecycleComponent
     private final Map<Index, List<PendingDelete>> pendingDeletes = new HashMap<>();
     private final AtomicInteger numUncompletedDeletes = new AtomicInteger();
     private final OldShardsStats oldShardsStats = new OldShardsStats();
+
+    /**
+     * 该对象内部维护了所有的映射信息  在node初始化时 通过indicesModule插入默认值
+     */
     private final MapperRegistry mapperRegistry;
     private final NamedWriteableRegistry namedWriteableRegistry;
     private final IndexingMemoryController indexingMemoryController;
@@ -637,6 +641,8 @@ public class IndicesService extends AbstractLifecycleComponent
         if (hasIndex(index)) {
             throw new ResourceAlreadyExistsException(index);
         }
+
+        // 当构建索引完成后 会触发该监听器
         List<IndexEventListener> finalListeners = new ArrayList<>(builtInListeners);
 
         // 追加一个监听器 去维护 shard级别的缓存数据
@@ -661,6 +667,7 @@ public class IndicesService extends AbstractLifecycleComponent
             }
         };
         finalListeners.add(onStoreClose);
+        // 统计相关的监听器
         finalListeners.add(oldShardsStats);
 
         // 使用相关参数生成 IndexService
@@ -753,8 +760,10 @@ public class IndicesService extends AbstractLifecycleComponent
     /**
      * This creates a new IndexService without registering it
      * @param indexCreationContext 本次创建该索引服务是基于什么场景 比如需要创建一个新的索引 或者只是想要做校验工作
+     * @param indicesQueryCache   索引数据查询结果缓存
      * @param indexingOperationListeners  监控有关索引的操作 比如 indexingMemoryController 每当索引写入或者删除的时候 在内存中就会反映出变化
      * @param builtInListeners 监听有关index的相关事件
+     * @param indexingOperationListeners 默认就是 IndexingMemoryController  这个对象会根据内存使用的变化 动态开启/关闭 throttle
      * 根据元数据信息 以及各种缓存对象创建 IndexService
      */
     private synchronized IndexService createIndexService(IndexService.IndexCreationContext indexCreationContext,
@@ -772,7 +781,7 @@ public class IndicesService extends AbstractLifecycleComponent
             idxSettings.getNumberOfReplicas(),
             indexCreationContext);
 
-        // 先创建索引模块
+        // 每当生成一个索引时 会生成一个索引模块   analysisRegistry是在node初始化时通过analysisModule生成的   内部包含了各种分词器
         final IndexModule indexModule = new IndexModule(idxSettings, analysisRegistry, getEngineFactory(idxSettings),
             directoryFactories, () -> allowExpensiveQueries, indexNameExpressionResolver);
 
@@ -781,7 +790,7 @@ public class IndicesService extends AbstractLifecycleComponent
             indexModule.addIndexOperationListener(operationListener);
         }
 
-        // 通过插件服务进行增强
+        // TODO 先忽略插件
         pluginsService.onIndexModule(indexModule);
 
         // 将索引的事件监听器设置到 indexModel上
@@ -810,15 +819,20 @@ public class IndicesService extends AbstractLifecycleComponent
         );
     }
 
+    /**
+     * 每个索引在集群中被创建时 有一个关联的配置项
+     * @param idxSettings  根据配置项生成引擎工厂
+     * @return
+     */
     private EngineFactory getEngineFactory(final IndexSettings idxSettings) {
         final IndexMetadata indexMetadata = idxSettings.getIndexMetadata();
-        // 如果索引已经被关闭
+        // 如果索引已经被关闭 返回一个空的引擎对象
         if (indexMetadata != null && indexMetadata.getState() == IndexMetadata.State.CLOSE) {
             // NoOpEngine takes precedence as long as the index is closed
             return NoOpEngine::new;
         }
 
-        // 使用函数处理 indexSettings 并生成EngineFactory
+        // 使用函数处理 indexSettings 并生成EngineFactory   在node中会加载EnginePlugin并提取engineFactory 默认为空
         final List<Optional<EngineFactory>> engineFactories =
             engineFactoryProviders
                 .stream()

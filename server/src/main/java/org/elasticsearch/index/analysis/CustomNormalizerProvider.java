@@ -30,11 +30,15 @@ import java.util.Map;
  * A custom normalizer that is built out of a char and token filters. On the
  * contrary to analyzers, it does not support tokenizers and only supports a
  * subset of char and token filters.
+ * 自定义标准因子
  */
 public final class CustomNormalizerProvider extends AbstractIndexAnalyzerProvider<CustomAnalyzer> {
 
     private final Settings analyzerSettings;
 
+    /**
+     * 当调用build后才会设置结果
+     */
     private CustomAnalyzer customAnalyzer;
 
     public CustomNormalizerProvider(IndexSettings indexSettings,
@@ -43,6 +47,12 @@ public final class CustomNormalizerProvider extends AbstractIndexAnalyzerProvide
         this.analyzerSettings = settings;
     }
 
+    /**
+     *
+     * @param tokenizerFactory 在该基础上进行处理
+     * @param charFilters
+     * @param tokenFilters
+     */
     public void build(final TokenizerFactory tokenizerFactory, final Map<String, CharFilterFactory> charFilters,
             final Map<String, TokenFilterFactory> tokenFilters) {
         if (analyzerSettings.get("tokenizer") != null) {

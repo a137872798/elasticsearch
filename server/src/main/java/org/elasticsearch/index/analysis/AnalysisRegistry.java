@@ -82,7 +82,7 @@ public final class AnalysisRegistry implements Closeable {
      * @param tokenizers
      * @param analyzers
      * @param normalizers
-     * 某些组件可能是在生成其他组件前执行的
+     * 某些组件是一些增强器
      * @param preConfiguredCharFilters
      * @param preConfiguredTokenFilters
      * @param preConfiguredTokenizers
@@ -230,8 +230,10 @@ public final class AnalysisRegistry implements Closeable {
 
     /**
      * Creates an index-level {@link IndexAnalyzers} from this registry using the given index settings
+     * 生成相关分词器 并合并成IndexAnalyzers
      */
     public IndexAnalyzers build(IndexSettings indexSettings) throws IOException {
+        // 从配置项/插件系统 等生成factory/provider后 构建一个总对象  因为分词过程本身涉及到多个component
         final Map<String, CharFilterFactory> charFilterFactories = buildCharFilterFactories(indexSettings);
         final Map<String, TokenizerFactory> tokenizerFactories = buildTokenizerFactories(indexSettings);
         final Map<String, TokenFilterFactory> tokenFilterFactories = buildTokenFilterFactories(indexSettings);
@@ -413,15 +415,30 @@ public final class AnalysisRegistry implements Closeable {
         };
     }
 
+    /**
+     * 构建映射对象
+     * @param component 本次分词器的类型
+     * @param settings
+     * @param settingsMap  该分词器相关的配置项
+     * @param providerMap   从插件中解析出来 并注册到本对象的分词器provider
+     * @param defaultInstance  默认提供对象 就是从插件中解析出来的各种 PreXXX
+     * @param <T>
+     * @return
+     * @throws IOException
+     */
     @SuppressWarnings("unchecked")
     private <T> Map<String, T> buildMapping(Component component, IndexSettings settings, Map<String, Settings> settingsMap,
                     Map<String, ? extends AnalysisModule.AnalysisProvider<T>> providerMap,
                     Map<String, ? extends AnalysisModule.AnalysisProvider<T>> defaultInstance) throws IOException {
         Settings defaultSettings = Settings.builder().put(IndexMetadata.SETTING_VERSION_CREATED, settings.getIndexVersionCreated()).build();
         Map<String, T> factories = new HashMap<>();
+
+        // 对应设置在配置项中 通过特定前缀获取的一组配置
         for (Map.Entry<String, Settings> entry : settingsMap.entrySet()) {
             String name = entry.getKey();
             Settings currentSettings = entry.getValue();
+            // 某个组件的所有配置项 都有一个共同前缀 可以快速确定一组相关的配置
+            // .type属性可以在配置项中 获取到provider对象
             String typeName = currentSettings.get("type");
             if (component == Component.ANALYZER) {
                 T factory = null;
@@ -439,6 +456,7 @@ public final class AnalysisRegistry implements Closeable {
                     factories.put(name, factory);
                     continue;
                 }
+                // 将 normalizer相关的组件插入到 factories容器中
             } else if (component == Component.NORMALIZER) {
                 if (typeName == null || typeName.equals("custom")) {
                     T factory = (T) new CustomNormalizerProvider(settings, name, currentSettings);
@@ -446,15 +464,19 @@ public final class AnalysisRegistry implements Closeable {
                     continue;
                 }
             }
+            // type属性 对应了从插件中获取的某个component的名称， 这里通过map操作获取component并设置到map中
             AnalysisProvider<T> type = getAnalysisProvider(component, providerMap, name, typeName);
             if (type == null) {
                 throw new IllegalArgumentException("Unknown " + component + " type [" + typeName + "] for [" + name + "]");
             }
+
+            // 生成实例对象
             final T factory = type.get(settings, environment, name, currentSettings);
             factories.put(name, factory);
 
         }
         // go over the char filters in the bindings and register the ones that are not configured
+        // TODO 对应插件系统设置的  先忽略
         for (Map.Entry<String, ? extends AnalysisProvider<T>> entry : providerMap.entrySet()) {
             String name = entry.getKey();
             AnalysisProvider<T> provider = entry.getValue();
@@ -476,6 +498,7 @@ public final class AnalysisRegistry implements Closeable {
             factories.put(name, instance);
         }
 
+        // TODO 先忽略
         for (Map.Entry<String, ? extends AnalysisProvider<T>> entry : defaultInstance.entrySet()) {
             final String name = entry.getKey();
             final AnalysisProvider<T> provider = entry.getValue();
@@ -484,6 +507,14 @@ public final class AnalysisRegistry implements Closeable {
         return factories;
     }
 
+    /**
+     * @param component
+     * @param providerMap
+     * @param name
+     * @param typeName
+     * @param <T>
+     * @return
+     */
     private static <T> AnalysisProvider<T> getAnalysisProvider(Component component, Map<String, ? extends AnalysisProvider<T>> providerMap,
             String name, String typeName) {
         if (typeName == null) {
@@ -557,6 +588,16 @@ public final class AnalysisRegistry implements Closeable {
         }
     }
 
+    /**
+     * 注册器本身在初始化时  将从插件中加载的各个组件注册到本对象上
+     * @param indexSettings
+     * @param analyzerProviders
+     * @param normalizerProviders
+     * @param tokenizerFactoryFactories
+     * @param charFilterFactoryFactories
+     * @param tokenFilterFactoryFactories
+     * @return
+     */
     public IndexAnalyzers build(IndexSettings indexSettings,
                                 Map<String, AnalyzerProvider<?>> analyzerProviders,
                                 Map<String, AnalyzerProvider<?>> normalizerProviders,
@@ -566,12 +607,14 @@ public final class AnalysisRegistry implements Closeable {
         Map<String, NamedAnalyzer> analyzers = new HashMap<>();
         Map<String, NamedAnalyzer> normalizers = new HashMap<>();
         Map<String, NamedAnalyzer> whitespaceNormalizers = new HashMap<>();
+        // 之前参数的map应该已经做过去重了  这里merge函数跟put一样吧
         for (Map.Entry<String, AnalyzerProvider<?>> entry : analyzerProviders.entrySet()) {
             analyzers.merge(entry.getKey(), produceAnalyzer(entry.getKey(), entry.getValue(), tokenFilterFactoryFactories,
                     charFilterFactoryFactories, tokenizerFactoryFactories), (k, v) -> {
                         throw new IllegalStateException("already registered analyzer with name: " + entry.getKey());
                     });
         }
+        // 分别用 normalizers/whitespaceNormalizers 存储结果
         for (Map.Entry<String, AnalyzerProvider<?>> entry : normalizerProviders.entrySet()) {
             processNormalizerFactory(entry.getKey(), entry.getValue(), normalizers,
                 TokenizerFactory.newFactory("keyword", KeywordTokenizer::new),
@@ -581,22 +624,27 @@ public final class AnalysisRegistry implements Closeable {
                 tokenFilterFactoryFactories, charFilterFactoryFactories);
         }
 
+        // 主要是检测能否正常使用
         for (Analyzer analyzer : normalizers.values()) {
             analyzer.normalize("", ""); // check for deprecations
         }
 
+        // TODO 实际上如果没有通过插件机制添加自定义的配置项 那么会添加一个标准分词器 并使用从插件中加载的各种filter对象 (虽然这些filter也是空的)
         if (!analyzers.containsKey(DEFAULT_ANALYZER_NAME)) {
             analyzers.put(DEFAULT_ANALYZER_NAME,
                     produceAnalyzer(DEFAULT_ANALYZER_NAME,
                             new StandardAnalyzerProvider(indexSettings, null, DEFAULT_ANALYZER_NAME, Settings.Builder.EMPTY_SETTINGS),
                             tokenFilterFactoryFactories, charFilterFactoryFactories, tokenizerFactoryFactories));
         }
+
+        // 必须设置兜底的分词器
         NamedAnalyzer defaultAnalyzer = analyzers.get(DEFAULT_ANALYZER_NAME);
         if (defaultAnalyzer == null) {
             throw new IllegalArgumentException("no default analyzer configured");
         }
         defaultAnalyzer.checkAllowedInMode(AnalysisMode.ALL);
 
+        // 兼容性 忽略
         if (analyzers.containsKey("default_index")) {
             throw new IllegalArgumentException("setting [index.analysis.analyzer.default_index] is not supported anymore, use " +
                 "[index.analysis.analyzer.default] instead for index [" + indexSettings.getIndex().getName() + "]");
@@ -607,11 +655,12 @@ public final class AnalysisRegistry implements Closeable {
                 throw new IllegalArgumentException("analyzer name must not start with '_'. got \"" + analyzer.getKey() + "\"");
             }
         }
+        // 将 一组分词器 标准因子 等合并成 indexAnalyzers
         return new IndexAnalyzers(analyzers, normalizers, whitespaceNormalizers);
     }
 
     /**
-     * 将指定的provider包装
+     * 通过provider 获取分词器对象 并包装成 NamedAnalyzer对象
      * @param name
      * @param analyzerFactory
      * @param tokenFilters
@@ -631,7 +680,8 @@ public final class AnalysisRegistry implements Closeable {
          * doesn't match here.
          */
         int overridePositionIncrementGap = TextFieldMapper.Defaults.POSITION_INCREMENT_GAP;
-        // TODO
+
+        // 自定义对象 就是从配置中获取"tokenizer" 对应的name 并从tokenizers 获取实例对象  与各种filter进行合并
         if (analyzerFactory instanceof CustomAnalyzerProvider) {
             ((CustomAnalyzerProvider) analyzerFactory).build(tokenizers, charFilters, tokenFilters);
             /*
@@ -643,6 +693,7 @@ public final class AnalysisRegistry implements Closeable {
              */
             overridePositionIncrementGap = Integer.MIN_VALUE;
         }
+        // 实际上在不使用任何插件的情况下 获取的就是标准分词器
         Analyzer analyzerF = analyzerFactory.get();
         if (analyzerF == null) {
             throw new IllegalArgumentException("analyzer [" + analyzerFactory.name() + "] created null analyzer");
@@ -663,6 +714,15 @@ public final class AnalysisRegistry implements Closeable {
         return analyzer;
     }
 
+    /**
+     * 处理标准因子工厂
+     * @param name
+     * @param normalizerFactory  外部插入的一组提供者
+     * @param normalizers   本次生成结果会设置到这个map中
+     * @param tokenizerFactory  当发现使用的是自定义对象时才会使用 作为基础分词器
+     * @param tokenFilters  存储2种filter工厂的容器
+     * @param charFilters
+     */
     private void processNormalizerFactory(
             String name,
             AnalyzerProvider<?> normalizerFactory,
@@ -674,6 +734,7 @@ public final class AnalysisRegistry implements Closeable {
             throw new IllegalStateException("keyword tokenizer factory is null, normalizers require analysis-common module");
         }
 
+        // 检测发现该工厂是 之前设置的 自定义工厂 在buildMapping阶段 如果发现使用的分词器/标准因子等是自定义对象 在这里进行合成
         if (normalizerFactory instanceof CustomNormalizerProvider) {
             ((CustomNormalizerProvider) normalizerFactory).build(tokenizerFactory, charFilters, tokenFilters);
         }
@@ -684,6 +745,7 @@ public final class AnalysisRegistry implements Closeable {
         if (normalizerF == null) {
             throw new IllegalArgumentException("normalizer [" + normalizerFactory.name() + "] created null normalizer");
         }
+        // 获取分词器对象 并存储到容器中
         NamedAnalyzer normalizer = new NamedAnalyzer(name, normalizerFactory.scope(), normalizerF);
         normalizers.put(name, normalizer);
     }

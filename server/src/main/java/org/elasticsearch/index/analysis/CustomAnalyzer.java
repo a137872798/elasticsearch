@@ -40,6 +40,16 @@ public final class CustomAnalyzer extends Analyzer implements AnalyzerComponents
         this(tokenizerFactory, charFilters, tokenFilters, 0, -1);
     }
 
+    /**
+     *
+     * @param tokenizerFactory  基础分词器
+     *
+     *                          在基础分词器分解出来的token之后 进行过滤
+     * @param charFilters
+     * @param tokenFilters
+     * @param positionIncrementGap
+     * @param offsetGap
+     */
     public CustomAnalyzer(TokenizerFactory tokenizerFactory, CharFilterFactory[] charFilters,
             TokenFilterFactory[] tokenFilters, int positionIncrementGap, int offsetGap) {
         this.components = new AnalyzerComponents(tokenizerFactory, charFilters, tokenFilters);

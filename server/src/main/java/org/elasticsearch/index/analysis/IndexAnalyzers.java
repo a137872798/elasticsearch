@@ -41,6 +41,8 @@ import static org.elasticsearch.index.analysis.AnalysisRegistry.DEFAULT_SEARCH_Q
  * 该对象本身维护了各种analyzer
  */
 public final class IndexAnalyzers implements Closeable {
+
+    // 3种类型的分词器
     private final Map<String, NamedAnalyzer> analyzers;
     private final Map<String, NamedAnalyzer> normalizers;
     private final Map<String, NamedAnalyzer> whitespaceNormalizers;

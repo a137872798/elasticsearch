@@ -87,8 +87,8 @@ public class BytesBinaryDVIndexFieldData extends DocValuesIndexFieldData impleme
         /**
          * 修改了返回值类型
          * @param indexSettings  包含所有索引的配置项
-         * @param fieldType   描述该field的信息  并且该类型是ES增强过的
-         * @param cache
+         * @param fieldType   描述该field的信息
+         * @param cache   以field为单位存储数据的缓存  可能会利用缓存对象快速构建结果
          * @param breakerService  熔断器
          * @param mapperService  映射服务
          * @return

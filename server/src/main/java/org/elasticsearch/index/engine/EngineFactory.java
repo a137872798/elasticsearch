@@ -21,6 +21,7 @@ package org.elasticsearch.index.engine;
 /**
  * Simple Engine Factory
  * 引擎工厂 根据相关配置可以生成负责读取lucene数据的engine
+ * 每个index 对应一个引擎工厂
  */
 @FunctionalInterface
 public interface EngineFactory {

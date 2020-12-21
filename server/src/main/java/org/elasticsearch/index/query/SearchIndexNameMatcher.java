@@ -41,8 +41,6 @@ public class SearchIndexNameMatcher implements Predicate<String> {
     private final ClusterService clusterService;
     /**
      * 索引名称解析器
-     */
-    /**
      * 主要就是这个解析器在起作用
      */
     private final IndexNameExpressionResolver expressionResolver;

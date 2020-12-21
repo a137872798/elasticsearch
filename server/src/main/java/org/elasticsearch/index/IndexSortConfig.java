@@ -173,6 +173,7 @@ public final class IndexSortConfig {
     /**
      * Builds the {@link Sort} order from the settings for this index
      * or returns null if this index has no sort.
+     * @param fieldDataLookup 对应indexFieldData::getForField
      * 根据内部包含的FieldSortSpec 信息 构建Sort对象
      */
     public Sort buildIndexSort(Function<String, MappedFieldType> fieldTypeLookup,
@@ -185,17 +186,18 @@ public final class IndexSortConfig {
         final SortField[] sortFields = new SortField[sortSpecs.length];
         for (int i = 0; i < sortSpecs.length; i++) {
             FieldSortSpec sortSpec = sortSpecs[i];
-            // 找到 MapperService中 描述每个fieldType的  MappedFieldType  它增强了Lucene的 FieldType
+            // 找到 MapperService中 描述每个fieldType的  MappedFieldType
             final MappedFieldType ft = fieldTypeLookup.apply(sortSpec.field);
             if (ft == null) {
                 throw new IllegalArgumentException("unknown index sort field:[" + sortSpec.field + "]");
             }
             boolean reverse = sortSpec.order == null ? false : (sortSpec.order == SortOrder.DESC);
+            // 当一个doc下出现了多次field时 获取哪个值作为排序的参考
             MultiValueMode mode = sortSpec.mode;
             if (mode == null) {
                 mode = reverse ? MultiValueMode.MAX : MultiValueMode.MIN;
             }
-            // IndexFieldDataService内部的数据是什么时候填充的 ???
+            // 根据index field 查询数据
             IndexFieldData<?> fieldData;
             try {
                 fieldData = fieldDataLookup.apply(ft);
@@ -205,7 +207,7 @@ public final class IndexSortConfig {
             if (fieldData == null) {
                 throw new IllegalArgumentException("docvalues not found for index sort field:[" + sortSpec.field + "]");
             }
-            // 检验是否是允许的排序类型
+            // 转换成 sortFields
             sortFields[i] = fieldData.sortField(sortSpec.missingValue, mode, null, reverse);
             validateIndexSortField(sortFields[i]);
         }

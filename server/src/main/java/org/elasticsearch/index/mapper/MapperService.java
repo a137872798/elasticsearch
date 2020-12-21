@@ -162,6 +162,9 @@ public class MapperService extends AbstractIndexComponent implements Closeable {
 
     /**
      * 初始化映射服务对象
+     * @param indexAnalyzers 内部包含了各种分词器对象   分词器本身是以index为单位进行划分的
+     * @param mapperRegistry 内部存储了各种映射关系
+     * @param queryShardContextSupplier 在查询前需要生成一个 QueryShardContext对象
      */
     public MapperService(IndexSettings indexSettings, IndexAnalyzers indexAnalyzers, NamedXContentRegistry xContentRegistry,
                          SimilarityService similarityService, MapperRegistry mapperRegistry,
