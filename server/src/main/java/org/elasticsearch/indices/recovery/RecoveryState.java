@@ -54,17 +54,19 @@ public class RecoveryState implements ToXContentFragment, Writeable {
 
         /**
          * recovery of lucene files, either reusing local ones are copying new ones
-         * 代表正在开始恢复lucene  当调用recovery时 最先进入这个状态
+         * 通过lucene的 segment_N 文件中的相关信息 恢复最基础的事务文件
          */
         INDEX((byte) 1),
 
         /**
          * potentially running check index
+         * 检查lucene索引文件状态
          */
         VERIFY_INDEX((byte) 2),
 
         /**
          * starting up the engine, replaying the translog
+         * 开始启动引擎 并从事务日志中恢复数据
          */
         TRANSLOG((byte) 3),
 
@@ -613,10 +615,23 @@ public class RecoveryState implements ToXContentFragment, Writeable {
         }
     }
 
+    /**
+     * 在恢复过程中 描述lucene下相关索引文件的信息
+     */
     public static class File implements ToXContentObject, Writeable {
+
+        /**
+         * 文件名称
+         */
         private String name;
+        /**
+         * 长度信息
+         */
         private long length;
         private long recovered;
+        /**
+         * 是否通过之前某个存在的文件进行初始化
+         */
         private boolean reused;
 
         public File(String name, long length, boolean reused) {
@@ -715,12 +730,12 @@ public class RecoveryState implements ToXContentFragment, Writeable {
     }
 
     /**
-     * 这个索引是 ES定义的 与 lucene中index的定义不同
+     * ES通过index存储数据  在进行还原数据 数据就会填充到这个临时的index中
      */
     public static class Index extends Timer implements ToXContentFragment, Writeable {
 
         /**
-         * 存储恢复相关的文件信息
+         * 恢复索引使用到的所有文件都会记录在这里  比如
          */
         private final Map<String, File> fileDetails = new HashMap<>();
 

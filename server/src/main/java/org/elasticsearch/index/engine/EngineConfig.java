@@ -59,6 +59,10 @@ public final class EngineConfig {
     private final String allocationId;
     private final IndexSettings indexSettings;
     private final ByteSizeValue indexingBufferSize;
+    /**
+     * 是否允许通过GC完成自动删除
+     * 在indexShard的恢复阶段   创建engine对象时 会将该值设置为false
+     */
     private volatile boolean enableGcDeletes = true;
     private final TimeValue flushMergesAfter;
     private final String codecName;
@@ -121,6 +125,7 @@ public final class EngineConfig {
 
     /**
      * Creates a new {@link org.elasticsearch.index.engine.EngineConfig}
+     * 通过相关参数来初始化 引擎配置对象
      */
     public EngineConfig(ShardId shardId, String allocationId, ThreadPool threadPool,
                         IndexSettings indexSettings, Engine.Warmer warmer, Store store,

@@ -202,6 +202,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
     /**
      * The current retention leases.
+     * 本对象被初始化时 续约信息为空
      */
     private RetentionLeases retentionLeases = RetentionLeases.EMPTY;
 
@@ -465,7 +466,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * Updates retention leases on a replica.
      *
      * @param retentionLeases the retention leases
-     *                        使用传入的续约信息 更新this.retentionLeases 一般 loadRetentionLeases 与该方法是一起调用的
+     *                        更新续约信息
      */
     public synchronized void updateRetentionLeasesOnReplica(final RetentionLeases retentionLeases) {
         assert primaryMode == false;
@@ -480,7 +481,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * @param path the path to the directory containing the state file  相关文件的存储路径
      * @return the retention leases
      * @throws IOException if an I/O exception occurs reading the retention leases
-     * 加载续约信息
+     * 加载之前写入到磁盘的续约信息
      */
     public RetentionLeases loadRetentionLeases(final Path path) throws IOException {
         final RetentionLeases retentionLeases;
@@ -504,13 +505,15 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param path the path to the directory containing the state file
      * @throws WriteStateException if an exception occurs writing the state file
-     * 将当前的续约信息持久化
+     * 持久化续约信息
      */
     public void persistRetentionLeases(final Path path) throws WriteStateException {
         synchronized (retentionLeasePersistenceLock) {
             final RetentionLeases currentRetentionLeases;
             synchronized (this) {
                 // 确保此时续约对象的相关信息比之前持久化的要新
+                // 在初始化阶段 persistedRetentionLeasesPrimaryTerm/persistedRetentionLeasesVersion 都是0
+                // 但是 retentionLeases.Empty 的term为1  也是就初始化该对象后可以直接调用该方法
                 if (retentionLeases.supersedes(persistedRetentionLeasesPrimaryTerm, persistedRetentionLeasesVersion) == false) {
                     logger.trace("skipping persisting retention leases [{}], already persisted", retentionLeases);
                     return;
@@ -518,7 +521,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 currentRetentionLeases = retentionLeases;
             }
             logger.trace("persisting retention leases [{}]", currentRetentionLeases);
-            // 将续约信息写入到某个地方
+            // 将续约信息写入到分片目录下
             RetentionLeases.FORMAT.writeAndCleanup(currentRetentionLeases, path);
             // 因为持久化成功  更新persistedXXX的值
             persistedRetentionLeasesPrimaryTerm = currentRetentionLeases.primaryTerm();
@@ -915,7 +918,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * @param allocationId  分配该分片的allocation的id
      * @param indexSettings
      * @param operationPrimaryTerm
-     * @param globalCheckpoint
+     * @param globalCheckpoint    当创建IndexShard时 传入的 globalCheckpoint为 -2
      * @param onGlobalCheckpointUpdated
      * @param currentTimeMillisSupplier
      * @param onSyncRetentionLeases
@@ -1029,6 +1032,10 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         return globalCheckpoint;
     }
 
+    /**
+     * 通过该对象可以获取到全局检查点
+     * @return
+     */
     @Override
     public long getAsLong() {
         return globalCheckpoint;
@@ -1039,7 +1046,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param newGlobalCheckpoint the new global checkpoint
      * @param reason              the reason the global checkpoint was updated
-     *                            在副本上更新全局检查点
+     *                            更新本节点对应的副本数据同步tracker对象的 全局检查点
      */
     public synchronized void updateGlobalCheckpointOnReplica(final long newGlobalCheckpoint, final String reason) {
         assert invariant();
@@ -1049,6 +1056,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
          * information is lagging compared to a replica (e.g., if a replica is promoted to primary but has stale info relative to other
          * replica shards). In these cases, the local knowledge of the global checkpoint could be higher than the sync from the lagging
          * primary.
+         * 在本对象被初始化时  使用的全局检查点默认为-2 (UNASSIGNED_SEQ_NO)
          */
         final long previousGlobalCheckpoint = globalCheckpoint;
         if (newGlobalCheckpoint > previousGlobalCheckpoint) {

@@ -47,10 +47,13 @@ final class TranslogHeader {
     public static final int VERSION_PRIMARY_TERM = 3; // added primary term
     public static final int CURRENT_VERSION = VERSION_PRIMARY_TERM;
 
+    /**
+     * 每当生成一个事务文件时 会生成一个uuid
+     */
     private final String translogUUID;
 
     /**
-     * 事务日志为什么需要 term
+     * 该事务所记录的 shard 对应的生成该shardRouting的term
      */
     private final long primaryTerm;
     /**

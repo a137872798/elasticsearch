@@ -669,7 +669,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     }
 
     /**
-     * 检测该目录是否已经损坏
+     * 检测内部数据是否已经发生了异常    当发生异常时会在目录下生成一个 corrupt_为前缀的文件
      *
      * @param directory 在创建每个shard时 会专门为该分片维护一个dir
      * @throws IOException
@@ -678,7 +678,6 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         final String[] files = directory.listAll();
         List<CorruptIndexException> ex = new ArrayList<>();
         for (String file : files) {
-            // 找到以 corrupted_ 开头的文件   这些文件是存储异常的... 在output对象中异常信息也会以特殊的格式写入到文件中
             if (file.startsWith(CORRUPTED_MARKER_NAME_PREFIX)) {
                 try (ChecksumIndexInput input = directory.openChecksumInput(file, IOContext.READONCE)) {
                     CodecUtil.checkHeader(input, CODEC, CORRUPTED_MARKER_CODEC_VERSION, CORRUPTED_MARKER_CODEC_VERSION);
@@ -1640,12 +1639,14 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     public void bootstrapNewHistory() throws IOException {
         metadataLock.writeLock().lock();
         try {
-            // 获取上次提交的数据中用户的数据
+            // 从当前目录中获取最后一次提交的segment_N文件     并获取上次提交的数据中用户的数据
             Map<String, String> userData = readLastCommittedSegmentsInfo().getUserData();
-            // 初始化时是-1
+            // 获取之前写入了多少次数据  每当执行一次op时 应该就会将seq+1
             final long maxSeqNo = Long.parseLong(userData.get(SequenceNumbers.MAX_SEQ_NO));
-            // 默认也是-1  这个同步检查点是什么
+            // 同步检查点也会存储在userData中       也就是每次commit工作都会记录此时本地的检查点/seq 并存储到userData持久化到segment_N文件中
             final long localCheckpoint = Long.parseLong(userData.get(SequenceNumbers.LOCAL_CHECKPOINT_KEY));
+
+            // 这里生成了一个新的 segment_N文件 区别只是使用的historyId 不同 其他数据没有变化
             bootstrapNewHistory(localCheckpoint, maxSeqNo);
         } finally {
             metadataLock.writeLock().unlock();
@@ -1659,7 +1660,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      *
      * @see SequenceNumbers#LOCAL_CHECKPOINT_KEY
      * @see SequenceNumbers#MAX_SEQ_NO
-     * 传入检查点和最大序列号
+     * 使用之前已经commit的最新的segment_N文件中记录的检查点/seq 并用于生成一个新的segment_N文件
      */
     public void bootstrapNewHistory(long localCheckpoint, long maxSeqNo) throws IOException {
         metadataLock.writeLock().lock();
@@ -1717,17 +1718,18 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     public void trimUnsafeCommits(final Path translogPath) throws IOException {
         metadataLock.writeLock().lock();
         try {
-            // 将此时目录下所有的segment_N 文件读取出来  (因为每个segment_N 还原后都会得到相关的所有索引文件信息 所以不同gen的文件不会混淆)
+            // 将此时目录下所有的segment_N 文件读取出来  每个segment_N 还原后都会得到某次commit相关的所有索引文件信息
             final List<IndexCommit> existingCommits = DirectoryReader.listCommits(directory);
             assert existingCommits.isEmpty() == false;
             // 在返回时已经排序过了 最后一个就是最新的commit
             final IndexCommit lastIndexCommit = existingCommits.get(existingCommits.size() - 1);
+            // 每个 segmentInfos内的用户数据中有一个translogUUID 可以找到一个事务文件
             final String translogUUID = lastIndexCommit.getUserData().get(Translog.TRANSLOG_UUID_KEY);
-            // 读取存储在目录下的事务checkpoint日志 从解析出来的 checkpoint对象中获取globalCheckpoint属性
+            // 除了事务文件外 一起的还有checkPoint文件   这里获取文件中记录的全局检查点
             final long lastSyncedGlobalCheckpoint = Translog.readGlobalCheckpoint(translogPath, translogUUID);
-            // 代表该indexCommit之后的数据要作废 可能没有做事务日志啥的
+            // 这里只会保留一个segment_N 文件
             final IndexCommit startingIndexCommit = CombinedDeletionPolicy.findSafeCommitPoint(existingCommits, lastSyncedGlobalCheckpoint);
-            // 因为正常情况下IndexWriter 就是以最新的segment_N 初始化  但是要从 startingIndexCommit开始 所以通过writer以保留的indexCommit重新提交
+            // 在初始化时 会自动删除后面的数据
             if (startingIndexCommit.equals(lastIndexCommit) == false) {
                 try (IndexWriter writer = newAppendingIndexWriter(directory, startingIndexCommit)) {
                     // this achieves two things:

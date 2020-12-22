@@ -297,7 +297,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      */
     private final PendingReplicationActions pendingReplicationActions;
     /**
-     * TODO
+     * 记录续约信息
      */
     private final ReplicationTracker replicationTracker;
 
@@ -419,8 +419,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param indexSettings
      * @param path                    存储shard信息的路径
      * @param store                   好像就是读取有关 segment_N 文件的 还不清楚咋用
-     * @param indexSortSupplier       每个分片下面自然是存储了各种索引数据 这个sort是写入时的排序 还是查询时的排序???  在lucene中写入doc时 确实可以根据sort进行排序的
-     *                                TODO 在使用时再顺便复习一下lucene的写入流程吧
+     * @param indexSortSupplier
      * @param indexCache              内部维护有关索引的所有缓存 根据维度 又分为 queryCache BitsetFilterCache
      * @param mapperService           映射服务 还没搞明白怎么用的
      * @param similarityService       打分服务先不看
@@ -525,6 +524,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             new GlobalCheckpointListeners(shardId, threadPool.scheduler(), logger);
         // 存储正在执行复制的action
         this.pendingReplicationActions = new PendingReplicationActions(shardId, threadPool);
+
+        // 该对象记录了 集群中副本分片的同步状态  无论主副本shard都会携带该对象
         this.replicationTracker = new ReplicationTracker(
             shardId,
             aId,
@@ -1794,15 +1795,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 在通过事务日志恢复数据前(实际上除了从本地事务日志恢复数据外 也可以通过远端传输的形式恢复数据)
-     * 需要调用该函数  也就是触发前置钩子
+     * 在为某个分片恢复数据前 会调用该函数
      */
     public void preRecovery() {
+        // 获取此时分片的状态 一般就是 recovering
         final IndexShardState currentState = this.state; // single volatile read
         if (currentState == IndexShardState.CLOSED) {
             throw new IndexShardNotRecoveringException(shardId, currentState);
         }
         assert currentState == IndexShardState.RECOVERING : "expected a recovering shard " + shardId + " but got " + currentState;
+        // 触发前置钩子  目前也没有默认实现
         indexEventListener.beforeIndexShardRecovery(this, indexSettings);
     }
 
@@ -2062,7 +2064,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 获取最新的事务日志文件对应的全局检查点 并进行更新
+     * 加载最新的全局检查点
      *
      * @throws IOException
      */
@@ -2070,8 +2072,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         // we have to set it before we open an engine and recover from the translog because
         // acquiring a snapshot from the translog causes a sync which causes the global checkpoint to be pulled in,
         // and an engine can be forced to close in ctor which also causes the global checkpoint to be pulled in.
+        // 获取事务日志id
         final String translogUUID = store.readLastCommittedSegmentsInfo().getUserData().get(Translog.TRANSLOG_UUID_KEY);
+        // 每次生成事务文件时 伴随的还有checkPoint  然后内部有一个globalCheckpoint属性 描述了副本组数据的同步状态
         final long globalCheckpoint = Translog.readGlobalCheckpoint(translogConfig.getTranslogPath(), translogUUID);
+        // 将从持久化数据中取出的全局检查点 回填到 副本tracker对象
+        // 同时会触发挂载在 GlobalCheckpointListeners内的监听器
         replicationTracker.updateGlobalCheckpointOnReplica(globalCheckpoint, "read from translog checkpoint");
     }
 
@@ -2082,16 +2088,23 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      **/
     public void openEngineAndRecoverFromTranslog() throws IOException {
         assert recoveryState.getStage() == RecoveryState.Stage.INDEX : "unexpected recovery stage [" + recoveryState.getStage() + "]";
+        // 校验阶段先不看
         maybeCheckIndex();
+        // 切换到通过事务日志恢复数据的阶段
         recoveryState.setStage(RecoveryState.Stage.TRANSLOG);
+        // 在进行数据恢复时 存储临时数据的对象
         final RecoveryState.Translog translogRecoveryStats = recoveryState.getTranslog();
+
+        // 这里定义了数据恢复的逻辑
         final Engine.TranslogRecoveryRunner translogRecoveryRunner = (engine, snapshot) -> {
             translogRecoveryStats.totalOperations(snapshot.totalOperations());
             translogRecoveryStats.totalOperationsOnStart(snapshot.totalOperations());
             return runTranslogRecovery(engine, snapshot, Engine.Operation.Origin.LOCAL_TRANSLOG_RECOVERY,
                 translogRecoveryStats::incrementRecoveredOperations);
         };
+        // 加载全局检查点
         loadGlobalCheckpointToReplicationTracker();
+        // 打开引擎
         innerOpenEngineAndTranslog(replicationTracker);
         getEngine().recoverFromTranslog(translogRecoveryRunner, Long.MAX_VALUE);
     }
@@ -2112,12 +2125,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * 开启引擎对象
      *
-     * @param globalCheckpointSupplier 获取全局检查点的函数
+     * @param globalCheckpointSupplier 获取全局检查点的函数  实际上就对应 replicationTracker 该对象会记录最新的全局检查点
      * @throws IOException
      */
     private void innerOpenEngineAndTranslog(LongSupplier globalCheckpointSupplier) throws IOException {
         assert Thread.holdsLock(mutex) == false : "opening engine under mutex";
-        // 必须处于recovery 才能调用该方法
+        // 此时shard必须处于数据恢复阶段才可以调用该函数
         if (state != IndexShardState.RECOVERING) {
             throw new IndexShardNotRecoveringException(shardId, state);
         }
@@ -2129,7 +2142,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         // but we need to make sure we don't loose deletes until we are done recovering
         // 标记成不可删除 这样一些长时间不使用的 translogReader对应的文件也不会被删除了
         config.setEnableGcDeletes(false);
-        // 加载最新的续约信息 并设置到记录续约信息的对象中
+        // 从磁盘中读取最新的续约信息 并设置到replicationTracker中  某几种数据恢复方式都会写入一个空的续约信息到文件中
         updateRetentionLeasesOnReplica(loadRetentionLeases());
         assert recoveryState.getRecoverySource().expectEmptyRetentionLeases() == false || getRetentionLeases().leases().isEmpty()
             : "expected empty set of retention leases with recovery source [" + recoveryState.getRecoverySource()
@@ -2138,7 +2151,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             assert currentEngineReference.get() == null : "engine is running";
             verifyNotClosed();
             // we must create a new engine under mutex (see IndexShard#snapshotStoreMetadata).
-            // 生成一个新的engine 对象 并覆盖当前的engine属性
+            // 根据config信息生成引擎对象 如果此时已经有一个引擎对象了 那么进行覆盖
             final Engine newEngine = engineFactory.newReadWriteEngine(config);
             onNewEngine(newEngine);
             currentEngineReference.set(newEngine);
@@ -2439,9 +2452,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 这里实际上也会转发到 openEngineAndRecoverFromTranslog 也是从事务文件中恢复数据  TODO 为什么叫 fromStore???
+     * 从本地store的文件恢复shard的数据
      *
-     * @param listener
+     * @param listener  处理结果的监听器
      */
     public void recoverFromStore(ActionListener<Boolean> listener) {
         // we are the first primary, recover from the gateway
@@ -2800,7 +2813,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @return the retention leases
      * @throws IOException if an I/O exception occurs reading the retention leases
-     *                     从 state文件中加载数据流并转换成续约对象
+     *                     对应写入续约信息的操作 从相同path下读取数据
      */
     public RetentionLeases loadRetentionLeases() throws IOException {
         verifyNotClosed();
@@ -3193,7 +3206,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         switch (recoveryState.getRecoverySource().getType()) {
             case EMPTY_STORE:
             case EXISTING_STORE:
-                // 当store中存在数据时 直接通过recoverFromStore 进行恢复
+                // 代表通过之前事务日志中存储的数据进行恢复
                 executeRecovery("from store", recoveryState, recoveryListener, this::recoverFromStore);
                 break;
             case PEER:
@@ -3256,12 +3269,20 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 开始执行数据恢复操作
+     * @param reason
+     * @param recoveryState
+     * @param recoveryListener
+     * @param action
+     */
     private void executeRecovery(String reason, RecoveryState recoveryState, PeerRecoveryTargetService.RecoveryListener recoveryListener,
                                  CheckedConsumer<ActionListener<Boolean>, Exception> action) {
         // 标记成正在恢复中
         markAsRecovering(reason, recoveryState); // mark the shard as recovering on the cluster state thread
+        // 异步执行数据恢复任务 并在完成时  通知 recoveryListener
         threadPool.generic().execute(ActionRunnable.wrap(ActionListener.wrap(r -> {
-                // 这里声明了正常返回是一个BOOLEAN类型
+                // r代表本次action的结果
                 if (r) {
                     recoveryListener.onRecoveryDone(recoveryState);
                 }
@@ -3395,12 +3416,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 通过全局检查点生成一个 engineConfig 对象
+     * 根据相关信息生成一个引擎配置对象
      *
      * @param globalCheckpointSupplier
      * @return
      */
     private EngineConfig newEngineConfig(LongSupplier globalCheckpointSupplier) {
+        // 生成描述排序顺序的对象
         final Sort indexSort = indexSortSupplier.get();
         final Engine.Warmer warmer = reader -> {
             assert Thread.holdsLock(mutex) == false : "warming engine under mutex";
@@ -3409,6 +3431,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 this.warmer.warm(reader);
             }
         };
+
+        // 这里都是一些基本的赋值操作
         return new EngineConfig(shardId, shardRouting.allocationId().getId(),
             threadPool, indexSettings, warmer, store, indexSettings.getMergePolicy(),
             mapperService != null ? mapperService.indexAnalyzer() : null,

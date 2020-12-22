@@ -94,7 +94,7 @@ public class RetentionLeases implements ToXContentFragment, Writeable {
      * @param version     the version
      * @return true if this retention leases collection would supercedes a retention lease collection with the specified primary term and
      * version
-     * 取代判断条件
+     * 判断能否取代
      */
     boolean supersedes(final long primaryTerm, final long version) {
         return this.primaryTerm > primaryTerm || this.primaryTerm == primaryTerm && this.version > version;

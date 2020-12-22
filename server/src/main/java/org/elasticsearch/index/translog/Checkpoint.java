@@ -48,13 +48,13 @@ final class Checkpoint {
     final long offset;
     final int numOps;
 
-    /**
-     * 如果是针对某个 gen的检查点 应该就是该gen
-     * 如果是全局检查点 应该就是最大的gen
-     */
     final long generation;
     final long minSeqNo;
     final long maxSeqNo;
+
+    /**
+     * 每个检查点对象都会记录一个 描述副本间数据同步的全局检查点
+     */
     final long globalCheckpoint;
 
     /**
@@ -133,10 +133,21 @@ final class Checkpoint {
         }
     }
 
+    /**
+     * 生成一个空的检查点对象
+     * @param offset
+     * @param generation  年代信息
+     * @param globalCheckpoint   本次检查点
+     * @param minTranslogGeneration  TODO 为什么会有一个最小的事务gen
+     * @return
+     */
     static Checkpoint emptyTranslogCheckpoint(final long offset, final long generation, final long globalCheckpoint,
                                               long minTranslogGeneration) {
+
+        // 在生成空的检查点文件时 使用的2个seq信息都是-1
         final long minSeqNo = SequenceNumbers.NO_OPS_PERFORMED;
         final long maxSeqNo = SequenceNumbers.NO_OPS_PERFORMED;
+        // 这个截断的seq是啥意思  -2
         final long trimmedAboveSeqNo = SequenceNumbers.UNASSIGNED_SEQ_NO;
         return new Checkpoint(offset, 0, generation, minSeqNo, maxSeqNo, globalCheckpoint, minTranslogGeneration, trimmedAboveSeqNo);
     }
@@ -215,7 +226,6 @@ final class Checkpoint {
 
         }
         // now go and write to the channel, in one go.
-        // TODO 如果文件中已经有数据了怎么办
         try (FileChannel channel = factory.open(checkpointFile, options)) {
             Channels.writeToChannel(byteOutputStream.toByteArray(), channel);
             // no need to force metadata, file size stays the same and we did the full fsync

@@ -24,7 +24,13 @@ package org.elasticsearch.index.shard;
  * 代表某个索引的分片此时的状态
  */
 public enum IndexShardState {
+    /**
+     * 当分片刚刚创建完成时 处于这个状态
+     */
     CREATED((byte) 0),
+    /**
+     * 当创建完分片后 需要做的第一步就是数据的恢复  并且会将状态切换成 recovering
+     */
     RECOVERING((byte) 1),
     POST_RECOVERY((byte) 2),
     STARTED((byte) 3),

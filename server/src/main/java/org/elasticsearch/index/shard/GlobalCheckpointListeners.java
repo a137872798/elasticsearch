@@ -45,7 +45,7 @@ import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
 /**
  * Represents a collection of global checkpoint listeners. This collection can be added to, and all listeners present at the time of an
  * update will be notified together. All listeners will be notified when the shard is closed.
- * 该对象整合了一组 全局检查点监听器
+ * 每个indexShard对应一个该对象   当感知到indexShard对应replicationTracker的globalCheckpoint发生了变化 会触发相关函数
  */
 public class GlobalCheckpointListeners implements Closeable {
 
@@ -211,20 +211,21 @@ public class GlobalCheckpointListeners implements Closeable {
      * Invoke to notify all registered listeners of an updated global checkpoint.
      *
      * @param globalCheckpoint the updated global checkpoint
-     *                         代表此时获取到了一个更大的全局检查点  需要用它来触发监听器
+     *                         当在 ReplicationTracker中 更新了globalCheckpoint时   就会触发该方法
      */
     synchronized void globalCheckpointUpdated(final long globalCheckpoint) {
         assert globalCheckpoint >= NO_OPS_PERFORMED;
         assert globalCheckpoint > lastKnownGlobalCheckpoint
             : "updated global checkpoint [" + globalCheckpoint + "]"
             + " is not more than the last known global checkpoint [" + lastKnownGlobalCheckpoint + "]";
-        // 记得更新最大的检查点
+        // 更新当前已知的全局检查点
         lastKnownGlobalCheckpoint = globalCheckpoint;
+        // 触发所有相关的监听器
         notifyListeners(globalCheckpoint, null);
     }
 
     /**
-     * 以某个检查点触发监听器
+     * 当检查点推进到某个位置时 触发监听器
      *
      * @param globalCheckpoint
      * @param e                可能是由于异常情况关闭的  这时就会传入exception
@@ -233,6 +234,7 @@ public class GlobalCheckpointListeners implements Closeable {
         assert Thread.holdsLock(this) : Thread.currentThread();
 
         // early return if there are no listeners
+        // 此时没有监听器 不需要做处理   在shard数据恢复阶段还没有设置监听器
         if (listeners.isEmpty()) {
             return;
         }

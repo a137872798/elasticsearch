@@ -682,6 +682,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         DiscoveryNodes nodes = state.nodes();
         RoutingTable routingTable = state.routingTable();
 
+        // 这里需要找到在整个集群中 只分配到本节点上的所有路由信息   该shardRouting 可能是primary 也可能是replica
         for (final ShardRouting shardRouting : localRoutingNode) {
             ShardId shardId = shardRouting.shardId();
             if (failedShardsCache.containsKey(shardId) == false) {
@@ -828,7 +829,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
     }
 
     /**
-     * 监听某分片的数据恢复情况 并触发钩子
+     * 监听shard的数据恢复情况  在完成时触发相关函数
      */
     private class RecoveryListener implements PeerRecoveryTargetService.RecoveryListener {
 

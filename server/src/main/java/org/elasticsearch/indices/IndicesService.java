@@ -921,6 +921,8 @@ public class IndicesService extends AbstractLifecycleComponent
      * @param recoveryState          the recovery state   描述回复流程的状态对象
      * @param recoveryTargetService  recovery service for the target
      * @param recoveryListener       a callback when recovery changes state (finishes or fails)
+     *                               当整个恢复流程完成后通知该对象进行处理
+     *                               因为本身恢复操作是异步完成的 在此期间不应该操作该分片
      * @param repositoriesService    service responsible for snapshot/restore   存储层服务 通过快照可以实现数据的快速恢复
      * @param onShardFailure         a callback when this shard fails
      * @param globalCheckpointSyncer a callback when this shard syncs the global checkpoint

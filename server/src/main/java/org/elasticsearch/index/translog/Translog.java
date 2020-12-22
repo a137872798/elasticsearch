@@ -2053,6 +2053,13 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         return checkpoint.globalCheckpoint;
     }
 
+    /**
+     *
+     * @param location
+     * @param expectedTranslogUUID  本次预计解析出来的事务文件对应的uuid
+     * @return
+     * @throws IOException
+     */
     private static Checkpoint readCheckpoint(Path location, String expectedTranslogUUID) throws IOException {
         // 获取  translog.ckp 信息
         final Checkpoint checkpoint = readCheckpoint(location);
@@ -2099,6 +2106,15 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         return readers;
     }
 
+    /**
+     * 清空之前所有的事务日志信息
+     * @param location  该目录下存储事务文件的路径
+     * @param initialGlobalCheckpoint  本次检查点
+     * @param shardId  本次使用的分片id
+     * @param primaryTerm  每个IndexShard在生成时 有自己的term
+     * @return
+     * @throws IOException
+     */
     public static String createEmptyTranslog(final Path location, final long initialGlobalCheckpoint,
                                              final ShardId shardId, final long primaryTerm) throws IOException {
         final ChannelFactory channelFactory = FileChannel::open;
@@ -2118,12 +2134,12 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
      * translog UUID could cause a lot of issues and that's why in all (but one) cases the method
      * {@link #createEmptyTranslog(Path, long, ShardId, long)} should be used instead.
      *
-     * @param location                a {@link Path} to the directory that will contains the translog files (translog + translog checkpoint)
+     * @param location                a {@link Path} to the directory that will contains the translog files (translog + translog checkpoint)  存储事务文件信息的目录
      * @param shardId                 the {@link ShardId}
-     * @param initialGlobalCheckpoint the global checkpoint to initialize the translog with
-     * @param primaryTerm             the shard's primary term to initialize the translog with
-     * @param translogUUID            the unique identifier to initialize the translog with
-     * @param factory                 a {@link ChannelFactory} used to open translog files
+     * @param initialGlobalCheckpoint the global checkpoint to initialize the translog with    本地检查点 是从segment_N文件中获取的
+     * @param primaryTerm             the shard's primary term to initialize the translog with   创建该分片信息对应的term
+     * @param translogUUID            the unique identifier to initialize the translog with     本次事务日志的id 可以为null
+     * @param factory                 a {@link ChannelFactory} used to open translog files    通道工厂
      * @return the translog's unique identifier
      * @throws IOException if something went wrong during translog creation
      * 创建一个空的事务文件
@@ -2134,19 +2150,29 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
                                              final long primaryTerm,
                                              @Nullable final String translogUUID,
                                              @Nullable final ChannelFactory factory) throws IOException {
+        // 先清空目录下所有文件
         IOUtils.rm(location);
+        // 重新创建分片下的translog目录
         Files.createDirectories(location);
 
         final long generation = 1L;
         final long minTranslogGeneration = 1L;
+        // 生成文件通道工厂
         final ChannelFactory channelFactory = factory != null ? factory : FileChannel::open;
+        // 当事务id没有手动设置时 生成一个随机数
         final String uuid = Strings.hasLength(translogUUID) ? translogUUID : UUIDs.randomBase64UUID();
+        // 生成检查点文件路径
         final Path checkpointFile = location.resolve(CHECKPOINT_FILE_NAME);
+        // 这里初始化了一个事务日志文件的路径 gen为1
         final Path translogFile = location.resolve(getFilename(generation));
+        // 使用空数据生成检查点对象  每个检查点应该就是存储 此时store已经写到的seq 以及checkpoint信息吧
         final Checkpoint checkpoint = Checkpoint.emptyTranslogCheckpoint(0, generation, initialGlobalCheckpoint, minTranslogGeneration);
 
+        // 通过checkpoint信息生成文件
         Checkpoint.write(channelFactory, checkpointFile, checkpoint, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW);
+        // 将文件刷盘
         IOUtils.fsync(checkpointFile, false);
+        // 生成一个 事务日志写入对象  因为之前只是写入了检查点信息
         final TranslogWriter writer = TranslogWriter.create(shardId, uuid, generation, translogFile, channelFactory,
             new ByteSizeValue(10), minTranslogGeneration, initialGlobalCheckpoint,
             () -> {
@@ -2159,6 +2185,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
             seqNo -> {
                 throw new UnsupportedOperationException();
             });
+        // 这里关闭了文件通道 但是文件已经生成了 是一个 translog-1.tlog  并且写入了一个事务头
         writer.close();
         return uuid;
     }

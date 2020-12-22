@@ -97,7 +97,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
     private final Map<Long, Tuple<BytesReference, Exception>> seenSequenceNumbers;
 
     /**
-     * 初始化 writer对象
+     * 这边基本就是赋值操作  TranslogWriter都是通过静态方法创建的
      *
      * @param channelFactory
      * @param shardId
@@ -152,16 +152,16 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
      *
      * @param shardId                         每个writer对应一个translog 对应一个shard
      * @param translogUUID                    每次初始化translog时会分配一个uuid
-     * @param fileGeneration                  该对象要写入的文件对应的gen
-     * @param file                            对应事务文件路径 (.tlg文件)
+     * @param fileGeneration                  该对象要写入的文件对应的gen 会作为文件名的一部分
+     * @param file                            对应事务文件路径 (translog-gen.tlg文件)
      * @param channelFactory                  用于生成fileChannel
-     * @param bufferSize
-     * @param initialMinTranslogGen           在全局checkpoint中 记录的最小gen
-     * @param initialGlobalCheckpoint         通过Translog 的 globalCheckpointSupplier.getAsLong() 获得的也不知道做啥
+     * @param bufferSize                      内存缓冲区大小  数据会先存储在缓冲区中 并一次性写入到磁盘
+     * @param initialMinTranslogGen           TODO
+     * @param initialGlobalCheckpoint         此时的全局检查点   当分片处于恢复阶段时 会使用本地检查点作为全局检查点
      * @param globalCheckpointSupplier        globalCheckpointSupplier
      * @param minTranslogGenerationSupplier   对应函数 getMinFileGeneration()
-     * @param primaryTerm                     primaryTermSupplier
-     * @param tragedy                         存储异常的对象
+     * @param primaryTerm                     生成该分片对应的shardRouting时的 term信息
+     * @param tragedy                         TragicExceptionHolder  就是可以存储一个异常对象
      * @param persistedSequenceNumberConsumer
      * @return
      * @throws IOException
@@ -177,11 +177,12 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
             // 因为事务头的格式是固定的 所以可以预估header大小
             final TranslogHeader header = new TranslogHeader(translogUUID, primaryTerm);
             header.write(channel);
-            // 生成一个 3种seq都是空的检查点对象  注意initialMinTranslogGen被传进去了
-            // 也就是即使重启了也能确保之前的数据被 读取到  应该要等待某个特殊操作后 才允许删除旧的gen对应的文件
+
+            // 生成空的检查点对象
             final Checkpoint checkpoint = Checkpoint.emptyTranslogCheckpoint(header.sizeInBytes(), fileGeneration,
                 initialGlobalCheckpoint, initialMinTranslogGen);
-            // 将最新的检查点写入到全局检查点文件中
+
+            // 在这里还会生成一次检查点文件
             writeCheckpoint(channelFactory, file.getParent(), checkpoint);
             final LongSupplier writerGlobalCheckpointSupplier;
             if (Assertions.ENABLED) {
@@ -194,6 +195,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
             } else {
                 writerGlobalCheckpointSupplier = globalCheckpointSupplier;
             }
+            // 使用相关信息生成 事务写入对象
             return new TranslogWriter(channelFactory, shardId, checkpoint, channel, file, bufferSize,
                 writerGlobalCheckpointSupplier, minTranslogGenerationSupplier, header, tragedy, persistedSequenceNumberConsumer);
         } catch (Exception exception) {

@@ -125,7 +125,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * 内部引擎对象
+ * 内部引擎对象   默认生成的就是该对象
  */
 public class InternalEngine extends Engine {
 
@@ -270,10 +270,12 @@ public class InternalEngine extends Engine {
         boolean success = false;
         try {
             this.lastDeleteVersionPruneTimeMSec = engineConfig.getThreadPool().relativeTimeInMillis();
+
+            // 拓展了 lucene内置的并发merge对象
             mergeScheduler = scheduler = new EngineMergeScheduler(engineConfig.getShardId(), engineConfig.getIndexSettings());
             throttle = new IndexThrottle();
             try {
-                // 有些commit信息可能没有同步到全集群 所以要丢弃
+                // 某些commit信息可能没有同步到其他节点 需要丢弃这些数据  旧的commit数据还会保留
                 store.trimUnsafeCommits(config().getTranslogConfig().getTranslogPath());
                 // globalCheckpoint 是从engineConfig中带过来的啊
                 translog = openTranslog(engineConfig, translogDeletionPolicy, engineConfig.getGlobalCheckpointSupplier(),

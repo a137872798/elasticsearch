@@ -100,6 +100,9 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
 
     }
 
+    /**
+     * 描述数据恢复的方式
+     */
     public enum Type {
         EMPTY_STORE,
         EXISTING_STORE,

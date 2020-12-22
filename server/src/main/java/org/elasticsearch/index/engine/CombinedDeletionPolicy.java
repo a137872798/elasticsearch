@@ -213,16 +213,18 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
      * If an index was created before 6.2 or recovered from remote, we might not have a safe commit.
      * In this case, this method will return the oldest index commit.
      *
-     * @param commits          a list of existing commit points
+     * @param commits          a list of existing commit points    此时存在的一组提交点  每个提交点对应一个  segment_N 文件
      * @param globalCheckpoint the persisted global checkpoint from the translog, see {@link Translog#readGlobalCheckpoint(Path, String)}
+     *                         最新的全局检查点
      * @return a safe commit or the oldest commit if a safe commit is not found
-     * 找到安全提交点
+     * 找到一个安全的提交点
      */
     public static IndexCommit findSafeCommitPoint(List<IndexCommit> commits, long globalCheckpoint) throws IOException {
         if (commits.isEmpty()) {
             throw new IllegalArgumentException("Commit list must not empty");
         }
         final int keptPosition = indexOfKeptCommits(commits, globalCheckpoint);
+        // 只有被返回的提交点会被保留 其余的会被删除
         return commits.get(keptPosition);
     }
 
@@ -230,24 +232,25 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
      * Find the highest index position of a safe index commit whose max sequence number is not greater than the global checkpoint.
      * Index commits with different translog UUID will be filtered out as they don't belong to this engine.
      * @param commits
-     * @param globalCheckpoint  大体上可以预见 globalCheckpoint应该是指某个 shard在所有相关node上的最小的checkpoint
+     * @param globalCheckpoint
+     * 在这组 IndexCommit中 最后仅会保留一个IndexCommit 以及相关的所有索引文件
+     * 这些索引文件也就包含了 ES.Index 此时全部的数据
      */
     private static int indexOfKeptCommits(List<? extends IndexCommit> commits, long globalCheckpoint) throws IOException {
-        // 从用户自定义的数据中还原translogUUId
+        // 每次提交点中 都可以获取事务id
         final String expectedTranslogUUID = commits.get(commits.size() - 1).getUserData().get(Translog.TRANSLOG_UUID_KEY);
 
         // Commits are sorted by age (the 0th one is the oldest commit).
-        // 从后往前找到首个要保留的commit下标
         for (int i = commits.size() - 1; i >= 0; i--) {
             final Map<String, String> commitUserData = commits.get(i).getUserData();
             // Ignore index commits with different translog uuid.
-            // 代表某些 IndexCommit的事务id已经不一致了  不是同一批数据
-            // TODO 话说什么时候会替换事务id呢
+            // 如果事务文件id已经匹配不上了 就忽略不同的文件  返回首个事务id相同的文件
+            // TODO 先简化情况吧  假设只按照检查点数据来确定是否安全
             if (expectedTranslogUUID.equals(commitUserData.get(Translog.TRANSLOG_UUID_KEY)) == false) {
                 return i + 1;
             }
 
-            // 找到首个seqNo <= 全局检查点的commit
+            // 全局检查点之前的数据 都已经完成同步了 可以确保是安全的
             final long maxSeqNoFromCommit = Long.parseLong(commitUserData.get(SequenceNumbers.MAX_SEQ_NO));
             if (maxSeqNoFromCommit <= globalCheckpoint) {
                 return i;

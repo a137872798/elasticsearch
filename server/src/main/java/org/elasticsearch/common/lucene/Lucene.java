@@ -258,7 +258,7 @@ public class Lucene {
         ))
         {
             // do nothing and close this will kick of IndexFileDeleter which will remove all pending files
-            // 触发IndexWriter.close() 删除文件
+            // 可能此时存在 即将生成的segment_N 文件 因为indexWriter有一个两阶段提交 close会间接删除这种pending文件
         }
     }
 
