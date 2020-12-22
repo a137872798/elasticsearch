@@ -57,7 +57,7 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
      */
     PrunePostingsMergePolicy(MergePolicy in, String idField) {
         super(in,
-            // 这是一个包装函数
+            // 这是一个包装函数  OneMergeWrappingMergePolicy 对象在采集到n个OneMerge对象后 会通过该函数进行包装
             toWrap -> new OneMerge(toWrap.segments) {
             @Override
             public CodecReader wrapForMerge(CodecReader reader) throws IOException {
@@ -80,6 +80,7 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
             return reader; // no deleted docs - we are good!
         }
         final boolean fullyDeletedSegment = reader.numDocs() == 0;
+        // 这里会过滤掉一些doc
         return new FilterCodecReader(reader) {
 
             @Override
@@ -105,7 +106,7 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
                     }
 
                     /**
-                     * 在获取某个field下所有的term时 做了特殊处理
+                     * 在获取所有doc下某个field下所有的term时 做了特殊处理
                      * @param field
                      * @return
                      * @throws IOException
@@ -113,24 +114,26 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
                     @Override
                     public Terms terms(String field) throws IOException {
                         Terms in = postingsReader.terms(field);
-                        // 非id的情况直接范围
+                        // 本次处理的不是指定的_id 直接返回即可
                         if (idField.equals(field) && in != null) {
                             return new FilterLeafReader.FilterTerms(in) {
                                 @Override
                                 public TermsEnum iterator() throws IOException {
+                                    // 每个TermsEnum 对应某个doc下该field分词后的term集合
                                     TermsEnum iterator = super.iterator();
+                                    // 每次返回的TermsEnum 会通过该filter进行包装
                                     return new FilteredTermsEnum(iterator, false) {
                                         private PostingsEnum internal;
 
                                         /**
-                                         * 代表传入的term是否存在吧
+                                         * 这个函数是判断遍历出来的term能否正常使用
                                          * @param term
                                          * @return
                                          * @throws IOException
                                          */
                                         @Override
                                         protected AcceptStatus accept(BytesRef term) throws IOException {
-                                            //
+                                            // 代表所有doc 都已经被删除
                                             if (fullyDeletedSegment) {
                                                 return AcceptStatus.END; // short-cut this if we don't match anything
                                             }

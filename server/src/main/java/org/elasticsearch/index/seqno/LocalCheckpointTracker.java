@@ -75,6 +75,8 @@ public class LocalCheckpointTracker {
      *
      * @param maxSeqNo        the last sequence number assigned, or {@link SequenceNumbers#NO_OPS_PERFORMED}
      * @param localCheckpoint the last known local checkpoint, or {@link SequenceNumbers#NO_OPS_PERFORMED}
+     *                        从segment_N.userData中获取 maxSeqNo 以及 localCheckPoint信息
+     *                        进行初始化
      */
     public LocalCheckpointTracker(final long maxSeqNo, final long localCheckpoint) {
         if (localCheckpoint < 0 && localCheckpoint != SequenceNumbers.NO_OPS_PERFORMED) {
@@ -86,7 +88,6 @@ public class LocalCheckpointTracker {
             throw new IllegalArgumentException(
                 "max seq. no. must be non-negative or [" + SequenceNumbers.NO_OPS_PERFORMED + "] but was [" + maxSeqNo + "]");
         }
-        // 这里更像是一个特殊的初始化  在之后正常处理seq之后 会更新成seq+1
         nextSeqNo.set(maxSeqNo + 1);
         processedCheckpoint.set(localCheckpoint);
         persistedCheckpoint.set(localCheckpoint);

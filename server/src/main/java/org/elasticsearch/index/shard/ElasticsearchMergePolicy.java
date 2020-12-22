@@ -43,6 +43,7 @@ import java.util.Map;
  * <p>
  * For now, this {@link MergePolicy} takes care of moving versions that used to
  * be stored as payloads to numeric doc values.
+ * 该对象可以解决兼容性问题  先忽略
  */
 public final class ElasticsearchMergePolicy extends FilterMergePolicy {
 
@@ -52,12 +53,8 @@ public final class ElasticsearchMergePolicy extends FilterMergePolicy {
     private volatile boolean upgradeInProgress;
 
     // True if the next merge request should only upgrade ancient (an older Lucene major version than current) segments;
-    // 只有古老的segment 需要升级???
     private volatile boolean upgradeOnlyAncientSegments;
 
-    /**
-     * 最多同时进行5个 升级???
-     */
     private static final int MAX_CONCURRENT_UPGRADE_MERGES = 5;
 
     /** @param delegate the merge policy to wrap */

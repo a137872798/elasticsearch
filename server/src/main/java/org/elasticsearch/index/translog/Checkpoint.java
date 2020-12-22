@@ -48,6 +48,9 @@ final class Checkpoint {
     final long offset;
     final int numOps;
 
+    /**
+     * 对应最新的事务文件的gen
+     */
     final long generation;
     final long minSeqNo;
     final long maxSeqNo;
@@ -58,7 +61,7 @@ final class Checkpoint {
     final long globalCheckpoint;
 
     /**
-     * 如果是全局检查点的话  它对应不同gen的事务文件  那么该值就是现存的所有事务文件中最小的gen
+     * 每次生成checkPoint时 此时可能有很多事务日志文件 他们的gen都不同 这里记录的是最小的gen
      */
     final long minTranslogGeneration;
 
@@ -138,7 +141,7 @@ final class Checkpoint {
      * @param offset
      * @param generation  年代信息
      * @param globalCheckpoint   本次检查点
-     * @param minTranslogGeneration  TODO 为什么会有一个最小的事务gen
+     * @param minTranslogGeneration
      * @return
      */
     static Checkpoint emptyTranslogCheckpoint(final long offset, final long generation, final long globalCheckpoint,

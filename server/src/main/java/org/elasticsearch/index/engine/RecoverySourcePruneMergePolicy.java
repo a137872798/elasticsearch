@@ -51,7 +51,7 @@ final class RecoverySourcePruneMergePolicy extends OneMergeWrappingMergePolicy {
 
     /**
      *
-     * @param recoverySourceField   “recovery_source” 是什么东西???
+     * @param recoverySourceField   本次处理的field仅针对"_recovery_source"
      * @param retainSourceQuerySupplier 一个以 seq_no 的取值范围为查询条件的对象
      * @param in
      */

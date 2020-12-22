@@ -259,7 +259,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * 获取续约信息
      */
     public synchronized Tuple<Boolean, RetentionLeases> getRetentionLeases(final boolean expireLeases) {
-        // 非过期情况 直接返回当前续约信息
+        // 不包含过期信息的情况 直接返回当前续约信息
         if (expireLeases == false) {
             return Tuple.tuple(false, retentionLeases);
         }

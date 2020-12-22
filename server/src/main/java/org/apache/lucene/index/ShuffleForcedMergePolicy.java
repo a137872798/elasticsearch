@@ -91,6 +91,7 @@ public class ShuffleForcedMergePolicy extends FilterMergePolicy {
 
     // Return a new list that sort segments of the original one by name (older first)
     // and then interleave them to colocate oldest and most recent segments together.
+    //这里会将顺序进行打乱
     private List<SegmentCommitInfo> interleaveList(List<SegmentCommitInfo> infos) throws IOException {
         List<SegmentCommitInfo> newInfos = new ArrayList<>(infos.size());
         Collections.sort(infos, Comparator.comparing(a -> a.info.name));

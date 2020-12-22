@@ -180,14 +180,17 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
      * translog file referenced by this generation. The translog creation will fail if this generation can't be opened.
      *
      * @param config                   the configuration of this translog     包含了相关的参数信息
-     * @param translogUUID             the translog uuid to open, null for a new translog   为该事务文件分配的uuid
+     * @param translogUUID             the translog uuid to open, null for a new translog
+     *                                 从之前segment_N.userData中获取的事务id
      * @param deletionPolicy           an instance of {@link TranslogDeletionPolicy} that controls when a translog file can be safely
      *                                 deleted
      * @param globalCheckpointSupplier a supplier for the global checkpoint
+     *                                 这里也是从ReplicationTracker获取全局检查点
      * @param primaryTermSupplier      a supplier for the latest value of primary term of the owning index shard. The latest term value is
      *                                 examined and stored in the header whenever a new generation is rolled. It's guaranteed from outside
      *                                 that a new generation is rolled when the term is increased. This guarantee allows to us to validate
      *                                 and reject operation whose term is higher than the primary term stored in the translog header.
+     *                                 对应从ReplicationTracker 获取主分片的任期
      * @param persistedSequenceNumberConsumer a callback that's called whenever an operation with a given sequence number is successfully
      *                                        persisted.
      */
@@ -206,6 +209,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         ReadWriteLock rwl = new ReentrantReadWriteLock();
         readLock = new ReleasableLock(rwl.readLock());
         writeLock = new ReleasableLock(rwl.writeLock());
+        // 存储日志文件/检查点文件的目录
         this.location = config.getTranslogPath();
 
         // 初始化的同时创建目录对象
@@ -213,12 +217,13 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
         try {
 
-            // 先检测目录下是否存在 checkPoint文件 存在则读取检查点信息  不存在会抛出异常 奇怪了 一开始不一定存在checkPoint文件的啊
-            // 这个就是全局检查点吗
+            // 先检测目录下是否存在 checkPoint文件 存在则读取检查点信息
+            // 不存在会抛出异常 因为在恢复数据前会创建检查点文件 如果没有旧数据就创建一个空的
             final Checkpoint checkpoint = readCheckpoint(location);
-            // 生成新gen对应的事务文件
+            // 检测是否存在一个gen更大的事务文件 但是还没有更新到全局检查点文件上
             final Path nextTranslogFile = location.resolve(getFilename(checkpoint.generation + 1));
             // 获取之前gen对应的检查点文件 文件名上会携带 gen信息
+            // 每次操作完会先创建 translog-gen.ckp文件作为临时的检查点文件  当commit后 会创建translog.ckp文件作为有效的全局检查点文件
             final Path currentCheckpointFile = location.resolve(getCommitCheckpointFileName(checkpoint.generation));
             // this is special handling for error condition when we create a new writer but we fail to bake
             // the newly written file (generation+1) into the checkpoint. This is still a valid state
@@ -231,6 +236,8 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
             assert Files.exists(nextTranslogFile) == false ||
                     Files.size(nextTranslogFile) <= TranslogHeader.headerSizeInBytes(translogUUID) :
                         "unexpected translog file: [" + nextTranslogFile + "]";
+
+            // 如果存在一个更大的gen的事务文件 并且还没有提交 那么先删除
             if (Files.exists(currentCheckpointFile) // current checkpoint is already copied
                 && Files.deleteIfExists(nextTranslogFile)) { // delete it and log a warning
                 logger.warn("deleted previously created, but not yet committed, next generation [{}]. This can happen due to a" +
@@ -244,8 +251,8 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
             boolean success = false;
             current = null;
             try {
-                // 每次生成事务对象后  都会增加gen 并生成一个专门写入 translog_newgen 文件的writer对象
-                // writer在初始化前 还会更新全局检查点对象
+                // 生成一个负责写事务文件的对象  本次要写入的文件对应的gen为之前最大gen+1
+                // genMinFileGen 对应此时存活的最小的事务文件gen
                 current = createWriter(checkpoint.generation + 1, getMinFileGeneration(), checkpoint.globalCheckpoint,
                     persistedSequenceNumberConsumer);
                 success = true;
@@ -267,7 +274,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
     /**
      * recover all translog files found on disk
-     * 从一个全局检查点找到此时包含的处于不同gen的所有translog.tlg (也就是记录operation的文件)  并且生成对应的reader对象
+     * 从一个全局检查点找到此时包含的处于不同gen的所有translog-gen.tlg (也就是记录operation的文件)  并且生成对应的reader对象
      */
     private ArrayList<TranslogReader> recoverFromFiles(Checkpoint checkpoint) throws IOException {
         boolean success = false;
@@ -292,12 +299,12 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
                         "translog file doesn't exist with generation: " + i + " recovering from: " + minGenerationToRecoverFrom
                             + " checkpoint: " + checkpoint.generation + " - translog ids must be consecutive");
                 }
-                // 代表此时最新的检查点文件  它的信息应该跟全局检查点是一样的
+                // 代表此时处理的是最新检查点文件 与translog.ckp是一样的 就不需要寻找 translog-gen.ckp文件了
                 final Checkpoint readerCheckpoint = i == checkpoint.generation ? checkpoint
                     // 否则解析对应gen的检查点对象
                     : Checkpoint.read(location.resolve(getCommitCheckpointFileName(i)));
 
-                // 根据相关信息创建 translogReader
+                // 根据相关信息创建 translogReader  这里只是做了基础的赋值操作
                 final TranslogReader reader = openReader(committedTranslogFile, readerCheckpoint);
                 assert reader.getPrimaryTerm() <= primaryTermSupplier.getAsLong() :
                     "Primary terms go backwards; current term [" + primaryTermSupplier.getAsLong() + "] translog path [ "
@@ -310,7 +317,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
             // when we clean up files, we first update the checkpoint with a new minReferencedTranslog and then delete them;
             // if we crash just at the wrong moment, it may be that we leave one unreferenced file behind so we delete it if there
-            // 删除全局检查点记录的最小gen之前的 事务文件/提交点文件
+            // 最新的全局检查点文件 minTranslogGen之前的事务文件以及对应的检查点文件都可以删除了
             IOUtils.deleteFilesIgnoringExceptions(location.resolve(getFilename(minGenerationToRecoverFrom - 1)),
                 location.resolve(getCommitCheckpointFileName(minGenerationToRecoverFrom - 1)));
 
@@ -324,6 +331,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
                             + checkpoint + " but got " + checkpointFromDisk);
                 }
             } else {
+                // 从全局检查点文件拷贝一份 作为 translog-gen.ckp
                 copyCheckpointTo(commitCheckpoint);
             }
             success = true;
@@ -588,7 +596,9 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
      *                                获取此时目录下可以观测到的最小的gen  对应最小的reader对象
      *
      * @param initialGlobalCheckpoint the global checkpoint to be written in the first checkpoint.
-     *                                全局检查点是什么玩意啊 不是那个不携带gen的checkpoint文件么
+     *                                之前checkPoint文件存储的全局检查点 本次事务文件将会以该值作为起点
+     * @param persistedSequenceNumberConsumer
+     *
      */
     TranslogWriter createWriter(long fileGeneration, long initialMinTranslogGen, long initialGlobalCheckpoint,
                                 LongConsumer persistedSequenceNumberConsumer) throws IOException {

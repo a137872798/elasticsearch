@@ -64,7 +64,7 @@ final class SoftDeletesPolicy {
      * @param globalCheckpointSupplier   通过translog 获取最新的checkpoint 记录的globalCheckpoint
      * @param minRetainedSeqNo   将会被保留的最小的序列
      * @param retentionOperations   保留的操作数
-     * @param retentionLeasesSupplier  保留的续约???
+     * @param retentionLeasesSupplier  实际上就是通过ReplicationTracker 获取保留的续约信息
      */
     SoftDeletesPolicy(
             final LongSupplier globalCheckpointSupplier,
@@ -122,6 +122,7 @@ final class SoftDeletesPolicy {
     /**
      * Returns the min seqno that is retained in the Lucene index.
      * Operations whose seq# is least this value should exist in the Lucene index.
+     * 获取续约信息对应的最小seq
      */
     synchronized long getMinRetainedSeqNo() {
         /*
@@ -130,6 +131,7 @@ final class SoftDeletesPolicy {
          */
         final RetentionLeases retentionLeases = retentionLeasesSupplier.get();
         // do not advance if the retention lock is held
+        // 代表此时没有其他线程抢占锁
         if (retentionLockCount == 0) {
             /*
              * This policy retains operations for two purposes: peer-recovery and querying changes history.

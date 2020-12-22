@@ -277,7 +277,7 @@ public class InternalEngine extends Engine {
             try {
                 // 某些commit信息可能没有同步到其他节点 需要丢弃这些数据  旧的commit数据还会保留
                 store.trimUnsafeCommits(config().getTranslogConfig().getTranslogPath());
-                // globalCheckpoint 是从engineConfig中带过来的啊
+                // engineConfig.getGlobalCheckpointSupplier() 实际上就是借助replicationTracker 获取最新的全局检查点
                 translog = openTranslog(engineConfig, translogDeletionPolicy, engineConfig.getGlobalCheckpointSupplier(),
                     // 用于处理seq的函数 每当记录一个operation时 就会增加seq 需要做处理
                     seqNo -> {
@@ -291,21 +291,23 @@ public class InternalEngine extends Engine {
                 this.translog = translog;
                 // 初始化软删除策略  ES 有一个_soft_delete field 被设置成软删除字段
                 this.softDeletesPolicy = newSoftDeletesPolicy();
+                // 这里也只是做一些赋值操作
                 this.combinedDeletionPolicy =
                     new CombinedDeletionPolicy(logger, translogDeletionPolicy, softDeletesPolicy, translog::getLastSyncedGlobalCheckpoint);
 
-                // 从segment.userData中读取相关信息还原 localCheckpointTracker
+                // 创建本地检查点追踪对象
                 this.localCheckpointTracker = createLocalCheckpointTracker(localCheckpointTrackerSupplier);
 
                 // 生成 IndexWriter 用于写入数据 其中mergePolicy 包装了好多层
                 writer = createWriter();
-                // 从最新的segments.userData 中检查是否有启动相关的参数
+                // 在indexWriter初始化时 会加载dir下最新的segment_N文件 (同时清理旧的文件)  这里是从userData中获取一个auto时间戳信息
                 bootstrapAppendOnlyInfoFromWriter(writer);
 
                 // 获取segments.userData
                 final Map<String, String> commitData = commitDataAsMap(writer);
+                // 获取userData中的historyUUID
                 historyUUID = loadHistoryUUID(commitData);
-                // 什么是mergeUUID ???
+                // 获取 force_merge_uuid属性
                 forceMergeUUID = commitData.get(FORCE_MERGE_UUID_KEY);
                 indexWriter = writer;
             } catch (IOException | TranslogCorruptedException e) {
@@ -369,7 +371,7 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 创建追踪本地检查点信息的对象 包含processedCheckpoint persistedCheckpoint
+     * 创建追踪本地检查点信息的对象
      * @param localCheckpointTrackerSupplier
      * @return
      * @throws IOException
@@ -378,18 +380,18 @@ public class InternalEngine extends Engine {
         BiFunction<Long, Long, LocalCheckpointTracker> localCheckpointTrackerSupplier) throws IOException {
         final long maxSeqNo;
         final long localCheckpoint;
-        // 从 userData中解析 序列号信息
+        // 从 userData中解析 localCheckpoint/maxSeq
         final SequenceNumbers.CommitInfo seqNoStats =
             SequenceNumbers.loadSeqNoInfoFromLuceneCommit(store.readLastCommittedSegmentsInfo().userData.entrySet());
         maxSeqNo = seqNoStats.maxSeqNo;
         localCheckpoint = seqNoStats.localCheckpoint;
         logger.trace("recovered maximum sequence number [{}] and local checkpoint [{}]", maxSeqNo, localCheckpoint);
-        // 可以看出 localCheckpoint 在初始化时 是借助之前的segment存储的 信息还原的
+        // 对应LocalCheckpointTracker::new
         return localCheckpointTrackerSupplier.apply(maxSeqNo, localCheckpoint);
     }
 
     /**
-     *
+     * 生成软删除策略对象
      * @return
      * @throws IOException
      */
@@ -406,6 +408,7 @@ public class InternalEngine extends Engine {
                 translog::getLastSyncedGlobalCheckpoint,
                 lastMinRetainedSeqNo,
                 engineConfig.getIndexSettings().getSoftDeleteRetentionOperations(),
+                // 续约信息也是从 ReplicationTracker中获取的
                 engineConfig.retentionLeasesSupplier());
     }
 
@@ -572,12 +575,12 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     *
+     * 从最新的segment_N文件中获取userData信息
      * @param writer
      */
     private void bootstrapAppendOnlyInfoFromWriter(IndexWriter writer) {
         for (Map.Entry<String, String> entry : writer.getLiveCommitData()) {
-            // 如果存在什么 max_unsafe_auto_id_timestamp 进行更新
+            // 如果存在 max_unsafe_auto_id_timestamp 获取时间戳信息
             if (MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID.equals(entry.getKey())) {
                 assert maxUnsafeAutoIdTimestamp.get() == -1 :
                     "max unsafe timestamp was assigned already [" + maxUnsafeAutoIdTimestamp.get() + "]";
@@ -688,11 +691,13 @@ public class InternalEngine extends Engine {
     private Translog openTranslog(EngineConfig engineConfig, TranslogDeletionPolicy translogDeletionPolicy,
                                   LongSupplier globalCheckpointSupplier, LongConsumer persistedSequenceNumberConsumer) throws IOException {
 
+        // 在初始化 indexShard时 就已经生成了 translogConfig对象了
         final TranslogConfig translogConfig = engineConfig.getTranslogConfig();
         // 用户信息中有携带 translogUUID
         final Map<String, String> userData = store.readLastCommittedSegmentsInfo().getUserData();
         final String translogUUID = Objects.requireNonNull(userData.get(Translog.TRANSLOG_UUID_KEY));
         // We expect that this shard already exists, so it must already have an existing translog else something is badly wrong!
+        // 在创建过程中会根据此时存在的所有事务文件生成reader对象 以及生成一个向最新事务日志文件(gen+1)写入数据的writer对象
         return new Translog(translogConfig, translogUUID, translogDeletionPolicy, globalCheckpointSupplier,
             engineConfig.getPrimaryTermSupplier(), persistedSequenceNumberConsumer);
     }
@@ -804,7 +809,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 生成一个资源管理对象
-     * @param externalRefreshListener
+     * @param externalRefreshListener 该对象一旦感知到reader对象就会进行预热工作
      * @return
      * @throws EngineException
      */
@@ -813,12 +818,15 @@ public class InternalEngine extends Engine {
         ElasticsearchReaderManager internalReaderManager = null;
         try {
             try {
+                // 该reader内部包含多个子reader 每个reader对应一个segment
                 final ElasticsearchDirectoryReader directoryReader =
                     ElasticsearchDirectoryReader.wrap(DirectoryReader.open(indexWriter), shardId);
 
                 // listener 监听到新的reader时 会检测缓存键 并与熔断器产生联动
                 internalReaderManager = new ElasticsearchReaderManager(directoryReader,
                        new RamAccountingRefreshListener(engineConfig.getCircuitBreakerService()));
+
+                // 获取segment_N数据信息
                 lastCommittedSegmentInfos = store.readLastCommittedSegmentsInfo();
                 // 生成外部资源对象  使用的监听器具备预热功能
                 // 在初始化时 reader属性会被设置成current
@@ -2686,6 +2694,7 @@ public class InternalEngine extends Engine {
     private IndexWriter createWriter() throws IOException {
         try {
             final IndexWriterConfig iwc = getIndexWriterConfig();
+            // 使用该配置项生成 IndexWriter
             return createWriter(store.directory(), iwc);
         } catch (LockObtainFailedException ex) {
             logger.warn("could not lock IndexWriter", ex);
@@ -2728,7 +2737,7 @@ public class InternalEngine extends Engine {
      * @return
      */
     private IndexWriterConfig getIndexWriterConfig() {
-        // 这里用了ES自己定制的分词器
+        // 一开始的分词器是通过插件系统加载的  也有默认的分词器 这里就是利用分词器来配置config对象
         final IndexWriterConfig iwc = new IndexWriterConfig(engineConfig.getAnalyzer());
         // 在close时 不需要自动提交
         iwc.setCommitOnClose(false); // we by default don't commit on close
@@ -2736,7 +2745,7 @@ public class InternalEngine extends Engine {
         iwc.setOpenMode(IndexWriterConfig.OpenMode.APPEND);
         // 设置reader相关的参数
         iwc.setReaderAttributes(getReaderAttributes(store.directory(), engineConfig.getIndexSettings()));
-        // 指定删除策略
+        // 指定删除策略  原本默认的删除策略是KeepOnlyLastCommitDeletionPolicy
         iwc.setIndexDeletionPolicy(combinedDeletionPolicy);
         // with tests.verbose, lucene sets this up: plumb to align with filesystem stream
         boolean verbose = false;
@@ -2745,22 +2754,24 @@ public class InternalEngine extends Engine {
         } catch (Exception ignore) {
         }
         iwc.setInfoStream(verbose ? InfoStream.getDefault() : new LoggerInfoStream(logger));
-        // 设置ES封装的merge策略
+        // 默认merge策略是 ConcurrentMergeScheduler    这里设置ES封装的merge策略(做了增强)
         iwc.setMergeScheduler(mergeScheduler);
         // Give us the opportunity to upgrade old segments while performing
         // background merges
+        // 这个merge策略也是 ES增强过的  对应EsTieredMergePolicy
         MergePolicy mergePolicy = config().getMergePolicy();
         // always configure soft-deletes field so an engine with soft-deletes disabled can open a Lucene index with soft-deletes.
         // 指定软删除字段为 "_soft_deletes"
         iwc.setSoftDeletesField(Lucene.SOFT_DELETES_FIELD);
         // RecoverySourcePruneMergePolicy 负责处理 recovery_source 相关的
+        // TODO 这个merge策略先不看 等回顾lucene的merge流程后重看
         mergePolicy = new RecoverySourcePruneMergePolicy(SourceFieldMapper.RECOVERY_SOURCE_NAME, softDeletesPolicy::getRetentionQuery,
-
             // 这个是保留软删除字段的merge策略 也就是 在merge过程中软删除字段不会被丢弃
             new SoftDeletesRetentionMergePolicy(Lucene.SOFT_DELETES_FIELD, softDeletesPolicy::getRetentionQuery,
-
-                // 最基础的merge策略先是被这个对象包装   用于过滤 _id
+                // 最基础的merge策略先是被这个对象包装 当发现field为_id时需要做特殊处理
                 new PrunePostingsMergePolicy(mergePolicy, IdFieldMapper.NAME)));
+
+        // 是否打乱merge
         boolean shuffleForcedMerge = Booleans.parseBoolean(System.getProperty("es.shuffle_forced_merge", Boolean.TRUE.toString()));
         if (shuffleForcedMerge) {
             // We wrap the merge policy for all indices even though it is mostly useful for time-based indices
@@ -2769,13 +2780,15 @@ public class InternalEngine extends Engine {
             // 如果要打乱的话 还要再包装一层
             mergePolicy = new ShuffleForcedMergePolicy(mergePolicy);
         }
-        // 最后用ES的mergePolicy 又包装了一层
+        // ElasticsearchMergePolicy 主要是解决兼容性问题的
         iwc.setMergePolicy(new ElasticsearchMergePolicy(mergePolicy));
+        // 打分策略先不管了
         iwc.setSimilarity(engineConfig.getSimilarity());
         iwc.setRAMBufferSizeMB(engineConfig.getIndexingBufferSize().getMbFrac());
         iwc.setCodec(engineConfig.getCodec());
-        // 卧槽  复合文件我特地没看
+        // TODO 复合文件先忽略
         iwc.setUseCompoundFile(true); // always use compound on flush - reduces # of file-handles on refresh
+        // 设置排序对象后 doc将会按照排序规则进行存储
         if (config().getIndexSort() != null) {
             iwc.setIndexSort(config().getIndexSort());
         }

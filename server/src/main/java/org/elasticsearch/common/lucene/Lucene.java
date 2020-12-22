@@ -103,7 +103,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 内部操纵lucene
+ * 用于操纵lucene的对象
  */
 public class Lucene {
     public static final String LATEST_CODEC = "Lucene84";

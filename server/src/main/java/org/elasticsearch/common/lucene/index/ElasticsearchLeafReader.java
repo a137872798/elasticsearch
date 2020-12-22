@@ -25,7 +25,7 @@ import org.elasticsearch.index.shard.ShardId;
 /**
  * A {@link org.apache.lucene.index.FilterLeafReader} that exposes
  * Elasticsearch internal per shard / index information like the shard ID.
- * 包装的是子级reader  也就是segmentReader
+ * 包装的是子级reader  也就是segmentReader  每个子reader对象都会标注属于哪个shard
  */
 public final class ElasticsearchLeafReader extends FilterLeafReader {
 

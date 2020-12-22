@@ -45,8 +45,9 @@ public class SequenceNumbers {
     /**
      * Reads the sequence number stats from the commit data (maximum sequence number and local checkpoint).
      *
-     * @param commitData       the commit data   用户写入的数据
+     * @param commitData       the commit data
      * @return the sequence number stats
+     * 从存储在segment_N.userData 中获取某些数据
      */
     public static CommitInfo loadSeqNoInfoFromLuceneCommit(
         final Iterable<Map.Entry<String, String>> commitData) {

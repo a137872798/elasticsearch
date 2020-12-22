@@ -58,10 +58,11 @@ public class TranslogReader extends BaseTranslogReader implements Closeable {
     /**
      * Create a translog writer against the specified translog file channel.
      *
-     * @param checkpoint the translog checkpoint
+     * @param checkpoint the translog checkpoint    生成本次检查点对应的gen
      * @param channel    the translog file channel to open a translog reader against
      * @param path       the path to the translog
      * @param header     the header of the translog file  从事务文件中读取出来的文件头
+     * 这里只是基础的赋值操作
      */
     TranslogReader(final Checkpoint checkpoint, final FileChannel channel, final Path path, final TranslogHeader header) {
         super(checkpoint.generation, channel, path, header);
@@ -75,8 +76,8 @@ public class TranslogReader extends BaseTranslogReader implements Closeable {
      *
      * @param channel the translog file channel
      * @param path the path to the translog     事务文件对应的路径
-     * @param checkpoint the translog checkpoint
-     * @param translogUUID the tranlog UUID    为每个事务文件分配的uuid
+     * @param checkpoint the translog checkpoint   此时的检查点信息
+     * @param translogUUID the translog UUID    每次生成 Translog对象时 对应一个uuid
      * @return a new TranslogReader
      * @throws IOException if any of the file operations resulted in an I/O exception
      * 一般是通过该方法初始化 事务文件读取对象的

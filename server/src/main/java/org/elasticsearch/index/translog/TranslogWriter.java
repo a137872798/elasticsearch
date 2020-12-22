@@ -156,10 +156,10 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
      * @param file                            对应事务文件路径 (translog-gen.tlg文件)
      * @param channelFactory                  用于生成fileChannel
      * @param bufferSize                      内存缓冲区大小  数据会先存储在缓冲区中 并一次性写入到磁盘
-     * @param initialMinTranslogGen           TODO
+     * @param initialMinTranslogGen           此时存活的所有事务文件中最小的gen  仅对应生成该对象时的状态
      * @param initialGlobalCheckpoint         此时的全局检查点   当分片处于恢复阶段时 会使用本地检查点作为全局检查点
      * @param globalCheckpointSupplier        globalCheckpointSupplier
-     * @param minTranslogGenerationSupplier   对应函数 getMinFileGeneration()
+     * @param minTranslogGenerationSupplier   对应函数 getMinFileGeneration() 动态获取此时所有事务文件中最小的gen
      * @param primaryTerm                     生成该分片对应的shardRouting时的 term信息
      * @param tragedy                         TragicExceptionHolder  就是可以存储一个异常对象
      * @param persistedSequenceNumberConsumer
@@ -182,7 +182,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
             final Checkpoint checkpoint = Checkpoint.emptyTranslogCheckpoint(header.sizeInBytes(), fileGeneration,
                 initialGlobalCheckpoint, initialMinTranslogGen);
 
-            // 在这里还会生成一次检查点文件
+            // 覆盖之前的全局检查点文件  文件生成顺序是 translog-gen.tlg translog.ckp translog-gen.ckp translog-gen+1.tlg ...
             writeCheckpoint(channelFactory, file.getParent(), checkpoint);
             final LongSupplier writerGlobalCheckpointSupplier;
             if (Assertions.ENABLED) {
