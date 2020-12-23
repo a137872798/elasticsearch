@@ -300,7 +300,7 @@ public class InternalEngine extends Engine {
 
                 // 生成 IndexWriter 用于写入数据 其中mergePolicy 包装了好多层
                 writer = createWriter();
-                // 在indexWriter初始化时 会加载dir下最新的segment_N文件 (同时清理旧的文件)  这里是从userData中获取一个auto时间戳信息
+                // 在indexWriter初始化时 会加载dir下最新的segment_N文件  这里是从userData中获取一个auto时间戳信息
                 bootstrapAppendOnlyInfoFromWriter(writer);
 
                 // 获取segments.userData
@@ -321,30 +321,38 @@ public class InternalEngine extends Engine {
                     throw e;
                 }
             }
-            // 创建资源管理器 在合适的时机会检测能否刷新 并返回最新的数据
+            // 创建资源管理器 在合适的时机会检测能否刷新 并返回最新的数据   总共存在2个readerManager对象 一个为internal一个为external
             // RefreshWarmerListener 负责对数据进行预热
             externalReaderManager = createReaderManager(new RefreshWarmerListener(logger, isClosed, engineConfig));
             internalReaderManager = externalReaderManager.internalReaderManager;
             this.internalReaderManager = internalReaderManager;
             this.externalReaderManager = externalReaderManager;
-            // 这里把记录版本号的容器作为监听器设置到manager上了
+            // 这里把记录版本号的容器作为监听器设置到 internalReaderManager上了
             internalReaderManager.addListener(versionMap);
             assert pendingTranslogRecovery.get() == false : "translog recovery can't be pending before we set it";
             // don't allow commits until we are done with recovering
+            // 标记此时还未从事务日志中恢复数据
             pendingTranslogRecovery.set(true);
-            // 从配置中获取相应的监听器对象并进行设置
+            // 从配置中获取相应的监听器对象并进行设置  对应 RefreshListeners,RefreshPendingLocationListener
             for (ReferenceManager.RefreshListener listener: engineConfig.getExternalRefreshListener()) {
                 this.externalReaderManager.addListener(listener);
             }
+            // 对应 RefreshMetricUpdater
             for (ReferenceManager.RefreshListener listener: engineConfig.getInternalRefreshListener()) {
                 this.internalReaderManager.addListener(listener);
             }
+
+            // 生成一个会记录最后的刷新检查点的监听器对象 并设置到readerManager中
+            // localCheckpointTracker内部的processedCheckpoint初始值是从segment_N.userData 的_local_check_point上获取的
             this.lastRefreshedCheckpointListener = new LastRefreshedCheckpointListener(localCheckpointTracker.getProcessedCheckpoint());
-            // 在这里将监听器 追加到 internalReaderManager中了
             this.internalReaderManager.addListener(lastRefreshedCheckpointListener);
+
+            // 获取 userData中的 maxSeq 或者事务日志中的checkPoint.maxSeq
             maxSeqNoOfUpdatesOrDeletes = new AtomicLong(SequenceNumbers.max(localCheckpointTracker.getMaxSeqNo(), translog.getMaxSeqNo()));
-            // TODO 这意味着丢失了什么数据么 ???
+            // 在初始阶段 localCheckpointTracker.getPersistedCheckpoint() 就是userData._local_check_point
+            // TODO 什么时候会出现这种情况
             if (localCheckpointTracker.getPersistedCheckpoint() < localCheckpointTracker.getMaxSeqNo()) {
+                // 通过 InternalReaderManager 生成searcher   在InternalReaderManager中包含一个IndexReader  searcher就是包装了IndexReader
                 try (Searcher searcher =
                          acquireSearcher("restore_version_map_and_checkpoint_tracker", SearcherScope.INTERNAL)) {
                     // 从之前通过lucene存储的doc中还原出 version checkpoint信息
@@ -354,7 +362,7 @@ public class InternalEngine extends Engine {
                         "failed to restore version map and local checkpoint tracker", e);
                 }
             }
-            // 记录各种统计数据
+            // 统计相关的先忽略
             completionStatsCache = new CompletionStatsCache(() -> acquireSearcher("completion_stats"));
             this.externalReaderManager.addListener(completionStatsCache);
             success = true;
@@ -591,7 +599,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 从事务日志中恢复数据
-     * @param translogRecoveryRunner the translog recovery runner     通过引擎和快照数据进行恢复
+     * @param translogRecoveryRunner the translog recovery runner    这里定义了恢复数据的逻辑
      * @param recoverUpToSeqNo       the upper bound, inclusive, of sequence number to be recovered   最多加载到seq为多少的数据后 就不再恢复了
      * @return
      * @throws IOException
@@ -601,7 +609,7 @@ public class InternalEngine extends Engine {
         flushLock.lock();
         try (ReleasableLock lock = readLock.acquire()) {
             ensureOpen();
-            // 在初始化时 该标识会被修改成true 当该标识被修改成false时 代表已经恢复了数据
+            // 在初始化时 该标识会被修改成true 当该标识被修改成false时 代表已经恢复了数据  就不需要重复恢复数据了
             if (pendingTranslogRecovery.get() == false) {
                 throw new IllegalStateException("Engine has already been recovered");
             }
@@ -636,19 +644,20 @@ public class InternalEngine extends Engine {
      * 从事务日志中恢复数据
      * @param translogRecoveryRunner  该对象定义了如何通过engine 和从translog中获取的快照对象进行数据恢复
      *                                返回的结果就是 总计恢复了多少operation
-     * @param recoverUpToSeqNo
+     * @param recoverUpToSeqNo   代表最多加载到seq为多少的记录  默认情况下是不做限制的  Long.MAX_VALUE
      * @throws IOException
      */
     private void recoverFromTranslogInternal(TranslogRecoveryRunner translogRecoveryRunner, long recoverUpToSeqNo) throws IOException {
 
         // 记录总计恢复了多少operation
         final int opsRecovered;
-        // 从lucene的doc中 可以恢复 processedCheckpoint
+        // 获取 localCheckpointTracker 记录的  processedCheckpoint
+        // 这之前的数据 已经存在于lucene的索引文件中了 所以不需要恢复
         final long localCheckpoint = getProcessedLocalCheckpoint();
 
         // 当前检查点小于 seq上限才有恢复的必要
         if (localCheckpoint < recoverUpToSeqNo) {
-            // 将中间这部分数据生成快照  事务日志应该是每次操作都会写入的
+            // 将中间这部分数据生成快照
             try (Translog.Snapshot snapshot = translog.newSnapshot(localCheckpoint + 1, recoverUpToSeqNo)) {
                 opsRecovered = translogRecoveryRunner.run(this, snapshot);
             } catch (Exception e) {
@@ -757,7 +766,7 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 获取translog最后一个写入的位置
+     * 获取此时事务日志最后一条记录的位置信息
      */
     @Override
     public Translog.Location getTranslogLastWriteLocation() {
@@ -828,8 +837,7 @@ public class InternalEngine extends Engine {
 
                 // 获取segment_N数据信息
                 lastCommittedSegmentInfos = store.readLastCommittedSegmentsInfo();
-                // 生成外部资源对象  使用的监听器具备预热功能
-                // 在初始化时 reader属性会被设置成current
+                // 为什么会分为外部资源对象和内部资源对象
                 ExternalReaderManager externalReaderManager = new ExternalReaderManager(internalReaderManager, externalRefreshListener);
                 success = true;
                 return externalReaderManager;
@@ -2068,8 +2076,9 @@ public class InternalEngine extends Engine {
 
     /**
      * 发起刷新请求
+     * 在什么时机需要触发刷新 ???
      * @param source
-     * @param scope  由内部发起还是外部发起
+     * @param scope  由内部发起还是外部发起  不同的scope会使用不同的readerManager
      * @param block  是否需要阻塞
      * @return
      * @throws EngineException
@@ -2087,7 +2096,7 @@ public class InternalEngine extends Engine {
                 try {
                     // even though we maintain 2 managers we really do the heavy-lifting only once.
                     // the second refresh will only do the extra work we have to do for warming caches etc.
-                    // 获取对应的 reader管理对象
+                    // 获取匹配的 readerManager对象
                     ReferenceManager<ElasticsearchDirectoryReader> referenceManager = getReferenceManager(scope);
                     // it is intentional that we never refresh both internal / external together
                     // block 尽可能获取最新的数据  即使阻塞一段时间
@@ -2125,9 +2134,9 @@ public class InternalEngine extends Engine {
         // TODO: maybe we should just put a scheduled job in threadPool?
         // We check for pruning in each delete request, but we also prune here e.g. in case a delete burst comes in and then no more deletes
         // for a long time:
-        // 清除过期的version 信息
+        // 清除 VersionMap 中的墓碑信息
         maybePruneDeletes();
-        // 刷新merge处理器的配置信息
+        // 更新merge对象内部的属性
         mergeScheduler.refreshConfig();
         return refreshed;
     }
@@ -3034,11 +3043,16 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * 接收到某些配置发生变化的通知 更新内部组件
+     */
     @Override
     public void onSettingsChanged() {
         mergeScheduler.refreshConfig();
         // config().isEnableGcDeletes() or config.getGcDeletesInMillis() may have changed:
+        // 可能有关GCDeletes的配置项会发生变化
         maybePruneDeletes();
+        // 保留数量发生了变化
         softDeletesPolicy.setRetentionOperations(config().getIndexSettings().getSoftDeleteRetentionOperations());
     }
 
@@ -3251,7 +3265,7 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 监听资源的刷新
+     * 该对象会设置在 internalReaderManager上 监听资源的刷新
      */
     private final class LastRefreshedCheckpointListener implements ReferenceManager.RefreshListener {
 
@@ -3260,21 +3274,26 @@ public class InternalEngine extends Engine {
          */
         final AtomicLong refreshedCheckpoint;
 
-        /**
-         * 对应此时待处理的检查点
-         */
         private long pendingCheckpoint;
 
         LastRefreshedCheckpointListener(long initialLocalCheckpoint) {
             this.refreshedCheckpoint = new AtomicLong(initialLocalCheckpoint);
         }
 
+
+        /**
+         * 每次在刷新前都会重新读取  localCheckpointTracker 已处理的检查点
+         */
         @Override
         public void beforeRefresh() {
             // all changes until this point should be visible after refresh
             pendingCheckpoint = localCheckpointTracker.getProcessedCheckpoint();
         }
 
+        /**
+         * 当刷新流程结束时触发该方法
+         * @param didRefresh  是否真的刷新了数据
+         */
         @Override
         public void afterRefresh(boolean didRefresh) {
             if (didRefresh) {
@@ -3357,16 +3376,16 @@ public class InternalEngine extends Engine {
      * Restores the live version map and local checkpoint of this engine using documents (including soft-deleted)
      * after the local checkpoint in the safe commit. This step ensures the live version map and checkpoint tracker
      * are in sync with the Lucene commit.
-     * 恢复记录version的map 以及 checkpointTracker内部的数据
-     * 实际上就是读取当前已经存在的数据  如果有checkpoint/version 相关的 则还原到容器中
+     * 通过reader读取doc  并从中还原 version/checkpoint 信息
      */
     private void restoreVersionMapAndCheckpointTracker(DirectoryReader directoryReader) throws IOException {
         final IndexSearcher searcher = new IndexSearcher(directoryReader);
         searcher.setQueryCache(null);
-        // BooleanQuery 是多个查询条件累加的结果
+        // BooleanQuery 是多个查询条件累加的结果  这里是获取 本次已经持久化后的checkpoint对应的doc
         final Query query = new BooleanQuery.Builder()
             .add(LongPoint.newRangeQuery(
                     SeqNoFieldMapper.NAME, getPersistedLocalCheckpoint() + 1, Long.MAX_VALUE), BooleanClause.Occur.MUST)
+            // doc 必须要包含 _primary_term field
             .add(Queries.newNonNestedFilter(), BooleanClause.Occur.MUST) // exclude non-root nested documents
             .build();
         // 此时weight中已经包含了查询结果了
@@ -3390,26 +3409,30 @@ public class InternalEngine extends Engine {
                 final long primaryTerm = dv.docPrimaryTerm(docId);
                 final long seqNo = dv.docSeqNo(docId);
 
-                // 每当解析到一个 seq时 就更新tracker内部的数据
+                // 之前是用 userData.maxSeq 来还原 processedSeq/persistedSeq的
+                // 现在通过 segmentInfos打开索引文件 并读取内部的docValue 获取记录的最新的seq 更新localCheckpointTracker内的数据
+                // 当seq 超过了checkPoint时 会将2者同步
                 localCheckpointTracker.markSeqNoAsProcessed(seqNo);
                 localCheckpointTracker.markSeqNoAsPersisted(seqNo);
                 idFieldVisitor.reset();
-                // 定位到指定的doc 并用visitor处理 field数据
+
+                // 处理每个doc时  通过visitor获取id信息
                 leaf.reader().document(docId, idFieldVisitor);
                 if (idFieldVisitor.getId() == null) {
                     assert dv.isTombstone(docId);
                     continue;
                 }
                 final BytesRef uid = new Term(IdFieldMapper.NAME, Uid.encodeId(idFieldVisitor.getId())).bytes();
-                // 每个id 在KeyedLock中对应一个 KeyLock对象  并且会直接上锁    在相关流程操作完成时 会释放锁 同时减少引用计数
+                // 在KeyedLock中 为每个id 维护一个锁对象 在获取的同时会对锁进行lock操作   也就是以id为单位进行操作是线程安全的
+                // 在使用完后会自动释放锁
                 try (Releasable ignored = versionMap.acquireLock(uid)) {
-                    // 从容器中找到对应的版本号
+                    // 从容器中找到该id的版本信息
                     final VersionValue curr = versionMap.getUnderLock(uid);
-                    // 上面是在还原 checkpoint 这里就在还原版本号
+
+                    // 当前版本为空 或者本次从 versionValue中获取的seq 比doc解析出来的小    一开始 versionMap中还没有存储任何数据
                     if (curr == null ||
-                        // 当前版本为空 或者本次解析出来的版本号比之前存储在map中的新
                         compareOpToVersionMapOnSeqNo(idFieldVisitor.getId(), seqNo, primaryTerm, curr) == OpVsLuceneDocStatus.OP_NEWER) {
-                        // 如果当前doc 存储在 tombstone中
+                        // 如果当前doc携带了 tombstone field 先忽略这种情况
                         if (dv.isTombstone(docId)) {
                             // use 0L for the start time so we can prune this delete tombstone quickly
                             // when the local checkpoint advances (i.e., after a recovery completed).
@@ -3418,7 +3441,7 @@ public class InternalEngine extends Engine {
                             // putDeleteUnderLock 将数据存储到 tombstone 中 并从 maps移除
                             versionMap.putDeleteUnderLock(uid, new DeleteVersionValue(dv.docVersion(docId), seqNo, primaryTerm, startTime));
                         } else {
-                            // 如果不在 tombstone中  那么插入到maps中
+                            // 为 id 插入一个version信息   内部包含了 doc下 _version 字段的值   还有 _seq_no 的值
                             versionMap.putIndexUnderLock(uid, new IndexVersionValue(null, dv.docVersion(docId), seqNo, primaryTerm));
                         }
                     }
@@ -3426,6 +3449,7 @@ public class InternalEngine extends Engine {
             }
         }
         // remove live entries in the version map
+        // 在通过之前segment_N 文件关联的所有索引文件恢复了 seq 以及生成id对应的版本信息后 进行刷新工作
         refresh("restore_version_map_and_checkpoint_tracker", SearcherScope.INTERNAL, true);
     }
 

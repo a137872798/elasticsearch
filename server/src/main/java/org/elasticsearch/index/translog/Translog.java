@@ -687,7 +687,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
     /**
      * The a {@linkplain Location} that will sort after the {@linkplain Location} returned by the last write but before any locations which
      * can be returned by the next write.
-     * 返回最后一个operation对应的位置
+     * 获取事务日志此时最后一条记录的位置信息
      */
     public Location getLastWriteLocation() {
         try (ReleasableLock lock = readLock.acquire()) {
@@ -727,7 +727,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
      * @param fromSeqNo the lower bound of the range (inclusive)
      * @param toSeqNo   the upper bound of the range (inclusive)
      * @return the new snapshot
-     *
+     * 选择一个范围的事务记录 并生成快照对象
      */
     public Snapshot newSnapshot(long fromSeqNo, long toSeqNo) throws IOException {
         assert fromSeqNo <= toSeqNo : fromSeqNo + " > " + toSeqNo;
@@ -735,8 +735,9 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         try (ReleasableLock ignored = readLock.acquire()) {
             ensureOpen();
             TranslogSnapshot[] snapshots = Stream.concat(readers.stream(), Stream.of(current))
+                // 先找到符合条件的所有reader对象  如果TranslogWriter这种 初始状态 minSeq/maxSeq都是-1 会被过滤掉
                 .filter(reader -> reader.getCheckpoint().minSeqNo <= toSeqNo && fromSeqNo <= reader.getCheckpoint().maxEffectiveSeqNo())
-                // 反正就是将在seq合理范围内的所有reader对象都创建一个快照
+                // 将符合条件的所有reader生成一个快照对象
                 .map(BaseTranslogReader::newSnapshot).toArray(TranslogSnapshot[]::new);
             // 将多个事务文件的快照合并成功一个全局快照对象  它可以遍历下面的所有operation
             final Snapshot snapshot = newMultiSnapshot(snapshots);
@@ -776,6 +777,12 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         return null;
     }
 
+    /**
+     * 将多个快照对象合并
+     * @param snapshots
+     * @return
+     * @throws IOException
+     */
     private Snapshot newMultiSnapshot(TranslogSnapshot[] snapshots) throws IOException {
         final Closeable onClose;
         if (snapshots.length == 0) {
@@ -783,7 +790,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         } else {
             assert Arrays.stream(snapshots).map(BaseTranslogReader::getGeneration).min(Long::compareTo).get()
                 == snapshots[0].generation : "first reader generation of " + snapshots + " is not the smallest";
-            // 这里只针对最小的gen 生成了计数器对象  应该是在删除事务文件时使用
+            // 当事务日志内的数据已经恢复并持久化到 lucene的索引文件中了  那么就没有必要保留之前的数据了  所以在处理完后 就要删除对应的事务文件
             onClose = acquireTranslogGenFromDeletionPolicy(snapshots[0].generation);
         }
         boolean success = false;
@@ -829,12 +836,13 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
      * @return
      */
     private Closeable acquireTranslogGenFromDeletionPolicy(long viewGen) {
-        // 这里生成计数器对象 并在close时释放计数
+        // 通过事务日志删除策略来决定删除什么样的文件
         Releasable toClose = deletionPolicy.acquireTranslogGen(viewGen);
         return () -> {
             try {
                 toClose.close();
             } finally {
+                // 清除所有不再被引用的事务日志文件
                 trimUnreferencedReaders();
                 // 如果没有文件被使用 就关闭channel
                 closeFilesIfNoPendingRetentionLocks();
@@ -1001,7 +1009,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
 
     /**
-     * 用于定位 operation 的
+     * 事务日志中每条记录有一个位置  每条记录对应一个OP
      */
     public static class Location implements Comparable<Location> {
 
@@ -1096,7 +1104,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
      * between {@code fromSeqNo} (inclusive) and {@code toSeqNo} (inclusive). This filtered snapshot
      * shares the same underlying resources with the {@code delegate} snapshot, therefore we should not
      * use the {@code delegate} after passing it to this filtered snapshot.
-     * 快照的包装类 禁止读取范围外的seqNo
+     * 确保只遍历 指定范围内的数据
      */
     private static final class SeqNoFilterSnapshot implements Snapshot {
         private final Snapshot delegate;
@@ -1847,7 +1855,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
     }
 
     /**
-     * 找到包含这个seqNo的最大的gen  代表一定要保留
+     * 该seq对应的最小的gen
      * @param seqNo
      * @param writer
      * @param readers
@@ -1910,7 +1918,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
                 // we're shutdown potentially on some tragic event, don't delete anything
                 return;
             }
-            // getMinReferencedGen()获取当前系统中允许保留的最小gen
+            // getMinReferencedGen()获取当前系统中正在被使用的最小的gen
             // getMinFileGeneration() 此时存在的最小的事务文件
             if (getMinReferencedGen() == getMinFileGeneration()) {
                 return;
@@ -1955,17 +1963,16 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
     }
 
     /**
-     * 获取此时还在使用中的最小gen
+     * 获取此时还被引用中的最小的事务文件gen
      * @return
      */
     private long getMinReferencedGen() {
         assert readLock.isHeldByCurrentThread() || writeLock.isHeldByCurrentThread();
-        // 通过下面2个参数计算后得到的就是此时要保留的最小gen
+
         long minReferencedGen = Math.min(
-            // 获取最小的gen对应的引用计数  (虽然数据已经提交过了 也就是旧数据可以丢弃了 但是旧的数据仍然在使用中 那么就不能删除)
+            // 获取最小的gen对应的引用计数  同时也代表这个gen对应的文件不应该被删除 如果没有则会返回MAX_VALUE 代表没有限制
             deletionPolicy.getMinTranslogGenRequiredByLocks(),
-            // 此时需要保留的最小的gen   在lucene配合DeletionPolicy的处理流程中 会更新deletionPolicy.getLocalCheckpointOfSafeCommit()
-            // 在 safeCommit之前的数据都可以被删除
+            // 当信息还未同步时 LocalCheckpointOfSafeCommit 为-1    找到此时还在使用中的最小的gen
             minGenerationForSeqNo(deletionPolicy.getLocalCheckpointOfSafeCommit() + 1, current, readers));
         assert minReferencedGen >= getMinFileGeneration() :
             "deletion policy requires a minReferenceGen of [" + minReferencedGen + "] but the lowest gen available is ["

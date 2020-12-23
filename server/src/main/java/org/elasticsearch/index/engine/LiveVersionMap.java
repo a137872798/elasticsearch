@@ -72,7 +72,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         // NOTE: these values can both be non-volatile since it's ok to read a stale value per doc ID. We serialize changes in the engine
         // that will prevent concurrent updates to the same document ID and therefore we can rely on the happens-before guanratee of the
         // map reference itself.
-        // 描述是否安全
+        // 描述是否安全  默认为false
         private boolean unsafe;
 
         // minimum timestamp of delete operations that were made while this map was active. this is used to make sure they are kept in
@@ -169,12 +169,15 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
             return needsSafeAccess || previousMapsNeededSafeAccess;
         }
 
+        /**
+         * 是否需要继承在安全模式下访问
+         * @return
+         */
         boolean shouldInheritSafeAccess() {
-            // 空 且 安全  代表没有检测到任何操作
+            // 如果之前的maps中没有数据  并且是不安全的
             final boolean mapHasNotSeenAnyOperations = current.isEmpty() && current.isUnsafe() == false;
             return needsSafeAccess
                 // we haven't seen any ops and map before needed it so we maintain it
-                // 应该是代表current  还没有写入任何operation 所以沿用上一个的状态
                 || (mapHasNotSeenAnyOperations && previousMapsNeededSafeAccess);
         }
 
@@ -286,7 +289,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
     private final AtomicLong ramBytesUsedTombstones = new AtomicLong();
 
     /**
-     * 感知refresh的前置钩子
+     * 本对象会设置到 internalReaderManager上  当执行refresh前会触发该钩子
      * @throws IOException
      */
     @Override
@@ -295,13 +298,19 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         // map.  While reopen is running, any lookup will first
         // try this new map, then fallback to old, then to the
         // current searcher:
-        // 在执行刷新前要构建 maps对象
+        // 当执行刷新操作前  需要更新maps内的数据
         maps = maps.buildTransitionMap();
         assert (unsafeKeysMap = unsafeKeysMap.buildTransitionMap()) != null;
         // This is not 100% correct, since concurrent indexing ops can change these counters in between our execution of the previous
         // line and this one, but that should be minor, and the error won't accumulate over time:
     }
 
+    /**
+     * 当某次刷新动作完成后触发
+     * 那么只要发生了refresh 之前的id对应的version信息一定会被清除
+     * @param didRefresh   本次是否发生了数据的变化
+     * @throws IOException
+     */
     @Override
     public void afterRefresh(boolean didRefresh) throws IOException {
         // We can now drop old because these operations are now visible via the newly opened searcher.  Even if didRefresh is false, which
@@ -310,7 +319,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         // case.  This is because we assign new maps (in beforeRefresh) slightly before Lucene actually flushes any segments for the
         // reopen, and so any concurrent indexing requests can still sneak in a few additions to that current map that are in fact
         // reflected in the previous reader.   We don't touch tombstones here: they expire on their own index.gc_deletes timeframe:
-        // 当刷新结束时 将map中的oldLookup置空
+        // 将old置空
         maps = maps.invalidateOldMap();
         assert (unsafeKeysMap = unsafeKeysMap.invalidateOldMap()) != null;
 
@@ -318,13 +327,14 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
     /**
      * Returns the live version (add or delete) for this uid.
+     * 获取该id对应的版本号信息
      */
     VersionValue getUnderLock(final BytesRef uid) {
         return getUnderLock(uid, maps);
     }
 
     /**
-     * 查找某个byte 对应的版本号
+     * 查找某个id对应的版本号
      * @param uid
      * @param currentMaps
      * @return
@@ -385,6 +395,11 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         }
     }
 
+    /**
+     * 将某个id 以及相关的版本号存储到容器中
+     * @param uid
+     * @param version
+     */
     void putIndexUnderLock(BytesRef uid, IndexVersionValue version) {
         assert assertKeyedLockHeldByCurrentThread(uid);
         assert uid.bytes.length == uid.length : "Oversized _uid! UID length: " + uid.length + ", bytes length: " + uid.bytes.length;

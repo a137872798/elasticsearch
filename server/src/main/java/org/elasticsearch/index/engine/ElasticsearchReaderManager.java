@@ -76,6 +76,7 @@ class ElasticsearchReaderManager extends ReferenceManager<ElasticsearchDirectory
     @Override
     protected ElasticsearchDirectoryReader refreshIfNeeded(ElasticsearchDirectoryReader referenceToRefresh) throws IOException {
         // 一旦检测到有未刷盘的变化 比如 deleteQueue中记录了 update delete信息  马上将这些信息作用到segment上 并生成一批新的segmentReader
+        // 当reader没有发生变化时 返回null
         final ElasticsearchDirectoryReader reader = (ElasticsearchDirectoryReader) DirectoryReader.openIfChanged(referenceToRefresh);
         if (reader != null) {
             refreshListener.accept(reader, referenceToRefresh);

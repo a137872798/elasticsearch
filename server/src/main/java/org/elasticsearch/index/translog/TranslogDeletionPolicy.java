@@ -47,8 +47,7 @@ public final class TranslogDeletionPolicy {
     /**
      * Records how many retention locks are held against each
      * translog generation
-     * 维护了每个shard对应的 translog对象
-     * 在该容器中的 就代表此时translog正在被使用
+     * 维护了每个gen对应的事务文件的 引用计数
      */
     private final Map<Long, Counter> translogRefCounts = new HashMap<>();
 
@@ -81,15 +80,16 @@ public final class TranslogDeletionPolicy {
     /**
      * acquires the basis generation for a new snapshot. Any translog generation above, and including, the returned generation
      * will not be deleted until the returned {@link Releasable} is closed.
-     * 应该是每个获取该gen对应的 translog时 同时都会获得一个 close对象 类似引用计数的操作 只有引用计数归0时才会触发真正的close操作
+     * 决定根据什么规则来删除事务文件
      */
     synchronized Releasable acquireTranslogGen(final long translogGen) {
-        // 为每个 translog维护单独的计数器对象
+        // 为每个事务日志文件维护引用计数  当引用计数归0时就能确保删除文件了
         translogRefCounts.computeIfAbsent(translogGen, l -> Counter.newCounter(false)).addAndGet(1);
         final AtomicBoolean closed = new AtomicBoolean();
         assert assertAddTranslogRef(closed);
         return () -> {
             if (closed.compareAndSet(false, true)) {
+                // 当该文件使用完毕时 释放引用计数
                 releaseTranslogGen(translogGen);
                 assert assertRemoveTranslogRef(closed);
             }

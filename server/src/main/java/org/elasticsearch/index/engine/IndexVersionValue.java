@@ -24,12 +24,22 @@ import org.elasticsearch.index.translog.Translog;
 
 import java.util.Objects;
 
+/**
+ * 描述某个id 对应的索引版本信息
+ */
 final class IndexVersionValue extends VersionValue {
 
     private static final long RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(IndexVersionValue.class);
 
     private final Translog.Location translogLocation;
 
+    /**
+     *
+     * @param translogLocation  可为空
+     * @param version  某个id对应的doc下 _version 字段的值
+     * @param seqNo  _seq_no的值
+     * @param term  _primary_term的值
+     */
     IndexVersionValue(Translog.Location translogLocation, long version, long seqNo, long term) {
         super(version, seqNo, term);
         this.translogLocation = translogLocation;

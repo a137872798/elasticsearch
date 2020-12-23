@@ -389,7 +389,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * True if this shard is still indexing (recently) and false if we've been idle for long enough (as periodically checked by {@link
      * IndexingMemoryController}).
-     * 当前分片是否处于激活状态  当发起一次index操作时 就会设置为true 那么是在什么时候设置成false呢 ???
+     * 当前分片是否处于激活状态  当发起一次index操作时 就会设置为true
+     * 当分片首次被创建 并且启动engine后 也会设置为true
      */
     private final AtomicBoolean active = new AtomicBoolean();
     /**
@@ -407,9 +408,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * location 是定义translog 中某个operation的位置的
      */
     private final AtomicReference<Translog.Location> pendingRefreshLocation = new AtomicReference<>();
-    /**
-     * 继承自 refreshListener 还不清楚怎么用
-     */
+
     private final RefreshPendingLocationListener refreshPendingLocationListener;
     private volatile boolean useRetentionLeasesInPeerRecovery;
 
@@ -1901,13 +1900,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             try {
                 /**
                  * 这里就是定义了如何通过事务日志文件恢复数据的函数
-                 * @param snapshot 事务日志的快照对象可以遍历给定范围内的所有operation
+                 * @param engine 使用的引擎对象
+                 * @param snapshot 此时日志文件下所有数据(OP) 结合成的快照对象
                  */
                 final Engine.TranslogRecoveryRunner translogRecoveryRunner = (engine, snapshot) -> {
 
                     // 设置本次处理的事务日志文件总长度  每个operation 作为一个单位长度
                     recoveryState.getTranslog().totalLocal(snapshot.totalOperations());
-                    // 执行恢复任务
+                    // 代表总计恢复了多少 op
                     final int recoveredOps = runTranslogRecovery(engine, snapshot, Engine.Operation.Origin.LOCAL_TRANSLOG_RECOVERY,
                         recoveryState.getTranslog()::incrementRecoveredOperations);
                     // 通过更新数量来设置total
@@ -1981,15 +1981,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * 恢复实际上就是重新发起一次写入啊
      *
      * @param engine    使用的引擎对象
-     * @param operation
-     * @param origin    发起本次操作的原因
+     * @param operation   本次用于恢复的单个操作
+     * @param origin    本次operation 来源 比如从本地事务文件恢复
      * @return
      * @throws IOException
      */
     private Engine.Result applyTranslogOperation(Engine engine, Translog.Operation operation,
                                                  Engine.Operation.Origin origin) throws IOException {
         // If a translog op is replayed on the primary (eg. ccr), we need to use external instead of null for its version type.
-        // 如果当前作为主分片首次发起的操作 作为外部操作 其余情况就是null
+        // TODO 先忽略 origin为PRIMARY的情况
         final VersionType versionType = (origin == Engine.Operation.Origin.PRIMARY) ? VersionType.EXTERNAL : null;
         final Engine.Result result;
         switch (operation.opType()) {
@@ -2024,6 +2024,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Replays translog operations from the provided translog {@code snapshot} to the current engine using the given {@code origin}.
      * The callback {@code onOperationRecovered} is notified after each translog operation is replayed successfully.
+     * @param engine  本次相关的引擎对象
+     * @param snapshot  涉及到的所有事务文件合并成一个快照对象
+     * @param origin  记录了本次operation数据的来源  比如是基于本地事务文件获取
      * @param onOperationRecovered 每当完成一次恢复操作的后置钩子
      * 通过事务日志文件进行恢复
      */
@@ -2106,6 +2109,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         loadGlobalCheckpointToReplicationTracker();
         // 打开引擎
         innerOpenEngineAndTranslog(replicationTracker);
+        // 从事务日志中恢复数据
         getEngine().recoverFromTranslog(translogRecoveryRunner, Long.MAX_VALUE);
     }
 
@@ -2140,7 +2144,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
         // we disable deletes since we allow for operations to be executed against the shard while recovering
         // but we need to make sure we don't loose deletes until we are done recovering
-        // 标记成不可删除 这样一些长时间不使用的 translogReader对应的文件也不会被删除了
+        // 标记成不可删除
         config.setEnableGcDeletes(false);
         // 从磁盘中读取最新的续约信息 并设置到replicationTracker中  某几种数据恢复方式都会写入一个空的续约信息到文件中
         updateRetentionLeasesOnReplica(loadRetentionLeases());
@@ -2161,7 +2165,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
         // time elapses after the engine is created above (pulling the config settings) until we set the engine reference, during
         // which settings changes could possibly have happened, so here we forcefully push any config changes to the new engine.
-        // 主要是触发newEngine加载配置的逻辑
+        // 某些配置可能发生了变化
         onSettingsChanged();
         assert assertSequenceNumbersInCommit();
         assert recoveryState.getStage() == RecoveryState.Stage.TRANSLOG : "TRANSLOG stage expected but was: " + recoveryState.getStage();
@@ -2181,7 +2185,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 当创建一个新的engine时 会创建一个新的事务文件 以及该文件对应的writer对象
+     * 这里将获取事务日志最后一条记录位置的函数设置到 refreshListeners中
      *
      * @param newEngine
      */
@@ -3439,6 +3443,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             similarityService.similarity(mapperService), codecService, shardEventListener,
             indexCache != null ? indexCache.query() : null, cachingPolicy, translogConfig,
             IndexingMemoryController.SHARD_INACTIVE_TIME_SETTING.get(indexSettings.getSettings()),
+            // 对应externalReaderManager的监听器
             List.of(refreshListeners, refreshPendingLocationListener),
             Collections.singletonList(new RefreshMetricUpdater(refreshMetric)),
             indexSort, circuitBreakerService, globalCheckpointSupplier, replicationTracker::getRetentionLeases,
@@ -4153,16 +4158,33 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 该监听器会设置在 internalReaderManager
+     */
     private static class RefreshMetricUpdater implements ReferenceManager.RefreshListener {
 
+        /**
+         * 当刷新完成后 将耗时信息设置到统计对象中
+         */
         private final MeanMetric refreshMetric;
+
+        /**
+         * 记录某次开始刷新的时间
+         */
         private long currentRefreshStartTime;
+        /**
+         * 记录执行刷新任务的线程
+         */
         private Thread callingThread = null;
 
         private RefreshMetricUpdater(MeanMetric refreshMetric) {
             this.refreshMetric = refreshMetric;
         }
 
+        /**
+         * 在执行刷新操作前
+         * @throws IOException
+         */
         @Override
         public void beforeRefresh() throws IOException {
             if (Assertions.ENABLED) {
@@ -4173,6 +4195,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             currentRefreshStartTime = System.nanoTime();
         }
 
+        /**
+         * 刷新完成时 进行一些数据统计
+         * @param didRefresh
+         * @throws IOException
+         */
         @Override
         public void afterRefresh(boolean didRefresh) throws IOException {
             if (Assertions.ENABLED) {

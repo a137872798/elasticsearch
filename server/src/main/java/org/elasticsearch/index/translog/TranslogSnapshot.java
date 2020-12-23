@@ -36,7 +36,7 @@ final class TranslogSnapshot extends BaseTranslogReader {
      */
     private final int totalOperations;
     /**
-     * 某一时刻的检查点  记录了一些特殊的数值 还不清楚是做什么的
+     * 某个 TranslogReader对应的checkpoint对象
      */
     private final Checkpoint checkpoint;
     /**
@@ -55,9 +55,6 @@ final class TranslogSnapshot extends BaseTranslogReader {
      */
     private long position;
 
-    /**
-     * TODO 什么用
-     */
     private int skippedOperations;
 
     /**

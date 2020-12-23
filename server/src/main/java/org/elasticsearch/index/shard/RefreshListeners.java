@@ -227,7 +227,7 @@ public final class RefreshListeners implements ReferenceManager.RefreshListener,
 
     /**
      * Setup the translog used to find the last refreshed location.
-     * 获取此时正在使用的事务文件写入的位置
+     * 通过该函数可以随时得知此时该监听器绑定的engine上 事务日志最后一条记录的位置
      */
     public void setCurrentRefreshLocationSupplier(Supplier<Translog.Location> currentRefreshLocationSupplier) {
         this.currentRefreshLocationSupplier = currentRefreshLocationSupplier;

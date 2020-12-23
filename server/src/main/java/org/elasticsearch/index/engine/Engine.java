@@ -767,7 +767,7 @@ public abstract class Engine implements Closeable {
             Searcher engineSearcher = new Searcher(source, acquire,
                 engineConfig.getSimilarity(), engineConfig.getQueryCache(), engineConfig.getQueryCachingPolicy(),
 
-                // close 钩子
+                // 关闭searcher时触发的  close钩子
                 () -> {
                 if (released.compareAndSet(false, true)) {
                     try {
@@ -1367,7 +1367,7 @@ public abstract class Engine implements Closeable {
 
         /**
          *
-         * @param source  这个source指代什么???
+         * @param source  描述当前场景
          * @param reader  真正负责读取数据的reader对象
          * @param similarity
          * @param queryCache

@@ -59,12 +59,12 @@ public class LocalCheckpointTracker {
 
     /**
      * The current persisted local checkpoint, i.e., all sequence numbers no more than this number have been durably persisted.
-     * 一边处理一边持久化吗???
      */
     final AtomicLong persistedCheckpoint = new AtomicLong();
 
     /**
      * The next available sequence number.
+     * 下一个预期更新的seq
      */
     final AtomicLong nextSeqNo = new AtomicLong();
 
@@ -106,6 +106,7 @@ public class LocalCheckpointTracker {
      * Marks the provided sequence number as seen and updates the max_seq_no if needed.
      */
     public void advanceMaxSeqNo(final long seqNo) {
+        // 比较传入的参数 与原值  保留更大的那个
         nextSeqNo.accumulateAndGet(seqNo + 1, Math::max);
     }
 
@@ -131,25 +132,25 @@ public class LocalCheckpointTracker {
 
     /**
      * 标记某个seq 已经处理过了  可能是processed/persisted
-     * @param seqNo
-     * @param checkPoint
+     * @param seqNo  本次处理完毕的seq
+     * @param checkPoint  之前的检查点
      * @param bitSetMap
      */
     private void markSeqNo(final long seqNo, final AtomicLong checkPoint, final LongObjectHashMap<CountedBitSet> bitSetMap) {
         assert Thread.holdsLock(this);
         // make sure we track highest seen sequence number
-        // 更新nextSeq
+        // 尝试更新nextSeq
         advanceMaxSeqNo(seqNo);
         if (seqNo <= checkPoint.get()) {
             // this is possible during recovery where we might replay an operation that was also replicated
             return;
         }
-        // 定位到某个slot的位图
+        // seq 使用位图来存储 当某个seq被确认后 会设置到位图中
         final CountedBitSet bitSet = getBitSetForSeqNo(bitSetMap, seqNo);
         // 位运算 得到要设置的位置
         final int offset = seqNoToBitSetOffset(seqNo);
         bitSet.set(offset);
-        // 因为处理了新的seq 且正好按照单调递增的顺序 所以要更新检查点
+        // 当此时seq 已经超过了checkPoint时 更新checkPoint的值   也就是会尽可能保持 seq与checkPoint的一致性
         if (seqNo == checkPoint.get() + 1) {
             updateCheckpoint(checkPoint, bitSetMap);
         }
@@ -236,7 +237,9 @@ public class LocalCheckpointTracker {
     /**
      * Moves the checkpoint to the last consecutively processed sequence number. This method assumes that the sequence number
      * following the current checkpoint is processed.
-     * 更新检查点
+     * @param checkPoint 当前检查点的值
+     * @param bitSetMap 存储seq的位图
+     * 更新检查点  每次增加1
      */
     @SuppressForbidden(reason = "Object#notifyAll")
     private void updateCheckpoint(AtomicLong checkPoint, LongObjectHashMap<CountedBitSet> bitSetMap) {

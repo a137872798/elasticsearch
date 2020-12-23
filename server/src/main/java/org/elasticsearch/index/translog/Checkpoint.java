@@ -127,6 +127,7 @@ final class Checkpoint {
 
     /**
      * Returns the maximum sequence number of operations in this checkpoint after applying {@link #trimmedAboveSeqNo}.
+     * 获取有效的 maxSeq
      */
     long maxEffectiveSeqNo() {
         if (trimmedAboveSeqNo == SequenceNumbers.UNASSIGNED_SEQ_NO) {

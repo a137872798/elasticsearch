@@ -908,6 +908,7 @@ public class Lucene {
     private static final class DirectoryReaderWithAllLiveDocs extends FilterDirectoryReader {
         /**
          * 每个segmentReader 都会被包装成该对象
+         * 就是直接包含了 liveDoc位图 以及存活的doc数量
          */
         static final class LeafReaderWithLiveDocs extends FilterLeafReader {
 

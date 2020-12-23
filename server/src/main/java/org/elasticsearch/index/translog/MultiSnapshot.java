@@ -94,9 +94,7 @@ final class MultiSnapshot implements Translog.Snapshot {
             final TranslogSnapshot current = translogs[index];
             Translog.Operation op;
             while ((op = current.next()) != null) {
-                // 如果是未分配的seq 是不需要校验的
-                // seqNo 就是某个operation在整个事务文件下的 全局序号
-                // 如果在 getAndSet冲突 就继续往下读取
+                // 为什么是反向遍历啊
                 if (op.seqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO || seenSeqNo.getAndSet(op.seqNo()) == false) {
                     return op;
                 } else {

@@ -48,6 +48,11 @@ final class RamAccountingRefreshListener implements BiConsumer<ElasticsearchDire
         this.breakerService = breakerService;
     }
 
+    /**
+     * 当reader对象发生refresh后 触发该函数  处理跟缓存相关的逻辑
+     * @param reader
+     * @param previousReader
+     */
     @Override
     public void accept(ElasticsearchDirectoryReader reader, ElasticsearchDirectoryReader previousReader) {
         // 获取指定的熔断器实例

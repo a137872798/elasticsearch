@@ -584,6 +584,8 @@ public class RecoveryState implements ToXContentFragment, Writeable {
         /**
          * Sets the total number of translog operations to be recovered locally before performing peer recovery
          * @see IndexShard#recoverLocallyUpToGlobalCheckpoint()
+         * 设置本次操作过程涉及到的所有事务文件的 op数总和  但是某些op对应的seq可能不再恢复范围内 所以是需要跳过的
+         * 每个op对应一个seq
          */
         public synchronized void totalLocal(int totalLocal) {
             assert totalLocal >= recovered : totalLocal + " < " + recovered;

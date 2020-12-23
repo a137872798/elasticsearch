@@ -75,9 +75,9 @@ public final class KeyedLock<T> {
             } else {
                 assert perNodeLock != null;
                 int i = perNodeLock.count.get();
-                // 计数器为0 代表当前没有上锁
+                // 锁对象在初始化时 计数就为1
                 if (i > 0 && perNodeLock.count.compareAndSet(i, i + 1)) {
-                    // 这里可能会发生阻塞的
+                    // 这里可能会发生阻塞的   当能够抢占到锁时 锁的引用计数已经从2恢复成1了 因为之前那个线程已经减少引用计数了
                     perNodeLock.lock();
                     return new ReleasableLock(key, perNodeLock);
                 }
@@ -114,7 +114,7 @@ public final class KeyedLock<T> {
 
     private ReleasableLock tryCreateNewLock(T key) {
         KeyLock newLock = new KeyLock(fair);
-        // 生成锁的时候直接上锁吗
+        // 在生成锁后 立刻进行上锁操作
         newLock.lock();
         KeyLock keyLock = map.putIfAbsent(key, newLock);
         if (keyLock == null) {
@@ -168,6 +168,9 @@ public final class KeyedLock<T> {
         }
     }
 
+    /**
+     * 锁在创建时 默认持有数为1
+     */
     @SuppressWarnings("serial")
     private static final class KeyLock extends ReentrantLock {
         KeyLock(boolean fair) {

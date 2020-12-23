@@ -178,7 +178,8 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
             final TranslogHeader header = new TranslogHeader(translogUUID, primaryTerm);
             header.write(channel);
 
-            // 生成空的检查点对象
+            // 生成空的检查点对象  这里offset 就是从事务头开始
+            // 初始状态 minSeq/maxSeq 都是-1
             final Checkpoint checkpoint = Checkpoint.emptyTranslogCheckpoint(header.sizeInBytes(), fileGeneration,
                 initialGlobalCheckpoint, initialMinTranslogGen);
 

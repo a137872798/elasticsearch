@@ -41,7 +41,7 @@ import java.util.function.Supplier;
 class CompletionStatsCache implements ReferenceManager.RefreshListener {
 
     /**
-     * 可以获取到 查询对象 底层套了 IndexReader
+     * 获取reader对象的函数
      */
     private final Supplier<Engine.Searcher> searcherSupplier;
 
