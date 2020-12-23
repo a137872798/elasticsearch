@@ -378,6 +378,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
     /**
      * Adds this uid/version to the pending adds map iff the map needs safe access.
+     * 将某个id对应的 indexVersion信息插入到maps中
      */
     void maybePutIndexUnderLock(BytesRef uid, IndexVersionValue version) {
         assert assertKeyedLockHeldByCurrentThread(uid);

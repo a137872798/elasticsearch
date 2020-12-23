@@ -19,7 +19,7 @@ import java.util.stream.Stream;
 
 import static org.hamcrest.Matchers.equalTo;
 
-public class InferenceToXContentCompressorTests extends ESTestCase {
+public nferenceToXContentCompressorTests extends ESTestCase {
 
     public void testInflateAndDeflate() throws IOException {
         for(int i = 0; i < 10; i++) {

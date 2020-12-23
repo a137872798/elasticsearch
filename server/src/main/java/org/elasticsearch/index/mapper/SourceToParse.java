@@ -51,6 +51,7 @@ public class SourceToParse {
     private final XContentType xContentType;
 
     /**
+     * 就是简单的赋值操作
      * @param index
      * @param id
      * @param source

@@ -211,7 +211,7 @@ public class LocalCheckpointTracker {
 
     /**
      * Checks if the given sequence number was marked as processed in this tracker.
-     * 检测某个序号是否已经操作完成了
+     * 每个操作都有一个 seq  通过判断seq 与本地检查点对象维护的 processedCheckpoint 来检测某个操作是否已经执行过了
      */
     public boolean hasProcessed(final long seqNo) {
         assert seqNo >= 0 : "invalid seq_no=" + seqNo;
@@ -228,7 +228,7 @@ public class LocalCheckpointTracker {
             if (seqNo <= processedCheckpoint.get()) {
                 return true;
             }
-            // 也就是seq 可能会在  processedCheckpoint < seq < nextSeqNo 之间
+            // 如果已经设置到位图中了 必然已经被处理过了
             final CountedBitSet bitSet = processedSeqNo.get(bitSetKey);
             return bitSet != null && bitSet.get(bitSetOffset);
         }

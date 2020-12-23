@@ -57,6 +57,10 @@ final class PerThreadIDVersionAndSeqNoLookup {
 
     /** terms enum for uid field */
     final String uidField;
+
+    /**
+     * 通过 id 定位到某个doc后
+     */
     private final TermsEnum termsEnum;
 
     /** Reused for iteration (when the term exists) */
@@ -67,11 +71,11 @@ final class PerThreadIDVersionAndSeqNoLookup {
 
     /**
      * Initialize lookup for the provided segment
-     * 该对象在初始化时 通过一个 segmentReader 和一个指定的field 进行初始化
+     * @param uidField 代表 name为 _id 的field   本对象本身是作为缓存使用的 实际上还可以使用其他field
      */
     PerThreadIDVersionAndSeqNoLookup(LeafReader reader, String uidField) throws IOException {
         this.uidField = uidField;
-        // terms 是用于迭代所有doc中 该field分词后的term的
+        // 获取每个包含_id的doc 的docValue被分词后的结果 也就是terms
         final Terms terms = reader.terms(uidField);
         if (terms == null) {
             // If a segment contains only no-ops, it does not have _uid but has both _soft_deletes and _tombstone fields.
@@ -154,11 +158,13 @@ final class PerThreadIDVersionAndSeqNoLookup {
 
     private static long readNumericDocValues(LeafReader reader, String field, int docId) throws IOException {
         final NumericDocValues dv = reader.getNumericDocValues(field);
+
+        // 定位到某个具体的doc
         if (dv == null || dv.advanceExact(docId) == false) {
             assert false : "document [" + docId + "] does not have docValues for [" + field + "]";
             throw new IllegalStateException("document [" + docId + "] does not have docValues for [" + field + "]");
         }
-        // 这里已经定位到doc了
+        // 获取docValue
         return dv.longValue();
     }
 

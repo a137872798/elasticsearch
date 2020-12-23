@@ -77,7 +77,6 @@ public final class VersionsAndSeqNoResolver {
 
         // 获取当前线程关联的 lookup对象 一般 ThreadLocal应该是配合长生命周期的线程使用的  比如线程池
         PerThreadIDVersionAndSeqNoLookup[] lookupState = ctl.get();
-        // 如果不为空 发现 field是不需要设置了
         if (lookupState == null) {
             // 原来是每个 segmentReader 对应一个 lookup对象
             lookupState = new PerThreadIDVersionAndSeqNoLookup[reader.leaves().size()];
@@ -154,7 +153,6 @@ public final class VersionsAndSeqNoResolver {
             final LeafReaderContext leaf = leaves.get(i);
             // 找到对应的lookup对象
             PerThreadIDVersionAndSeqNoLookup lookup = lookups[leaf.ord];
-            // 结果被缓存了是吗 现在用term直接查询
             DocIdAndVersion result = lookup.lookupVersion(term.bytes(), loadSeqNo, leaf);
             if (result != null) {
                 return result;

@@ -41,6 +41,7 @@ public interface IndexingOperationListener {
      * also called when indexing a document did not succeed due to document
      * related failures. See {@link #postIndex(ShardId, Engine.Index, Exception)}
      * for engine level failures
+     * 每当执行了一次index操作后 触发该钩子
      */
     default void postIndex(ShardId shardId, Engine.Index index, Engine.IndexResult result) {}
 

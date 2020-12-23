@@ -1309,10 +1309,11 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         private final long seqNo;
         private final long primaryTerm;
         private final long version;
-        private final BytesReference source;
         /**
-         * index 为什么包含路由信息
+         * 每次index操作写入的数据就是这个source
          */
+        private final BytesReference source;
+
         private final String routing;
 
         /**
