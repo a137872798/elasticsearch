@@ -181,6 +181,16 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
             this.cache = cache;
         }
 
+
+        /**
+         * 当通过IndexWarmer加载数据时 会转发到该方法
+         * @param context  根据上下文信息 以及 IndexFieldData 可以获取LeafFieldData
+         * @param indexFieldData
+         * @param <FD>
+         * @param <IFD>
+         * @return
+         * @throws Exception
+         */
         @Override
         @SuppressWarnings("unchecked")
         public <FD extends LeafFieldData, IFD extends IndexFieldData<FD>> FD load(final LeafReaderContext context,
@@ -196,9 +206,9 @@ public class IndicesFieldDataCache implements RemovalListener<IndicesFieldDataCa
             // 这里是加载某个field的数据 并存储到缓存中
             final Accountable accountable = cache.computeIfAbsent(key, k -> {
                 cacheHelper.addClosedListener(IndexFieldCache.this);
-                // 将监听器转移到 key中
+                // 如果key发生了冲突 将listener 合并
                 Collections.addAll(k.listeners, this.listeners);
-                // 通过 indexFieldData 加载数据
+                // 这里会执行lucene的标准操作 通过指定一个field 将包含该field的所有doc取出来  所有field的docValue 会合并成一个迭代器
                 final LeafFieldData fieldData = indexFieldData.loadDirect(context);
                 for (Listener listener : k.listeners) {
                     try {

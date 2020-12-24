@@ -153,9 +153,6 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
      */
     private final TranslogConfig config;
 
-    /**
-     * 全局检查点是什么
-     */
     private final LongSupplier globalCheckpointSupplier;
 
     /**
@@ -627,7 +624,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
      * @param operation the operation to add
      * @return the location of the operation in the translog
      * @throws IOException if adding the operation to the translog resulted in an I/O exception
-     * 开始往writer中追加一个新的操作记录
+     * 在事务日志中记录一个新的operation
      */
     public Location add(final Operation operation) throws IOException {
         //  基于池化技术获取一块可回收的byte[]并包装成输出流  （实际上内部是二级数组在逻辑上形成大数组）
@@ -646,7 +643,6 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
             final ReleasableBytesReference bytes = out.bytes();
             try (ReleasableLock ignored = readLock.acquire()) {
                 ensureOpen();
-                // TODO 这里term到底怎么用
                 if (operation.primaryTerm() > current.getPrimaryTerm()) {
                     assert false :
                         "Operation term is newer than the current term; "
@@ -1910,7 +1906,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
     /**
      * Trims unreferenced translog generations by asking {@link TranslogDeletionPolicy} for the minimum
      * required generation
-     * 当某些reader不被使用时 可以考虑将他们删除
+     * 一般是这样 每当要将一个数据写入到lucene中 就会同时在事务日志中写入一份并持久化  而当在lucene中的数据完成刷盘 旧的事务日志就可以删除了
      */
     public void trimUnreferencedReaders() throws IOException {
         // first check under read lock if any readers can be trimmed

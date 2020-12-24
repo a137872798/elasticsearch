@@ -82,7 +82,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
     private final LongSupplier minTranslogGenerationSupplier;
 
     // callback that's called whenever an operation with a given sequence number is successfully persisted.
-    // 该函数是定义如何处理那些未提交的数据的
+    // 每当事务日志中记载的某个operation 刷盘成功时会触发一次该函数
     private final LongConsumer persistedSequenceNumberConsumer;
 
     protected final AtomicBoolean closed = new AtomicBoolean(false);
@@ -242,6 +242,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
 
         totalOffset += data.length();
 
+        // 当某个 TranslogWriter被初始化时  minSeqNo/maxSeqNo 都是 NO_OPS_PERFORMED  而当首次将数据写入到事务日志中后 就会更新min/max的值
         if (minSeqNo == SequenceNumbers.NO_OPS_PERFORMED) {
             assert operationCounter == 0;
         }
@@ -350,6 +351,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
     @Override
     synchronized Checkpoint getCheckpoint() {
         return new Checkpoint(totalOffset, operationCounter, generation, minSeqNo, maxSeqNo,
+            // 全局检查点是从 replicationCheckpointTracker中获取的  应该是某个shard所有primary，replication写入到的checkpoint
             globalCheckpointSupplier.getAsLong(), minTranslogGenerationSupplier.getAsLong(),
             SequenceNumbers.UNASSIGNED_SEQ_NO);
     }
@@ -502,6 +504,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
     }
 
     /**
+     * 刷盘只要没有替换当前事务文件  就只是将最新的checkpoint信息覆盖到外层的检查点文件
      * @param channelFactory
      * @param translogFile   事务文件的上层目录
      * @param checkpoint     本次需要写入到文件中的检查点

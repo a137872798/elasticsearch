@@ -80,9 +80,6 @@ public final class BitsetFilterCache extends AbstractIndexComponent
     public static final Setting<Boolean> INDEX_LOAD_RANDOM_ACCESS_FILTERS_EAGERLY_SETTING =
         Setting.boolSetting("index.load_fixed_bitset_filters_eagerly", true, Property.IndexScope);
 
-    /**
-     * 这是什么意思 如果是false 就不能预热了
-     */
     private final boolean loadRandomAccessFiltersEagerly;
     /**
      * 每个缓存键 对应一个缓存对象  缓存键应该是以index为维度进行划分的
@@ -100,7 +97,7 @@ public final class BitsetFilterCache extends AbstractIndexComponent
         if (listener == null) {
             throw new IllegalArgumentException("listener must not be null");
         }
-        // 是否渴望使用固定大小的位图 默认为true   对应的是稀疏位图
+        // 只有该标识为true 才会开启预热
         this.loadRandomAccessFiltersEagerly = this.indexSettings.getValue(INDEX_LOAD_RANDOM_ACCESS_FILTERS_EAGERLY_SETTING);
         this.loadedFilters = CacheBuilder.<IndexReader.CacheKey, Cache<Query, Value>>builder().removalListener(this).build();
         this.listener = listener;
@@ -121,6 +118,11 @@ public final class BitsetFilterCache extends AbstractIndexComponent
         }
     }
 
+    /**
+     * 生成基于 liveDoc的缓存对象
+     * @param threadPool
+     * @return
+     */
     public IndexWarmer.Listener createListener(ThreadPool threadPool) {
         return new BitSetProducerWarmer(threadPool);
     }
@@ -272,15 +274,17 @@ public final class BitsetFilterCache extends AbstractIndexComponent
          *
          * @param indexShard
          * @param reader
-         * @return
+         * @return  调用TerminationHandler 结束时就代表预热完成了
          */
         @Override
         public IndexWarmer.TerminationHandle warmReader(final IndexShard indexShard, final ElasticsearchDirectoryReader reader) {
+            // 这种情况应该不会发生吧
             if (indexSettings.getIndex().equals(indexShard.indexSettings().getIndex()) == false) {
                 // this is from a different index
                 return TerminationHandle.NO_WAIT;
             }
 
+            // 代表是否支持开启预热
             if (!loadRandomAccessFiltersEagerly) {
                 return TerminationHandle.NO_WAIT;
             }
@@ -289,7 +293,7 @@ public final class BitsetFilterCache extends AbstractIndexComponent
             final Set<Query> warmUp = new HashSet<>();
             final MapperService mapperService = indexShard.mapperService();
             DocumentMapper docMapper = mapperService.documentMapper();
-            // TODO 什么鬼 ???
+            // TODO 先不管预热逻辑吧 反正就是预先加载到缓存 不影响正常流程
             if (docMapper != null) {
                 if (docMapper.hasNestedObjects()) {
                     hasNested = true;

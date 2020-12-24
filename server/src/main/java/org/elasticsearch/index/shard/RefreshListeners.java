@@ -86,7 +86,7 @@ public final class RefreshListeners implements ReferenceManager.RefreshListener,
     private volatile List<Tuple<Translog.Location, Consumer<Boolean>>> refreshListeners = null;
     /**
      * The translog location that was last made visible by a refresh.
-     * 代表最后一个被刷新的位置   location应该是只有在translog中才使用到的  用于定位某个operation的位置
+     * 代表上一次刷新时 事务日志写入到的位置
      */
     private volatile Translog.Location lastRefreshedLocation;
 
@@ -148,7 +148,8 @@ public final class RefreshListeners implements ReferenceManager.RefreshListener,
      * @param listener for the refresh. Called with true if registering the listener ran it out of slots and forced a refresh. Called with
      *        false otherwise.
      * @return did we call the listener (true) or register the listener to call later (false)?
-     * 插入一个监听某个location的监听器
+     * refresh可以意味着将lucene的数据刷盘  某些场景可能会监听某个seq对应的数据刷盘
+     * Translog.Location 就对应着某个写入lucene的数据
      */
     public boolean addOrNotify(Translog.Location location, Consumer<Boolean> listener) {
         requireNonNull(listener, "listener cannot be null");
@@ -253,7 +254,7 @@ public final class RefreshListeners implements ReferenceManager.RefreshListener,
     }
 
     /**
-     *
+     * 当externalReaderManager刷新完成后会触发该方法
      * @param didRefresh  代表本次刷新是否成功执行
      * @throws IOException
      */
@@ -265,7 +266,7 @@ public final class RefreshListeners implements ReferenceManager.RefreshListener,
         /* We intentionally ignore didRefresh here because our timing is a little off. It'd be a useful flag if we knew everything that made
          * it into the refresh, but the way we snapshot the translog position before the refresh, things can sneak into the refresh that we
          * don't know about.
-         * 如果连当前刷新的位置都没有确定 就不需要后续处理了
+         * TODO 应该是不会出现这种情况吧
          * */
         if (null == currentRefreshLocation) {
             /* The translog had an empty last write location at the start of the refresh so we can't alert anyone to anything. This

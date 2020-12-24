@@ -120,6 +120,7 @@ public final class IndexWarmer {
 
     /**
      * A handle on the execution of  warm-up action.
+     * 调用该函数会阻塞当前线程 直到所有预热工作完成
      */
     public interface TerminationHandle {
 
@@ -169,27 +170,27 @@ public final class IndexWarmer {
         @Override
         public TerminationHandle warmReader(final IndexShard indexShard, final ElasticsearchDirectoryReader reader) {
             final MapperService mapperService = indexShard.mapperService();
-            // TODO 什么是全局顺序
+
+            // 先从该index 对应的field模板中 找到支持预热的field
             final Map<String, MappedFieldType> warmUpGlobalOrdinals = new HashMap<>();
-            // 这些fieldType 是什么时候设置进去的
             for (MappedFieldType fieldType : mapperService.fieldTypes()) {
                 final String indexName = fieldType.name();
                 if (fieldType.eagerGlobalOrdinals() == false) {
                     continue;
                 }
-                // 只有满足全局顺序的field 才会加入到 map中
                 warmUpGlobalOrdinals.put(indexName, fieldType);
             }
             final CountDownLatch latch = new CountDownLatch(warmUpGlobalOrdinals.size());
-            // 只会为 全局顺序为true的field 进行预热
+            // 并行进行预热
             for (final MappedFieldType fieldType : warmUpGlobalOrdinals.values()) {
                 executor.execute(() -> {
                     try {
                         final long start = System.nanoTime();
+                        // TODO 先忽略这里吧 假设已经生成了可以通过reader加载数据的模板
                         IndexFieldData.Global<?> ifd = indexFieldDataService.getForField(fieldType);
-                        // 预热实际上就是提前加载数据到内存
                         IndexFieldData<?> global = ifd.loadGlobal(reader);
                         if (reader.leaves().isEmpty() == false) {
+                            // 这里开始加载数据 并存储在cache对象中
                             global.load(reader.leaves().get(0));
                         }
 
