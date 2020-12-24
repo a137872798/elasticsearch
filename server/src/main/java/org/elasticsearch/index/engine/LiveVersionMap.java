@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicLong;
 final class LiveVersionMap implements ReferenceManager.RefreshListener, Accountable {
 
     /**
-     * byte数据流是作为key的 可以在KeyedLock中获取一个对应的锁对象
+     * 该对象内 以id为单位进行并发控制
      */
     private final KeyedLock<BytesRef> keyedLock = new KeyedLock<>();
 
@@ -417,14 +417,16 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
     }
 
     /**
-     * 这是记录删除的数据啊 每当处理Delete时 条件允许的情况会调用该方法
+     * 记录某个id此时最新的versionValue信息 比如是一次index操作 或者是一次delete操作
      * @param uid
      * @param version
      */
     void putDeleteUnderLock(BytesRef uid, DeleteVersionValue version) {
         assert assertKeyedLockHeldByCurrentThread(uid);
         assert uid.bytes.length == uid.length : "Oversized _uid! UID length: " + uid.length + ", bytes length: " + uid.bytes.length;
+        // 因为是删除操作 所以将对应的数据存储到 tombstone容器中
         putTombstone(uid, version);
+        // id 仅能存在于 maps和tombstones 中的一个
         maps.remove(uid, version);
     }
 
@@ -460,9 +462,10 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
     /**
      * 检测该数据是否应该被删除
-     * @param maxTimestampToPrune   超过该时间戳就不允许被删除
-     * @param maxSeqNoToPrune   超过该seq 不允许被删除
-     * @param versionValue   本次tombstone的参考数据
+     * 删除数据是为了减少内存压力吧
+     * @param maxTimestampToPrune   在该时间戳之前的记录需要被删除
+     * @param maxSeqNoToPrune   在该seq之前的记录需要被删除
+     * @param versionValue   本次检测是否允许被删除的数据
      * @return
      */
     private boolean canRemoveTombstone(long maxTimestampToPrune, long maxSeqNoToPrune, DeleteVersionValue versionValue) {
@@ -478,18 +481,22 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
     /**
      * Try to prune tombstones whose timestamp is less than maxTimestampToPrune and seqno at most the maxSeqNoToPrune.
-     * @param maxSeqNoToPrune 不能删除超过该时间的数据
-     * @param maxTimestampToPrune  删除的seq不能超过这个值   一般就是localCheckpoint 代表未提交的数据不能被删除
-     *                             实际上还有个条件 就是墓碑的 deleteVersionValue的时间必须小于 current.minDeleteTimestamp
+     * @param maxSeqNoToPrune
+     * @param maxTimestampToPrune
+     *                            按照条件来清除墓碑数据
      */
     void pruneTombstones(long maxTimestampToPrune, long maxSeqNoToPrune) {
-        // DeleteVersionValue 这个是携带一个时间属性的
+        // 每隔一段时间会尝试清理 墓碑中的数据   墓碑中的数据是每当发生一次删除操作 记录下来的
         for (Map.Entry<BytesRef, DeleteVersionValue> entry : tombstones.entrySet()) {
             // we do check before we actually lock the key - this way we don't need to acquire the lock for tombstones that are not
             // prune-able. If the tombstone changes concurrently we will re-read and step out below since if we can't collect it now w
             // we won't collect the tombstone below since it must be newer than this one.
+
+            // 检测记录是否允许被删除
             if (canRemoveTombstone(maxTimestampToPrune, maxSeqNoToPrune, entry.getValue())) {
                 final BytesRef uid = entry.getKey();
+
+                // 这里是为了确保此时只有一条线程在处理该id相关的数据
                 try (Releasable lock = keyedLock.tryAcquire(uid)) {
                     // we use tryAcquire here since this is a best effort and we try to be least disruptive
                     // this method is also called under lock in the engine under certain situations such that this can lead to deadlocks
@@ -499,6 +506,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
                         final DeleteVersionValue versionValue = tombstones.get(uid);
                         if (versionValue != null) {
                             if (canRemoveTombstone(maxTimestampToPrune, maxSeqNoToPrune, versionValue)) {
+                                // 从tombstone中移除该id对应的记录
                                 removeTombstoneUnderLock(uid);
                             }
                         }

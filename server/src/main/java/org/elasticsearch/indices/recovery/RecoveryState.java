@@ -478,14 +478,20 @@ public class RecoveryState implements ToXContentFragment, Writeable {
     }
 
     /**
-     * 代表在某次恢复流程记录使用事务日志进行恢复的信息 比如总计恢复了多少operation数据
+     * 记录在基于事务日志进行数据恢复阶段的各种信息
      */
     public static class Translog extends Timer implements ToXContentFragment, Writeable {
         public static final int UNKNOWN = -1;
 
+        /**
+         * 每当有一个事务日志内的operation 被恢复到lucene中 就会将该值+1
+         */
         private int recovered;
         private int total = UNKNOWN;
         private int totalOnStart = UNKNOWN;
+        /**
+         * 总计恢复了多少operation  在translog.recovery阶段结束时应该与 recovered一致
+         */
         private int totalLocal = UNKNOWN;
 
         public Translog() {

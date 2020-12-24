@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit;
 public class ShardIndexWarmerService extends AbstractIndexShardComponent {
 
     /**
-     * 统计当前正在预热的数量
+     * 当前正在并发执行的预热数量
      */
     private final CounterMetric current = new CounterMetric();
     /**

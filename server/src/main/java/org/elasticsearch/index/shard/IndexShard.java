@@ -247,7 +247,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      */
     private final CodecService codecService;
     /**
-     * 这个暖机器的具体实现是??? 暖机的意思就是提前将数据从文件读取到缓存中
+     * 暖机的意思就是提前将数据从文件读取到缓存中
      */
     private final Engine.Warmer warmer;
     /**
@@ -389,7 +389,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * True if this shard is still indexing (recently) and false if we've been idle for long enough (as periodically checked by {@link
      * IndexingMemoryController}).
-     * 当前分片是否处于激活状态  当发起一次index操作时 就会设置为true
+     * 当前分片是否处于激活状态  当发起一次index/delete/noop操作时 就会设置为true
      * 当分片首次被创建 并且启动engine后 也会设置为true
      */
     private final AtomicBoolean active = new AtomicBoolean();
@@ -2010,6 +2010,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 result = applyDeleteOperation(engine, delete.seqNo(), delete.primaryTerm(), delete.version(), delete.id(),
                     versionType, UNASSIGNED_SEQ_NO, 0, origin);
                 break;
+                // 代表本次执行的是一个 NOOP操作
             case NO_OP:
                 final Translog.NoOp noOp = (Translog.NoOp) operation;
                 result = markSeqNoAsNoop(engine, noOp.seqNo(), noOp.primaryTerm(), noOp.reason(), origin);
@@ -2033,7 +2034,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                             Runnable onOperationRecovered) throws IOException {
         int opsRecovered = 0;
         Translog.Operation operation;
-        // 遍历每个operation对象
+        // 遍历每个operation对象   通过不断的迭代最终将所有事务日志中的数据都还原了
+        // TODO 在恢复期间每次写入操作都应该要检测engine是否完成恢复 甚至不应该被外部发现  那么是怎么做到的呢
         while ((operation = snapshot.next()) != null) {
             try {
                 logger.trace("[translog] recover op {}", operation);
@@ -3428,6 +3430,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private EngineConfig newEngineConfig(LongSupplier globalCheckpointSupplier) {
         // 生成描述排序顺序的对象
         final Sort indexSort = indexSortSupplier.get();
+
+        // 每当 externalReaderManager刷新时 就会通过该对象进行预热
         final Engine.Warmer warmer = reader -> {
             assert Thread.holdsLock(mutex) == false : "warming engine under mutex";
             assert reader != null;
@@ -4070,13 +4074,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 这里也单独定义了一个刷新监听器
-     * 监听在engine中的写入事件
+     * 该对象会监听 externalReaderManager的刷新事件
      */
     private class RefreshPendingLocationListener implements ReferenceManager.RefreshListener {
 
         /**
-         * 当更新写入位置时 进行记录
+         * 在执行刷新前 先获取此时engine内translog记录的最新的记录对应的location
          */
         Translog.Location lastWriteLocation;
 
@@ -4212,12 +4215,22 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    /**
+     * 该函数定义了如何返回 坟墓doc
+     * @return
+     */
     private EngineConfig.TombstoneDocSupplier tombstoneDocSupplier() {
         final RootObjectMapper.Builder noopRootMapper = new RootObjectMapper.Builder("__noop");
         final DocumentMapper noopDocumentMapper = mapperService != null ?
             new DocumentMapper.Builder(noopRootMapper, mapperService).build(mapperService) :
             null;
         return new EngineConfig.TombstoneDocSupplier() {
+
+            /**
+             * 针对某次 delete操作生成一个 doc对象
+             * @param id
+             * @return
+             */
             @Override
             public ParsedDocument newDeleteTombstoneDoc(String id) {
                 return docMapper().getDocumentMapper().createDeleteTombstoneDoc(shardId.getIndexName(), id);

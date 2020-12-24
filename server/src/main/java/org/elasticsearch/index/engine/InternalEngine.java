@@ -195,6 +195,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 在初始化时 会将该标识修改成true  代表此时还未从事务文件中恢复数据
+     * 在这个阶段应该是拒绝处理其他请求的   TODO 那么是怎么做处理的
      */
     private final AtomicBoolean pendingTranslogRecovery = new AtomicBoolean(false);
     private final AtomicLong maxUnsafeAutoIdTimestamp = new AtomicLong(-1);
@@ -233,7 +234,7 @@ public class InternalEngine extends Engine {
     private final KeyedLock<Long> noOpKeyedLock = new KeyedLock<>();
 
     /**
-     * TODO
+     * 代表此前执行了一次大规模的merge操作  某些地方会检测该标识 并执行刷盘
      */
     private final AtomicBoolean shouldPeriodicallyFlushAfterBigMerge = new AtomicBoolean(false);
 
@@ -326,7 +327,7 @@ public class InternalEngine extends Engine {
                 }
             }
             // 创建资源管理器 在合适的时机会检测能否刷新 并返回最新的数据   总共存在2个readerManager对象 一个为internal一个为external
-            // RefreshWarmerListener 负责对数据进行预热
+            // RefreshWarmerListener 负责对数据进行预热    每当外部readerManager对象触发refresh时 就会针对最新的数据进行预热
             externalReaderManager = createReaderManager(new RefreshWarmerListener(logger, isClosed, engineConfig));
             internalReaderManager = externalReaderManager.internalReaderManager;
             this.internalReaderManager = internalReaderManager;
@@ -470,6 +471,12 @@ public class InternalEngine extends Engine {
             this.current = internalReaderManager.acquire(); // steal the reference without warming up
         }
 
+        /**
+         * externalReaderManager 与 internalReaderManager的区别就是 外部对象会维护缓存  比如此时由于lucene内存占用过大的场景 会触发强制刷盘(通过refresh) 但是不会刷新对外的缓存
+         * @param referenceToRefresh
+         * @return
+         * @throws IOException
+         */
         @Override
         protected ElasticsearchDirectoryReader refreshIfNeeded(ElasticsearchDirectoryReader referenceToRefresh) throws IOException {
             // we simply run a blocking refresh on the internal reference manager and then steal it's reader
@@ -676,19 +683,22 @@ public class InternalEngine extends Engine {
         assert pendingTranslogRecovery.get() : "translogRecovery is not pending but should be";
         // 代表数据的恢复已完成
         pendingTranslogRecovery.set(false); // we are good - now we can commit
+
+        // 代表有数据从事务日志重做到了 lucene中
         if (opsRecovered > 0) {
             logger.trace("flushing post recovery from translog: ops recovered [{}], current translog generation [{}]",
                 opsRecovered, translog.currentFileGeneration());
 
-            // 数据恢复的第一时间是想到写入到lucene中
-            // 操作应该会先记录到事务文件中 那么在什么时候写入到lucene中呢   应该是写入了只是没有commit吧
-            // TODO 有关IndexWriter.commit 之后再看
+            // 之前在恢复过程中 数据只是写入到内存中  在这里针对之前写入lucene的数据进行刷盘
+            // translog 在这之前应该是已经完成持久化了
             commitIndexWriter(indexWriter, translog);
-            // 更新最后一次的segment信息
+            // 因为上面执行了刷盘操作 这里就要刷新segmentInfos
             refreshLastCommittedSegmentInfos();
-            // 因为在commit过程中会触发所有doc的写入 产生新的 segment  所以reader数据已经发生了变化  这里要更新reader对象
+            // 这里主要是刷新 reader对象 并且会触发一组refreshListener
             refresh("translog_recovery");
         }
+
+        // 如果某些事务日志的数据已经持久化到lucene中了  就可以考虑清理旧的事务日志文件了
         translog.trimUnreferencedReaders();
     }
 
@@ -841,7 +851,7 @@ public class InternalEngine extends Engine {
 
                 // 获取segment_N数据信息
                 lastCommittedSegmentInfos = store.readLastCommittedSegmentsInfo();
-                // 为什么会分为外部资源对象和内部资源对象
+                // 内部对象和 外部对象维护的监听器不同
                 ExternalReaderManager externalReaderManager = new ExternalReaderManager(internalReaderManager, externalRefreshListener);
                 success = true;
                 return externalReaderManager;
@@ -1737,6 +1747,7 @@ public class InternalEngine extends Engine {
                 deleteResult = plan.earlyResultOnPreflightError.get();
             } else {
                 // generate or register sequence number
+                // TODO 先忽略 主分片的写入逻辑
                 if (delete.origin() == Operation.Origin.PRIMARY) {
                     // 为delete生成seqNo
                     delete = new Delete(delete.id(), delete.uid(), generateSeqNoForOperationOnPrimary(delete),
@@ -1745,18 +1756,21 @@ public class InternalEngine extends Engine {
 
                     advanceMaxSeqNoOfUpdatesOrDeletesOnPrimary(delete.seqNo());
                 } else {
+                    // 更新此时观测到的最大的seq
                     markSeqNoAsSeen(delete.seqNo());
                 }
 
                 assert delete.seqNo() >= 0 : "ops should have an assigned seq no.; origin: " + delete.origin();
 
-                // 代表需要从lucene中删除该数据
+                // 代表需要从lucene中删除该数据  当发现是stale操作 也需要重复执行(主要是为了重做事务日志)
                 if (plan.deleteFromLucene || plan.addStaleOpToLucene) {
                     deleteResult = deleteInLucene(delete, plan);
                 } else {
+                    // 代表不需要写入到 lucene中 直接生成结果
                     deleteResult = new DeleteResult(
                         plan.versionOfDeletion, delete.primaryTerm(), delete.seqNo(), plan.currentlyDeleted == false);
                 }
+                // 代表本次操作作用到了lucene上 且不是之前已经存在于lucene的数据
                 if (plan.deleteFromLucene) {
                     numDocDeletes.inc();
                     versionMap.putDeleteUnderLock(delete.uid().bytes(),
@@ -1764,12 +1778,17 @@ public class InternalEngine extends Engine {
                             engineConfig.getThreadPool().relativeTimeInMillis()));
                 }
             }
-            // 不是从事务文件中恢复 就要设置location 信息
+            // 如果本次操作不是从事务日志中获取的数据 就不需要记录到事务日志中
             if (delete.origin().isFromTranslog() == false && deleteResult.getResultType() == Result.Type.SUCCESS) {
                 final Translog.Location location = translog.add(new Translog.Delete(delete, deleteResult));
                 deleteResult.setTranslogLocation(location);
             }
+
+            // 此时该seq对应的操作 同时记录到lucene和事务日志中 才增加 processedCheckpoint
             localCheckpointTracker.markSeqNoAsProcessed(deleteResult.getSeqNo());
+
+            // 代表本次操作是从事务日志中重做的  这里增加的是 persistedCheckpoint
+            // (因为从事务日志中恢复 反过来说记录一开始就存在于事务日志中 已经完成了持久化)
             if (deleteResult.getTranslogLocation() == null) {
                 // the op is coming from the translog (and is hence persisted already) or does not have a sequence number (version conflict)
                 assert delete.origin().isFromTranslog() || deleteResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
@@ -1786,6 +1805,7 @@ public class InternalEngine extends Engine {
             throw e;
         }
         // 处理delete操作会将数据存储到墓碑中 而每当间隔超过一定时间 会将太旧的墓碑数据清理掉
+        // 这个数据存储在 versionMap的意义是什么
         maybePruneDeletes();
         return deleteResult;
     }
@@ -1807,6 +1827,7 @@ public class InternalEngine extends Engine {
     }
 
     /**
+     * 检测delete对应的id是否存在 或者是否已经处理过 生成不同的处理策略
      * @param delete
      * @return
      * @throws IOException
@@ -1825,10 +1846,15 @@ public class InternalEngine extends Engine {
             // See testRecoveryWithOutOfOrderDelete for an example of peer recovery
             plan = DeletionStrategy.processButSkipLucene(false, delete.version());
         } else {
+            // 实际上delete 也就是针对之前写入的index 这里就是匹配 seq/id 等信息
+            // 推测是这样 如果某个op对应的seq已经更新到 processedCheckpoint上了 就代表这个操作已经同步到事务日志中了 就完全不需要处理了
+            // 下面的情况 当发现seq重复 却没有写入到事务文件中 会再一次作用到lucene上 TODO 是为了重做事务日志吗  如果本身不需要记录事务操作又要怎么处理???
             final OpVsLuceneDocStatus opVsLucene = compareOpToLuceneDocBasedOnSeqNo(delete);
+            // 如果查询到记录 应该就代表这条记录没有被删除
             if (opVsLucene == OpVsLuceneDocStatus.OP_STALE_OR_EQUAL) {
                 plan = DeletionStrategy.processAsStaleOp(delete.version());
             } else {
+                // 两种情况  一种是本次的seq比查询出来的记录更大 还有一种就是没有查询到记录
                 plan = DeletionStrategy.processNormally(opVsLucene == OpVsLuceneDocStatus.LUCENE_DOC_NOT_FOUND, delete.version());
             }
         }
@@ -1888,7 +1914,7 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 从lucene中删除某些doc
+     * 将删除操作作用到lucene上
      * @param delete
      * @param plan
      * @return
@@ -1897,22 +1923,23 @@ public class InternalEngine extends Engine {
     private DeleteResult deleteInLucene(Delete delete, DeletionStrategy plan) throws IOException {
         assert assertMaxSeqNoOfUpdatesIsAdvanced(delete.uid(), delete.seqNo(), false, false);
         try {
-            // 通过函数生成了某个id 对应的PD对象
+            // 在执行删除任务前 会生成一个对应删除操作的doc
             final ParsedDocument tombstone = engineConfig.getTombstoneDocSupplier().newDeleteTombstoneDoc(delete.id());
             assert tombstone.docs().size() == 1 : "Tombstone doc should have single doc [" + tombstone + "]";
-            // 更新doc的数据
+            // 将Op内的信息设置到doc上
             tombstone.updateSeqID(delete.seqNo(), delete.primaryTerm());
             tombstone.version().setLongValue(plan.versionOfDeletion);
             final ParseContext.Document doc = tombstone.docs().get(0);
             assert doc.getField(SeqNoFieldMapper.TOMBSTONE_NAME) != null :
                 "Delete tombstone document but _tombstone field is not set [" + doc + " ]";
 
-            // 删除的doc就会加上软删除字段
+            // 这些doc都追加上了 软删除字段 TODO 为啥
             doc.add(softDeletesField);
-            // 删除动作也是将数据写入到lucene中
+            // addStaleOpToLucene  代表需要再次写入 还不知道是为啥
             if (plan.addStaleOpToLucene || plan.currentlyDeleted) {
                 indexWriter.addDocument(doc);
             } else {
+                // 代表本次处理的数据 seq更大 执行更新操作
                 indexWriter.softUpdateDocument(delete.uid(), doc, softDeletesField);
             }
             return new DeleteResult(
@@ -1939,9 +1966,12 @@ public class InternalEngine extends Engine {
      * 基本跟 IndexStrategy一个套路
      */
     protected static final class DeletionStrategy {
-        // of a rare double delete
+        // of a rare double delete  代表本次删除操作是否需要作用到lucene上  比如该delete操作之前已经执行过了 那么就不该重复执行
         final boolean deleteFromLucene;
         final boolean addStaleOpToLucene;
+        /**
+         * 代表此时在lucene中无法找到相关数据
+         */
         final boolean currentlyDeleted;
         final long versionOfDeletion;
         final Optional<DeleteResult> earlyResultOnPreflightError;
@@ -1967,22 +1997,39 @@ public class InternalEngine extends Engine {
             return new DeletionStrategy(false, false, currentlyDeleted, Versions.NOT_FOUND, deleteResult);
         }
 
+        /**
+         *
+         * @param currentlyDeleted  true代表delete对应的doc信息在lucene中无法被找到
+         * @param versionOfDeletion
+         * @return
+         */
         static DeletionStrategy processNormally(boolean currentlyDeleted, long versionOfDeletion) {
             return new DeletionStrategy(true, false, currentlyDeleted, versionOfDeletion, null);
-
         }
 
+        /**
+         * 代表本次 Op的seq 已经记录到事务日志中了 所以不需要重做到lucene上
+         * @param currentlyDeleted
+         * @param versionOfDeletion
+         * @return
+         */
         public static DeletionStrategy processButSkipLucene(boolean currentlyDeleted, long versionOfDeletion) {
             return new DeletionStrategy(false, false, currentlyDeleted, versionOfDeletion, null);
         }
 
+        /**
+         * delete对应的doc信息还存在于lucene中
+         * @param versionOfDeletion
+         * @return
+         */
         static DeletionStrategy processAsStaleOp(long versionOfDeletion) {
             return new DeletionStrategy(false, true, false, versionOfDeletion, null);
         }
     }
 
     /**
-     * 裁剪掉一些过期的数据
+     * 每当发生delete操作时 在VersionMap中会记录信息 (存储在 tombstoneMaps中)
+     * 这里尝试清除数据
      */
     @Override
     public void maybePruneDeletes() {
@@ -2019,7 +2066,7 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 插入一个 noop操作
+     * 当需要处理一个 NOOP操作时 写入到lucene/事务日志中
      * @param noOp
      * @return
      * @throws IOException
@@ -2028,39 +2075,41 @@ public class InternalEngine extends Engine {
         assert readLock.isHeldByCurrentThread() || writeLock.isHeldByCurrentThread();
         assert noOp.seqNo() > SequenceNumbers.NO_OPS_PERFORMED;
         final long seqNo = noOp.seqNo();
+
+        // 跟index/delete不同 是将seq作为锁的key    index/delete 都是将versionMap作为锁
         try (Releasable ignored = noOpKeyedLock.acquire(seqNo)) {
             final NoOpResult noOpResult;
-            // 默认就是返回 EMPTY  在FollowingEngine中会重写该方法
+            // 默认就是返回 EMPTY  先简单理解
             final Optional<Exception> preFlightError = preFlightCheckForNoOp(noOp);
-            // TODO
+            // 忽略
             if (preFlightError.isPresent()) {
                 noOpResult = new NoOpResult(SequenceNumbers.UNASSIGNED_PRIMARY_TERM,
                     SequenceNumbers.UNASSIGNED_SEQ_NO, preFlightError.get());
             } else {
-                // 更新 localCheckpointTracker中 nextSeqNo   这是还没有修改成 processedCheckpoint persistedCheckpoint
+
+                // 每当要处理某个op时 就会尝试用它的seq 去更新localCheckpointTracker的nextSeq
                 markSeqNoAsSeen(noOp.seqNo());
 
-                // 如果该operate对应的seq 已经被处理了就可以跳过
-                // 这里指的处理就是生成一个doc 并写入到lucene中
+                // 如果该operate对应的seq 已经被处理了就可以跳过   这里没有生成 处理策略那一步操作
                 if (hasBeenProcessedBefore(noOp) == false) {
                     try {
-                        // 生成一个要存储到tombstone的 PD 对象
+
+                        // 生成一个 noop对应的 doc对象
                         final ParsedDocument tombstone = engineConfig.getTombstoneDocSupplier().newNoopTombstoneDoc(noOp.reason());
                         tombstone.updateSeqID(noOp.seqNo(), noOp.primaryTerm());
                         // A noop tombstone does not require a _version but it's added to have a fully dense docvalues for the version
                         // field. 1L is selected to optimize the compression because it might probably be the most common value in
                         // version field.
-                        // TODO 这里版本号总是传入1
+                        // noop操作的 version总是1
                         tombstone.version().setLongValue(1L);
                         assert tombstone.docs().size() == 1 : "Tombstone should have a single doc [" + tombstone + "]";
 
-                        // 这里获取doc对象
                         final ParseContext.Document doc = tombstone.docs().get(0);
                         assert doc.getField(SeqNoFieldMapper.TOMBSTONE_NAME) != null
                             : "Noop tombstone document but _tombstone field is not set [" + doc + " ]";
-                        // 加入软删除field 可能只是为了针对软删除处理的逻辑能够应用到这个doc上
+                        // 从目前的逻辑来看  index/delete/noop 3种操作都会写入软删除的field
                         doc.add(softDeletesField);
-                        // 将新的doc 写入到lucene中     lucene是支持直接写入 field的迭代器对象的
+                        // 将新的doc 写入到lucene中
                         indexWriter.addDocument(doc);
                     } catch (final Exception ex) {
                         /*
@@ -2122,8 +2171,7 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 发起刷新请求
-     * 在什么时机需要触发刷新 ???
+     * 发起刷新请求   当发现lucene内部有未持久化的数据 会间接触发lucene的刷盘
      * @param source
      * @param scope  由内部发起还是外部发起  不同的scope会使用不同的readerManager
      * @param block  是否需要阻塞
@@ -2188,6 +2236,12 @@ public class InternalEngine extends Engine {
         return refreshed;
     }
 
+
+    /**
+     * 每当执行一个 operation时 会将数据存储在lucene管理的内存中  当超过一定值时 就会触发刷盘
+     * refresh 实际上会间接触发 lucene.flush
+     * @throws EngineException
+     */
     @Override
     public void writeIndexingBuffer() throws EngineException {
         refresh("write indexing buffer", SearcherScope.INTERNAL, false);
@@ -2854,6 +2908,7 @@ public class InternalEngine extends Engine {
     /**
      * A listener that warms the segments if needed when acquiring a new reader
      * 当获取到一个最新的reader对象时 立即进行预热
+     * 该对象是针对 externalReaderManager的监听器
      */
     static final class RefreshWarmerListener implements BiConsumer<ElasticsearchDirectoryReader, ElasticsearchDirectoryReader> {
         private final Engine.Warmer warmer;
@@ -3017,14 +3072,15 @@ public class InternalEngine extends Engine {
      *
      * @param writer   the index writer to commit
      * @param translog the translog
-     * 在从事务文件中还原的过程中 数据应该重新回到 lucene中了 此时需要对写入的数据进行提交
+     *                 针对lucene内的数据进行持久化
      */
     protected void commitIndexWriter(final IndexWriter writer, final Translog translog) throws IOException {
         ensureCanFlush();
         try {
-            // 获取此时的提交点
+            // 提交点就对应此时写入到内存中最新的operation对应的seq
+            // 可以看到这里没有做并发处理 也就是获取到的seq 可能不是最新的 不过也只是有部分最新数据没有做持久化 不影响
             final long localCheckpoint = localCheckpointTracker.getProcessedCheckpoint();
-            // 通过函数返回 userData 并设置到 writer中
+            // 在对lucene数据进行持久化前 会将此时一些信息记录到userData中
             writer.setLiveCommitData(() -> {
                 /*
                  * The user data captured above (e.g. local checkpoint) contains data that must be evaluated *before* Lucene flushes
@@ -3036,22 +3092,31 @@ public class InternalEngine extends Engine {
                  * of invocation of the commit data iterator (which occurs after all documents have been flushed to Lucene).
                  */
                 final Map<String, String> commitData = new HashMap<>(7);
+
+                // 设置当前刷盘对应的事务日志的id
                 commitData.put(Translog.TRANSLOG_UUID_KEY, translog.getTranslogUUID());
+                // 对应本次commit的数据中 最新的operation的seq
                 commitData.put(SequenceNumbers.LOCAL_CHECKPOINT_KEY, Long.toString(localCheckpoint));
-                // seqNo 应该是此时最后写入的operation 对应的seq
+                // 此时观测到的最大的seq 因为触发该方法时 可能又有新的operation需要处理了 而它们会更新这个maxSeq  TODO 但是这个值存储起来的意义是什么 ???
                 commitData.put(SequenceNumbers.MAX_SEQ_NO, Long.toString(localCheckpointTracker.getMaxSeqNo()));
+
+                // 某些index操作可能会记录一个 maxUnsafeAutoIdTimestamp  那么在处理时可能就会更新到userData中
                 commitData.put(MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID, Long.toString(maxUnsafeAutoIdTimestamp.get()));
+
+                // 存储此时的historyUUID TODO 这个值的作用是什么???
                 commitData.put(HISTORY_UUID_KEY, historyUUID);
-                // force_merge 啥玩意
+                // force_merge 也是原封不动的写回到userData中 这个值的作用是???
                 final String currentForceMergeUUID = forceMergeUUID;
                 if (currentForceMergeUUID != null) {
                     commitData.put(FORCE_MERGE_UUID_KEY, currentForceMergeUUID);
                 }
+
+                // 获取此时需要保留的最小的seq 并存储到userData中
                 commitData.put(Engine.MIN_RETAINED_SEQNO, Long.toString(softDeletesPolicy.getMinRetainedSeqNo()));
                 logger.trace("committing writer with commit data [{}]", commitData);
                 return commitData.entrySet().iterator();
             });
-            // ???
+            // 因为此时即将进行刷盘 为了避免重复刷盘就将该标识设置为false
             shouldPeriodicallyFlushAfterBigMerge.set(false);
             writer.commit();
         } catch (final Exception ex) {
@@ -3317,7 +3382,7 @@ public class InternalEngine extends Engine {
     private final class LastRefreshedCheckpointListener implements ReferenceManager.RefreshListener {
 
         /**
-         * 当刷新完成后会与 pendingCheckpoint 同步
+         * 代表最近一次刷新时写入的checkpoint 对应的 processedCheckpoint
          */
         final AtomicLong refreshedCheckpoint;
 

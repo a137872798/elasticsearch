@@ -181,11 +181,11 @@ public class DocumentMapper implements ToXContentFragment {
     private final boolean hasNestedObjects;
 
     /**
-     * 已经被废弃的 metadataFieldMapper
+     * 针对删除操作 会使用一些固定的field
      */
     private final MetadataFieldMapper[] deleteTombstoneMetadataFieldMappers;
     /**
-     * 有些metadataFieldMapper 本认为是 noop的 本次创建的documentMapper对象 如果命中了会存入该数组
+     * 有些metadataFieldMapper 认为是 noop的 本次创建的documentMapper对象 如果命中了会存入该数组
      */
     private final MetadataFieldMapper[] noopTombstoneMetadataFieldMappers;
 
@@ -255,14 +255,13 @@ public class DocumentMapper implements ToXContentFragment {
             throw new ElasticsearchGenerationException("failed to serialize source for type [" + type + "]", e);
         }
 
-        // 这些应该是版本已经废弃的 用于描述元数据的field
+        // 针对删除操作 会使用一个固定的结果
         final Collection<String> deleteTombstoneMetadataFields = Arrays.asList(VersionFieldMapper.NAME, IdFieldMapper.NAME,
             TypeFieldMapper.NAME, SeqNoFieldMapper.NAME, SeqNoFieldMapper.PRIMARY_TERM_NAME, SeqNoFieldMapper.TOMBSTONE_NAME);
 
-        // 如果本次设置的元数据相关的mapper对象 命中了已经被废弃的 field容器
         this.deleteTombstoneMetadataFieldMappers = Stream.of(mapping.metadataMappers)
             .filter(field -> deleteTombstoneMetadataFields.contains(field.name())).toArray(MetadataFieldMapper[]::new);
-        // 找到命中 noop的元数据fieldMapper
+        // 一个noop操作对应的doc文档会包含这些field
         final Collection<String> noopTombstoneMetadataFields = Arrays.asList(
             VersionFieldMapper.NAME, SeqNoFieldMapper.NAME, SeqNoFieldMapper.PRIMARY_TERM_NAME, SeqNoFieldMapper.TOMBSTONE_NAME);
         this.noopTombstoneMetadataFieldMappers = Stream.of(mapping.metadataMappers)
@@ -336,14 +335,29 @@ public class DocumentMapper implements ToXContentFragment {
         return documentParser.parseDocument(source, mapping.metadataMappers);
     }
 
+    /**
+     * 生成一个删除用的doc
+     * @param index
+     * @param id
+     * @return
+     * @throws MapperParsingException
+     */
     public ParsedDocument createDeleteTombstoneDoc(String index, String id) throws MapperParsingException {
-        // SourceToParse 包裹了一层格式化数据
+        // 生成了一个 仅包含 id的doc
         final SourceToParse emptySource = new SourceToParse(index, id, new BytesArray("{}"), XContentType.JSON);
         // 通过解析对象解析格式化数据 并将结果包装成 ParsedDocument
         return documentParser.parseDocument(emptySource, deleteTombstoneMetadataFieldMappers).toTombstone();
     }
 
+    /**
+     * 生成写入noop操作的 doc
+     * @param index
+     * @param reason
+     * @return
+     * @throws MapperParsingException
+     */
     public ParsedDocument createNoopTombstoneDoc(String index, String reason) throws MapperParsingException {
+        // noop操作是没有id的 只有seq
         final String id = ""; // _id won't be used.
         final SourceToParse sourceToParse = new SourceToParse(index, id, new BytesArray("{}"), XContentType.JSON);
         final ParsedDocument parsedDoc = documentParser.parseDocument(sourceToParse, noopTombstoneMetadataFieldMappers).toTombstone();

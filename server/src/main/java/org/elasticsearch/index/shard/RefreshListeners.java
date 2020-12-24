@@ -44,6 +44,7 @@ import static java.util.Objects.requireNonNull;
  *
  * When {@link Closeable#close()}d it will no longer accept listeners and flush any existing listeners.
  * 在lucene中 ReferenceManager 可以包装某个资源对象  在合适的时候可以由用户发起refresh 而子类则负责监听数据变化
+ * 该对象是设置在 externalReaderManager上的
  */
 public final class RefreshListeners implements ReferenceManager.RefreshListener, Closeable {
 
@@ -242,7 +243,7 @@ public final class RefreshListeners implements ReferenceManager.RefreshListener,
     private Supplier<Translog.Location> currentRefreshLocationSupplier;
 
     /**
-     * 该对象本身只是监听器   在执行刷新前 更新当前位置以及开始刷新的时间
+     * 在执行 externalReaderManager的刷新前 会记录此时事务日志已写入到的location信息
      * @throws IOException
      */
     @Override

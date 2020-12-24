@@ -23,13 +23,17 @@ import org.apache.lucene.util.RamUsageEstimator;
 
 /**
  * Holds a deleted version, which just adds a timestamp to {@link VersionValue} so we know when we can expire the deletion.
- * 代表一个删除相关的版本号信息
+ * 每当发生一个 index 操作 或者 delete操作时 会生成对应的 versionValue (IndexVersionValue/DeleteVersionValue)
+ * 并写入到 versionMap中
  */
 
 final class DeleteVersionValue extends VersionValue {
 
     private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(DeleteVersionValue.class);
 
+    /**
+     * 对应处理删除操作发生时的时间戳   准确来说是作用到lucene后的时间
+     */
     final long time;
 
     DeleteVersionValue(long version,long seqNo, long term, long time) {
@@ -38,7 +42,7 @@ final class DeleteVersionValue extends VersionValue {
     }
 
     /**
-     * 代表实际上数据已经被删除
+     * 代表本次是一次删除操作
      * @return
      */
     @Override

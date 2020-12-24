@@ -616,7 +616,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
 
             logger.debug("creating shard_id {}", shardId);
             // if we are on a shared FS we only own the shard (ie. we can safely delete it) if we are the primary.
-            // 创建一个预热对象
+            // 创建一个预热对象   最终是当 externalReaderManager刷新时 对磁盘数据进行预热 也就是提前加载到内存
             final Engine.Warmer engineWarmer = (reader) -> {
                 IndexShard shard =  getShardOrNull(shardId.getId());
                 if (shard != null) {

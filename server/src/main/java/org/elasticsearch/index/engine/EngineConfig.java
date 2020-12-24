@@ -370,10 +370,12 @@ public final class EngineConfig {
     /**
      * A supplier supplies tombstone documents which will be used in soft-update methods.
      * The returned document consists only _uid, _seqno, _term and _version fields; other metadata fields are excluded.
+     * 这种doc 是在删除时使用的 包含了固定的field
      */
     public interface TombstoneDocSupplier {
         /**
          * Creates a tombstone document for a delete operation.
+         * 根据某次删除操作的id 生成parsedDoc对象
          */
         ParsedDocument newDeleteTombstoneDoc(String id);
 

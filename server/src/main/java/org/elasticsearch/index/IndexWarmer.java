@@ -44,6 +44,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * 索引暖机对象
  * 实际上就是将field级别的数据 预先加载到缓存中
+ * 在externalReaderManager刷新数据时  会通过该对象实现数据预热
  */
 public final class IndexWarmer {
 
@@ -73,9 +74,9 @@ public final class IndexWarmer {
     }
 
     /**
-     * 针对某个目录的reader 进行暖机工作 加快读取速度
+     * 预热逻辑
      *
-     * @param reader
+     * @param reader  本次已经获取到的最新的reader对象   该对象是ES包装过的 内部包含了shardId 并且生成的每个 subReader对象也会携带shardId
      * @param shard    针对哪个分片进行暖机
      * @param settings
      */
@@ -144,7 +145,7 @@ public final class IndexWarmer {
 
 
     /**
-     * fieldDataWarmer 代表为读取每个field下的数据做预热
+     * fieldDataWarmer 代表每个field下的数据做缓存
      */
     private static class FieldDataWarmer implements IndexWarmer.Listener {
 
@@ -160,9 +161,9 @@ public final class IndexWarmer {
         }
 
         /**
-         * TODO 先不看暖机逻辑
-         * @param indexShard
-         * @param reader
+         * @param indexShard  暖机对象本身是与indexService一一对应的  每当生成一个indexShard时 会将暖机对象带入
+         *                    当externalReaderManager刷新后 会触发暖机逻辑  该参数就是本次触发刷新的分片
+         * @param reader      reader对应本次读取的shard目录下所有lucene索引文件数据
          * @return
          */
         @Override
