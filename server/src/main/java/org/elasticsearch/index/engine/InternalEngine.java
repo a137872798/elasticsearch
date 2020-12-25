@@ -184,7 +184,7 @@ public class InternalEngine extends Engine {
     private final LocalCheckpointTracker localCheckpointTracker;
 
     /**
-     * 删除策略的作用是决定哪些 segment以及其下面的索引文件可以被删除
+     * 结合的一个删除策略
      */
     private final CombinedDeletionPolicy combinedDeletionPolicy;
 
@@ -284,7 +284,7 @@ public class InternalEngine extends Engine {
                 store.trimUnsafeCommits(config().getTranslogConfig().getTranslogPath());
                 // engineConfig.getGlobalCheckpointSupplier() 实际上就是借助replicationTracker 获取最新的全局检查点
                 translog = openTranslog(engineConfig, translogDeletionPolicy, engineConfig.getGlobalCheckpointSupplier(),
-                    // 用于处理seq的函数 每当记录一个operation时 就会增加seq 需要做处理
+                    // 每当在事务日志文件中有某个operation的数据刷盘成功时就会触发该方法
                     seqNo -> {
                         final LocalCheckpointTracker tracker = getLocalCheckpointTracker();
                         assert tracker != null || getTranslog().isOpen() == false;
@@ -489,7 +489,7 @@ public class InternalEngine extends Engine {
             if (isWarmedUp == false || newReader != referenceToRefresh) {
                 boolean success = false;
                 try {
-                    // isWarmedUp == false 代表之前没有reader 所以传入null
+                    // isWarmedUp == false 代表之前没有reader 所以传入null   这里会对数据进行预热 主要就是将数据读取到缓存中
                     refreshListener.accept(newReader, isWarmedUp ? referenceToRefresh : null);
                     isWarmedUp = true;
                     success = true;
@@ -560,7 +560,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 填满 seq 之间的缺口
-     * @param primaryTerm the shards primary term this engine was created for
+     * @param primaryTerm the shards primary term this engine was created for   在leader节点上生成该shard路由信息的主分片任期 应该是每一次分配的结果对应一个term
      * @return
      * @throws IOException
      */
@@ -568,7 +568,7 @@ public class InternalEngine extends Engine {
     public int fillSeqNoGaps(long primaryTerm) throws IOException {
         try (ReleasableLock ignored = writeLock.acquire()) {
             ensureOpen();
-            // 获取当前最新的检查点以及序列
+            // 获取当前最新的检查点以及序列  每当将一个 operation写入到lucene时 就会增加maxSeq 以及processedCheckpoint
             final long localCheckpoint = localCheckpointTracker.getProcessedCheckpoint();
             final long maxSeqNo = localCheckpointTracker.getMaxSeqNo();
             int numNoOpsAdded = 0;
@@ -577,15 +577,14 @@ public class InternalEngine extends Engine {
                     long seqNo = localCheckpoint + 1;
                     seqNo <= maxSeqNo;
                     seqNo = localCheckpointTracker.getProcessedCheckpoint() + 1 /* leap-frog the local checkpoint */) {
-                // 下面的操作会使得 localCheckpointTracker 内部的 processedCheckpoint +1
+                // 这里往lucene中写入 noop  注意这里发起操作的 origin是 PRIMARY
                 innerNoOp(new NoOp(seqNo, primaryTerm, Operation.Origin.PRIMARY, System.nanoTime(), "filling gaps"));
                 numNoOpsAdded++;
                 assert seqNo <= localCheckpointTracker.getProcessedCheckpoint() :
                     "local checkpoint did not advance; was [" + seqNo + "], now [" + localCheckpointTracker.getProcessedCheckpoint() + "]";
 
             }
-            // 之前写入的数据还没有持久化 这里进行持久化
-            // 每当进行一次事务日志的持久化 就会将persistedCheckpoint同步到lastOperation的seq
+            // 因为本次操作的origin是primary 数据会写入到事务文件中 并且还未持久化 所以要先进行刷盘
             syncTranslog(); // to persist noops associated with the advancement of the local checkpoint
             assert localCheckpointTracker.getPersistedCheckpoint() == maxSeqNo
                 : "persisted local checkpoint did not advance to max seq no; is [" + localCheckpointTracker.getPersistedCheckpoint() +
@@ -699,7 +698,7 @@ public class InternalEngine extends Engine {
             refresh("translog_recovery");
         }
 
-        // 如果某些事务日志的数据已经持久化到lucene中了  就可以考虑清理旧的事务日志文件了
+        // 在refresh中 存储在内存中的结构化数据 已经刷盘到lucene的索引文件中了 之前seq对应的事务日志也就可以删除了
         translog.trimUnreferencedReaders();
     }
 
@@ -733,6 +732,7 @@ public class InternalEngine extends Engine {
     }
 
     // Package private for testing purposes only
+    // TODO 什么时候会将 commit数据填充到 snapshottedCommit中???
     boolean hasSnapshottedCommits() {
         return combinedDeletionPolicy.hasSnapshottedCommits();
     }
@@ -770,8 +770,7 @@ public class InternalEngine extends Engine {
     @Override
     public void syncTranslog() throws IOException {
         translog.sync();
-        // 该方法发生在事务日志刷盘之后是因为 可能此时最新的globalCheckpoint 被写入到了事务日志中
-        // 只有在这个时候 才有检测是否有可删除lucene的必要  (globalCheckpoint就是确保数据已经写入到超半数节点)
+        // 每当刷盘完成时 都检测一下是否有不再被使用的 segment了 有的话进行移除
         revisitIndexDeletionPolicyOnTranslogSynced();
     }
 
@@ -789,15 +788,17 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 在事务日志进行刷盘后 检测是否有需要删除的lucene文件/事务文件
+     * 在事务文件刷盘后检测是否有需要删除的文件
      * @throws IOException
      */
     private void revisitIndexDeletionPolicyOnTranslogSynced() throws IOException {
         if (combinedDeletionPolicy.hasUnreferencedCommits()) {
-            // 减少删除队列中索引文件的引用计数 当归0时将被直接移除
+            // 触发删除策略的 onCommit 方法后  会有一部分文件被设置到删除队列中 之后通过 IndexFileDeleter删除文件
+            // ES 使用的删除策略是  CombinedDeletionPolicy
+            // 根据globalCheckpoint 选择不再维护的commit 并删除相关文件
             indexWriter.deleteUnusedFiles();
         }
-        // 事务日志也是要确保记录的operation在集群范围内完成同步 才可以删除
+        // 事务文件也包含了 checkpoint的信息 将小于 safeCommit的数据文件删除掉
         translog.trimUnreferencedReaders();
     }
 

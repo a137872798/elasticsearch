@@ -4107,7 +4107,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         @Override
         public void afterRefresh(boolean didRefresh) {
             if (didRefresh && lastWriteLocation != null) {
-                // 下面函数的意思是 当最新写入的location超过了 pending的值 则将pending更新成null
+                // pendingRefreshLocation 代表该事务日志位置对应的写入lucene的数据需要刷盘 当某次refresh时最后的位置已经超过了pending值 就可以将它置空 避免其他地方重复刷盘
                 pendingRefreshLocation.updateAndGet(pendingLocation -> {
                     if (pendingLocation == null || pendingLocation.compareTo(lastWriteLocation) <= 0) {
                         return null;
