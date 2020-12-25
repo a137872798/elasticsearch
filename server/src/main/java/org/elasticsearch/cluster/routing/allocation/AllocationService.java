@@ -119,6 +119,7 @@ public class AllocationService {
      * @param clusterState
      * @param startedShards
      * 将某组分片从初始状态修改成start状态
+     * 某个shard被创建时 处于init状态 在进行了recovery阶段后 就会上报leader 本分片可以开始使用了
      */
     public ClusterState applyStartedShards(ClusterState clusterState, List<ShardRouting> startedShards) {
         assert assertInitialized();
@@ -137,7 +138,7 @@ public class AllocationService {
         startedShards = new ArrayList<>(startedShards);
         startedShards.sort(Comparator.comparing(ShardRouting::primary));
 
-        // 将所有分片修改成启动状态
+        // 将所有分片修改成启动状态  同时触发 observer等逻辑
         applyStartedShards(allocation, startedShards);
 
         // TODO 先忽略这种增强逻辑
@@ -173,7 +174,7 @@ public class AllocationService {
     }
 
     /**
-     * 通过allocation内的信息修改集群状态
+     * 通过allocation内的信息修改集群状态    因为某个分片的状态变化会在allocation中反映出来
      * @param oldState
      * @param allocation
      * @return
@@ -181,10 +182,12 @@ public class AllocationService {
     private ClusterState buildResult(ClusterState oldState, RoutingAllocation allocation) {
         final RoutingTable oldRoutingTable = oldState.routingTable();
         final RoutingNodes newRoutingNodes = allocation.routingNodes();
-        // 因为在之前的reroute中 某些分片可能从unassigned状态变成了init状态  有些分片则从start状态变成了 relocation状态
+
+        // routingNodes中记录了分片最新的状态  通过它来还原 routingTable
         final RoutingTable newRoutingTable = new RoutingTable.Builder().updateNodes(oldRoutingTable.version(), newRoutingNodes).build();
 
-        // 使用新的路由表 更新metadata  在之前reroute使得一些分片发生变化时 allocation对象内部有一个监听器会记录这些变化的信息 这时用那些更新信息来更新 metadata 主要就是更新primaryVersion 以及 in-sync
+        // 使用新的路由表 更新metadata
+        // 同时在之前reroute使得一些分片发生变化时 allocation对象内部有一个监听器会记录这些变化的信息 这时用那些更新信息来更新 metadata 主要就是更新primaryVersion 以及 in-sync
         final Metadata newMetadata = allocation.updateMetadataWithRoutingChanges(newRoutingTable);
         assert newRoutingTable.validate(newMetadata); // validates the routing table is coherent with the cluster state metadata
 
@@ -193,6 +196,7 @@ public class AllocationService {
             .routingTable(newRoutingTable)
             .metadata(newMetadata);
 
+        // restore 只针对 recoverySource 为快照的
         final RestoreInProgress restoreInProgress = allocation.custom(RestoreInProgress.TYPE);
         if (restoreInProgress != null) {
             // 更新 restoreInProgress

@@ -90,7 +90,7 @@ final class StoreRecovery {
      * 从 store中恢复数据
      */
     void recoverFromStore(final IndexShard indexShard, ActionListener<Boolean> listener) {
-        // 首先只有主分片才需要恢复数据  并且该分片此时不能处于关闭状态
+        // 只有主分片的数据是可靠的 所以只有主分片才允许从本地事务日志恢复数据
         if (canRecover(indexShard)) {
             RecoverySource.Type recoveryType = indexShard.recoveryState().getRecoverySource().getType();
             // type必须要匹配

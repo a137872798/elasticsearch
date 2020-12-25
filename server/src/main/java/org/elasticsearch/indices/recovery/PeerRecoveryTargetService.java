@@ -155,6 +155,12 @@ public class PeerRecoveryTargetService implements IndexEventListener {
         }
     }
 
+    /**
+     * 当 recoverySource 为 PEER 时 会通过该对象进行数据恢复
+     * @param indexShard
+     * @param sourceNode
+     * @param listener
+     */
     public void startRecovery(final IndexShard indexShard, final DiscoveryNode sourceNode, final RecoveryListener listener) {
         // create a new recovery status, and process...
         // 根据某个sourceNode 初始化 recovery对象

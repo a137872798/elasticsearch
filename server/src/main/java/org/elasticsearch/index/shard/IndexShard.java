@@ -842,7 +842,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Marks the shard as recovering based on a recovery state, fails with exception is recovering is not allowed to be set.
      *
-     * @param recoveryState 将当前集群状态修改成恢复中
+     * @param recoveryState 将当前分片状态修改成恢复中
      */
     public IndexShardState markAsRecovering(String reason, RecoveryState recoveryState) throws IndexShardStartedException,
         IndexShardRelocatedException, IndexShardRecoveringException, IndexShardClosedException {
@@ -1807,13 +1807,20 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         indexEventListener.beforeIndexShardRecovery(this, indexSettings);
     }
 
+    /**
+     * 当该分片的数据恢复流程结束时  修改分片状态
+     * @param reason
+     * @throws IndexShardStartedException
+     * @throws IndexShardRelocatedException
+     * @throws IndexShardClosedException
+     */
     public void postRecovery(String reason) throws IndexShardStartedException, IndexShardRelocatedException, IndexShardClosedException {
         synchronized (postRecoveryMutex) {
             // we need to refresh again to expose all operations that were index until now. Otherwise
             // we may not expose operations that were indexed with a refresh listener that was immediately
             // responded to in addRefreshListener. The refresh must happen under the same mutex used in addRefreshListener
             // and before moving this shard to POST_RECOVERY state (i.e., allow to read from this shard).
-            // 每当恢复完数据后就要进行持久化
+            // 尝试刷新数据
             getEngine().refresh("post_recovery");
             synchronized (mutex) {
                 if (state == IndexShardState.CLOSED) {
@@ -2247,8 +2254,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     public void finalizeRecovery() {
         recoveryState().setStage(RecoveryState.Stage.FINALIZE);
         Engine engine = getEngine();
+        // 在fillSeqNoGaps 中可能会写入一些数据 这时就被动的将lucene的数据刷盘
         engine.refresh("recovery_finalization");
-        // 因为恢复操作已经完成了 所以开启了删除开关 这样太旧的数据就会被删除
+        // 因为恢复操作已经完成了 所以开启了删除开关
         engine.config().setEnableGcDeletes(true);
     }
 
@@ -3215,10 +3223,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 // 代表通过之前事务日志中存储的数据进行恢复
                 executeRecovery("from store", recoveryState, recoveryListener, this::recoverFromStore);
                 break;
+                // 副本节点会通过 拉取primary的数据进行恢复
             case PEER:
                 try {
                     markAsRecovering("from " + recoveryState.getSourceNode(), recoveryState);
-                    // 从远端拉取数据进行恢复
+                    // 从远端拉取数据进行恢复   recoveryState.getSourceNode() 对应主分片所在的节点
                     recoveryTargetService.startRecovery(this, recoveryState.getSourceNode(), recoveryListener);
                 } catch (Exception e) {
                     failShard("corrupted preexisting index", e);
@@ -3288,11 +3297,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         markAsRecovering(reason, recoveryState); // mark the shard as recovering on the cluster state thread
         // 异步执行数据恢复任务 并在完成时  通知 recoveryListener
         threadPool.generic().execute(ActionRunnable.wrap(ActionListener.wrap(r -> {
-                // r代表本次action的结果
+                // r代表本次恢复操作的结果 为true时才需要走下一步
                 if (r) {
                     recoveryListener.onRecoveryDone(recoveryState);
                 }
             },
+            // 处理出现的异常 这里主要是把失败信息发送到leader节点 由主节点重新为分片指定节点
+            // 如果本分片是副本 那么不需要走恢复流程 静默处理
             e -> recoveryListener.onRecoveryFailure(recoveryState, new RecoveryFailedException(recoveryState, null, e), true)), action));
     }
 

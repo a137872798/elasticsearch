@@ -28,7 +28,6 @@ import org.elasticsearch.tasks.Task;
 public interface TransportRequestHandler<T extends TransportRequest> {
 
     /**
-     * TODO 当处理完成时 应该会将task从manager中移除
      * @param request  本次的请求对象
      * @param channel   使用的通道信息
      * @param task   本次相关的任务信息

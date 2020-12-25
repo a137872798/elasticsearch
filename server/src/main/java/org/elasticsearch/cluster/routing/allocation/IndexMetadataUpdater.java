@@ -84,7 +84,8 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
     }
 
     /**
-     * 某个之前处于初始状态的分片此时转换成 启动状态
+     * 某个之前处于初始状态的分片此时转换成启动状态
+     * 在从 init -> started 的过程中 经历了数据恢复阶段
      * @param initializingShard
      * @param startedShard
      */
@@ -142,13 +143,13 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
      * we update {@link IndexMetadata#getInSyncAllocationIds()} and {@link IndexMetadata#primaryTerm(int)} based on
      * the changes made during this allocation.
      *
-     * @param oldMetadata {@link Metadata} object from before the routing nodes was changed.
-     * @param newRoutingTable {@link RoutingTable} object after routing changes were applied.
+     * @param oldMetadata {@link Metadata} object from before the routing nodes was changed.   之前的元数据信息
+     * @param newRoutingTable {@link RoutingTable} object after routing changes were applied.   此时最新的路由表
      * @return adapted {@link Metadata}, potentially the original one if no change was needed.
-     * 当reroute结束时 此时 shardChanges 容器中已经记录了各种更新信息了   此时使用最新的路由表对元数据进行更新
      */
     public Metadata applyChanges(Metadata oldMetadata, RoutingTable newRoutingTable) {
-        // 将所有变化的分片按照索引进行分组
+        // 在某个操作前后 会涉及到分片状态的变化 并且会被记录在 shardChanges中
+        // applyChanges相当于是操作已经处理完了 就需要处理在操作过程中发生的变化信息
         Map<Index, List<Map.Entry<ShardId, Updates>>> changesGroupedByIndex =
             shardChanges.entrySet().stream().collect(Collectors.groupingBy(e -> e.getKey().getIndex()));
 
@@ -162,8 +163,9 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                 ShardId shardId = shardEntry.getKey();
                 Updates updates = shardEntry.getValue();
 
-                // 这里是在更新主分片的任期 以及 同步集合内的分片
+                // 某个分片发生的全部变化 会作用到metadata上
                 indexMetadataBuilder = updateInSyncAllocations(newRoutingTable, oldIndexMetadata, indexMetadataBuilder, shardId, updates);
+                // 每次只有主分片发生变化 才会更新 primaryTerm  副本怎么变化都没关系
                 indexMetadataBuilder = updatePrimaryTerm(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
             }
 
@@ -189,7 +191,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
      * @param indexMetadataBuilder 通过该对象构建新的元数据
      * @param shardId 本次更新的数据相关的分片id
      * @param updates 包含了本次的更新信息
-     * 更新 indexMetadata 的同步集合   在一个集合内的数据会保持同步  也就对应着写入主分片的数据会复写到副本的模型
+     *                更新  in-sync
      */
     private IndexMetadata.Builder updateInSyncAllocations(RoutingTable newRoutingTable, IndexMetadata oldIndexMetadata,
                                                           IndexMetadata.Builder indexMetadataBuilder, ShardId shardId, Updates updates) {
@@ -197,11 +199,11 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             "allocation ids cannot be both added and removed in the same allocation round, added ids: " +
                 updates.addedAllocationIds + ", removed ids: " + updates.removedAllocationIds;
 
-        // 获取此时处于同一 in-sync容器的分配者id列表
+        // 获取此时处于同一 in-sync容器的分片分配id
         Set<String> oldInSyncAllocationIds = oldIndexMetadata.inSyncAllocationIds(shardId.id());
 
         // check if we have been force-initializing an empty primary or a stale primary
-        // 本次启动了一个主分片 并且之前不在 in-sync集合中
+        // TODO
         if (updates.initializedPrimary != null && oldInSyncAllocationIds.isEmpty() == false &&
             oldInSyncAllocationIds.contains(updates.initializedPrimary.allocationId().getId()) == false) {
             // we're not reusing an existing in-sync allocation id to initialize a primary, which means that we're either force-allocating
@@ -236,10 +238,10 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                 // 每当主分片发生变化时 都会重置 in-sync (replica 则是加入到in-sync)
                 indexMetadataBuilder.putInSyncAllocationIds(shardId.id(), Collections.singleton(allocationId));
             }
-            // 代表本次更新仅涉及到副本
+
         } else {
             // standard path for updating in-sync ids
-            // 将本次变化的replica 同步到in-sync中 比如某个分片变成了非 start模式 就从in-sync中移除  如果转换成了start模式 则加入到in-sync
+            // 根据本次的变化 更新 in-sync
             Set<String> inSyncAllocationIds = new HashSet<>(oldInSyncAllocationIds);
             inSyncAllocationIds.addAll(updates.addedAllocationIds);
             inSyncAllocationIds.removeAll(updates.removedAllocationIds);
@@ -254,7 +256,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             // Only trim the set of allocation ids when it grows, otherwise we might trim too eagerly when the number
             // of replicas was decreased while shards were unassigned.
 
-            // 获取该index下每个shardId 对应的 (primary replica) 总和
+            // 计算总数
             int maxActiveShards = oldIndexMetadata.getNumberOfReplicas() + 1; // +1 for the primary
 
             // 获取对应的路由表
@@ -409,8 +411,8 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
          */
         private boolean increaseTerm; // whether primary term should be increased
         /**
-         * 需要被加入到 同步集合的分配者id  每个非unassigned的shard 都有一个分配者id   并且此时处于启动状态
-         * 会放到一个同步集合中 副本此时应该就会不断从主分片上同步数据
+         * 当某个分片完成了数据恢复  从init转变成 start状态时
+         * 会加入到这个容器中 之后会进入到 in-sync 队列中
          */
         private Set<String> addedAllocationIds = new HashSet<>(); // allocation ids that should be added to the in-sync set
 

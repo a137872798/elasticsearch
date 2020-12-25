@@ -22,6 +22,7 @@ import org.elasticsearch.index.seqno.SequenceNumbers;
 
 /**
  * Information about the safe commit, for making decisions about recoveries.
+ * 描述一个可靠的提交点  可靠指的是已经同步到集群的大多数相关节点
  */
 public class SafeCommitInfo {
 

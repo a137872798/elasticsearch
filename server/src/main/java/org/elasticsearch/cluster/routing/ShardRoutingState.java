@@ -34,7 +34,7 @@ public enum ShardRoutingState {
     /**
      * The shard is initializing (probably recovering from either a peer shard
      * or gateway).
-     * 正在进行分片的初始化工作
+     * 正在进行分片的初始化工作   实际上就包含了数据的恢复流程
      */
     INITIALIZING((byte) 2),
     /**

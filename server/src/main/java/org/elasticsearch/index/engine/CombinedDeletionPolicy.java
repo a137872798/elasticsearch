@@ -50,6 +50,10 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
     private final TranslogDeletionPolicy translogDeletionPolicy;
     private final SoftDeletesPolicy softDeletesPolicy;
     private final LongSupplier globalCheckpointSupplier;
+
+    /**
+     * 存储在该容器中的对象代表正在被使用 不宜直接删除
+     */
     private final ObjectIntHashMap<IndexCommit> snapshottedCommits; // Number of snapshots held against each commit point.
 
     /**
@@ -76,6 +80,12 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
         this.snapshottedCommits = new ObjectIntHashMap<>();
     }
 
+    /**
+     * 通过ES.engine创建的 indexWriter 使用该删除策略来替代默认的删除策略
+     * 在初始化IndexFileDeleter 的过程中会触发 deletionPolicy.onInit()
+     * @param commits
+     * @throws IOException
+     */
     @Override
     public void onInit(List<? extends IndexCommit> commits) throws IOException {
         assert commits.isEmpty() == false : "index is opened, but we have no commits";
@@ -89,7 +99,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
     }
 
     /**
-     * 从候选列表中选择哪些文件将会被删除    通过调用commits.delete 将文件加入到删除队列中
+     * 从候选列表中选择哪些文件将会被删除
      * @param commits
      * @throws IOException
      */
@@ -98,18 +108,23 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
         final IndexCommit safeCommit;
         synchronized (this) {
             // 找到需要保存的最小的commit 对象
+            // 实际上就是检测全局检查点 代表在集群的所有分片上(也可能是超半数节点,目前还不清楚) 数据都已经提交到了某个位置
+            // 这样之前的数据就可以删除了
             final int keptPosition = indexOfKeptCommits(commits, globalCheckpointSupplier.getAsLong());
             this.safeCommitInfo = SafeCommitInfo.EMPTY;
             this.lastCommit = commits.get(commits.size() - 1);
             this.safeCommit = commits.get(keptPosition);
+
+            // 可以看到安全点之后的数据没有被删除  因为其他副本会慢慢同步到最新的数据 所以最新的数据不应该被删除
             for (int i = 0; i < keptPosition; i++) {
-                // 代表正在被使用
+                // 将没有被使用的commit删除
                 if (snapshottedCommits.containsKey(commits.get(i)) == false) {
+                    // 加入到删除队列中  先进入删除队列才有可能减少引用计数 才有可能被删除
                     deleteCommit(commits.get(i));
                 }
             }
             updateRetentionPolicy();
-            // 代表只剩下一个commit了 那么下一个 maxSeqNo无法确定 就是用MAX_VALUE
+            // 本次刚好保留的是最后一个commit
             if (keptPosition == commits.size() - 1) {
                 this.maxSeqNoOfNextSafeCommit = Long.MAX_VALUE;
             } else {
@@ -120,7 +135,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
         }
 
         assert Thread.holdsLock(this) == false : "should not block concurrent acquire or relesase";
-        // LOCAL_CHECKPOINT_KEY   MAX_SEQ_NO 这些是什么时候插入进去的 ???
+        // 生成一个安全提交点对象
         safeCommitInfo = new SafeCommitInfo(Long.parseLong(
             safeCommit.getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY)), getDocCountOfCommit(safeCommit));
 
@@ -145,8 +160,8 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
     }
 
     /**
-     * 本地检查点 和 本地检查点safeCommit是2个含义
-     * 本地检查点 safeCommit 应该是指已经同步到集群中其他节点了
+     * 因为最新的commit可能数据还没有同步到其他节点 并在该删除策略中被废弃
+     * 获取可信任的commit中记录的本地检查点 并设置到2个删除策略中
      * @throws IOException
      */
     private void updateRetentionPolicy() throws IOException {
@@ -231,21 +246,21 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
     /**
      * Find the highest index position of a safe index commit whose max sequence number is not greater than the global checkpoint.
      * Index commits with different translog UUID will be filtered out as they don't belong to this engine.
-     * @param commits
-     * @param globalCheckpoint
-     * 在这组 IndexCommit中 最后仅会保留一个IndexCommit 以及相关的所有索引文件
-     * 这些索引文件也就包含了 ES.Index 此时全部的数据
+     * @param commits   本次从shard目录下扫描到的所有 segmentInfos
+     * @param globalCheckpoint   从事务日志上获取的最新刷盘的全局检查点
      */
     private static int indexOfKeptCommits(List<? extends IndexCommit> commits, long globalCheckpoint) throws IOException {
-        // 每次提交点中 都可以获取事务id
+        // 当通过refresh 间接触发刷盘时 不会更新segmentInfos的 userData
+        // 当主动发起indexWriter.commit时 会更新segmentInfos的 userData
         final String expectedTranslogUUID = commits.get(commits.size() - 1).getUserData().get(Translog.TRANSLOG_UUID_KEY);
 
         // Commits are sorted by age (the 0th one is the oldest commit).
+        // 从后往前找到首个可以被删除的commit
         for (int i = commits.size() - 1; i >= 0; i--) {
             final Map<String, String> commitUserData = commits.get(i).getUserData();
             // Ignore index commits with different translog uuid.
             // 如果事务文件id已经匹配不上了 就忽略不同的文件  返回首个事务id相同的文件
-            // TODO 先简化情况吧  假设只按照检查点数据来确定是否安全
+            // TODO 怎么出现这种情况???
             if (expectedTranslogUUID.equals(commitUserData.get(Translog.TRANSLOG_UUID_KEY)) == false) {
                 return i + 1;
             }
@@ -270,7 +285,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
 
     /**
      * Checks if the deletion policy can delete some index commits with the latest global checkpoint.
-     * 只能删除小于全局检查点的数据  全局检查点应该就是整个集群下最小的检查点
+     * 是否有检测的必要 每当在某个时刻确定了一个safeCommit时 会找到下一个 commit的seq  当全局检查点更新 并超过它时 才有进行删除的必要
      */
     boolean hasUnreferencedCommits() {
         return maxSeqNoOfNextSafeCommit <= globalCheckpointSupplier.getAsLong();

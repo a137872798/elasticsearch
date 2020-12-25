@@ -255,6 +255,8 @@ public class RecoveryState implements ToXContentFragment, Writeable {
 
     /**
      * Returns recovery source node (only non-null if peer recovery)
+     * 当从本地事务日志恢复数据时 不需要设置该值
+     * 而如果通过peer恢复数据时 必须要设置 对应primary所在的节点
      */
     @Nullable
     public DiscoveryNode getSourceNode() {

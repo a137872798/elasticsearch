@@ -710,11 +710,11 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         assert shardRouting.initializing() : "only allow shard creation for initializing shard but was " + shardRouting;
 
         DiscoveryNode sourceNode = null;
-        // 如果分片从其他节点获取数据
+        // 代表属于本节点的分片是副本分片 会先检测主分片是否处于active状态 也就是是否已经完成数据恢复
         if (shardRouting.recoverySource().getType() == Type.PEER)  {
             // 寻找primary分片所在的节点
             sourceNode = findSourceNodeForPeerRecovery(logger, routingTable, nodes, shardRouting);
-            // 找不到恢复源就不创建分片了吗
+            // 如果主分片数据恢复还未完成也会返回null 无法创建分片
             if (sourceNode == null) {
                 logger.trace("ignoring initializing shard {} - no source node can be found.", shardRouting.shardId());
                 return;

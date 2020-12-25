@@ -66,7 +66,8 @@ public final class TranslogDeletionPolicy {
     }
 
     /**
-     * 该位置的数据已经在集群维度完成了同步
+     * 因为最新的commit可能数据还没有同步到其他节点 并在该删除策略中被废弃
+     * 获取可信任的commit中记录的本地检查点 并设置到2个删除策略中
      * @param newCheckpoint
      */
     public synchronized void setLocalCheckpointOfSafeCommit(long newCheckpoint) {

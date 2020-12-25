@@ -1910,7 +1910,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
     /**
      * Trims unreferenced translog generations by asking {@link TranslogDeletionPolicy} for the minimum
      * required generation
-     * 当某些reader不被使用时 可以考虑将他们删除
+     * 检测某些事务文件是否可以被删除
      */
     public void trimUnreferencedReaders() throws IOException {
         // first check under read lock if any readers can be trimmed
@@ -1927,7 +1927,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
         }
 
         // move most of the data to disk to reduce the time the write lock is held
-        // 将尽可能多的数据先写入磁盘中
+        // 将尽可能多的数据先写入磁盘中  主要是为了减少下面持有锁的时间
         sync();
         try (ReleasableLock ignored = writeLock.acquire()) {
             if (closed.get()) {
@@ -1970,10 +1970,11 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
     private long getMinReferencedGen() {
         assert readLock.isHeldByCurrentThread() || writeLock.isHeldByCurrentThread();
 
+        // 目前还在被引用中的最小的gen
         long minReferencedGen = Math.min(
             // 获取最小的gen对应的引用计数  同时也代表这个gen对应的文件不应该被删除 如果没有则会返回MAX_VALUE 代表没有限制
             deletionPolicy.getMinTranslogGenRequiredByLocks(),
-            // 当信息还未同步时 LocalCheckpointOfSafeCommit 为-1    找到此时还在使用中的最小的gen
+            // localCheckpointOfSafeCommit 代表 safeCommit记录的本地检查点  safeCommit 代表在集群中完成同步的globalCheckpoint对应的commit
             minGenerationForSeqNo(deletionPolicy.getLocalCheckpointOfSafeCommit() + 1, current, readers));
         assert minReferencedGen >= getMinFileGeneration() :
             "deletion policy requires a minReferenceGen of [" + minReferencedGen + "] but the lowest gen available is ["
@@ -1986,6 +1987,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
     /**
      * deletes all files associated with a reader. package-private to be able to simulate node failures at this point
+     * 将某个reader对应的文件删除
      */
     void deleteReaderFiles(TranslogReader reader) {
         IOUtils.deleteFilesIgnoringExceptions(reader.path(),

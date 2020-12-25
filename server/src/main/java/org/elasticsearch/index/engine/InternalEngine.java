@@ -184,7 +184,7 @@ public class InternalEngine extends Engine {
     private final LocalCheckpointTracker localCheckpointTracker;
 
     /**
-     * 结合的一个删除策略
+     * 删除策略的作用是决定哪些 segment以及其下面的索引文件可以被删除
      */
     private final CombinedDeletionPolicy combinedDeletionPolicy;
 
@@ -577,7 +577,7 @@ public class InternalEngine extends Engine {
                     long seqNo = localCheckpoint + 1;
                     seqNo <= maxSeqNo;
                     seqNo = localCheckpointTracker.getProcessedCheckpoint() + 1 /* leap-frog the local checkpoint */) {
-                // 下面的操作会使得 localCheckpointTracker 内部的 processedCheckpoint +1  如果operation 是通过事务日志的数据产生的 那么还要增加 persistedCheckpoint
+                // 下面的操作会使得 localCheckpointTracker 内部的 processedCheckpoint +1
                 innerNoOp(new NoOp(seqNo, primaryTerm, Operation.Origin.PRIMARY, System.nanoTime(), "filling gaps"));
                 numNoOpsAdded++;
                 assert seqNo <= localCheckpointTracker.getProcessedCheckpoint() :
@@ -585,6 +585,7 @@ public class InternalEngine extends Engine {
 
             }
             // 之前写入的数据还没有持久化 这里进行持久化
+            // 每当进行一次事务日志的持久化 就会将persistedCheckpoint同步到lastOperation的seq
             syncTranslog(); // to persist noops associated with the advancement of the local checkpoint
             assert localCheckpointTracker.getPersistedCheckpoint() == maxSeqNo
                 : "persisted local checkpoint did not advance to max seq no; is [" + localCheckpointTracker.getPersistedCheckpoint() +
@@ -732,7 +733,6 @@ public class InternalEngine extends Engine {
     }
 
     // Package private for testing purposes only
-    // TODO 什么时候会将 commit数据填充到 snapshottedCommit中???
     boolean hasSnapshottedCommits() {
         return combinedDeletionPolicy.hasSnapshottedCommits();
     }
@@ -770,7 +770,8 @@ public class InternalEngine extends Engine {
     @Override
     public void syncTranslog() throws IOException {
         translog.sync();
-        // 每当刷盘完成时 都检测一下是否有不再被使用的 segment了 有的话进行移除
+        // 该方法发生在事务日志刷盘之后是因为 可能此时最新的globalCheckpoint 被写入到了事务日志中
+        // 只有在这个时候 才有检测是否有可删除lucene的必要  (globalCheckpoint就是确保数据已经写入到超半数节点)
         revisitIndexDeletionPolicyOnTranslogSynced();
     }
 
@@ -788,17 +789,15 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 在事务文件刷盘后检测是否有需要删除的文件
+     * 在事务日志进行刷盘后 检测是否有需要删除的lucene文件/事务文件
      * @throws IOException
      */
     private void revisitIndexDeletionPolicyOnTranslogSynced() throws IOException {
         if (combinedDeletionPolicy.hasUnreferencedCommits()) {
-            // 触发删除策略的 onCommit 方法后  会有一部分文件被设置到删除队列中 之后通过 IndexFileDeleter删除文件
-            // ES 使用的删除策略是  CombinedDeletionPolicy
-            // 根据globalCheckpoint 选择不再维护的commit 并删除相关文件
+            // 减少删除队列中索引文件的引用计数 当归0时将被直接移除
             indexWriter.deleteUnusedFiles();
         }
-        // 事务文件也包含了 checkpoint的信息 将小于 safeCommit的数据文件删除掉
+        // 事务日志也是要确保记录的operation在集群范围内完成同步 才可以删除
         translog.trimUnreferencedReaders();
     }
 

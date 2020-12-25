@@ -431,9 +431,9 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
         }
 
         /**
-         *
+         * 通过最新的 routingNodes 生成 routingTable
          * @param version
-         * @param routingNodes  通过内部的节点信息更新路由表
+         * @param routingNodes
          * @return
          */
         @SuppressWarnings("unchecked")
@@ -445,7 +445,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
             for (RoutingNode routingNode : routingNodes) {
                 for (ShardRouting shardRoutingEntry : routingNode) {
                     // every relocating shard has a double entry, ignore the target one.
-                    // 这种分片是 在relocation过程中针对 target节点生成的 shardRouting  这种会被忽略  TODO 那么意义是什么??? 他不会在routingTable中显示出来
+                    // 这种分片是 在relocation过程中针对 target节点生成的 shardRouting  这种不会在routingTable中显示出来
                     if (shardRoutingEntry.initializing() && shardRoutingEntry.relocatingNodeId() != null)
                         continue;
 

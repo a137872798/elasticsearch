@@ -208,7 +208,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     }
 
     /**
-     * 增加一个需要恢复数据的分片
+     * 当某个分片从未分配状态变成init状态后 就代表该分片需要进行数据恢复了
+     * 数据恢复将会在该分片被分配到的节点上执行 并且在分片数据恢复完成后 节点会通知leader 将分片转换成started状态 同时触发 removeRecovery 代表本分片完成了数据恢复
      * @param routing
      */
     private void addRecovery(ShardRouting routing) {
@@ -232,7 +233,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * 更新需要恢复数据的副本数量
      * @param routing  待处理的分片
      * @param increment  新增需要恢复的副本/又完成了一个需要恢复的副本
-     * @param primary   与 routing相同shardId的主分片
+     * @param primary   如果本分片是主分片  那么传入null
+     *                  如果是副本分片 那么传入的是主分片
      */
     private void updateRecoveryCounts(final ShardRouting routing, final boolean increment, @Nullable final ShardRouting primary) {
         final int howMany = increment ? 1 : -1;
@@ -244,7 +246,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         // 代表某个节点对应的需要恢复数据的副本数发生了变化
         Recoveries.getOrAdd(recoveriesPerNode, routing.currentNodeId()).addIncoming(howMany);
 
-        // 默认情况下 副本的恢复源就是 PEER  其余情况 比如primary就不需要处理了 并且应该是通过本地数据还原
+        // 下面仅处理副本的数据恢复
         if (routing.recoverySource().getType() == RecoverySource.Type.PEER) {
             // add/remove corresponding outgoing recovery on node with primary shard
             if (primary == null) {
@@ -269,7 +271,6 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                 recoveriesPerNode.get(routing.currentNodeId()).addOutgoing(numRecoveringReplicas);
             }
         }
-        // 如果当前分片不是 PEER 就代表是primary
     }
 
     public int getIncomingRecoveries(String nodeId) {
@@ -281,7 +282,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     }
 
     /**
-     * 通过这个shardingRouting的 shardId 找到匹配的 primary
+     * 如果本分片是一个副本 那么找到用于恢复数据的主分片
      * @param routing
      * @return
      */
@@ -294,11 +295,13 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             if (shardRoutings != null) {
                 for (ShardRouting shardRouting : shardRoutings) {
                     if (shardRouting.primary()) {
-                        // 意思是可能会有多个 primary为true且shardId 一致的分片???   不过active() = true的 应该只有一个
+                        // 当此时主分片处于活跃状态 也就是已经完成了数据恢复 那么可以返回
                         if (shardRouting.active()) {
                             return shardRouting;
+                            // 主分片此时还未恢复完数据 先尝试往下遍历 如果发现其他主分片 先使用其他主分片
                         } else if (primary == null) {
                             primary = shardRouting;
+                            // 主分片可能此时处于重定向状态 还是会返回主分片
                         } else if (primary.relocatingNodeId() != null) {
                             primary = shardRouting;
                         }
@@ -582,11 +585,14 @@ public class RoutingNodes implements Iterable<RoutingNode> {
      * If the started shard is a primary relocation target, this also reinitializes currently initializing replicas as their
      * recovery source changes
      *
+     * @param routingChangesObserver 监听分片变化
      * @return the started shard
      * 将某个处于初始状态的分片转换成启动
+     * 是在分片完成数据恢复阶段后才触发的
      */
     public ShardRouting startShard(Logger logger, ShardRouting initializingShard, RoutingChangesObserver routingChangesObserver) {
         ensureMutable();
+        // 在这里完成了 shard状态的更新
         ShardRouting startedShard = started(initializingShard);
         logger.trace("{} marked shard as started (routing: {})", initializingShard.shardId(), initializingShard);
 
@@ -594,7 +600,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         routingChangesObserver.shardStarted(initializingShard, startedShard);
 
 
-        // 如果这个分片是由重分配创建的shard 那么它的 relocating 指向的就是source Node
+        // TODO 如果这个分片是由重分配创建的shard 那么它的 relocating 指向的就是source Node  先忽略这段逻辑
         if (initializingShard.relocatingNodeId() != null) {
             // relocation target has been started, remove relocation source
             RoutingNode relocationSourceNode = node(initializingShard.relocatingNodeId());
@@ -818,6 +824,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     private ShardRouting started(ShardRouting shard) {
         assert shard.initializing() : "expected an initializing shard " + shard;
         // 初始状态的shard 有2种 一种是真的还未启动的分片 一种是之前启动 但是进入了relocating状态 这时会在target节点上创建一个 init的分片 它的relocatingNodeId 指向source节点
+        // 这里代表分片不是由于重分配生成的  那么就可以减少此时处于非活跃状态的分片数量了
         if (shard.relocatingNodeId() == null) {
             // if this is not a target shard for relocation, we need to update statistics
             inactiveShardCount--;
@@ -825,7 +832,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                 inactivePrimaryCount--;
             }
         }
-        // TODO
+        // 因为该分片完成了数据恢复 所以从recovery容器中移除
         removeRecovery(shard);
         ShardRouting startedShard = shard.moveToStarted();
         updateAssigned(shard, startedShard);
@@ -1425,17 +1432,17 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     }
 
     /**
-     * 记录此时所有需要恢复数据的分片
-     * 以node作为划分界限
+     * 以node为界限  记录每个节点会有多少分片需要输入数据  有多少分片需要向外输出数据
+     * 比如1主8副 那么主分片所在的节点 outgoing就是8 其他节点incoming 都是1
      */
     private static final class Recoveries {
         private static final Recoveries EMPTY = new Recoveries();
         /**
-         * 需要接收数据的分片 比如 replicate
+         * 需要恢复数据的分片数量
          */
         private int incoming = 0;
         /**
-         * 此时往外输出数据的分片 比如 primary
+         * 此时往外输出数据
          */
         private int outgoing = 0;
 

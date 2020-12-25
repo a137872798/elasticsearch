@@ -89,6 +89,7 @@ final class SoftDeletesPolicy {
 
     /**
      * Sets the local checkpoint of the current safe commit
+     * 在 CombinedDeletionPolicy 的onCommit触发时 会找到此时已经确保数据同步到集群中的最新的commit对象 并获取该commit记录的userData中的 localCheckpoint
      */
     synchronized void setLocalCheckpointOfSafeCommit(long newCheckpoint) {
         if (newCheckpoint < this.localCheckpointOfSafeCommit) {

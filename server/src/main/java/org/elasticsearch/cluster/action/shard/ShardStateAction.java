@@ -98,7 +98,7 @@ public class ShardStateAction {
         this.clusterService = clusterService;
         this.threadPool = threadPool;
 
-        // 分片在启动和关闭 会注册不同的处理器
+        // 代表分片在某个节点上成功启动 或者失败
         transportService.registerRequestHandler(SHARD_STARTED_ACTION_NAME, ThreadPool.Names.SAME, StartedShardEntry::new,
             new ShardStartedTransportHandler(clusterService,
                 new ShardStartedClusterStateTaskExecutor(allocationService, rerouteService, logger),
@@ -248,9 +248,7 @@ public class ShardStateAction {
     }
 
     /**
-     * 当某个分片被标记成无效时 需要在leader节点进行处理
-     * 是这样 先找到shard.primary所在的node 发送请求 获取primary对应replicaGroup  找到在 unavailable容器中的分片 向leader节点发起关闭的请求
-     * 而该对象就是处理关闭请求的
+     * 代表某个分片在之前的某个节点上无法正常启动  就要借助relocation服务 重新指定位置
      */
     private static class ShardFailedTransportHandler implements TransportRequestHandler<FailedShardEntry> {
 
@@ -584,8 +582,6 @@ public class ShardStateAction {
     }
 
     /**
-     * 目前只看到在IndicesClusterStateService中 CS标记该分片为init状态 但是在node上为start或者 recovery post 会发送该请求
-     * 应该是分片在数据恢复后通知的 这种情况就代表数据已经恢复完成
      * @param shardRouting
      * @param primaryTerm
      * @param message
@@ -601,6 +597,10 @@ public class ShardStateAction {
         sendShardAction(SHARD_STARTED_ACTION_NAME, currentState, entry, listener);
     }
 
+
+    /**
+     * 在leader节点上处理 其他节点发来的 SHARD_STARTED_ACTION_NAME 请求
+     */
     private static class ShardStartedTransportHandler implements TransportRequestHandler<StartedShardEntry> {
         private final ClusterService clusterService;
         private final ShardStartedClusterStateTaskExecutor shardStartedClusterStateTaskExecutor;
@@ -613,6 +613,13 @@ public class ShardStateAction {
             this.logger = logger;
         }
 
+        /**
+         * 当某个分片成功启动  会通知到其他节点
+         * @param request  本次的请求对象
+         * @param channel   使用的通道信息
+         * @param task   本次相关的任务信息
+         * @throws Exception
+         */
         @Override
         public void messageReceived(StartedShardEntry request, TransportChannel channel, Task task) throws Exception {
             logger.debug("{} received shard started for [{}]", request.shardId, request);
@@ -626,6 +633,9 @@ public class ShardStateAction {
         }
     }
 
+    /**
+     * 在集群中更新某个分片可用的逻辑
+     */
     public static class ShardStartedClusterStateTaskExecutor
             implements ClusterStateTaskExecutor<StartedShardEntry>, ClusterStateTaskListener {
         private final AllocationService allocationService;
@@ -638,6 +648,13 @@ public class ShardStateAction {
             this.rerouteService = rerouteService;
         }
 
+        /**
+         * 开始处理任务
+         * @param currentState
+         * @param tasks  每个任务都表示某个分片成功启动了
+         * @return
+         * @throws Exception
+         */
         @Override
         public ClusterTasksResult<StartedShardEntry> execute(ClusterState currentState, List<StartedShardEntry> tasks) throws Exception {
             ClusterTasksResult.Builder<StartedShardEntry> builder = ClusterTasksResult.builder();
@@ -645,6 +662,7 @@ public class ShardStateAction {
             List<ShardRouting> shardRoutingsToBeApplied = new ArrayList<>(tasks.size());
             Set<ShardRouting> seenShardRoutings = new HashSet<>(); // to prevent duplicates
             for (StartedShardEntry task : tasks) {
+                // 如果在当前CS中 发现该分片已经不存在了 静默处理
                 final ShardRouting matched = currentState.getRoutingTable().getByAllocationId(task.shardId, task.allocationId);
                 if (matched == null) {
                     // tasks that correspond to non-existent shards are marked as successful. The reason is that we resend shard started
@@ -654,6 +672,8 @@ public class ShardStateAction {
                     logger.debug("{} ignoring shard started task [{}] (shard does not exist anymore)", task.shardId, task);
                     builder.success(task);
                 } else {
+
+                    // 代表本次上报成功的是主分片  匹配term  当匹配失败时 静默处理
                     if (matched.primary() && task.primaryTerm > 0) {
                         final IndexMetadata indexMetadata = currentState.metadata().index(task.shardId.getIndex());
                         assert indexMetadata != null;
@@ -667,6 +687,7 @@ public class ShardStateAction {
                             continue;
                         }
                     }
+                    // 如果分片已经启动了  静默处理
                     if (matched.initializing() == false) {
                         assert matched.active() : "expected active shard routing for task " + task + " but found " + matched;
                         // same as above, this might have been a stale in-flight request, so we just ignore.
@@ -692,6 +713,7 @@ public class ShardStateAction {
 
             ClusterState maybeUpdatedState = currentState;
             try {
+                // 处理分片状态的转换  并发布到集群中 这样分片就可以观测到主分片启动成功 并开始拉取数据
                 maybeUpdatedState = allocationService.applyStartedShards(currentState, shardRoutingsToBeApplied);
                 builder.successes(tasksToBeApplied);
             } catch (Exception e) {
