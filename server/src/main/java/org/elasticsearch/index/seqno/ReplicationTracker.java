@@ -103,7 +103,6 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *   handoff. If the target shard is successfully initialized in primary mode, the source shard of a primary relocation is then moved
      *   to replica mode (using {@link #completeRelocationHandoff}), as the relocation target will be in charge of the global checkpoint
      *   computation from that point on.
-     *   是否是主分片模式  主分片模式才可以进行重分配
      */
     volatile boolean primaryMode;
 
@@ -134,7 +133,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
     /**
      * Boolean flag that indicates whether a relocation handoff completed (see {@link #completeRelocationHandoff}).
-     * 当重定向完成后 会修改成true
+     * 代表当前分片的重定向完成
      */
     volatile boolean relocated;
 
@@ -1152,20 +1151,22 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * @param applyingClusterStateVersion the cluster state version being applied when updating the allocation IDs from the master
      *                                    此时集群的版本号
      * @param inSyncAllocationIds         the allocation IDs of the currently in-sync shard copies
-     *                                    当前已经完成同步的分片对应的 allocationId集合    跟kafka一个套路么  有一个同步完成的集合
+     *                                    此时同步队列中的所有分片对应的 allocationId
      * @param routingTable                the shard routing table
-     *                                    代表当前节点的某个分片晋升成了master分片
+     * 代表接收到leader节点发来的更新分片信息的请求
      */
     public synchronized void updateFromMaster(final long applyingClusterStateVersion, final Set<String> inSyncAllocationIds,
                                               final IndexShardRoutingTable routingTable) {
         assert invariant();
-        // 本次更新对应的集群版本号更新才有处理的必要
+
+        // 每次集群发生了一次变化 就需要增加版本号
         if (applyingClusterStateVersion > appliedClusterStateVersion) {
             // check that the master does not fabricate new in-sync entries out of thin air once we are in primary mode
             assert !primaryMode || inSyncAllocationIds.stream().allMatch(
                 inSyncId -> checkpoints.containsKey(inSyncId) && checkpoints.get(inSyncId).inSync) :
                 "update from master in primary mode contains in-sync ids " + inSyncAllocationIds +
                     " that have no matching entries in " + checkpoints;
+
             // remove entries which don't exist on master
             // 找到所有处于 init阶段的shard对应的allocationId 并生成集合
             Set<String> initializingAllocationIds = routingTable.getAllInitializingShards().stream()
@@ -1174,6 +1175,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             boolean removedEntries = checkpoints.keySet().removeIf(
                 aid -> !inSyncAllocationIds.contains(aid) && !initializingAllocationIds.contains(aid));
 
+            // 当该对象首次被创建时应该是false  该值不会因为当前分片是主分片而设置成true
             if (primaryMode) {
                 // add new initializingIds that are missing locally. These are fresh shard copies - and not in-sync
                 for (String initializingId : initializingAllocationIds) {
@@ -1189,8 +1191,10 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 if (removedEntries) {
                     pendingInSync.removeIf(aId -> checkpoints.containsKey(aId) == false);
                 }
+
             } else {
                 for (String initializingId : initializingAllocationIds) {
+                    // TODO 在数据恢复阶段应该已经从事务文件中加载globalCheckpoint了啊
                     final long localCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
                     final long globalCheckpoint = localCheckpoint;
                     checkpoints.put(initializingId, new CheckpointState(localCheckpoint, globalCheckpoint, false, false));

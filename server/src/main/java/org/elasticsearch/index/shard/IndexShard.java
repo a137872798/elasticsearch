@@ -655,10 +655,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param newPrimaryTerm              当前主分片的 term 每个在集群中更替 主分片在集群中的位置 就会增加term
      * @param primaryReplicaSyncer        the primary-replica resync action to trigger when a term is increased on a primary
      * @param applyingClusterStateVersion the cluster state version being applied when updating the allocation IDs from the master
-     * @param inSyncAllocationIds         the allocation ids of the currently in-sync shard copies    同步该分片数据的所有节点
+     * @param inSyncAllocationIds         the allocation ids of the currently in-sync shard copies    此时同步队列中所有分片
      * @param routingTable                the shard routing table     某个shard在整个集群中最新的分布情况
      * @throws IOException
-     * 更新分片的状态   在IndicesClusterStateService中 会监听CS的变化
+     * 比如本节点上报修改状态的请求被leader通过  在发布到集群通知本节点 就要做一些更新操作
      */
     @Override
     public void updateShardState(final ShardRouting newRouting,
@@ -677,18 +677,18 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 throw new IllegalArgumentException("Trying to set a routing entry with shardId " +
                     newRouting.shardId() + " on a shard with shardId " + shardId());
             }
-            // TODO 当分配的位置已经发生了变化时 抛出异常  浅层含义是???
+            // 代表虽然是同一个分片 分配到同一个节点 但是发生在2次分配动作中   allocationId是为了解决ABA的问题
             if (newRouting.isSameAllocation(currentRouting) == false) {
                 throw new IllegalArgumentException("Trying to set a routing entry with a different allocation. Current " +
                     currentRouting + ", new " + newRouting);
             }
-            // TODO 这几种情况为什么要抛出异常呢 ???
+            // 不允许直接更新分片角色  应该要先经历移除的操作 再重新添加
             if (currentRouting.primary() && newRouting.primary() == false) {
                 throw new IllegalArgumentException("illegal state: trying to move shard from primary mode to replica mode. Current "
                     + currentRouting + ", new " + newRouting);
             }
 
-            // 当前分片是主分片 TODO
+            // 当前如果是主分片 要更新副本组信息 这涉及到了 副本从主分片拉取数据进行recovery的过程
             if (newRouting.primary()) {
                 replicationTracker.updateFromMaster(applyingClusterStateVersion, inSyncAllocationIds, routingTable);
             }
@@ -1588,7 +1588,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @throws org.apache.lucene.index.IndexFormatTooNewException if the lucene index is too new to be opened.
      * @throws java.io.FileNotFoundException                      if one or more files referenced by a commit are not present.
      * @throws java.nio.file.NoSuchFileException                  if one or more files referenced by a commit are not present.
-     *                                                            store 用于获取lucene目录下 索引文件的检验和 长度 等等信息 会将它们包装成metadata数据
+     *
+     *                      将此时分片对应的dir 下所有文件信息 生成元数据
      */
     public Store.MetadataSnapshot snapshotStoreMetadata() throws IOException {
         assert Thread.holdsLock(mutex) == false : "snapshotting store metadata under mutex";
@@ -1600,12 +1601,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 // the engine on us. If the engine is running, we can get a snapshot via the deletion policy of the engine.
                 final Engine engine = getEngineOrNull();
                 if (engine != null) {
+                    // 获取最新的 commit信息
                     indexCommit = engine.acquireLastIndexCommit(false);
                 }
+                // TODO 目前不会返回null
                 if (indexCommit == null) {
                     return store.getMetadata(null, true);
                 }
             }
+            // 根据本次commit信息生成元数据
             return store.getMetadata(indexCommit.getIndexCommit());
         } finally {
             store.decRef();
@@ -1852,24 +1856,29 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @return a sequence number that an operation-based peer recovery can start with.
      * This is the first operation after the local checkpoint of the safe commit if exists.
-     * 基于本地的事务日志文件将数据恢复到全局检查点
+     * 从本地恢复数据 直到 globalCheckpoint
      */
     public long recoverLocallyUpToGlobalCheckpoint() {
         assert Thread.holdsLock(mutex) == false : "recover locally under mutex";
+
+        // 必须处于数据恢复阶段才应该调用该方法
         if (state != IndexShardState.RECOVERING) {
             throw new IndexShardNotRecoveringException(shardId, state);
         }
         assert recoveryState.getStage() == RecoveryState.Stage.INDEX : "unexpected recovery stage [" + recoveryState.getStage() + "]";
         assert routingEntry().recoverySource().getType() == RecoverySource.Type.PEER : "not a peer recovery [" + routingEntry() + "]";
+
+        // safeCommit 就是全局检查点对应的 lucene提交数据
         final Optional<SequenceNumbers.CommitInfo> safeCommit;
         final long globalCheckpoint;
         try {
-            // 获取事务日志文件id
+            // 获取最新的事务日志文件id
             final String translogUUID = store.readLastCommittedSegmentsInfo().getUserData().get(Translog.TRANSLOG_UUID_KEY);
-            // 根据最新的事务日志文件 找到此时记录的全局检查点  TODO 这个全局检查点是在什么时候进行同步的
+            // 最新的事务日志文件 记录的全局检查点是最可靠的 通过它反查 saftCommit信息
+            // 传入事务id 只是为了校验 而不是通过该事务id去查找
             globalCheckpoint = Translog.readGlobalCheckpoint(translogConfig.getTranslogPath(), translogUUID);
 
-            // 获取到safeCommit 这个是<= 全局检查点的  到这里为止的数据都是确保在集群中一致的
+            // 检测本地持久化的数据是否已经达到全局检查点 如果达到返回 Optional.Empty()
             safeCommit = store.findSafeIndexCommit(globalCheckpoint);
         } catch (org.apache.lucene.index.IndexNotFoundException e) {
             logger.trace("skip local recovery as no index commit found");
@@ -1878,7 +1887,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             logger.debug("skip local recovery as failed to find the safe commit", e);
             return UNASSIGNED_SEQ_NO;
         }
-        // 没有绝对可靠的数据时 就不进行写入
+
+        // 代表本地持久化的数据已经超过了 globalCheckpoint 就不需要从本地恢复数据了
         if (safeCommit.isPresent() == false) {
             logger.trace("skip local recovery as no safe commit found");
             return UNASSIGNED_SEQ_NO;
@@ -1887,16 +1897,19 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         try {
             // 校验逻辑可以先忽略
             maybeCheckIndex(); // check index here and won't do it again if ops-based recovery occurs
+
+            // 进入从事务日志中恢复数据的阶段
             recoveryState.setStage(RecoveryState.Stage.TRANSLOG);
 
+            // 代表本地已经持久化的数据检查点刚好与全局检查点一致  本次不需要从事务日志中重做数据
             if (safeCommit.get().localCheckpoint == globalCheckpoint) {
                 logger.trace("skip local recovery as the safe commit is up to date; safe commit {} global checkpoint {}",
                     safeCommit.get(), globalCheckpoint);
                 recoveryState.getTranslog().totalLocal(0);
-                // TODO 这个返回值的含义是？？？ 为什么要+1
+                // 代表从 globalCheckpoint + 1的位置开始拉取远端数据
                 return globalCheckpoint + 1;
             }
-            // 如果此时状态被关闭了 或者处于阻塞状态 返回值是啥意思啊
+            // TODO
             if (indexSettings.getIndexMetadata().getState() == IndexMetadata.State.CLOSE ||
                 IndexMetadata.INDEX_BLOCKS_WRITE_SETTING.get(indexSettings.getSettings())) {
                 logger.trace("skip local recovery as the index was closed or not allowed to write; safe commit {} global checkpoint {}",
@@ -1907,6 +1920,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             try {
                 /**
                  * 这里就是定义了如何通过事务日志文件恢复数据的函数
+                 * 下面的操作和 primary从主分片恢复数据的逻辑是一致的
                  * @param engine 使用的引擎对象
                  * @param snapshot 此时日志文件下所有数据(OP) 结合成的快照对象
                  */
@@ -1923,7 +1937,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 };
                 // 新创建了一个engine对象
                 innerOpenEngineAndTranslog(() -> globalCheckpoint);
-                // globalCheckpoint 开始的数据就不再恢复了
+                // 只需要从事务日志中将数据恢复到全局检查点的位置  而在primary上是尽可能的从本地恢复数据
                 getEngine().recoverFromTranslog(translogRecoveryRunner, globalCheckpoint);
                 logger.trace("shard locally recovered up to {}", getEngine().getSeqNoStats(globalCheckpoint));
             } finally {
@@ -2992,7 +3006,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Returns the current replication group for the shard.
      *
      * @return the replication group
-     * 获取该分片所有副本组成的 group
+     * 获取某个分片的副本组
      */
     public ReplicationGroup getReplicationGroup() {
         assert assertPrimaryMode();

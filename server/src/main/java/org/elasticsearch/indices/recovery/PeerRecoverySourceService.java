@@ -53,6 +53,7 @@ import java.util.Set;
 /**
  * The source recovery accepts recovery requests from other peer shards and start the recovery process from this
  * source shard to the target shard.
+ * 该节点接收 replicaShard的请求 并从primaryShard拉取数据返回
  */
 public class PeerRecoverySourceService extends AbstractLifecycleComponent implements IndexEventListener {
 
@@ -110,7 +111,7 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
     }
 
     /**
-     * 执行恢复操作
+     * 通过req中描述的相关信息  开始传输数据给副本 完成副本的恢复流程
      * @param request
      * @param listener
      */
@@ -122,12 +123,13 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
         // 获取这个分片的路由信息 记录了这个shard相关的信息分散在哪些节点上 并且在哪个节点上是primary分片 在哪些节点上是副本
         final ShardRouting routingEntry = shard.routingEntry();
 
-        // 作为恢复源的 shard 必须是主分片 因为主分片上的数据才可以确保是最新的 最可靠的
+        // 首先确保该分片是主分片 且处于active状态    active代表主分片已经完成了自身的数据恢复  (就是从本地事务日志中恢复数据)
         if (routingEntry.primary() == false || routingEntry.active() == false) {
             throw new DelayRecoveryException("source shard [" + routingEntry + "] is not an active primary");
         }
 
-        // 表明 target成为了该分片重定向后的节点     当检测到路由信息落后时 触发一个延迟方法 等待routing信息同步
+        // 除了副本可以发起恢复数据的请求外 主分片发生重定向时 新的location可以从旧的node上拉取数据
+        // 信息错误 有可能是 leader节点还没有将最新的元数据同步到本节点上 所以在延时后可以重试
         if (request.isPrimaryRelocation() && (routingEntry.relocating() == false ||
             routingEntry.relocatingNodeId().equals(request.targetNode().getId()) == false)) {
             logger.debug("delaying recovery of {} as source shard is not marked yet as relocating to {}",
@@ -135,7 +137,8 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
             throw new DelayRecoveryException("source shard is not marked yet as relocating to [" + request.targetNode() + "]");
         }
 
-        // 返回针对某个分片进行数据恢复的处理器
+        // 在PeerRecoveryTargetService中要记录 哪些副本(重定向后的primary) 正在恢复数据
+        // 而在PeerRecoverySourceService中也需要记录 收到了哪些恢复请求
         RecoverySourceHandler handler = ongoingRecoveries.addNewRecovery(request, shard);
         logger.trace("[{}][{}] starting recovery to {}", request.shardId().getIndex().getName(), request.shardId().id(),
             request.targetNode());
@@ -144,7 +147,7 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
     }
 
     /**
-     * 当收到某个节点的 恢复请求时 通过该对象进行处理
+     * 某个副本请求从主分片拉取数据
      */
     class StartRecoveryTransportRequestHandler implements TransportRequestHandler<StartRecoveryRequest> {
         @Override
@@ -172,9 +175,15 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
         @Nullable
         private List<ActionListener<Void>> emptyListeners;
 
+        /**
+         * 增加一个正在处理的 恢复操作
+         * @param request   本次恢复操作的请求信息
+         * @param shard    针对哪个分片发起的恢复操作
+         * @return
+         */
         synchronized RecoverySourceHandler addNewRecovery(StartRecoveryRequest request, IndexShard shard) {
             assert lifecycle.started();
-            // 在source端要记录此时正在处理哪些shard的恢复
+            // 因为同一个分片 可以有多个副本发起请求 所以这里用列表
             final ShardRecoveryContext shardContext = ongoingRecoveries.computeIfAbsent(shard, s -> new ShardRecoveryContext());
             RecoverySourceHandler handler = shardContext.addNewRecovery(request, shard);
             shard.recoveryStats().incCurrentAsSource();
@@ -235,7 +244,7 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
         }
 
         /**
-         * 在处理数据恢复过程中的上下文对象
+         * 以分片为单位记录所有的恢复请求
          */
         private final class ShardRecoveryContext {
 
@@ -247,11 +256,10 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
 
             /**
              * Adds recovery source handler.
-             * 可能会有多个节点像 shard.primary所在的节点发起请求 申请数据恢复   针对每个节点都会维护对应的handler对象
+             * @param request 可以同时处理多个副本(重定向主分片)的请求
              */
             synchronized RecoverySourceHandler addNewRecovery(StartRecoveryRequest request, IndexShard shard) {
-                // 每个shard分配在某个节点上都有一个唯一的allocationId  代表一个 shard -> targetNode 的映射关系
-                // 每当集群状态发生变化时 如果有涉及到集群节点上shard分配关系的变化 那么应该会生成新的allocationId 用于区分
+                // 每个allocationId 可以理解区分每个分片的唯一id  这里代表不能在同一时间 不应该收到同一个副本的多个请求
                 for (RecoverySourceHandler existingHandler : recoveryHandlers) {
                     if (existingHandler.getRequest().targetAllocationId().equals(request.targetAllocationId())) {
                         throw new DelayRecoveryException("recovery with same target already registered, waiting for " +
@@ -264,17 +272,19 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
             }
 
             /**
-             * 针对 source -> target -> shard  的映射关系 生成一个handler对象
+             * 每个副本的恢复操作都由对应的handler来完成
              * @param request
              * @param shard
              * @return
              */
             private RecoverySourceHandler createRecoverySourceHandler(StartRecoveryRequest request, IndexShard shard) {
                 RecoverySourceHandler handler;
-                // 该对象定义了一组接口的实现 而调用时机是由 recoverySourceHandler决定的
+                // 负责传输数据
                 final RemoteRecoveryTargetHandler recoveryTarget =
                     new RemoteRecoveryTargetHandler(request.recoveryId(), request.shardId(), transportService, bigArrays,
                         request.targetNode(), recoverySettings, throttleTime -> shard.recoveryStats().addThrottleTime(throttleTime));
+
+                // 负责从primary抽取数据
                 handler = new RecoverySourceHandler(shard, recoveryTarget, shard.getThreadPool(), request,
                     Math.toIntExact(recoverySettings.getChunkSize().getBytes()), recoverySettings.getMaxConcurrentFileChunks());
                 return handler;

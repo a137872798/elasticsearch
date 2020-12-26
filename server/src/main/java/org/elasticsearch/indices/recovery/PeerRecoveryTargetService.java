@@ -112,6 +112,13 @@ public class PeerRecoveryTargetService implements IndexEventListener {
      */
     private final RecoveriesCollection onGoingRecoveries;
 
+    /**
+     * 在Node中被初始化  维护每个需要从primary拉取数据的 replica Shard 的恢复情况
+     * @param threadPool
+     * @param transportService
+     * @param recoverySettings
+     * @param clusterService
+     */
     public PeerRecoveryTargetService(ThreadPool threadPool, TransportService transportService,
             RecoverySettings recoverySettings, ClusterService clusterService) {
         this.threadPool = threadPool;
@@ -163,10 +170,11 @@ public class PeerRecoveryTargetService implements IndexEventListener {
      */
     public void startRecovery(final IndexShard indexShard, final DiscoveryNode sourceNode, final RecoveryListener listener) {
         // create a new recovery status, and process...
-        // 根据某个sourceNode 初始化 recovery对象
+        // 每个分片会的数据恢复 会分配一个 恢复任务  并且关联一个recoveryId
         final long recoveryId = onGoingRecoveries.startRecovery(indexShard, sourceNode, listener, recoverySettings.activityTimeout());
         // we fork off quickly here and go async but this is called from the cluster state applier thread too and that can cause
         // assertions to trip if we executed it on the same thread hence we fork off to the generic threadpool.
+        // 以上只是创建任务  这里才是开始执行任务
         threadPool.generic().execute(new RecoveryRunner(recoveryId));
     }
 
@@ -196,13 +204,14 @@ public class PeerRecoveryTargetService implements IndexEventListener {
     }
 
     /**
-     * 启动某个 recovery的恢复操作
+     * 执行恢复任务
      * @param recoveryId
      */
     private void doRecovery(final long recoveryId) {
         final StartRecoveryRequest request;
         final RecoveryState.Timer timer;
         CancellableThreads cancellableThreads;
+        // 先找到recoveryId 对应的任务对象
         try (RecoveryRef recoveryRef = onGoingRecoveries.getRecovery(recoveryId)) {
             if (recoveryRef == null) {
                 logger.trace("not running recovery with id [{}] - can not find it (probably finished)", recoveryId);
@@ -210,8 +219,10 @@ public class PeerRecoveryTargetService implements IndexEventListener {
             }
             final RecoveryTarget recoveryTarget = recoveryRef.target();
             timer = recoveryTarget.state().getTimer();
+            // 该对象负责管理一组线程
             cancellableThreads = recoveryTarget.cancellableThreads();
             try {
+                // 本次将被恢复数据的分片
                 final IndexShard indexShard = recoveryTarget.indexShard();
                 // 触发前置钩子
                 indexShard.preRecovery();
@@ -219,7 +230,8 @@ public class PeerRecoveryTargetService implements IndexEventListener {
                 logger.trace("{} preparing shard for peer recovery", recoveryTarget.shardId());
                 indexShard.prepareForIndexRecovery();
 
-                // 通过本地事务文件将数据恢复到全局检查点的位置   那么从远端节点恢复数据应该就是从集群master节点上获取最新的数据
+                // 全局检查点就代表所有分片的数据都已经至少同步到这个位置 那么只有之后的数据 需要从primary上拉取
+                // 之前的数据 还是可以从本地恢复
                 final long startingSeqNo = indexShard.recoverLocallyUpToGlobalCheckpoint();
                 assert startingSeqNo == UNASSIGNED_SEQ_NO || recoveryTarget.state().getStage() == RecoveryState.Stage.TRANSLOG :
                     "unexpected recovery stage [" + recoveryTarget.state().getStage() + "] starting seqno [ " + startingSeqNo + "]";
@@ -234,6 +246,8 @@ public class PeerRecoveryTargetService implements IndexEventListener {
                 return;
             }
         }
+
+        // 这个是异常处理器
         Consumer<Exception> handleException = e -> {
             if (logger.isTraceEnabled()) {
                 logger.trace(() -> new ParameterizedMessage(
@@ -292,6 +306,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
                 return;
             }
 
+            // 会发送 分片启动失败的信息到 leader
             onGoingRecoveries.failRecovery(recoveryId, new RecoveryFailedException(request, e), true);
         };
 
@@ -305,7 +320,8 @@ public class PeerRecoveryTargetService implements IndexEventListener {
                 // the issues that a missing call to this could cause are sneaky and hard to debug. If we don't need it on this
                 // call we can potentially remove it altogether which we should do it in a major release only with enough
                 // time to test. This shoudl be done for 7.0 if possible
-                // 恢复数据对应的 ACTION 为  START_RECOVERY
+
+                // 请求从 primaryShard拉取数据 恢复replica的action为 START_RECOVERY   目标节点就是 primaryShard所在节点
                 transportService.sendRequest(request.sourceNode(), PeerRecoverySourceService.Actions.START_RECOVERY, request,
                     // 处理recoveryRes
                     new TransportResponseHandler<RecoveryResponse>() {
@@ -373,8 +389,9 @@ public class PeerRecoveryTargetService implements IndexEventListener {
      * @param recoveryTarget the target of the recovery
      * @param startingSeqNo  a sequence number that an operation-based peer recovery can start with.
      *                       This is the first operation after the local checkpoint of the safe commit if exists.
+     *                       从该seqNo 开始拉取数据  一般就是globalCheckpoint+1
      * @return a start recovery request
-     * 生成恢复数据的请求  之后是要发送到sourceNode的
+     * 向primaryShard 所在的节点发送拉取数据的请求
      */
     public static StartRecoveryRequest getStartRecoveryRequest(Logger logger, DiscoveryNode localNode,
                                                                RecoveryTarget recoveryTarget, long startingSeqNo) {
@@ -383,11 +400,12 @@ public class PeerRecoveryTargetService implements IndexEventListener {
 
         Store.MetadataSnapshot metadataSnapshot;
         try {
-            // 获取lucene索引文件的描述信息 比如文件大小 校验和之类的
+            // 获取本地最新的 commitInfo 对应的元数据信息
             metadataSnapshot = recoveryTarget.indexShard().snapshotStoreMetadata();
             // Make sure that the current translog is consistent with the Lucene index; otherwise, we have to throw away the Lucene index.
             try {
-                // 获取最后提交的segment_N 下记录的事务id
+
+                // 获取最新的事务日志文件记录的 globalCheckpoint
                 final String expectedTranslogUUID = metadataSnapshot.getCommitUserData().get(Translog.TRANSLOG_UUID_KEY);
                 // expectedTranslogUUID 主要是校验检查的元数据的文件是否一致
                 final long globalCheckpoint = Translog.readGlobalCheckpoint(recoveryTarget.translogLocation(), expectedTranslogUUID);
@@ -625,7 +643,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
     }
 
     /**
-     * 该对象负责启动recovery对象
+     * 执行恢复任务
      */
     class RecoveryRunner extends AbstractRunnable {
 

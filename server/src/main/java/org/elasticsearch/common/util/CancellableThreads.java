@@ -108,7 +108,7 @@ public class CancellableThreads {
      * causing the call to prematurely return.
      *
      * @param interruptible code to run
-     *                      执行一个可中断的对象
+     *                 执行任务的线程都是可打断的  通过该对象进行统一维护 当这些任务需要被打断时 可以一次性中断所有任务
      */
     public void executeIO(IOInterruptible interruptible) throws IOException {
         // 代表线程在加入前是 被中断状态  在调用add后会恢复成普通状态 这样就可以再次感知到线程被打断并触发对应异常
@@ -126,7 +126,7 @@ public class CancellableThreads {
             // we can only reach here if assertions are disabled. If we reach this code and cancelled is false, this means that we've
             // been interrupted externally (which we don't support).
 
-            // 感知到被打断 但是本对象没有被关闭 那么就是由外部触发的打断
+            // 如果是任务被正常关闭  cacelled为true    如果是false 代表是预期外的中断
             cancelledByExternalInterrupt = !cancelled;
         } catch (RuntimeException t) {
             runtimeException = t;

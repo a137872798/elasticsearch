@@ -59,7 +59,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 /**
- * 定义如何从远端节点拉取数据 用于恢复某个节点的处理器
+ * 这里定义了传输数据的逻辑
  */
 public class RemoteRecoveryTargetHandler implements RecoveryTargetHandler {
 
@@ -86,6 +86,16 @@ public class RemoteRecoveryTargetHandler implements RecoveryTargetHandler {
     private final Consumer<Long> onSourceThrottle;
     private volatile boolean isCancelled = false;
 
+
+    /**
+     * @param recoveryId  每个恢复任务对应一个id
+     * @param shardId
+     * @param transportService
+     * @param bigArrays
+     * @param targetNode
+     * @param recoverySettings
+     * @param onSourceThrottle
+     */
     public RemoteRecoveryTargetHandler(long recoveryId, ShardId shardId, TransportService transportService, BigArrays bigArrays,
                                        DiscoveryNode targetNode, RecoverySettings recoverySettings, Consumer<Long> onSourceThrottle) {
         this.transportService = transportService;
@@ -97,7 +107,6 @@ public class RemoteRecoveryTargetHandler implements RecoveryTargetHandler {
         this.recoverySettings = recoverySettings;
         this.onSourceThrottle = onSourceThrottle;
 
-        // 看来这2个Options是一样的
         this.translogOpsRequestOptions = TransportRequestOptions.builder()
                 .withType(TransportRequestOptions.Type.RECOVERY)
                 .withTimeout(recoverySettings.internalActionLongTimeout())

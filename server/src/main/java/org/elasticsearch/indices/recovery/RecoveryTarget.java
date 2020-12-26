@@ -58,7 +58,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Represents a recovery where the current node is the target node of the recovery. To track recoveries in a central place, instances of
  * this class are created through {@link RecoveriesCollection}.
- * 代表从目标节点获取数据并恢复本地节点数据的对象  RecoveryTargetHandler定义了处理的接口
+ * 每个shard 从primary拉取数据 并进行恢复的任务会被封装成一个 recoveryTarget对象
  */
 public class RecoveryTarget extends AbstractRefCounted implements RecoveryTargetHandler {
 
@@ -116,14 +116,14 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
     /**
      * Creates a new recovery target object that represents a recovery to the provided shard.
      *
-     * @param indexShard                        local shard where we want to recover to   基于某个本地分片与 目标节点生成target对象 之后可以从目标节点获取数据流并在本地恢复索引文件
+     * @param indexShard                        local shard where we want to recover to
      * @param sourceNode                        source node of the recovery where we recover from
      * @param listener                          called when recovery is completed/failed
      */
     public RecoveryTarget(IndexShard indexShard, DiscoveryNode sourceNode, PeerRecoveryTargetService.RecoveryListener listener) {
         super("recovery_status");
         this.cancellableThreads = new CancellableThreads();
-        // 每个针对远端节点生成的恢复操作都有一个唯一id
+        // 每个node上 recovery确保唯一性
         this.recoveryId = idGenerator.incrementAndGet();
         this.listener = listener;
         this.logger = Loggers.getLogger(getClass(), indexShard.shardId());
@@ -132,10 +132,12 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
         this.shardId = indexShard.shardId();
         // 生成特殊的临时文件前缀
         final String tempFilePrefix = RECOVERY_PREFIX + UUIDs.randomBase64UUID() + ".";
+        // indexShard.store() 对应分片数据所在的目录
         this.multiFileWriter = new MultiFileWriter(indexShard.store(), indexShard.recoveryState().getIndex(), tempFilePrefix, logger,
             this::ensureRefCount);
         this.store = indexShard.store();
         // make sure the store is not released until we are done.
+        // 因为此时准备往store中写入文件 所以增加引用计数 避免dir被意外删除
         store.incRef();
         indexShard.recoveryStats().incCurrentAsTarget();
     }
@@ -253,7 +255,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
      *
      * @param e                exception that encapsulating the failure
      * @param sendShardFailure indicates whether to notify the master of the shard failure
-     *                         因为某种原因使得恢复失败时触发  关闭此时运行的所有线程
+     *                         本次恢复任务因为失败而中止
      */
     public void fail(RecoveryFailedException e, boolean sendShardFailure) {
         if (finished.compareAndSet(false, true)) {
@@ -261,6 +263,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                 notifyListener(e, sendShardFailure);
             } finally {
                 try {
+                    // 关闭恢复用线程  会打断所有阻塞中线程
                     cancellableThreads.cancel("failed recovery [" + ExceptionsHelper.stackTrace(e) + "]");
                 } finally {
                     // release the initial reference. recovery files will be cleaned as soon as ref count goes to zero, potentially now

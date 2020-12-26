@@ -96,7 +96,7 @@ import java.util.stream.StreamSupport;
  * while the {@link RateLimiter} passed via {@link RecoverySettings} is shared across recoveries
  * originating from this nodes to throttle the number bytes send during file transfer. The transaction log
  * phase bypasses the rate limiter entirely.
- * 该对象定义了恢复数据的逻辑
+ * 定义了从主分片抽取数据的逻辑
  */
 public class RecoverySourceHandler {
 
@@ -110,6 +110,10 @@ public class RecoverySourceHandler {
     private final RecoveryTargetHandler recoveryTarget;
     private final int maxConcurrentFileChunks;
     private final ThreadPool threadPool;
+
+    /**
+     * 每个恢复任务会对应一个 cancellableThreads对象
+     */
     private final CancellableThreads cancellableThreads = new CancellableThreads();
 
     /**
@@ -120,7 +124,7 @@ public class RecoverySourceHandler {
     /**
      *
      * @param shard
-     * @param recoveryTarget  对应 RemoteRecoveryTargetHandler
+     * @param recoveryTarget  负责传输数据
      * @param threadPool
      * @param request
      * @param fileChunkSizeInBytes
@@ -147,10 +151,12 @@ public class RecoverySourceHandler {
      * 开始从本地将数据传输到远端节点 用于恢复数据
      */
     public void recoverToTarget(ActionListener<RecoveryResponse> listener) {
+
+        // 在执行恢复过程中 可能会
         final Closeable releaseResources = () -> IOUtils.close(resources);
         final ActionListener<RecoveryResponse> wrappedListener = ActionListener.notifyOnce(listener);
         try {
-            // 设置onCancel 函数
+            // 当cancellableThreads对象被关闭时 继续提交任务就会抛出异常
             cancellableThreads.setOnCancel((reason, beforeCancelEx) -> {
                 final RuntimeException e;
                 if (shard.state() == IndexShardState.CLOSED) { // check if the shard got closed on us
@@ -171,7 +177,7 @@ public class RecoverySourceHandler {
 
             final SetOnce<RetentionLease> retentionLeaseRef = new SetOnce<>();
 
-            // 在primary分片下执行任务
+            // 首先确保当前是source主分片 并且已经抢占到 permit  在一个shard中某些操作可能是互斥的 这就需要通过permit来做隔离
             runUnderPrimaryPermit(() -> {
                 // 获取路由表
                 final IndexShardRoutingTable routingTable = shard.getReplicationGroup().getRoutingTable();
@@ -417,12 +423,13 @@ public class RecoverySourceHandler {
                 }
             };
             // 当获取门票时 可能会被阻塞 这时任务本身会被包装成一个对象 设置到队列中 之后某个线程释放门票后负责唤醒 所以以异步监听器的形式处理结果
+            // 该任务本身是支持与其他任务并行执行的 所以获取的门票数为1
             primary.acquirePrimaryOperationPermit(onAcquired, ThreadPool.Names.SAME, reason);
             // 阻塞等待 检测结果
             try (Releasable ignored = FutureUtils.get(permit)) {
                 // check that the IndexShard still has the primary authority. This needs to be checked under operation permit to prevent
                 // races, as IndexShard will switch its authority only when it holds all operation permits, see IndexShard.relocated()
-                // 代表当前primary已经替换了吗      当某些节点正在从primary拉取数据时 应该允许替换primary节点吗
+                // 那种不支持并发  会抢占所有permit的动作很可能就是 relocate  当阻塞结束后发现本主分片已经完成重定向了 就不应该从本分片获取数据了
                 if (primary.isRelocatedPrimary()) {
                     throw new IndexShardRelocatedException(primary.shardId());
                 }

@@ -94,6 +94,9 @@ public class RecoverySettings {
     private volatile SimpleRateLimiter rateLimiter;
     private volatile TimeValue retryDelayStateSync;
     private volatile TimeValue retryDelayNetwork;
+    /**
+     * 每隔多少时间检测一次恢复任务  如果在这段时间内没有拉取到新的数据 触发恢复失败的逻辑
+     */
     private volatile TimeValue activityTimeout;
     private volatile TimeValue internalActionTimeout;
     private volatile TimeValue internalActionRetryTimeout;

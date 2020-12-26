@@ -51,10 +51,10 @@ public class MultiFileWriter extends AbstractRefCounted implements Releasable {
     /**
      *
      * @param store  存储相关文件的目录
-     * @param indexState  该对象内部有一个属性 存储本次相关的所有文件
+     * @param indexState  描述本次恢复索引涉及到的所有文件
      * @param tempFilePrefix  在恢复过程中创建的临时文件会以它作为前缀
      * @param logger
-     * @param ensureOpen
+     * @param ensureOpen  确保此时恢复任务还处于运行状态
      */
     public MultiFileWriter(Store store, RecoveryState.Index indexState, String tempFilePrefix, Logger logger, Runnable ensureOpen) {
         super("multi_file_writer");

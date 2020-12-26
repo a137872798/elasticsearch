@@ -116,7 +116,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
     private final ThreadPool threadPool;
 
     /**
-     * 从其他节点拉取数据 用于恢复本节点数据
+     * 记录当前node下所有分片从 primary拉取数据 并进行恢复的状况
      */
     private final PeerRecoveryTargetService recoveryTargetService;
     private final ShardStateAction shardStateAction;
@@ -743,6 +743,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
 
     /**
      * 更新分片信息
+     * 比如主分片先是完成了本地的数据恢复  并通知到leader节点 之后在CS中 本shardRouting的状态被修改成 STARTED
+     * 之后会将这个信息发布到集群中
      * @param nodes
      * @param shardRouting  此时从CS中获取的最新分片信息
      * @param shard  本地分片信息
@@ -760,7 +762,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         try {
             final IndexMetadata indexMetadata = clusterState.metadata().index(shard.shardId().getIndex());
             primaryTerm = indexMetadata.primaryTerm(shard.shardId().id());
-            // 获取处于同步队列中的所有nodeId
+            // 该容器内存储已经完成同步的所有分片
             final Set<String> inSyncIds = indexMetadata.inSyncAllocationIds(shard.shardId().id());
             final IndexShardRoutingTable indexShardRoutingTable = routingTable.shardRoutingTable(shardRouting.shardId());
 

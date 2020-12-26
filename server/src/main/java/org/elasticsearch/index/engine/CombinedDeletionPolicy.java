@@ -83,7 +83,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
     /**
      * 通过ES.engine创建的 indexWriter 使用该删除策略来替代默认的删除策略
      * 在初始化IndexFileDeleter 的过程中会触发 deletionPolicy.onInit()
-     * @param commits
+     * @param commits  这里至少会传入一个空的 IndexCommit
      * @throws IOException
      */
     @Override
@@ -198,6 +198,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
         assert safeCommit != null : "Safe commit is not initialized yet";
         assert lastCommit != null : "Last commit is not initialized yet";
         final IndexCommit snapshotting = acquiringSafeCommit ? safeCommit : lastCommit;
+        // 当该commit信息正在被使用时  在删除过期的lucene数据时 就会忽略这个commit
         snapshottedCommits.addTo(snapshotting, 1); // increase refCount
         return new SnapshotIndexCommit(snapshotting);
     }
@@ -206,7 +207,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
      * Releases an index commit that acquired by {@link #acquireIndexCommit(boolean)}.
      *
      * @return true if the snapshotting commit can be clean up.
-     * 当某个快照IndexCommit不再被使用时 调用该方法
+     * 当快照使用完毕后 进行释放
      */
     synchronized boolean releaseCommit(final IndexCommit snapshotCommit) {
         final IndexCommit releasingCommit = ((SnapshotIndexCommit) snapshotCommit).delegate;
@@ -219,6 +220,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
             snapshottedCommits.remove(releasingCommit);
         }
         // The commit can be clean up only if no pending snapshot and it is neither the safe commit nor last commit.
+        // 是否可以清理这个commit
         return refCount == 0 && releasingCommit.equals(safeCommit) == false && releasingCommit.equals(lastCommit) == false;
     }
 
@@ -300,6 +302,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
 
     /**
      * A wrapper of an index commit that prevents it from being deleted.
+     * 对应某次提交相关信息的快照
      */
     private static class SnapshotIndexCommit extends IndexCommit {
         private final IndexCommit delegate;

@@ -2607,6 +2607,12 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * 获取此时lucene中最新一次提交的相关信息
+     * @param flushFirst indicates whether the engine should flush before returning the snapshot
+     * @return
+     * @throws EngineException
+     */
     @Override
     public IndexCommitRef acquireLastIndexCommit(final boolean flushFirst) throws EngineException {
         // we have to flush outside of the readlock otherwise we might have a problem upgrading
@@ -2616,8 +2622,9 @@ public class InternalEngine extends Engine {
             flush(false, true);
             logger.trace("finish flush for snapshot");
         }
-        // 返回一个SnapshotIndexCommit
+        // 这里要获取的是最后一个commit
         final IndexCommit lastCommit = combinedDeletionPolicy.acquireIndexCommit(false);
+        // 当indexCommit信息使用完毕后 会从快照容器中移除
         return new Engine.IndexCommitRef(lastCommit, () -> releaseIndexCommit(lastCommit));
     }
 
@@ -2627,6 +2634,11 @@ public class InternalEngine extends Engine {
         return new Engine.IndexCommitRef(safeCommit, () -> releaseIndexCommit(safeCommit));
     }
 
+    /**
+     * 代表某个快照不再使用 就是从内部快照容器中移除
+     * @param snapshot
+     * @throws IOException
+     */
     private void releaseIndexCommit(IndexCommit snapshot) throws IOException {
         // Revisit the deletion policy if we can clean up the snapshotting commit.
         if (combinedDeletionPolicy.releaseCommit(snapshot)) {
@@ -2849,7 +2861,7 @@ public class InternalEngine extends Engine {
     private IndexWriterConfig getIndexWriterConfig() {
         // 一开始的分词器是通过插件系统加载的  也有默认的分词器 这里就是利用分词器来配置config对象
         final IndexWriterConfig iwc = new IndexWriterConfig(engineConfig.getAnalyzer());
-        // 在close时 不需要自动提交
+        // 在close时 不需要自动提交  因为要考虑到在集群间的同步
         iwc.setCommitOnClose(false); // we by default don't commit on close
         // 采用 append模式
         iwc.setOpenMode(IndexWriterConfig.OpenMode.APPEND);

@@ -226,8 +226,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     private static SegmentInfos readSegmentsInfo(IndexCommit commit, Directory directory) throws IOException {
         assert commit == null || commit.getDirectory() == directory;
         try {
-            // 如果传入了 commit 从范围内查找segment_N文件
-            // 反之从directory中查找
+            // 如果传入了 commit 就获取commit对应的 segmentInfos 文件
             return commit == null ? Lucene.readSegmentInfos(directory) : Lucene.readSegmentInfos(commit);
         } catch (EOFException eof) {
             // TODO this should be caught by lucene - EOF is almost certainly an index corruption
@@ -857,7 +856,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * change concurrently for safety reasons.
      *
      * @see StoreFileMetadata
-     * shard级别的元数据
+     * 描述分片某次lucene.commit 对应的 CommitInfo 生成的快照
      */
     public static final class MetadataSnapshot implements Iterable<StoreFileMetadata>, Writeable {
 
@@ -990,6 +989,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                 // 获取这些段中最小的版本号
                 Version maxVersion = segmentCommitInfos.getMinSegmentLuceneVersion();
 
+                // 每次commit 会对应一个segmentInfos  每个线程往lucene写入的数据会对应一个 segment
                 for (SegmentCommitInfo info : segmentCommitInfos) {
                     final Version version = info.info.getVersion();
                     if (version == null) {
@@ -1755,15 +1755,18 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
 
     /**
      * Returns a {@link org.elasticsearch.index.seqno.SequenceNumbers.CommitInfo} of the safe commit if exists.
+     * 通过全局检查点 反查 safeCommit
      */
     public Optional<SequenceNumbers.CommitInfo> findSafeIndexCommit(long globalCheckpoint) throws IOException {
         final List<IndexCommit> commits = DirectoryReader.listCommits(directory);
         assert commits.isEmpty() == false : "no commit found";
         // 找到所有小于全局检查点的 IndexCommit最大的那个 也就是往上无限接近globalCheckpoint的
         final IndexCommit safeCommit = CombinedDeletionPolicy.findSafeCommitPoint(commits, globalCheckpoint);
-        // 从lucene中获取此时最大的本地检查点 以及 seqNo   每次到engine将数据提交时 都会将这个用户信息写入
+        // 获取那个时刻 对应的本地已经写入的数据中最大的 seqNo 以及 localCheckpoint
+        // 这个数据可能已经持久化到lucene中了  应该要将 globalCheckpoint -> localCheckpoint之间的数据清除掉吧
         final SequenceNumbers.CommitInfo commitInfo = SequenceNumbers.loadSeqNoInfoFromLuceneCommit(safeCommit.getUserData().entrySet());
         // all operations of the safe commit must be at most the global checkpoint.
+        // 代表这个时刻本地的数据 还小于全局检查点的数据 需要恢复 localCheckpoint -> globalCheckpoint 之间的数据
         if (commitInfo.maxSeqNo <= globalCheckpoint) {
             return Optional.of(commitInfo);
         } else {

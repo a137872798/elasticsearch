@@ -65,6 +65,8 @@ public class StartRecoveryRequest extends TransportRequest {
      * @param targetNode         the target node to recover to
      * @param metadataSnapshot   the Lucene metadata
      * @param primaryRelocation  whether or not the recovery is a primary relocation
+     *                           主分片发生重定向 也会从原有的主分片所在的节点拉取数据    此时该标识为true
+     *                           副本向主分片拉取数据时  该标识为false
      * @param recoveryId         the recovery ID
      * @param startingSeqNo      the starting sequence number
      */

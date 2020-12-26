@@ -37,6 +37,9 @@ import java.util.concurrent.atomic.AtomicLong;
 public class RecoveryStats implements ToXContentFragment, Writeable {
 
     private final AtomicInteger currentAsSource = new AtomicInteger();
+    /**
+     * 当前处于恢复状态的shard副本数
+     */
     private final AtomicInteger currentAsTarget = new AtomicInteger();
     private final AtomicLong throttleTimeInNanos = new AtomicLong();
 

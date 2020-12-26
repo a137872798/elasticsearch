@@ -48,7 +48,8 @@ public class RecoveriesCollection {
 
     /**
      * This is the single source of truth for ongoing recoveries. If it's not here, it was canceled or done
-     * 维护了每个 recoveryId 与 target对象的映射关系
+     * 管理此时 node下所有的replicaShard的恢复任务
+     * key: recoveryId
      */
     private final ConcurrentMap<Long, RecoveryTarget> onGoingRecoveries = ConcurrentCollections.newConcurrentMap();
 
@@ -63,20 +64,26 @@ public class RecoveriesCollection {
     /**
      * Starts are new recovery for the given shard, source node and state
      *
+     * @param indexShard 本次要恢复数据的分片
+     * @param sourceNode 数据将会从该节点上获取
+     * @param listener 当副本分片恢复完数据后 也会向leader节点上报 申请进入start状态
      * @return the id of the new recovery.
-     * 将某个分片与对应的node 合成一个target对象
+     * 本次要开始为某个shard恢复数据 记录在该对象中
+     * 每个恢复任务 对应一个recoveryId
      */
     public long startRecovery(IndexShard indexShard, DiscoveryNode sourceNode,
                               PeerRecoveryTargetService.RecoveryListener listener, TimeValue activityTimeout) {
+        // 该对象内部包含了完成恢复流程需要的所有逻辑
         RecoveryTarget recoveryTarget = new RecoveryTarget(indexShard, sourceNode, listener);
+        // 开始执行恢复任务
         startRecoveryInternal(recoveryTarget, activityTimeout);
         return recoveryTarget.recoveryId();
     }
 
     /**
-     * 在启动恢复操作时 会开启一个监控器  定期检查target的lastAccessTime是否更新
+     * 在启动恢复操作时 会开启一个监控器  监控recovery任务是否正常运行
      * @param recoveryTarget
-     * @param activityTimeout
+     * @param activityTimeout  恢复任务最多允许的耗时
      */
     private void startRecoveryInternal(RecoveryTarget recoveryTarget, TimeValue activityTimeout) {
         RecoveryTarget existingTarget = onGoingRecoveries.putIfAbsent(recoveryTarget.recoveryId(), recoveryTarget);
@@ -143,6 +150,7 @@ public class RecoveriesCollection {
      * by using this method in a try-with-resources clause.
      * <p>
      * Returns null if recovery is not found
+     * 包装某个恢复任务
      */
     public RecoveryRef getRecovery(long id) {
         RecoveryTarget status = onGoingRecoveries.get(id);
@@ -185,8 +193,7 @@ public class RecoveriesCollection {
      * @param id               id of the recovery to fail
      * @param e                exception with reason for the failure
      * @param sendShardFailure true a shard failed message should be sent to the master
-     *                         是否需要将失败信息发送到master节点
-     *                         实际上是触发 target 内部监听器的相关钩子
+     *                         某次恢复任务失败   可能是在一定的时间间隔后 没有获取到更新的恢复用数据
      */
     public void failRecovery(long id, RecoveryFailedException e, boolean sendShardFailure) {
         RecoveryTarget removed = onGoingRecoveries.remove(id);
@@ -273,9 +280,14 @@ public class RecoveriesCollection {
     }
 
     /**
-     * 这是一个监视器
+     * 监控某个恢复任务
      */
     private class RecoveryMonitor extends AbstractRunnable {
+
+        /**
+         * 被监控的恢复任务对应的id
+         * 被监控的恢复任务对应的id
+         */
         private final long recoveryId;
 
         /**
@@ -299,18 +311,27 @@ public class RecoveriesCollection {
             logger.error(() -> new ParameterizedMessage("unexpected error while monitoring recovery [{}]", recoveryId), e);
         }
 
+        /**
+         * 每间隔一定时间检测 recovery任务的运行情况
+         * @throws Exception
+         */
         @Override
         protected void doRun() throws Exception {
             RecoveryTarget status = onGoingRecoveries.get(recoveryId);
+
+            // 代表恢复任务已经完成
             if (status == null) {
                 logger.trace("[monitor] no status found for [{}], shutting down", recoveryId);
                 return;
             }
+
             long accessTime = status.lastAccessTime();
+            // 代表在一定时间内 没有拉取到新的数据
             if (accessTime == lastSeenAccessTime) {
                 String message = "no activity after [" + checkInterval + "]";
                 failRecovery(recoveryId,
                         new RecoveryFailedException(status.state(), message, new ElasticsearchTimeoutException(message)),
+                        // 代表失败信息需要通知到 leader节点
                         true // to be safe, we don't know what go stuck
                 );
                 return;
