@@ -103,6 +103,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *   handoff. If the target shard is successfully initialized in primary mode, the source shard of a primary relocation is then moved
      *   to replica mode (using {@link #completeRelocationHandoff}), as the relocation target will be in charge of the global checkpoint
      *   computation from that point on.
+     *   首先本分片是主分片  并且从init状态变成started状态后 该标识为true
      */
     volatile boolean primaryMode;
 
@@ -158,8 +159,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * and / or in-sync, possibly also containing information about unassigned in-sync shard copies. The information that is tracked for
      * each shard copy is explained in the docs for the {@link CheckpointState} class.
      * key: allocationId
-     * value:
-     * 目前只知道在重定向后会将该容器内部的数值都重置
+     * value: 描述该分片(primary or replica) 的检查点信息
      */
     final Map<String, CheckpointState> checkpoints;
 
@@ -658,18 +658,20 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     }
 
     /**
-     * 当前某个 allocation 的检查点状态
+     * 描述某个分片当前检查点信息
      */
     public static class CheckpointState implements Writeable {
 
         /**
          * the last local checkpoint information that we have for this shard. All operations up to this point are properly fsynced to disk.
+         * 该分片此时本地检查点
          */
         long localCheckpoint;
 
         /**
          * the last global checkpoint information that we have for this shard. This is the global checkpoint that's fsynced to disk on the
          * respective shard, and all operations up to this point are properly fsynced to disk as well.
+         * 该分片此时的全局检查点
          */
         long globalCheckpoint;
         /**
@@ -683,6 +685,13 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
          */
         boolean tracked;
 
+        /**
+         *
+         * @param localCheckpoint
+         * @param globalCheckpoint
+         * @param inSync  是否已经与主分片完成同步
+         * @param tracked
+         */
         public CheckpointState(long localCheckpoint, long globalCheckpoint, boolean inSync, boolean tracked) {
             this.localCheckpoint = localCheckpoint;
             this.globalCheckpoint = globalCheckpoint;
@@ -998,6 +1007,9 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         return replicationGroup;
     }
 
+    /**
+     * 根据当前该分片的所有副本信息 更新replicationGroup
+     */
     private void updateReplicationGroupAndNotify() {
         assert Thread.holdsLock(this);
         ReplicationGroup newReplicationGroup = calculateReplicationGroup();
@@ -1090,6 +1102,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
     /**
      * Initializes the global checkpoint tracker in primary mode (see {@link #primaryMode}. Called on primary activation or promotion.
+     * 当本节点对应的shard是主分片 并且从init状态变成 started状态时  触发该函数
      */
     public synchronized void activatePrimaryMode(final long localCheckpoint) {
         assert invariant();
@@ -1099,6 +1112,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             "expected " + shardAllocationId + " to have initialized entry in " + checkpoints + " when activating primary";
         assert localCheckpoint >= SequenceNumbers.NO_OPS_PERFORMED;
         primaryMode = true;
+        // 更新本分片对应的checkpoint 本对象会记录该分片所有replica,primary的检查点
         updateLocalCheckpoint(shardAllocationId, checkpoints.get(shardAllocationId), localCheckpoint);
         updateGlobalCheckpointOnPrimary();
 
@@ -1194,11 +1208,12 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
             } else {
                 for (String initializingId : initializingAllocationIds) {
-                    // TODO 在数据恢复阶段应该已经从事务文件中加载globalCheckpoint了啊
+                    // 在初始阶段还不清楚这个分片此时的检查点信息
                     final long localCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
                     final long globalCheckpoint = localCheckpoint;
                     checkpoints.put(initializingId, new CheckpointState(localCheckpoint, globalCheckpoint, false, false));
                 }
+                // 处于该容器中的分片已经完成了与主分片的数据同步   tracked为true 就代表需要继续同步主分片最新写入的数据
                 for (String inSyncId : inSyncAllocationIds) {
                     final long localCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
                     final long globalCheckpoint = localCheckpoint;
@@ -1291,7 +1306,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     }
 
     /**
-     * 更新cps的本地检查点
+     * 更新某个分片此时的本地检查点
      * @param allocationId
      * @param cps
      * @param localCheckpoint

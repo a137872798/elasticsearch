@@ -3197,6 +3197,10 @@ public class InternalEngine extends Engine {
         return localCheckpointTracker.getProcessedCheckpoint();
     }
 
+    /**
+     * 获取此时已经持久化到事务日志文件中的本地检查点
+     * @return
+     */
     @Override
     public long getPersistedLocalCheckpoint() {
         return localCheckpointTracker.getPersistedCheckpoint();

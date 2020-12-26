@@ -45,18 +45,22 @@ public class ReplicationGroup {
      * unavailableInSyncShards + inSyncAllocationIds = allAllocationIds
      */
     private final Set<String> unavailableInSyncShards; // derived from the other fields
+
+    /**
+     * 需要继续同步数据的分片  因为在副本与主分片同步完数据后  主分片还会继续写入数据 副本需要继续同步数据
+     */
     private final List<ShardRouting> replicationTargets; // derived from the other fields
     /**
-     * 代表某些分片不需要被处理 需要跳过
+     * unassigned 以及 未完成同步的分片会存储在这个容器中
      */
     private final List<ShardRouting> skippedShards; // derived from the other fields
 
     /**
      *
      * @param routingTable  记录某个索引下所有的分片 以及它们会被分配到哪里
-     * @param inSyncAllocationIds
-     * @param trackedAllocationIds
-     * @param version
+     * @param inSyncAllocationIds   完成同步的所有分片
+     * @param trackedAllocationIds  需要追踪信息的所有分片  应该就是要持续同步数据的分片
+     * @param version 当前副本组的版本号 每次变化 版本号+1
      */
     public ReplicationGroup(IndexShardRoutingTable routingTable, Set<String> inSyncAllocationIds, Set<String> trackedAllocationIds,
                             long version) {
@@ -65,6 +69,7 @@ public class ReplicationGroup {
         this.trackedAllocationIds = trackedAllocationIds;
         this.version = version;
 
+        // 这些分片还没有完成数据同步
         this.unavailableInSyncShards = Sets.difference(inSyncAllocationIds, routingTable.getAllAllocationIds());
         this.replicationTargets = new ArrayList<>();
         this.skippedShards = new ArrayList<>();
@@ -74,6 +79,9 @@ public class ReplicationGroup {
                 assert shard.primary() == false : "primary shard should not be unassigned in a replication group: " + shard;
                 skippedShards.add(shard);
             } else {
+                // 根据不同的情况设置到不同的容器中
+
+                // 代表需要继续同步最新写入的数据
                 if (trackedAllocationIds.contains(shard.allocationId().getId())) {
                     replicationTargets.add(shard);
                 } else {
@@ -83,6 +91,7 @@ public class ReplicationGroup {
                 }
                 if (shard.relocating()) {
                     ShardRouting relocationTarget = shard.getTargetRelocatingShard();
+                    // 代表在重定向中的目标分片 要继续同步源分片的数据
                     if (trackedAllocationIds.contains(relocationTarget.allocationId().getId())) {
                         replicationTargets.add(relocationTarget);
                     } else {

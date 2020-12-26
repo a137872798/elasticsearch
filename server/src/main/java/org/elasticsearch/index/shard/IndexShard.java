@@ -655,7 +655,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param newPrimaryTerm              当前主分片的 term 每个在集群中更替 主分片在集群中的位置 就会增加term
      * @param primaryReplicaSyncer        the primary-replica resync action to trigger when a term is increased on a primary
      * @param applyingClusterStateVersion the cluster state version being applied when updating the allocation IDs from the master
-     * @param inSyncAllocationIds         the allocation ids of the currently in-sync shard copies    此时同步队列中所有分片
+     * @param inSyncAllocationIds         the allocation ids of the currently in-sync shard copies    已经完成同步的所有分片
      * @param routingTable                the shard routing table     某个shard在整个集群中最新的分布情况
      * @throws IOException
      * 比如本节点上报修改状态的请求被leader通过  在发布到集群通知本节点 就要做一些更新操作
@@ -693,6 +693,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 replicationTracker.updateFromMaster(applyingClusterStateVersion, inSyncAllocationIds, routingTable);
             }
 
+            // 更新本地分片状态
             if (state == IndexShardState.POST_RECOVERY && newRouting.active()) {
                 assert currentRouting.active() == false : "we are in POST_RECOVERY, but our shard routing is active " + currentRouting;
                 assert currentRouting.isRelocationTarget() == false || currentRouting.primary() == false ||
@@ -700,6 +701,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     "a primary relocation is completed by the master, but primary mode is not active " + currentRouting;
 
                 changeState(IndexShardState.STARTED, "global state is [" + newRouting.state() + "]");
+                // TODO
             } else if (currentRouting.primary() && currentRouting.relocating() && replicationTracker.isRelocated() &&
                 (newRouting.relocating() == false || newRouting.equalsIgnoringMetadata(currentRouting) == false)) {
                 // if the shard is not in primary mode anymore (after primary relocation) we have to fail when any changes in shard
@@ -710,11 +712,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             }
             assert newRouting.active() == false || state == IndexShardState.STARTED || state == IndexShardState.CLOSED :
                 "routing is active, but local shard state isn't. routing: " + newRouting + ", local state: " + state;
+
+            // 更新最新的路由信息 并进行持久化
             persistMetadata(path, indexSettings, newRouting, currentRouting, logger);
             final CountDownLatch shardStateUpdated = new CountDownLatch(1);
 
+            // 主分片时才需要继续处理
             if (newRouting.primary()) {
+                // 代表主分片的路由信息没有变化
                 if (newPrimaryTerm == pendingPrimaryTerm) {
+                    // 主分片被激活了
                     if (currentRouting.initializing() && currentRouting.isRelocationTarget() == false && newRouting.active()) {
                         // the master started a recovering primary, activate primary mode.
                         replicationTracker.activatePrimaryMode(getLocalCheckpoint());
@@ -3397,12 +3404,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 将元数据进行持久化
+     * 将最新的元数据进行持久化
      *
      * @param shardPath      当前创建的分片的文件路径
      * @param indexSettings
-     * @param newRouting     路由信息 表明这个shard此时被分配到哪个node  或者说此时的分配状态 比如是否在reallocate
-     * @param currentRouting 之前的路由信息  该对象在初始化时传入的routing 就是newRouting 而旧的routing就是null
+     * @param newRouting
+     * @param currentRouting
      * @param logger
      * @throws IOException
      */
@@ -3417,6 +3424,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         // only persist metadata if routing information that is persisted in shard state metadata actually changed
         final ShardId shardId = newRouting.shardId();
         // 只有在前后路由信息发生变化时 才有必要进行处理
+        // TODO 状态的变化 会修改allocationId么???
         if (currentRouting == null
             || currentRouting.primary() != newRouting.primary()
             || currentRouting.allocationId().equals(newRouting.allocationId()) == false) {

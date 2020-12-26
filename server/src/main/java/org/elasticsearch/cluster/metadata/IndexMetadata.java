@@ -559,7 +559,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
 
     /**
-     * 获取某个分片相关的所有 allocationId
+     * 获取某分片下所有已经完成同步的副本对应的allocationId
      * @param shardId
      * @return
      */

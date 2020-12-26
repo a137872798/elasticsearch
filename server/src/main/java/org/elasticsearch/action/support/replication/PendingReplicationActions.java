@@ -34,20 +34,18 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * 该对象是专门处理 复制组的
- * ReplicationGroup 本身只是一个bean对象 记录了某个index下所有的分片信息
+ * 每当某分片此时的 replicationGroup信息发生变化 就会通过该对象进行处理
  */
 public class PendingReplicationActions implements Consumer<ReplicationGroup>, Releasable {
 
     /**
-     * RetryableAction 代表一个在失败时允许重试的任务
-     * key 代表allocationId
+     * 需要追踪链路的分片会在这里维护
      */
     private final Map<String, Set<RetryableAction<?>>> onGoingReplicationActions = ConcurrentCollections.newConcurrentMap();
     private final ShardId shardId;
     private final ThreadPool threadPool;
     /**
-     * 这里会记录副本组的版本信息  应该是这样每当集群内节点发生变化时 副本信息也会变化 这时就应该更新version
+     * 记录上一次消费副本组时的版本号
      */
     private volatile long replicationGroupVersion = -1;
 
@@ -87,15 +85,15 @@ public class PendingReplicationActions implements Consumer<ReplicationGroup>, Re
 
     /**
      *
-     * @param replicationGroup  该对象内部只是存储了一些路由信息
+     * @param replicationGroup  处理最新的副本组
      */
     @Override
     public void accept(ReplicationGroup replicationGroup) {
-        // 每次检测副本组是否发生了变化 如果是 则更新内部的容器
+        // 通过版本号解决幂等问题
         if (isNewerVersion(replicationGroup)) {
             synchronized (this) {
                 if (isNewerVersion(replicationGroup)) {
-                    // TODO 这个追踪链路到底是啥意思
+                    // 更新需要持续同步数据的分片
                     acceptNewTrackedAllocationIds(replicationGroup.getTrackedAllocationIds());
                     replicationGroupVersion = replicationGroup.getVersion();
                 }
@@ -110,20 +108,21 @@ public class PendingReplicationActions implements Consumer<ReplicationGroup>, Re
 
     /**
      *
-     * @param trackedAllocationIds 副本组内部存储了所有被追踪的链路信息
+     * @param trackedAllocationIds   全量数据 代表此时应该继续同步数据的分片
      */
     synchronized void acceptNewTrackedAllocationIds(Set<String> trackedAllocationIds) {
         for (String targetAllocationId : trackedAllocationIds) {
             onGoingReplicationActions.putIfAbsent(targetAllocationId, ConcurrentCollections.newConcurrentSet());
         }
         ArrayList<Set<RetryableAction<?>>> toCancel = new ArrayList<>();
-        // 新版本中被移除掉的 allocationId 将会被移除
+        // 将不需要继续维护同步的分片移除
         for (String allocationId : onGoingReplicationActions.keySet()) {
             if (trackedAllocationIds.contains(allocationId) == false) {
                 toCancel.add(onGoingReplicationActions.remove(allocationId));
             }
         }
 
+        // value是个可重试任务 要进行关闭
         cancelActions(toCancel, "Replica left ReplicationGroup");
     }
 
