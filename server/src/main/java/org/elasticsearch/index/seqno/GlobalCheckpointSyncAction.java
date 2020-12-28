@@ -43,7 +43,7 @@ import java.io.IOException;
  * Background global checkpoint sync action initiated when a shard goes inactive. This is needed because while we send the global checkpoint
  * on every replication operation, after the last operation completes the global checkpoint could advance but without a follow-up operation
  * the global checkpoint will never be synced to the replicas.
- * 代表一个同步检查点的操作
+ * 代表一个同步全局检查点的操作
  * TransportReplicationAction 代表一个从主分片发起 并可能会传播到副本的操作
  */
 public class GlobalCheckpointSyncAction extends TransportReplicationAction<
@@ -112,11 +112,12 @@ public class GlobalCheckpointSyncAction extends TransportReplicationAction<
     }
 
     /**
+     * 同步全局检查点的操作实现
      * @param indexShard
      * @throws IOException
      */
     private void maybeSyncTranslog(final IndexShard indexShard) throws IOException {
-        // 如果当前分片指定的持久化方式 确实是基于 req触发  且当前同步的全局检查点小于 当前已知的全局检查点 就可以进行同步
+        // 如果当前分片指定的持久化方式 确实是基于 req触发  且当前已持久化的全局检查点小于 当前已知的全局检查点 就可以进行同步
         // 在其他的操作中就会更新 lastKnownGlobalCheckpoint
         if (indexShard.getTranslogDurability() == Translog.Durability.REQUEST &&
             indexShard.getLastSyncedGlobalCheckpoint() < indexShard.getLastKnownGlobalCheckpoint()) {

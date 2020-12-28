@@ -53,6 +53,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A {@link Translog.Snapshot} from changes in a Lucene index
+ * 查询lucene中的数据 作为快照
  */
 final class LuceneChangesSnapshot implements Translog.Snapshot {
     static final int DEFAULT_BATCH_SIZE = 1024;
@@ -96,7 +97,9 @@ final class LuceneChangesSnapshot implements Translog.Snapshot {
             }
         };
         this.mapperService = mapperService;
+        // 尝试加载多少数据
         final long requestingSize = (toSeqNo - fromSeqNo) == Long.MAX_VALUE ? Long.MAX_VALUE : (toSeqNo - fromSeqNo + 1L);
+        // 每次只加载多少数据
         this.searchBatchSize = requestingSize < searchBatchSize ? Math.toIntExact(requestingSize) : searchBatchSize;
         this.fromSeqNo = fromSeqNo;
         this.toSeqNo = toSeqNo;

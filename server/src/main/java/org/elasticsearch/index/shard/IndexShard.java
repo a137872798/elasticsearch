@@ -333,7 +333,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 续约同步器是什么
+     * 该对象负责同步 某个shardId 对应的所有分片的续约信息
      */
     private final RetentionLeaseSyncer retentionLeaseSyncer;
 
@@ -533,6 +533,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             UNASSIGNED_SEQ_NO,
             globalCheckpointListeners::globalCheckpointUpdated,
             threadPool::absoluteTimeInMillis,
+            // 处理续约信息的函数对象
             (retentionLeases, listener) -> retentionLeaseSyncer.sync(shardId, aId, getPendingPrimaryTerm(), retentionLeases, listener),
             this::getSafeCommitInfo,
             pendingReplicationActions);
@@ -719,15 +720,17 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             // 主分片时才需要继续处理
             if (newRouting.primary()) {
-                // 代表主分片的路由信息没有变化
+                // 主分片路由相关的信息没有变化 只是state变化
                 if (newPrimaryTerm == pendingPrimaryTerm) {
                     // 主分片被激活了
                     if (currentRouting.initializing() && currentRouting.isRelocationTarget() == false && newRouting.active()) {
                         // the master started a recovering primary, activate primary mode.
+                        // 激活主分片模式 这样其他分片才可以从主分片恢复数据
                         replicationTracker.activatePrimaryMode(getLocalCheckpoint());
                         ensurePeerRecoveryRetentionLeasesExist();
                     }
                 } else {
+                    // TODO
                     assert currentRouting.primary() == false : "term is only increased as part of primary promotion";
                     /* Note that due to cluster state batching an initializing primary shard term can failed and re-assigned
                      * in one state causing it's term to be incremented. Note that if both current shard state and new
@@ -828,6 +831,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 : "a started primary with non-pending operation term must be in primary mode " + this.shardRouting;
             shardStateUpdated.countDown();
         }
+
+        // 目前这2个钩子都是空实现
         if (currentRouting.active() == false && newRouting.active()) {
             indexEventListener.afterIndexShardStarted(this);
         }
@@ -835,6 +840,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             indexEventListener.shardRoutingChanged(this, currentRouting, newRouting);
         }
 
+        // TODO
         if (indexSettings.isSoftDeleteEnabled() && useRetentionLeasesInPeerRecovery == false) {
             final RetentionLeases retentionLeases = replicationTracker.getRetentionLeases();
             final Set<ShardRouting> shardRoutings = new HashSet<>(routingTable.getShards());
@@ -2575,7 +2581,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Checks if we have a completed history of operations since the given starting seqno (inclusive).
      * This method should be called after acquiring the retention lock; See {@link #acquireHistoryRetentionLock()}
-     * TODO
      */
     public boolean hasCompleteHistoryOperations(String reason, long startingSeqNo) {
         return getEngine().hasCompleteOperationHistory(reason, startingSeqNo);
@@ -2684,7 +2689,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @param allocationId the allocation ID of the shard to update the local checkpoint for   每个allocation 都会维护一个checkpoint
      * @param checkpoint   the local checkpoint for the shard
-     *                     更新本地检查点 如果超过了全局检查点 那么可能会更新全局检查点
+     *                     主分片会维护副本的 localCheckpoint/globalCheckpoint信息  这里就是某个副本上报了值
      */
     public void updateLocalCheckpointForShard(final String allocationId, final long checkpoint) {
         assert assertPrimaryMode();
@@ -2697,8 +2702,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @param allocationId     the allocation ID to update the global checkpoint for
      * @param globalCheckpoint the global checkpoint
-     *                         更新全局检查点   这个全局检查点是以allocation为单位的吗  好像每个allocation都可以设置一个global属性
-     *                         但是 replicationTracker外层也有一个globalCheckpoint 2者什么关系
+     *                         更新某个分片的全局检查点  (主分片会管理所有副本此时的检查点情况)
      */
     public void updateGlobalCheckpointForShard(final String allocationId, final long globalCheckpoint) {
         assert assertPrimaryMode();
@@ -2835,7 +2839,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Updates retention leases on a replica.
      *
      * @param retentionLeases the retention leases
-     *                        直接指定内部的续约对象
+     *                        在副本上更新续约信息
      */
     public void updateRetentionLeasesOnReplica(final RetentionLeases retentionLeases) {
         assert assertReplicationTarget();
@@ -2859,6 +2863,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * Persists the current retention leases to their dedicated state file.
      *
      * @throws WriteStateException if an exception occurs writing the state file
+     * 将此时的续约信息进行持久化
      */
     public void persistRetentionLeases() throws WriteStateException {
         verifyNotClosed();
@@ -2882,7 +2887,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         if (retentionLeases.v1()) {
             logger.trace("syncing retention leases [{}] after expiration check", retentionLeases.v2());
 
-            // TODO 进行同步处理 还不清楚在做什么
+            // 续约信息同步器
             retentionLeaseSyncer.sync(
                 shardId,
                 shardRouting.allocationId().getId(),
@@ -2975,17 +2980,20 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         verifyNotClosed();
         assert shardRouting.primary() : "only call maybeSyncGlobalCheckpoint on primary shard";
 
-        // 只有主分片有权限执行该方法
+        // 首先要求当前分片是主分片 并且已经完成recovery过程
         if (replicationTracker.isPrimaryMode() == false) {
             return;
         }
         assert assertPrimaryMode();
         // only sync if there are no operations in flight, or when using async durability
+        // stats 只是一个简单的bean对象
         final SeqNoStats stats = getEngine().getSeqNoStats(replicationTracker.getGlobalCheckpoint());
         final boolean asyncDurability = indexSettings().getTranslogDurability() == Translog.Durability.ASYNC;
+
+        // TODO 之后再好好理解这些条件的含义
         if (stats.getMaxSeqNo() == stats.getGlobalCheckpoint() || asyncDurability) {
 
-            // 获取该shard下 所有primary/replica 的allocationId 集合
+            // 只需要更新处于 in-sync 内的副本的globalCheckpoint
             final ObjectLongMap<String> globalCheckpoints = getInSyncGlobalCheckpoints();
             final long globalCheckpoint = replicationTracker.getGlobalCheckpoint();
             // async durability means that the local checkpoint might lag (as it is only advanced on fsync)
@@ -2993,9 +3001,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             // checkpoint can be synced. Also take into account that a shard might be pending sync, which means that it isn't
             // in the in-sync set just yet but might be blocked on waiting for its persisted local checkpoint to catch up to
             // the global checkpoint.
+            // 检测是否需要同步全局检查点
             final boolean syncNeeded =
                 (asyncDurability && (stats.getGlobalCheckpoint() < stats.getMaxSeqNo() || replicationTracker.pendingInSync()))
                     // check if the persisted global checkpoint
+                    // 下面的条件是发现 主分片维护的每个副本此时的全局检查点 有某个小于主分片最新生成的全局检查点
                     || StreamSupport
                     .stream(globalCheckpoints.values().spliterator(), false)
                     .anyMatch(v -> v.value < globalCheckpoint);
@@ -3041,12 +3051,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @param globalCheckpoint the global checkpoint    当前全局检查点
      * @param reason           the reason the global checkpoint was updated
-     *                         当前节点作为副本触发更新全局检查点
+     *                         比如执行了需要通知到所有分片的任务 在主分片执行完成后会携带主分片的globalCheckpoint
+     *                         并传播到副本分片上 如果发生比起之前的全局检查点大 就进行更新
      */
     public void updateGlobalCheckpointOnReplica(final long globalCheckpoint, final String reason) {
         assert assertReplicationTarget();
         final long localCheckpoint = getLocalCheckpoint();
-        // TODO 为什么全局检查点超过本地检查点就不需要再处理了
         if (globalCheckpoint > localCheckpoint) {
             /*
              * This can happen during recovery when the shard has started its engine but recovery is not finalized and is receiving global
@@ -3424,7 +3434,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         // only persist metadata if routing information that is persisted in shard state metadata actually changed
         final ShardId shardId = newRouting.shardId();
         // 只有在前后路由信息发生变化时 才有必要进行处理
-        // TODO 状态的变化 会修改allocationId么???
+        // 只有state的变化 是不会触发写入的
         if (currentRouting == null
             || currentRouting.primary() != newRouting.primary()
             || currentRouting.allocationId().equals(newRouting.allocationId()) == false) {
@@ -3711,7 +3721,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *                                   after this replication request was executed on it (see {@link #getMaxSeqNoOfUpdatesOrDeletes()}
      * @param onPermitAcquired           the listener for permit acquisition
      * @param timeout                    the maximum time to wait for the in-flight operations block
-     *                                   获取当前分片的全部许可证  此时分片作为一个副本
      */
     public void acquireAllReplicaOperationsPermits(final long opPrimaryTerm,
                                                    final long globalCheckpoint,
@@ -3725,13 +3734,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 获取当前副本的所有许可证
+     * 从副本分片上获取执行操作需要的许可证(单个)
      *
      * @param opPrimaryTerm                              请求体中携带的主分片任期
      * @param globalCheckpoint                           当前的全局检查点
      * @param maxSeqNoOfUpdatesOrDeletes
-     * @param onPermitAcquired
-     * @param allowCombineOperationWithPrimaryTermUpdate 默认为true  这里的含义更像是 是否要将操作放到 更新primaryTerm之后
+     * @param onPermitAcquired                  当获取到许可后会调用该方法 继续执行操作
+     * @param allowCombineOperationWithPrimaryTermUpdate  代表本次是否需要获取所有许可证
      * @param operationExecutor
      */
     private void innerAcquireReplicaOperationPermit(final long opPrimaryTerm,
@@ -3747,8 +3756,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         // primary term update. Since indexShardOperationPermits doesn't guarantee that async submissions are executed
         // in the order submitted, combining both operations ensure that the term is updated before the operation is
         // executed. It also has the side effect of acquiring all the permits one time instead of two.
+        // 当获取到许可证后触发该监听器
         final ActionListener<Releasable> operationListener = ActionListener.delegateFailure(onPermitAcquired,
             (delegatedListener, releasable) -> {
+                // 在处理前先检测 主分片任期是否已经落后了  因为可能之前发生了某种获取所有许可证的操作 这种操作可能就是由于primaryTerm的更新引发的
                 if (opPrimaryTerm < getOperationPrimaryTerm()) {
                     releasable.close();
                     final String message = String.format(
@@ -3761,7 +3772,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 } else {
                     assert assertReplicationTarget();
                     try {
+                        // 这个是主分片上的全局检查点 尝试在副本上进行同步
                         updateGlobalCheckpointOnReplica(globalCheckpoint, "operation");
+                        // 这里也是将副本的该值 与主分片的该值同步
                         advanceMaxSeqNoOfUpdatesOrDeletes(maxSeqNoOfUpdatesOrDeletes);
                     } catch (Exception e) {
                         releasable.close();
@@ -3773,6 +3786,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             });
 
         // 检测请求体中携带的主分片任期 是否超过了当前分片记录的任期
+        // TODO 这里先忽略
         if (requirePrimaryTermUpdate(opPrimaryTerm, allowCombineOperationWithPrimaryTermUpdate)) {
             synchronized (mutex) {
                 if (requirePrimaryTermUpdate(opPrimaryTerm, allowCombineOperationWithPrimaryTermUpdate)) {
@@ -3818,10 +3832,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         assert opPrimaryTerm <= pendingPrimaryTerm
             : "operation primary term [" + opPrimaryTerm + "] should be at most [" + pendingPrimaryTerm + "]";
 
-        // 实际上就是在触发监听器前抢占了所有的许可证
+        // 获取许可证 并在成功后触发 operationListener
         operationExecutor.accept(operationListener);
     }
 
+    /**
+     * 判断从主分片上获取到的 term是否比副本上要大
+     * @param opPrimaryTerm
+     * @param allPermits
+     * @return
+     */
     private boolean requirePrimaryTermUpdate(final long opPrimaryTerm, final boolean allPermits) {
         return (opPrimaryTerm > pendingPrimaryTerm) || (allPermits && opPrimaryTerm > getOperationPrimaryTerm());
     }
@@ -3927,7 +3947,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Schedules a flush or translog generation roll if needed but will not schedule more than one concurrently. The operation will be
      * executed asynchronously on the flush thread pool.
-     * 每当往事务文件中写入一个新的 operation后触发 检测是否要触发 flush 或者滚动到下个事务文件
+     * TODO 这个方法的调用时机是 ???
      */
     public void afterWriteOperation() {
         // shouldRollTranslogGeneration 当前事务文件写入的数据过多时 会返回true 推荐滚动到下一个事务文件

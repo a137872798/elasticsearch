@@ -155,7 +155,7 @@ public abstract class TransportReplicationAction<
      * @param requestReader
      * @param replicaRequestReader
      * @param executor
-     * @param syncGlobalCheckpointAfterOperation   操作完成后是否要同步全局检查点 TODO 这个值该怎么使用呢???
+     * @param syncGlobalCheckpointAfterOperation   操作完成后是否要同步全局检查点
      * @param forceExecutionOnPrimary
      */
     protected TransportReplicationAction(Settings settings, String actionName, TransportService transportService,
@@ -307,7 +307,7 @@ public abstract class TransportReplicationAction<
     }
 
     /**
-     * 处理包装了 primaryState的请求
+     * 在 primaryShard上处理请求
      * @param request
      * @param channel
      * @param task
@@ -337,7 +337,7 @@ public abstract class TransportReplicationAction<
         }
 
         /**
-         * 处理主分片
+         * 在主分片上处理任务
          * @throws Exception
          */
         @Override
@@ -354,7 +354,8 @@ public abstract class TransportReplicationAction<
             if (shardRouting.primary() == false) {
                 throw new ReplicationOperation.RetryOnPrimaryException(shardId, "actual shard is not a primary " + shardRouting);
             }
-            // 当 allocationId 不一致时代表发生了某种变化 不进行处理
+
+            // 解决ABA问题
             final String actualAllocationId = shardRouting.allocationId().getId();
             if (actualAllocationId.equals(primaryRequest.getTargetAllocationID()) == false) {
                 throw new ShardNotFoundException(shardId, "expected allocation id [{}] but found [{}]",
@@ -436,7 +437,7 @@ public abstract class TransportReplicationAction<
                     // 在当前节点处理primary
                     setPhase(replicationTask, "primary");
 
-                    // 在相关分片上完成处理后触发监听器  在这个过程中 会将primary/replica 上的检查点记录到一个对象中
+                    // 注意是操作完成后 尝试同步全局检查点
                     final ActionListener<Response> responseListener = ActionListener.wrap(response -> {
 
                         // 对结果进行适配  默认为NOOP
@@ -445,6 +446,9 @@ public abstract class TransportReplicationAction<
                         // 根据标识决定是否要同步全局检查点
                         if (syncGlobalCheckpointAfterOperation) {
                             try {
+                                // 这里会尝试更新全局检查点  作用到每个分片上的大概逻辑就是
+                                // 对比最近一次观测到的最大的globalCheckpoint 以及 持久化的全局检查点 如果 观测到了更大的全局检查点就进行刷盘
+                                // 在主分片处理完 转发给各个副本的时候就会将主分片的 globalCheckpoint带过去 间接更新 lastSeenGlobalCheckpoint
                                 primaryShardReference.indexShard.maybeSyncGlobalCheckpoint("post-operation");
                             } catch (final Exception e) {
                                 // only log non-closed exceptions
@@ -463,6 +467,7 @@ public abstract class TransportReplicationAction<
                         primaryShardReference.close(); // release shard operation lock before responding to caller
                         setPhase(replicationTask, "finished");
                         onCompletionListener.onResponse(response);
+                        // 当处理异常时 触发该函数 最终就是将异常信息通知给发起者
                     }, e -> handleException(primaryShardReference, e));
 
                     // 在这里完成 主分片/副本上的处理 并在最后触发监听器
@@ -713,7 +718,7 @@ public abstract class TransportReplicationAction<
             setPhase(task, "replica");
             // 获取本次要处理的分片的 allocationId
             final String actualAllocationId = this.replica.routingEntry().allocationId().getId();
-            // 当allocationId 不匹配时 抛出异常
+            // 避免ABA问题
             if (actualAllocationId.equals(replicaRequest.getTargetAllocationID()) == false) {
                 throw new ShardNotFoundException(this.replica.shardId(), "expected allocation id [{}] but found [{}]",
                     replicaRequest.getTargetAllocationID(), actualAllocationId);
@@ -817,8 +822,6 @@ public abstract class TransportReplicationAction<
                 }
                 assert request.waitForActiveShards() != ActiveShardCount.DEFAULT :
                     "request waitForActiveShards must be set in resolveRequest";
-
-                // 这里都是在处理主分片啊
 
                 // 找到本次要处理的主分片路由信息 由于主分片不可用 需要等待clusterState变化
                 final ShardRouting primary = state.getRoutingTable().shardRoutingTable(request.shardId()).primaryShard();
@@ -1035,6 +1038,7 @@ public abstract class TransportReplicationAction<
     /**
      * Executes the logic for acquiring one or more operation permit on a replica shard. The default is to acquire a single permit but this
      * method can be overridden to acquire more.
+     * @param maxSeqNoOfUpdatesOrDeletes  这个是请求在主分片执行完后  从主分片上获取到的  TODO 还不知道怎么用
      */
     protected void acquireReplicaOperationPermit(final IndexShard replica,
                                                  final ReplicaRequest request,
@@ -1085,7 +1089,7 @@ public abstract class TransportReplicationAction<
         }
 
         /**
-         * 要处理某个分片时 会在集群中找到对应的node 并转发请求  当该shard的活跃分片数(primary+replica) 达到要求时 才可以正常处理  也就是委托给该方法
+         * 作为主分片处理请求时 转发到该方法
          * @param request the request to perform
          * @param listener result listener 当处理完成时 触发监听器
          */
@@ -1226,7 +1230,7 @@ public abstract class TransportReplicationAction<
          * @param replica                    the shard this request should be executed on
          * @param request
          * @param primaryTerm                the primary term
-         * @param globalCheckpoint           the global checkpoint on the primary
+         * @param globalCheckpoint           the global checkpoint on the primary   此时主分片的全局检查点
          * @param maxSeqNoOfUpdatesOrDeletes the max seq_no of updates (index operations overwriting Lucene) or deletes on primary
          *                                   after this replication was executed on it.
          * @param listener                   callback for handling the response or failure

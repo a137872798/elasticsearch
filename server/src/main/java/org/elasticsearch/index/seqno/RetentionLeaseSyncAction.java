@@ -59,7 +59,8 @@ import java.util.Objects;
 /**
  * Write action responsible for syncing retention leases to replicas. This action is deliberately a write action so that if a replica misses
  * a retention lease sync then that shard will be marked as stale.
- * 保留续约同步信息
+ * 同步续约信息
+ * 该任务在执行完成后 需要同步检查点
  */
 public class RetentionLeaseSyncAction extends
         TransportWriteAction<RetentionLeaseSyncAction.Request, RetentionLeaseSyncAction.Request, RetentionLeaseSyncAction.Response> {
@@ -109,6 +110,15 @@ public class RetentionLeaseSyncAction extends
         assert false : "use RetentionLeaseSyncAction#sync";
     }
 
+
+    /**
+     * 代表一个针对续约信息进行同步的请求
+     * @param shardId
+     * @param primaryAllocationId
+     * @param primaryTerm
+     * @param retentionLeases  此时本节点最新的续约集信息
+     * @param listener   处理结果的监听器
+     */
     final void sync(ShardId shardId, String primaryAllocationId, long primaryTerm, RetentionLeases retentionLeases,
                     ActionListener<ReplicationResponse> listener) {
         final ThreadContext threadContext = threadPool.getThreadContext();
@@ -117,6 +127,7 @@ public class RetentionLeaseSyncAction extends
             threadContext.markAsSystemContext();
             final Request request = new Request(shardId, retentionLeases);
             final ReplicationTask task = (ReplicationTask) taskManager.register("transport", "retention_lease_sync", request);
+            // 请求会先发送到本地节点
             transportService.sendChildRequest(clusterService.localNode(), transportPrimaryAction,
                 new ConcreteShardRequest<>(request, primaryAllocationId, primaryTerm),
                 task,
@@ -152,6 +163,12 @@ public class RetentionLeaseSyncAction extends
         }
     }
 
+    /**
+     * 同步续约信息的请求是由primary发起的 先由自身处理
+     * @param request
+     * @param primary      the primary shard to perform the operation on
+     * @param listener listener for the result of the operation on primary, including current translog location and operation response
+     */
     @Override
     protected void shardOperationOnPrimary(Request request, IndexShard primary,
             ActionListener<PrimaryResult<Request, Response>> listener) {
@@ -159,18 +176,28 @@ public class RetentionLeaseSyncAction extends
             assert request.waitForActiveShards().equals(ActiveShardCount.NONE) : request.waitForActiveShards();
             Objects.requireNonNull(request);
             Objects.requireNonNull(primary);
+            // 这里就是将续约信息持久化
             primary.persistRetentionLeases();
             return new WritePrimaryResult<>(request, new Response(), null, null, primary, getLogger());
         });
     }
 
+    /**
+     * 在副本上执行任务
+     * @param request
+     * @param replica      the replica shard to perform the operation on
+     * @return
+     * @throws WriteStateException
+     */
     @Override
     protected WriteReplicaResult<Request> shardOperationOnReplica(
             final Request request,
             final IndexShard replica) throws WriteStateException {
         Objects.requireNonNull(request);
         Objects.requireNonNull(replica);
+        // 更新内存中的续约信息
         replica.updateRetentionLeasesOnReplica(request.getRetentionLeases());
+        // 对续约信息进行持久化
         replica.persistRetentionLeases();
         return new WriteReplicaResult<>(request, null, null, replica, getLogger());
     }
@@ -196,6 +223,7 @@ public class RetentionLeaseSyncAction extends
         public Request(final ShardId shardId, final RetentionLeases retentionLeases) {
             super(Objects.requireNonNull(shardId));
             this.retentionLeases = Objects.requireNonNull(retentionLeases);
+            // 注意默认情况下 在需要等待的活跃分片数为0
             waitForActiveShards(ActiveShardCount.NONE);
         }
 

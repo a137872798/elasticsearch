@@ -56,7 +56,7 @@ public final class RetentionLease implements ToXContentObject, Writeable {
     }
 
     /**
-     * 续约的序列号
+     * 该续约信息中保留的最小的序列号
      */
     private final long retainingSequenceNumber;
 
@@ -96,7 +96,7 @@ public final class RetentionLease implements ToXContentObject, Writeable {
      * Constructs a new retention lease.
      *
      * @param id                      the identifier of the retention lease
-     * @param retainingSequenceNumber the retaining sequence number
+     * @param retainingSequenceNumber the retaining sequence number   在生成续约信息时 一般该参数都是 checkpointState.globalCheckpoint
      * @param timestamp               the timestamp of when the retention lease was created or renewed
      * @param source                  the source of the retention lease
      */

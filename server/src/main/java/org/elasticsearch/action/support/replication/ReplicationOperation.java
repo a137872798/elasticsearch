@@ -55,7 +55,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
 
 /**
- * 发起了一些副本操作
+ * 通过该对象完成分片级别的某些任务 包含primary/replica
+ * 该对象是在主分片上被创建的
  * @param <Request>
  * @param <ReplicaRequest>
  * @param <PrimaryResultT>
@@ -69,6 +70,10 @@ public class ReplicationOperation<
     private final ThreadPool threadPool;
     private final Request request;
     private final String opType;
+
+    /**
+     * 记录此时已经处理了多少分片
+     */
     private final AtomicInteger totalShards = new AtomicInteger();
     /**
      * The number of pending sub-operations in this operation. This is incremented when the following operations start and decremented when
@@ -144,6 +149,7 @@ public class ReplicationOperation<
             return;
         }
 
+        // 当前已经处理到第几个分片了
         totalShards.incrementAndGet();
         // 当整个流程结束后才会-1
         pendingActions.incrementAndGet(); // increase by 1 until we finish all primary coordination
@@ -159,7 +165,7 @@ public class ReplicationOperation<
         this.primaryResult = primaryResult;
         final ReplicaRequest replicaRequest = primaryResult.replicaRequest();
 
-        // 实际上就是本对象内部的 request 会携带过去
+        // 实际上就是本对象的req
         if (replicaRequest != null) {
             if (logger.isTraceEnabled()) {
                 logger.trace("[{}] op [{}] completed on primary for request [{}]", primary.routingEntry().shardId(), opType, request);
@@ -171,26 +177,27 @@ public class ReplicationOperation<
             // is valid for this replication group. If we would sample in the reverse, the global checkpoint might be based on a subset
             // of the sampled replication group, and advanced further than what the given replication group would allow it to.
             // This would entail that some shards could learn about a global checkpoint that would be higher than its local checkpoint.
-            // 通过 tracker获取上一次同步的全局检查点    在本次操作完成后 会通过updateCheckPoints 更新tracker内部的检查点
+            // 获取主分片此时的全局检查点
             final long globalCheckpoint = primary.computedGlobalCheckpoint();
             // we have to capture the max_seq_no_of_updates after this request was completed on the primary to make sure the value of
             // max_seq_no_of_updates on replica when this request is executed is at least the value on the primary when it was executed
             // on.
-            // 获取最新的序列号 每次操作都会增加该值
+
+            // TODO 更新或者删除的 maxSeqNo是什么时候设置的 ???
             final long maxSeqNoOfUpdatesOrDeletes = primary.maxSeqNoOfUpdatesOrDeletes();
             assert maxSeqNoOfUpdatesOrDeletes != SequenceNumbers.UNASSIGNED_SEQ_NO : "seqno_of_updates still uninitialized";
             // 获取该主分片相关的副本组
             final ReplicationGroup replicationGroup = primary.getReplicationGroup();
-            // TODO 这个是正在同步的副本的意思吗 ???
+            // 应该是已经存在于 inSync队列中 并继续同步最新写入primary数据的replica
             final PendingReplicationActions pendingReplicationActions = primary.getPendingReplicationActions();
-            // 将不可用的分片标记成过期状态
+            // 根据条件判断 是否要将此时不可用的分片关闭
             markUnavailableShardsAsStale(replicaRequest, replicationGroup);
 
             // 开始在副本上进行处理
             performOnReplicas(replicaRequest, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, replicationGroup, pendingReplicationActions);
         }
 
-        // 当有关 replica的处理完成时 才根据之前result触发监听器
+        // 当发送副本请求后 触发该函数
         primaryResult.runPostReplicationActions(new ActionListener<>() {
 
             @Override
@@ -222,11 +229,12 @@ public class ReplicationOperation<
      */
     private void markUnavailableShardsAsStale(ReplicaRequest replicaRequest, ReplicationGroup replicationGroup) {
         // if inSyncAllocationIds contains allocation ids of shards that don't exist in RoutingTable, mark copies as stale
-        // 副本组中有2个列表一个是 存储 inSync容器中的任务   一个存储 unavailableInSyncShards容器中的任务
+        // 这些副本分片还没有完成一开始的数据同步  应该就是还没有完成 recovery
         for (String allocationId : replicationGroup.getUnavailableInSyncShards()) {
             // 增加一个此时正在运行的任务
             pendingActions.incrementAndGet();
-            // 将其他副本标记成无效状态 这个动作会发往 leader节点 并对这些分片进行关闭
+
+            // 是否要将分片标记为过期
             replicasProxy.markShardCopyAsStaleIfNeeded(replicaRequest.shardId(), allocationId, primaryTerm,
                 // decPendingAndFinishIfNeeded 对冲刚才增加的pendingActions
                 ActionListener.wrap(r -> decPendingAndFinishIfNeeded(), ReplicationOperation.this::onNoLongerPrimary));
@@ -253,7 +261,7 @@ public class ReplicationOperation<
 
         // 对应每个副本信息
         for (final ShardRouting shard : replicationGroup.getReplicationTargets()) {
-            // TODO allocationId 会出现一致的情况吗 ???
+            // allocationId 应该是不一致的
             if (shard.isSameAllocation(primaryRouting) == false) {
                 performOnReplica(shard, replicaRequest, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, pendingReplicationActions);
             }
@@ -279,14 +287,14 @@ public class ReplicationOperation<
         pendingActions.incrementAndGet();
 
 
-        // 当相关副本成功处理 并返回结果后 触发该监听器
+        // 每当成功作用在某个副本后 返回的结果会触发该函数
         final ActionListener<ReplicaResponse> replicationListener = new ActionListener<>() {
             @Override
             public void onResponse(ReplicaResponse response) {
                 // 每当成功处理一个分片后 增加成功数
                 successfulShards.incrementAndGet();
                 try {
-                    // 每个副本会将数据刷盘 同时返回此时最新的检查点  而 primary 则负责维护每个副本的检查点
+                    // 根据副本响应结果中的 localCheckpoint/globalCheckpoint  更新主分片维护的副本相关信息
                     updateCheckPoints(shard, response::localCheckpoint, response::globalCheckpoint);
                 } finally {
                     // 对冲增加的 pendingActions
@@ -354,8 +362,7 @@ public class ReplicationOperation<
     }
 
     /**
-     * 主分片所在节点会触发该方法  更新主分片此时的检查点
-     * 或者通过将请求发往每个副本 获取检查点并通过该对象维护
+     * 更新某个分片的 localCheckpoint/globalCheckpoint
      * @param shard
      * @param localCheckpointSupplier   将此时持久化的检查点同步到 tracer上
      * @param globalCheckpointSupplier
@@ -398,7 +405,7 @@ public class ReplicationOperation<
     /**
      * Checks whether we can perform a write based on the required active shard count setting.
      * Returns **null* if OK to proceed, or a string describing the reason to stop
-     * 检测当前是否有足够的活跃分片
+     * 某些请求可能有此时活跃的分片数量限制  当不满足条件时不应该继续执行任务
      */
     protected String checkActiveShardCount() {
         // 获取该主分片的 shardId

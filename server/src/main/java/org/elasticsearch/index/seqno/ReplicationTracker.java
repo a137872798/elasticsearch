@@ -191,6 +191,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     /**
      * This set contains allocation IDs for which there is a thread actively waiting for the local checkpoint to advance to at least the
      * current global checkpoint.
+     * 容器内的allocationId 对应的分片还没有同步完globalCheckpoint之前的数据
      */
     final Set<String> pendingInSync;
 
@@ -205,6 +206,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      */
     private RetentionLeases retentionLeases = RetentionLeases.EMPTY;
 
+    // -------  最近一次持久化的续约信息的 version/ primaryTerm  --------- //
+
     /**
      * The primary term of the most-recently persisted retention leases. This is used to check if we need to persist the current retention
      * leases.
@@ -216,6 +219,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * leases.
      */
     private long persistedRetentionLeasesVersion;
+
+    // ------------------------------------------------------------------ //
 
     /**
      * Whether there should be a peer recovery retention lease (PRRL) for every tracked shard copy. Always true on indices created from
@@ -338,6 +343,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             retentionLease = innerAddRetentionLease(id, retainingSequenceNumber, source);
             currentRetentionLeases = retentionLeases;
         }
+
+        // 每当续约信息发生变化 需要同步到该分片的其他副本
         onSyncRetentionLeases.accept(currentRetentionLeases, listener);
         return retentionLease;
     }
@@ -378,8 +385,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * Adds a new retention lease, but does not synchronise it with the rest of the replication group.
      *
      * @param id                      the identifier of the retention lease
-     * @param retainingSequenceNumber the retaining sequence number
-     * @param source                  the source of the retention lease
+     * @param retainingSequenceNumber the retaining sequence number   对应一个seqNo
+     * @param source                  the source of the retention lease   描述信息
      * @return the new retention lease
      * @throws RetentionLeaseAlreadyExistsException if the specified retention lease already exists
      * 插入一个新的续约对象
@@ -390,11 +397,14 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         if (retentionLeases.contains(id)) {
             throw new RetentionLeaseAlreadyExistsException(id);
         }
+
+        // 生成一个续约信息 插入到之前的续约队列中
         final RetentionLease retentionLease
             = new RetentionLease(id, retainingSequenceNumber, currentTimeMillisSupplier.getAsLong(), source);
         logger.debug("adding new retention lease [{}] to current retention leases [{}]", retentionLease, retentionLeases);
         retentionLeases = new RetentionLeases(
                 operationPrimaryTerm,
+                // 因为这里version +1   代表续约信息发生更新了  就可以正常进行 persistRetentionLeases
                 retentionLeases.version() + 1,
                 Stream.concat(retentionLeases.leases().stream(), Stream.of(retentionLease)).collect(Collectors.toList()));
         return retentionLease;
@@ -441,7 +451,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param id       the identifier of the retention lease
      * @param listener the callback when the retention lease is successfully removed and synced to replicas
-     *                 移除某个续约对象
+     *                 移除某个续约对象  这里也会涉及到在shardId 对应的所有分片同步续约信息
      */
     public void removeRetentionLease(final String id, final ActionListener<ReplicationResponse> listener) {
         Objects.requireNonNull(listener);
@@ -458,6 +468,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                     retentionLeases.leases().stream().filter(lease -> lease.id().equals(id) == false).collect(Collectors.toList()));
             currentRetentionLeases = retentionLeases;
         }
+        // 数据同步完成时会触发监听器
         onSyncRetentionLeases.accept(currentRetentionLeases, listener);
     }
 
@@ -465,7 +476,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * Updates retention leases on a replica.
      *
      * @param retentionLeases the retention leases
-     *                        更新续约信息
+     *                        在副本上更新续约信息   一般就是主分片先修改续约信息 在发起请求同步到所有副本上
      */
     public synchronized void updateRetentionLeasesOnReplica(final RetentionLeases retentionLeases) {
         assert primaryMode == false;
@@ -504,7 +515,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param path the path to the directory containing the state file
      * @throws WriteStateException if an exception occurs writing the state file
-     * 持久化续约信息
+     * 每次更新续约信息后 会发起一个同步续约信息的请求 首先就交由primary处理  就是指持久化续约信息
      */
     public void persistRetentionLeases(final Path path) throws WriteStateException {
         synchronized (retentionLeasePersistenceLock) {
@@ -559,6 +570,11 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             getPeerRecoveryRetentionLeaseId(nodeId), listener);
     }
 
+    /**
+     * 移除某个之前存在的续约信息
+     * @param nodeId
+     * @param listener
+     */
     public void removePeerRecoveryRetentionLease(String nodeId, ActionListener<ReplicationResponse> listener) {
         removeRetentionLease(getPeerRecoveryRetentionLeaseId(nodeId), listener);
     }
@@ -578,6 +594,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     /**
      * Id for a peer recovery retention lease for the given {@link ShardRouting}.
      * See {@link ReplicationTracker#addPeerRecoveryRetentionLease}.
+     * 通过某个分片所在的节点获取续约信息
      */
     public static String getPeerRecoveryRetentionLeaseId(ShardRouting shardRouting) {
         return getPeerRecoveryRetentionLeaseId(shardRouting.currentNodeId());
@@ -766,6 +783,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * Get the local knowledge of the persisted global checkpoints for all in-sync allocation IDs.
      *
      * @return a map from allocation ID to the local knowledge of the persisted global checkpoint for that allocation ID
+     * 将此时所有完成同步的 分片的全局检查点取出来 设置到map中
      */
     public synchronized ObjectLongMap<String> getInSyncGlobalCheckpoints() {
         assert primaryMode;
@@ -985,6 +1003,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         this.pendingInSync = new HashSet<>();
         this.routingTable = null;
         this.replicationGroup = null;
+
+        // 排除非兼容性的部分 该值默认为true
         this.hasAllPeerRecoveryRetentionLeases = indexSettings.getIndexVersionCreated().onOrAfter(Version.V_7_6_0)
             || (indexSettings.isSoftDeleteEnabled() &&
                 indexSettings.getIndexVersionCreated().onOrAfter(Version.V_7_4_0) &&
@@ -1019,6 +1039,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
     /**
      * 根据当前所有 allocation的同步状态生成 replicationGroup对象
+     * 如果是更新操作 每次version+1
      * @return
      */
     private ReplicationGroup calculateReplicationGroup() {
@@ -1057,7 +1078,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param newGlobalCheckpoint the new global checkpoint
      * @param reason              the reason the global checkpoint was updated
-     *                            更新本节点对应的副本数据同步tracker对象的 全局检查点
+     *                            因为某些操作使得副本感知到了主分片此时的全局检查点 进行同步
+     *                            比如 一些需要在分片上所有主副本执行的操作  (并且根据需要可能在操作执行完成后会将最新的全局检查点刷盘)
      */
     public synchronized void updateGlobalCheckpointOnReplica(final long newGlobalCheckpoint, final String reason) {
         assert invariant();
@@ -1083,7 +1105,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param allocationId     the allocation ID to update the global checkpoint for
      * @param globalCheckpoint the global checkpoint
-     *                         更新全局检查点
+     *                         更新某个分片的全局检查点
      */
     public synchronized void updateGlobalCheckpointForShard(final String allocationId, final long globalCheckpoint) {
         assert primaryMode;
@@ -1114,8 +1136,12 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         primaryMode = true;
         // 更新本分片对应的checkpoint 本对象会记录该分片所有replica,primary的检查点
         updateLocalCheckpoint(shardAllocationId, checkpoints.get(shardAllocationId), localCheckpoint);
+
+        // 根据此时checkpoints 中所有分片的localCheckpoint 生成一个全局检查点
+        // 首次触发时其他副本还没有上报自己的localCheckpoint 应该就是 -2  那么此时全局检查点还没有变化 还是-2
         updateGlobalCheckpointOnPrimary();
 
+        // 更新本地续约信息
         addPeerRecoveryRetentionLeaseForSolePrimary();
         assert invariant();
     }
@@ -1130,9 +1156,13 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert primaryMode;
         assert Thread.holdsLock(this);
 
+        // 从某个分片的路由表中获取此时的主分片
         final ShardRouting primaryShard = routingTable.primaryShard();
         final String leaseId = getPeerRecoveryRetentionLeaseId(primaryShard);
+
+        // 当续约信息不存在时 进行创建
         if (retentionLeases.get(leaseId) == null) {
+            // 代表此时完成数据同步的只有主分片自己  TODO 先忽略这种情况
             if (replicationGroup.getReplicationTargets().equals(Collections.singletonList(primaryShard))) {
                 assert primaryShard.allocationId().getId().equals(shardAllocationId)
                     : routingTable.assignedShards() + " vs " + shardAllocationId;
@@ -1141,6 +1171,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 logger.trace("addPeerRecoveryRetentionLeaseForSolePrimary: adding lease [{}]", leaseId);
                 innerAddRetentionLease(leaseId, Math.max(0L, checkpoints.get(shardAllocationId).globalCheckpoint + 1),
                     PEER_RECOVERY_RETENTION_LEASE_SOURCE);
+                // 代表所有分片的续约信息都已经插入完成
                 hasAllPeerRecoveryRetentionLeases = true;
             } else {
                 /*
@@ -1150,6 +1181,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 assert hasAllPeerRecoveryRetentionLeases == false : routingTable + " vs " + retentionLeases;
                 logger.debug("{} becoming primary of {} with missing lease: {}", primaryShard, routingTable, retentionLeases);
             }
+            // 检测是否所有分片都已经有对应的续约信息了 有的话修改标识
         } else if (hasAllPeerRecoveryRetentionLeases == false && routingTable.assignedShards().stream().allMatch(shardRouting ->
             retentionLeases.contains(getPeerRecoveryRetentionLeaseId(shardRouting))
                 || checkpoints.get(shardRouting.allocationId().getId()).tracked == false)) {
@@ -1165,7 +1197,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * @param applyingClusterStateVersion the cluster state version being applied when updating the allocation IDs from the master
      *                                    此时集群的版本号
      * @param inSyncAllocationIds         the allocation IDs of the currently in-sync shard copies
-     *                                    此时同步队列中的所有分片对应的 allocationId
+     *                                    同步队列中的分片代表已经将数据同步到 primary.globalCheckpoint 的位置了
      * @param routingTable                the shard routing table
      * 代表接收到leader节点发来的更新分片信息的请求
      */
@@ -1333,12 +1365,13 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param allocationId    the allocation ID of the shard to update the local checkpoint for
      * @param localCheckpoint the local checkpoint for the shard
-     *                        更新本地检查点
+     *                        更新某个分片的本地检查点
      */
     public synchronized void updateLocalCheckpoint(final String allocationId, final long localCheckpoint) {
         assert invariant();
         assert primaryMode;
         assert handoffInProgress == false;
+        // 这里维护了主分片管理的所有副本  只有已经完成数据恢复阶段并进入 in-sync 的副本才会添加到 checkpoints
         CheckpointState cps = checkpoints.get(allocationId);
         if (cps == null) {
             // can happen if replica was removed from cluster but replication process is unaware of it yet
@@ -1346,20 +1379,22 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         }
         // 更新之前的 state对象
         boolean increasedLocalCheckpoint = updateLocalCheckpoint(allocationId, cps, localCheckpoint);
-        // 如果该allocationId 对应的分片还处于同步队列中  (应该是针对副本的概念 尚未与primary达成数据同步的分片)
+
+        // 代表该分片在主分片上认为还处于未完成数据同步的状态
         boolean pending = pendingInSync.contains(allocationId);
-        // 代表已经追赶上全局检查点了   等下 那么全局检查点就不是所有节点一致了 因为还是有落后的节点 那么就是超半数同意 跟kafka一样???
+        // 因为在updateLocalCheckpoint 可能会更新 cps.localCheckpoint 并且可能该副本已经超过了主分片设定的全局检查点
         if (pending && cps.localCheckpoint >= getGlobalCheckpoint()) {
             pendingInSync.remove(allocationId);
             pending = false;
+            // 完成数据同步 进入in-sync 队列中
             cps.inSync = true;
-            // 因为此时某个allocation已经发生了变化 所以要更新replicationGroup 同时触发监听器
+            // 因为cps发生了变化 所以要更新 replicationGroup
             updateReplicationGroupAndNotify();
             logger.trace("marked [{}] as in-sync", allocationId);
-            // 唤醒所有阻塞线程
+            // 唤醒所有阻塞线程  可能有些操作针对的副本分片 还没有进入到 in-sync 队列 操作就会被阻塞
             notifyAllWaiters();
         }
-        // 尝试更新全局检查点
+        // 如果该副本的检查点是全局最小的 本次更新 就有可能会增大全局检查点
         if (increasedLocalCheckpoint && pending == false) {
             updateGlobalCheckpointOnPrimary();
         }
@@ -1369,21 +1404,29 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     /**
      * Computes the global checkpoint based on the given local checkpoints. In case where there are entries preventing the
      * computation to happen (for example due to blocking), it returns the fallback value.
-     * 计算此时最新的全局检查点
+     * @param pendingInSync 容器内的分片还没有同步好global之前的数据
+     * @param localCheckpoints   从CS中获取到的其他分片信息 需要通过该对象维护它们此时的检查点
+     * @param fallback  之前的全局检查点
+     * 通过一组相关信息  计算此时最新的全局检查点
      */
     private static long computeGlobalCheckpoint(final Set<String> pendingInSync, final Collection<CheckpointState> localCheckpoints,
                                                 final long fallback) {
         long minLocalCheckpoint = Long.MAX_VALUE;
+
+        // 如果这个容器不为空， 就代表还有副本正在同步全局检查点之前的数据 此时不宜更新
         if (pendingInSync.isEmpty() == false) {
             return fallback;
         }
+
+        // 代表所有分片都已经同步到全局检查点的位置
         for (final CheckpointState cps : localCheckpoints) {
-            // 找到完成同步的节点   完成同步意味着 localCheckpoint 至少超过了globalCheckpoint 那么总体上检查点还是变大的
+            // 在IndexMetadata中 可以获取到此时已经完成数据同步的副本 inSync为true
             if (cps.inSync) {
                 if (cps.localCheckpoint == SequenceNumbers.UNASSIGNED_SEQ_NO) {
                     // unassigned in-sync replica
                     return fallback;
                 } else {
+                    // 所有副本分片最小的本地检查点会作为新的全局检查点
                     minLocalCheckpoint = Math.min(cps.localCheckpoint, minLocalCheckpoint);
                 }
             }
@@ -1394,10 +1437,12 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
     /**
      * Scans through the currently known local checkpoint and updates the global checkpoint accordingly.
-     * 尝试更新全局检查点
+     * 主分片发起全局检查点更新操作
      */
     private synchronized void updateGlobalCheckpointOnPrimary() {
         assert primaryMode;
+
+        // pendingInsync 代表的是还未进入in-sync的副本 也就是数据还没同步到全局检查点的副本
         final long computedGlobalCheckpoint = computeGlobalCheckpoint(pendingInSync, checkpoints.values(), getGlobalCheckpoint());
         assert computedGlobalCheckpoint >= globalCheckpoint : "new global checkpoint [" + computedGlobalCheckpoint +
             "] is lower than previous one [" + globalCheckpoint + "]";
@@ -1507,6 +1552,9 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert invariant();
     }
 
+    /**
+     * 代表所有tracker为true的分片 都已经生成了自己的续约信息
+     */
     private synchronized void setHasAllPeerRecoveryRetentionLeases() {
         hasAllPeerRecoveryRetentionLeases = true;
         assert invariant();
@@ -1519,6 +1567,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     /**
      * Create any required peer-recovery retention leases that do not currently exist because we just did a rolling upgrade from a version
      * prior to {@link Version#V_7_4_0} that does not create peer-recovery retention leases.
+     * 确保所有分片都有续约对象 没有则创建
      */
     public synchronized void createMissingPeerRecoveryRetentionLeases(ActionListener<Void> listener) {
         if (hasAllPeerRecoveryRetentionLeases == false) {
@@ -1528,15 +1577,19 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 listener.onResponse(null);
             }, listener::onFailure), shardRoutings.size());
             for (ShardRouting shardRouting : shardRoutings) {
+                // 代表这个分片的续约信息已经存在
                 if (retentionLeases.contains(getPeerRecoveryRetentionLeaseId(shardRouting))) {
                     groupedActionListener.onResponse(null);
                 } else {
+                    // 当续约信息不存在时 进行手动插入
                     final CheckpointState checkpointState = checkpoints.get(shardRouting.allocationId().getId());
+                    // 代表该分片还没有完成数据同步 不需要生成续约信息
                     if (checkpointState.tracked == false) {
                         groupedActionListener.onResponse(null);
                     } else {
                         logger.trace("createMissingPeerRecoveryRetentionLeases: adding missing lease for {}", shardRouting);
                         try {
+                            // 每次续约信息发生变化 需要同步到集群其他节点
                             addPeerRecoveryRetentionLease(shardRouting.currentNodeId(),
                                 Math.max(SequenceNumbers.NO_OPS_PERFORMED, checkpointState.globalCheckpoint), groupedActionListener);
                         } catch (Exception e) {

@@ -52,6 +52,14 @@ public class RetentionLeaseSyncer {
         (shardId, primaryAllocationId, primaryTerm, retentionLeases, listener) -> listener.onResponse(new ReplicationResponse()),
         (shardId, primaryAllocationId, primaryTerm, retentionLeases) -> { });
 
+    /**
+     * 通过续约同步器 发起一个同步请求
+     * @param shardId
+     * @param primaryAllocationId
+     * @param primaryTerm
+     * @param retentionLeases
+     * @param listener
+     */
     public void sync(ShardId shardId, String primaryAllocationId, long primaryTerm,
                      RetentionLeases retentionLeases, ActionListener<ReplicationResponse> listener) {
         syncAction.sync(shardId, primaryAllocationId, primaryTerm, retentionLeases, listener);

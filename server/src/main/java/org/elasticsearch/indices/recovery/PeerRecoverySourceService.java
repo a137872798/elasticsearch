@@ -163,7 +163,7 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
     }
 
     /**
-     * 代表此时正在处理的恢复操作
+     * 代表此时正在处理的恢复操作   当前是主节点才会维护该对象
      */
     final class OngoingRecoveries {
 

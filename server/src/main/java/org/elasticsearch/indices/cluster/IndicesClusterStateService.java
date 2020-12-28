@@ -336,8 +336,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
     }
 
     /**
-     * 更新某个分片的全局检查点
-     * 具体操作就是将 syncedCheckpoint 同步到 lastKnowCheckpoint  同时对数据做刷盘操作
+     * 同步全局检查点
      * @param shardId
      */
     protected void updateGlobalCheckpointForShard(final ShardId shardId) {
@@ -734,7 +733,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                     new RecoveryListener(shardRouting, primaryTerm),
                     repositoriesService,
                     failedShardHandler, // 当某个shard处理失败时 使用该handler进行处理
-                    this::updateGlobalCheckpointForShard,
+                    this::updateGlobalCheckpointForShard,  // 当需要同步全局检查点的时候 触发该函数
                     retentionLeaseSyncer);
         } catch (Exception e) {
             failAndRemoveShard(shardRouting, true, "failed to create shard", e, state);

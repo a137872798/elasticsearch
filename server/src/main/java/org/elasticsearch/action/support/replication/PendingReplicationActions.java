@@ -34,7 +34,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * 每当某分片此时的 replicationGroup信息发生变化 就会通过该对象进行处理
+ * 该对象会监控 副本组的变化
  */
 public class PendingReplicationActions implements Consumer<ReplicationGroup>, Releasable {
 

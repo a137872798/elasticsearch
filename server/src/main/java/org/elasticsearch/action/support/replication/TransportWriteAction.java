@@ -65,6 +65,7 @@ public abstract class TransportWriteAction<
                                    ShardStateAction shardStateAction, ActionFilters actionFilters, Writeable.Reader<Request> request,
                                    Writeable.Reader<ReplicaRequest> replicaRequest, String executor, boolean forceExecutionOnPrimary) {
         super(settings, actionName, transportService, clusterService, indicesService, threadPool, shardStateAction, actionFilters,
+              // 注意操作完成后需要同步全局检查点
               request, replicaRequest, executor, true, forceExecutionOnPrimary);
     }
 
@@ -152,6 +153,7 @@ public abstract class TransportWriteAction<
 
         @Override
         public void runPostReplicationActions(ActionListener<Void> listener) {
+            // 代表在第一阶段就出现异常了
             if (finalFailure != null) {
                 listener.onFailure(finalFailure);
             } else {
@@ -345,6 +347,7 @@ public abstract class TransportWriteAction<
      */
     class WriteActionReplicasProxy extends ReplicasProxy {
 
+
         @Override
         public void failShardIfNeeded(ShardRouting replica, long primaryTerm, String message, Exception exception,
                                       ActionListener<Void> listener) {
@@ -355,6 +358,13 @@ public abstract class TransportWriteAction<
                 replica.shardId(), replica.allocationId().getId(), primaryTerm, true, message, exception, listener);
         }
 
+        /**
+         * 是否需要将分片标记为过期
+         * @param shardId
+         * @param allocationId
+         * @param primaryTerm
+         * @param listener
+         */
         @Override
         public void markShardCopyAsStaleIfNeeded(ShardId shardId, String allocationId, long primaryTerm, ActionListener<Void> listener) {
             shardStateAction.remoteShardFailed(shardId, allocationId, primaryTerm, true, "mark copy as stale", null, listener);

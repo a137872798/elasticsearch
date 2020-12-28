@@ -49,11 +49,12 @@ final class SoftDeletesPolicy {
      */
     private long localCheckpointOfSafeCommit;
     // This lock count is used to prevent `minRetainedSeqNo` from advancing.
-    // 该值不为0 就代表上锁了
+    // 如果该值不为0 代表此时不能删除任何doc
     private int retentionLockCount;
     // The extra number of operations before the global checkpoint are retained
     private long retentionOperations;
     // The min seq_no value that is retained - ops after this seq# should exist in the Lucene index.
+    // lucene利用软删除特性 去删除某些doc  这里是记录此时lucene中保留的最小的seqNo
     private long minRetainedSeqNo;
     // provides the retention leases used to calculate the minimum sequence number to retain
     private final Supplier<RetentionLeases> retentionLeasesSupplier;
@@ -103,6 +104,7 @@ final class SoftDeletesPolicy {
      * Acquires a lock on soft-deleted documents to prevent them from cleaning up in merge processes. This is necessary to
      * make sure that all operations that are being retained will be retained until the lock is released.
      * This is a analogy to the translog's retention lock; see {@link Translog#acquireRetentionLock()}
+     * TODO 获取软删除文档的续约锁 这是什么意思???
      */
     synchronized Releasable acquireRetentionLock() {
         assert retentionLockCount >= 0 : "Invalid number of retention locks [" + retentionLockCount + "]";
@@ -123,7 +125,7 @@ final class SoftDeletesPolicy {
     /**
      * Returns the min seqno that is retained in the Lucene index.
      * Operations whose seq# is least this value should exist in the Lucene index.
-     * 获取续约信息对应的最小seq
+     * 获取此时保留的最小的seq
      */
     synchronized long getMinRetainedSeqNo() {
         /*

@@ -3289,10 +3289,21 @@ public class InternalEngine extends Engine {
         return numDocUpdates.count();
     }
 
+    /**
+     * 获取 2个序列号之前所有的op 并生成快照
+     * @param source
+     * @param mapperService
+     * @param fromSeqNo
+     * @param toSeqNo
+     * @param requiredFullRange
+     * @return
+     * @throws IOException
+     */
     @Override
     public Translog.Snapshot newChangesSnapshot(String source, MapperService mapperService,
                                                 long fromSeqNo, long toSeqNo, boolean requiredFullRange) throws IOException {
         ensureOpen();
+        // 如果 toSeqNo 超过了上次刷盘的seq 那么针对lucene数据进行刷盘
         refreshIfNeeded(source, toSeqNo);
         Searcher searcher = acquireSearcher(source, SearcherScope.INTERNAL);
         try {
@@ -3312,6 +3323,12 @@ public class InternalEngine extends Engine {
         }
     }
 
+    /**
+     * 确保此时 startingSeqNo的数据还存在于lucene中
+     * @param reason
+     * @param startingSeqNo
+     * @return
+     */
     @Override
     public boolean hasCompleteOperationHistory(String reason, long startingSeqNo) {
         return getMinRetainedSeqNo() <= startingSeqNo;
@@ -3320,6 +3337,7 @@ public class InternalEngine extends Engine {
     /**
      * Returns the minimum seqno that is retained in the Lucene index.
      * Operations whose seq# are at least this value should exist in the Lucene index.
+     * lucene删除数据应该是利用 softDeletesPolicy 来做的 这里是获取此时保留的最小的seqNo
      */
     public final long getMinRetainedSeqNo() {
         return softDeletesPolicy.getMinRetainedSeqNo();
@@ -3379,7 +3397,7 @@ public class InternalEngine extends Engine {
 
     /**
      * Refresh this engine **internally** iff the requesting seq_no is greater than the last refreshed checkpoint.
-     * 尝试刷新内部的数据
+     * 尝试刷新内部的数据  会间接触发lucene.commit 也就是刷盘操作
      */
     protected final void refreshIfNeeded(String source, long requestingSeqNo) {
         // lastRefreshedCheckpoint 对应上一次刷新时得到的检查点 如果本次传入的seq比上次检查点大 才有刷新的必要
