@@ -640,7 +640,7 @@ public class RecoveryState implements ToXContentFragment, Writeable {
         private long length;
         private long recovered;
         /**
-         * 是否通过之前某个存在的文件进行初始化
+         * 该文件是否已经存在于本地
          */
         private boolean reused;
 
@@ -797,6 +797,12 @@ public class RecoveryState implements ToXContentFragment, Writeable {
             targetThrottleTimeInNanos = UNKNOWN;
         }
 
+        /**
+         * 添加一个本次涉及到恢复index的文件
+         * @param name
+         * @param length
+         * @param reused  该文件是否已经存在于本地
+         */
         public synchronized void addFileDetail(String name, long length, boolean reused) {
             File file = new File(name, length, reused);
             File existing = fileDetails.put(name, file);
@@ -808,6 +814,10 @@ public class RecoveryState implements ToXContentFragment, Writeable {
             file.addRecoveredBytes(bytes);
         }
 
+        /**
+         * 在恢复index的过程中  primaryShard的数据传输可能会被限流  这里增加限流时间
+         * @param timeInNanos
+         */
         public synchronized void addSourceThrottling(long timeInNanos) {
             if (sourceThrottlingInNanos == UNKNOWN) {
                 sourceThrottlingInNanos = timeInNanos;

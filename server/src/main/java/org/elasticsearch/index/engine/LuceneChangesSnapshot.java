@@ -215,6 +215,12 @@ final class LuceneChangesSnapshot implements Translog.Snapshot {
         }
     }
 
+    /**
+     * 查询满足条件的所有doc  要求 seq在指定范围内 非嵌套doc 结果按照seq排序
+     * @param after
+     * @return
+     * @throws IOException
+     */
     private TopDocs searchOperations(ScoreDoc after) throws IOException {
         final Query rangeQuery = new BooleanQuery.Builder()
             .add(LongPoint.newRangeQuery(SeqNoFieldMapper.NAME, Math.max(fromSeqNo, lastSeenSeqNo), toSeqNo), BooleanClause.Occur.MUST)

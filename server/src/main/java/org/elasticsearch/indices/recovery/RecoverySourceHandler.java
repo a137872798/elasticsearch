@@ -106,6 +106,9 @@ public class RecoverySourceHandler {
     private final int shardId;
     // Request containing source and target node information
     private final StartRecoveryRequest request;
+    /**
+     * 在发送 事务日志数据时 每次批发送的限制量
+     */
     private final int chunkSizeInBytes;
     private final RecoveryTargetHandler recoveryTarget;
     private final int maxConcurrentFileChunks;
@@ -176,7 +179,7 @@ public class RecoverySourceHandler {
 
             final SetOnce<RetentionLease> retentionLeaseRef = new SetOnce<>();
 
-            // 首先确保当前是source主分片 并且已经抢占到 permit  在一个shard中某些操作可能是互斥的 这就需要通过permit来做隔离
+            // 首先确保当前是主分片 并且已经抢占到 permit  在一个shard中某些操作可能是互斥的 这就需要通过permit来做隔离
             runUnderPrimaryPermit(() -> {
                 // 获取路由表
                 final IndexShardRoutingTable routingTable = shard.getReplicationGroup().getRoutingTable();
@@ -236,7 +239,7 @@ public class RecoverySourceHandler {
             final StepListener<SendSnapshotResult> sendSnapshotStep = new StepListener<>();
             final StepListener<Void> finalizeStep = new StepListener<>();
 
-            // 条件允许的情况 跳过阶段1
+            // 条件允许的情况 跳过阶段1  TODO
             if (isSequenceNumberBasedRecovery) {
                 logger.trace("performing sequence numbers based recovery. starting at [{}]", request.startingSeqNo());
                 startingSeqNo = request.startingSeqNo();
@@ -252,6 +255,8 @@ public class RecoverySourceHandler {
                 final Engine.IndexCommitRef safeCommitRef;
                 try {
                     // safeCommit是最接近 globalCheckpoint的 提交信息
+                    // 每次生成新的操作时 会推动globalCheckpoint 但是不一定会进行commit 所以safeCommit就是最新的快照
+                    // 也就是其他副本从最新的快照中恢复数据后 还需要根据primary的事务日志进行数据恢复
                     safeCommitRef = shard.acquireSafeIndexCommit();
                     resources.add(safeCommitRef);
                 } catch (final Exception e) {
@@ -268,18 +273,18 @@ public class RecoverySourceHandler {
                 // advances and not when creating a new safe commit. In any case this is a best-effort thing since future recoveries can
                 // always fall back to file-based ones, and only really presents a problem if this primary fails before things have settled
                 // down.
-                // 从安全点之前开始拉取数据是为了避免数据的丢失   即便重复处理也要避免有数据丢失
+                // 安全点对应的提交信息记录的此时的本地检查点 就是之后事务日志的起点  会从该位置开始传输事务数据
                 startingSeqNo = Long.parseLong(safeCommitRef.getIndexCommit().getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY)) + 1L;
                 logger.trace("performing file-based recovery followed by history replay starting at [{}]", startingSeqNo);
 
                 try {
-                    // 预估会涉及到多少operations
+                    // 从最新快照开始 还需要写入多少数据
                     final int estimateNumOps = estimateNumberOfHistoryOperations(startingSeqNo);
                     // 调用 store.incRef 并将释放引用计数的方法包装成一个对象存储到 resources中
                     final Releasable releaseStore = acquireStore(shard.store());
                     resources.add(releaseStore);
 
-                    // 当任务完成时 释放相关资源
+                    // 当任务完成时 释放相关资源   TODO 什么时候可以删除 safeCommit 应该是要等到生成一个新的快照  并且所有节点都认可这个快照 (也就是出现了新的safeCommit 才可以删除旧的)
                     sendFileStep.whenComplete(r -> IOUtils.close(safeCommitRef, releaseStore), e -> {
                         try {
                             IOUtils.close(safeCommitRef, releaseStore);
@@ -308,7 +313,7 @@ public class RecoverySourceHandler {
                         }, shardId + " removing retention lease for [" + request.targetAllocationId() + "]",
                         shard, cancellableThreads, logger);
 
-                    // 当移除续约数据后 进入阶段1
+                    // 当移除续约数据后 进入阶段1  这里会将safeCommit对应的索引文件数据传输到副本上
                     deleteRetentionLeaseStep.whenComplete(ignored -> {
                         assert Transports.assertNotTransportThread(RecoverySourceHandler.this + "[phase1]");
                         phase1(safeCommitRef.getIndexCommit(), startingSeqNo, () -> estimateNumOps, sendFileStep);
@@ -320,14 +325,14 @@ public class RecoverySourceHandler {
             }
             assert startingSeqNo >= 0 : "startingSeqNo must be non negative. got: " + startingSeqNo;
 
-            // 当续约对象插入完成后 通知target 准备事务对象
+            // 当最新的索引文件快照传输完成后  开始同步事务文件  这里只是创建engine对象
             sendFileStep.whenComplete(r -> {
                 assert Transports.assertNotTransportThread(RecoverySourceHandler.this + "[prepareTargetForTranslog]");
                 // For a sequence based recovery, the target can keep its local translog
                 prepareTargetForTranslog(estimateNumberOfHistoryOperations(startingSeqNo), prepareEngineStep);
             }, onFailure);
 
-            // 执行下一步流程
+            // 当副本上完成了engine的创建  执行下一步流程
             prepareEngineStep.whenComplete(prepareEngineTime -> {
                 assert Transports.assertNotTransportThread(RecoverySourceHandler.this + "[phase2]");
                 /*
@@ -335,13 +340,15 @@ public class RecoverySourceHandler {
                  * This means that any document indexed into the primary after this will be replicated to this replica as well
                  * make sure to do this before sampling the max sequence number in the next step, to ensure that we send
                  * all documents up to maxSeqNo in phase2.
+                 * 当上面全部的准备工作都完成后  某个副本才可以开始同步 写入到primary的最新数据
                  */
                 runUnderPrimaryPermit(() -> shard.initiateTracking(request.targetAllocationId()),
                     shardId + " initiating tracking of " + request.targetAllocationId(), shard, cancellableThreads, logger);
 
+                // 当前本分片最新的op 对应的seq
                 final long endingSeqNo = shard.seqNoStats().getMaxSeqNo();
                 logger.trace("snapshot for recovery; current size is [{}]", estimateNumberOfHistoryOperations(startingSeqNo));
-                // 第一阶段传输lucene文件  第二阶段传输事务文件
+                // 开始传输事务日志文件
                 final Translog.Snapshot phase2Snapshot = shard.newChangesSnapshot("peer-recovery", startingSeqNo, Long.MAX_VALUE, false);
                 resources.add(phase2Snapshot);
                 retentionLock.close();
@@ -590,9 +597,13 @@ public class RecoverySourceHandler {
                     phase1ExistingFileNames.size(), new ByteSizeValue(existingTotalSizeInBytes));
 
                 // 每个阶段对应一个listener
+                // 这里是将本次需要恢复的文件信息暴露给target
                 final StepListener<Void> sendFileInfoStep = new StepListener<>();
+                // 将恢复用的文件 以片段的形式发送给 target 当所有片段发送后都得到确认时触发监听器
                 final StepListener<Void> sendFilesStep = new StepListener<>();
+                // 当文件传输完毕后 会创建该副本的续约信息
                 final StepListener<RetentionLease> createRetentionLeaseStep = new StepListener<>();
+                // 当副本上旧的索引文件/事务文件被删除后触发
                 final StepListener<Void> cleanFilesStep = new StepListener<>();
                 cancellableThreads.checkForCancel();
                 // 将本次恢复涉及到的相关文件信息发送到target
@@ -600,17 +611,19 @@ public class RecoverySourceHandler {
                 recoveryTarget.receiveFileInfo(phase1FileNames, phase1FileSizes, phase1ExistingFileNames,
                         phase1ExistingFileSizes, translogOps.getAsInt(), sendFileInfoStep);
 
+                // 当targetNode 确定了本次要恢复的文件后触发下一步
                 sendFileInfoStep.whenComplete(r ->
-                    // 当对端处理完成产生结果时  这里开始传输文件数据流了
+                    // 这里开始传输文件数据流  只针对不一致的文件
                     sendFiles(store, phase1Files.toArray(new StoreFileMetadata[0]), translogOps, sendFilesStep), listener::onFailure);
 
-                // 当所有文件流都传输完毕后 创建续约对象 （续约对象意味着什么???）
+                // 当所有文件流都传输完毕后 创建续约对象  TODO 为什么中间要参杂一步生成续约对象
                 sendFilesStep.whenComplete(r -> createRetentionLease(startingSeqNo, createRetentionLeaseStep), listener::onFailure);
 
-                // 如果某些数据已经同步到所有相关节点上了 那么就可以进行清理了
+                // 下一步发起清理文件的请求  还是在replicaShard节点做处理
+                // 这里就是只保留本次恢复的索引文件 并且清空之前所有事务文件 生成一个空事务文件
                 createRetentionLeaseStep.whenComplete(retentionLease ->
                     {
-                        // 作为primaryShard 它的globalCheckpoint 具有权威性 所以使用它来检测其他副本分片上哪些文件可以删除
+                        // 将主分片的globalCheckpoint发送给其他副本  该值之前的索引文件都可以被删除了
                         final long lastKnownGlobalCheckpoint = shard.getLastKnownGlobalCheckpoint();
                         assert retentionLease == null || retentionLease.retainingSequenceNumber() - 1 <= lastKnownGlobalCheckpoint
                             : retentionLease + " vs " + lastKnownGlobalCheckpoint;
@@ -624,6 +637,8 @@ public class RecoverySourceHandler {
 
                 final long totalSize = totalSizeInBytes;
                 final long existingTotalSize = existingTotalSizeInBytes;
+
+                // 当准备工作完成后触发监听器
                 cleanFilesStep.whenComplete(r -> {
                     final TimeValue took = stopWatch.totalTime();
                     logger.trace("recovery [phase1]: took [{}]", took);
@@ -634,10 +649,11 @@ public class RecoverySourceHandler {
                 }, listener::onFailure);
             } else {
 
-                // 代表要跳过phase1
+                // 支持跳过第一阶段   就是primary最接近安全点的索引文件 与 副本上最新的索引文件完全一致
                 logger.trace("skipping [phase1] since source and target have identical sync id [{}]", recoverySourceMetadata.getSyncId());
 
-                // but we must still create a retention lease   还是会创建续约对象
+                // but we must still create a retention lease
+                // 跳过文件元数据传输  文件数据传输  删除旧文件的流程  只需要生成续约信息
                 final StepListener<RetentionLease> createRetentionLeaseStep = new StepListener<>();
                 createRetentionLease(startingSeqNo, createRetentionLeaseStep);
                 createRetentionLeaseStep.whenComplete(retentionLease -> {
@@ -671,6 +687,8 @@ public class RecoverySourceHandler {
                 logger.trace("cloning primary's retention lease");
                 try {
                     final StepListener<ReplicationResponse> cloneRetentionLeaseStep = new StepListener<>();
+
+                    // 为本次需要恢复数据的目标副本生成续约对象  并且在相关分片完成同步后 才触发监听器
                     final RetentionLease clonedLease
                         = shard.cloneLocalPeerRecoveryRetentionLease(request.targetNode().getId(),
                         // ThreadedActionListener 在线程池中触发监听器的逻辑
@@ -728,12 +746,14 @@ public class RecoverySourceHandler {
     }
 
     /**
-     * 进入准备阶段
+     * 通知副本开启engine 便于从最新快照开始 继续同步数据
      * @param totalTranslogOps  推测总计要拉取多少operation
      * @param listener
      */
     void prepareTargetForTranslog(int totalTranslogOps, ActionListener<TimeValue> listener) {
         StopWatch stopWatch = new StopWatch().start();
+
+        // 该监听器会记录耗时
         final ActionListener<Void> wrappedListener = ActionListener.wrap(
             nullVal -> {
                 stopWatch.stop();
@@ -747,7 +767,6 @@ public class RecoverySourceHandler {
         logger.trace("recovery [phase1]: prepare remote engine for translog");
         // 如果内部相关线程都已经被关闭了会抛出异常
         cancellableThreads.checkForCancel();
-        // 将请求发送到 target节点  准备好engine对象
         recoveryTarget.prepareForTranslogOperations(totalTranslogOps, wrappedListener);
     }
 
@@ -828,6 +847,8 @@ public class RecoverySourceHandler {
         };
 
         final StopWatch stopWatch = new StopWatch().start();
+
+        // 当发送传输事务日志的请求时  会返回target的localCheckpoint
         final ActionListener<Long> batchedListener = ActionListener.map(listener,
             // 先通过map函数做转换 之后再触发listener
             targetLocalCheckpoint -> {
@@ -844,7 +865,7 @@ public class RecoverySourceHandler {
         sendBatch(
                 readNextBatch,
                 true,
-                SequenceNumbers.UNASSIGNED_SEQ_NO,
+                SequenceNumbers.UNASSIGNED_SEQ_NO,  // 首次由于不知道target.localCheckpoint 所以传入-2
                 snapshot.totalOperations(),
                 maxSeenAutoIdTimestamp,
                 maxSeqNoOfUpdatesOrDeletes,
@@ -867,7 +888,7 @@ public class RecoverySourceHandler {
      * @throws IOException
      */
     private void sendBatch(
-            final CheckedSupplier<List<Translog.Operation>, IOException> nextBatch,
+            final CheckedSupplier<List<Translog.Operation>, IOException> nextBatch,   // 用于获取下一批数据的函数
             final boolean firstBatch,
             final long targetLocalCheckpoint,  // 每次target返回结果时都会携带对端的localCheckpoint 以它作为新的targetLocalCheckpoint 触发sendBatch
             final int totalTranslogOps,
@@ -992,6 +1013,9 @@ public class RecoverySourceHandler {
                 '}';
     }
 
+    /**
+     * 代表一块文件片段
+     */
     private static class FileChunk implements MultiFileTransfer.ChunkRequest {
         final StoreFileMetadata md;
         final BytesReference content;
@@ -1014,12 +1038,12 @@ public class RecoverySourceHandler {
     /**
      * 开始传输文件数据流
      * @param store
-     * @param files 代表需要同步的文件  在recovery恢复开始阶段 会先检测target请求携带的所有文件信息 比如校验和  在source端会进行匹配
-     *              当某个文件匹配不成功时 代表需要进行恢复
-     * @param translogOps
-     * @param listener
+     * @param files 代表 source与target不一样的文件 这些文件需要从头开始传输数据流
+     * @param translogOps  预计总计有多少个operation
+     * @param listener  当所有文件都传输到对端 并且被确认后 触发监听器
      */
     void sendFiles(Store store, StoreFileMetadata[] files, IntSupplier translogOps, ActionListener<Void> listener) {
+        // 优先传输比较小的文件
         ArrayUtil.timSort(files, Comparator.comparingLong(StoreFileMetadata::length)); // send smallest first
 
         final MultiFileTransfer<FileChunk> multiFileSender =
@@ -1044,7 +1068,7 @@ public class RecoverySourceHandler {
                 @Override
                 protected void onNewFile(StoreFileMetadata md) throws IOException {
                     offset = 0;
-                    // 因为切换到新的文件了 就关闭当前输入流  开启新的输入流
+                    // 要切换到新的文件  旧的文件就可以关闭了
                     IOUtils.close(currentInput, () -> currentInput = null);
                     final IndexInput indexInput = store.directory().openInput(md.name(), IOContext.READONCE);
                     currentInput = new InputStreamIndexInput(indexInput, md.length()) {
@@ -1072,7 +1096,6 @@ public class RecoverySourceHandler {
                     // 代表此时已经读取到文件末尾
                     final boolean lastChunk = offset + bytesRead == md.length();
                     // offset会作为 FileChunk的position
-                    // 但是从这里可以看出 数据流的传输都是完整的文件 不存在只传输文件部分数据的情况
                     final FileChunk chunk = new FileChunk(md, new BytesArray(buffer, 0, bytesRead), offset, lastChunk);
                     offset += bytesRead;
                     return chunk;
@@ -1105,8 +1128,7 @@ public class RecoverySourceHandler {
     }
 
     /**
-     * 尝试清理一些同步完成的数据  存储的最终目标应该是lucene中 所以太旧的事务文件就可以删除???
-     * 但是看targetHandler 删除的是lucene文件
+     * 通知其他节点删除 globalCheckpoint之前的索引文件   本地数据恢复也是从globalCheckpoint之后的数据开始
      * @param store
      * @param sourceMetadata
      * @param translogOps

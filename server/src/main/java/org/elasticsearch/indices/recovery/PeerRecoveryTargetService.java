@@ -127,17 +127,21 @@ public class PeerRecoveryTargetService implements IndexEventListener {
         this.clusterService = clusterService;
         this.onGoingRecoveries = new RecoveriesCollection(logger, threadPool);
 
-        // 开始注册相关的请求处理器
+        // 主分片会存在一个通知副本，本次要恢复哪些文件的动作
         transportService.registerRequestHandler(Actions.FILES_INFO, ThreadPool.Names.GENERIC, RecoveryFilesInfoRequest::new,
             new FilesInfoRequestHandler());
+        // 这一步操作是接收 primaryShard发送的数据片段
         transportService.registerRequestHandler(Actions.FILE_CHUNK, ThreadPool.Names.GENERIC, RecoveryFileChunkRequest::new,
             new FileChunkTransportRequestHandler());
+        // 当文件传输完成 并且生成了该副本对应的续约对象 并发布到分片所有节点上后
+        // 会将除了最新快照外的所有文件删除  包括事务文件 之后会创建一个空的事务文件
         transportService.registerRequestHandler(Actions.CLEAN_FILES, ThreadPool.Names.GENERIC,
             RecoveryCleanFilesRequest::new, new CleanFilesRequestHandler());
 
-        // 在source节点接受到 START_RECOVERY的请求后 会执行一些前置操作 其中就包含通知target 准备事务文件(prepare_translog)
+        // 在快照文件准备完毕后  在副本开启engine (最接近globalCheckpoint的索引文件)
         transportService.registerRequestHandler(Actions.PREPARE_TRANSLOG, ThreadPool.Names.GENERIC,
                 RecoveryPrepareForTranslogOperationsRequest::new, new PrepareForTranslogOperationsRequestHandler());
+        // 接收从primary传输过来的事务日志
         transportService.registerRequestHandler(Actions.TRANSLOG_OPS, ThreadPool.Names.GENERIC, RecoveryTranslogOperationsRequest::new,
             new TranslogOperationsRequestHandler());
         transportService.registerRequestHandler(Actions.FINALIZE, ThreadPool.Names.GENERIC, RecoveryFinalizeRecoveryRequest::new,
@@ -459,7 +463,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
 
         @Override
         public void messageReceived(RecoveryPrepareForTranslogOperationsRequest request, TransportChannel channel, Task task) {
-            // 找到之前在开始recovery时 加入到容器的对象
+            // 确保恢复任务还在执行中   每次调用该方法都会更新 RecoveryTarget.lastAccessTime 这样就不会被自动清理了
             try (RecoveryRef recoveryRef = onGoingRecoveries.getRecoverySafe(request.recoveryId(), request.shardId())) {
                 final ActionListener<TransportResponse> listener = new ChannelActionListener<>(channel, Actions.PREPARE_TRANSLOG, request);
                 recoveryRef.target().prepareForTranslogOperations(request.totalTranslogOps(),
@@ -497,7 +501,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
     }
 
     /**
-     * 接收对端发来的事务日志文件数据
+     * 接收primary发送来的事务日志
      */
     class TranslogOperationsRequestHandler implements TransportRequestHandler<RecoveryTranslogOperationsRequest> {
 
@@ -509,7 +513,6 @@ public class PeerRecoveryTargetService implements IndexEventListener {
 
                 // 生成一个集群状态观测对象
                 final ClusterStateObserver observer = new ClusterStateObserver(clusterService, null, logger, threadPool.getThreadContext());
-                // 在副本节点处理recovery的对象
                 final RecoveryTarget recoveryTarget = recoveryRef.target();
                 final ActionListener<RecoveryTranslogOperationsResponse> listener =
                     new ChannelActionListener<>(channel, Actions.TRANSLOG_OPS, request);
@@ -572,7 +575,8 @@ public class PeerRecoveryTargetService implements IndexEventListener {
     }
 
     /**
-     * 进入到recovery.phase1时 source节点会检测与target节点不同的文件信息 并通知到target
+     * 进入到recovery.phase1时 source节点会先获取safeCommit对应的文件信息  并与目标分片此时最新的commit文件进行对比
+     * 在生成请求后会通知到目标节点
      */
     class FilesInfoRequestHandler implements TransportRequestHandler<RecoveryFilesInfoRequest> {
 
@@ -581,6 +585,8 @@ public class PeerRecoveryTargetService implements IndexEventListener {
             // 确保此时该恢复请求还在处理中
             try (RecoveryRef recoveryRef = onGoingRecoveries.getRecoverySafe(request.recoveryId(), request.shardId())) {
                 final ActionListener<TransportResponse> listener = new ChannelActionListener<>(channel, Actions.FILES_INFO, request);
+
+                // 实际上就是在target.RecoveryState.File 中插入文件
                 recoveryRef.target().receiveFileInfo(
                     request.phase1FileNames, request.phase1FileSizes, request.phase1ExistingFileNames, request.phase1ExistingFileSizes,
                     request.totalTranslogOps, ActionListener.map(listener, nullVal -> TransportResponse.Empty.INSTANCE));
@@ -589,7 +595,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
     }
 
     /**
-     * 清理不常用的文件
+     * 仅保留本次恢复的索引文件   并且会删除之前所有事务文件 创建一个空的
      */
     class CleanFilesRequestHandler implements TransportRequestHandler<RecoveryCleanFilesRequest> {
 
@@ -604,8 +610,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
     }
 
     /**
-     * 当source节点将文件的数据流传输过来时 通过该handler进行处理
-     * 传输的数据流都是完整的文件
+     * 接收primaryShard 发送过来的用于恢复文件的数据片段
      */
     class FileChunkTransportRequestHandler implements TransportRequestHandler<RecoveryFileChunkRequest> {
 
@@ -614,6 +619,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
 
         @Override
         public void messageReceived(final RecoveryFileChunkRequest request, TransportChannel channel, Task task) throws Exception {
+            // 确保recoveryRef对象还没有被移除
             try (RecoveryRef recoveryRef = onGoingRecoveries.getRecoverySafe(request.recoveryId(), request.shardId())) {
                 final RecoveryTarget recoveryTarget = recoveryRef.target();
                 final RecoveryState.Index indexState = recoveryTarget.state().getIndex();

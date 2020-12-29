@@ -37,7 +37,14 @@ public class ReplicationGroup {
      * 该索引相关的路由表
      */
     private final IndexShardRoutingTable routingTable;
+
+    /**
+     * 应该是数据完全同步的副本存放在该列表
+     */
     private final Set<String> inSyncAllocationIds;
+    /**
+     * 完成了最新的快照数据写入 并且开启引擎后  开始同步primary上op时 会存放在该列表
+     */
     private final Set<String> trackedAllocationIds;
     private final long version;
 

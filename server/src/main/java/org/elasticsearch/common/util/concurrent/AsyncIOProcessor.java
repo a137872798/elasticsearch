@@ -95,7 +95,7 @@ public abstract class AsyncIOProcessor<Item> {
             // since we made the promise to process we gotta do it here at least once
             // 竞争到门票的线程 尽可能的将之前未处理的任务一起处理了
             drainAndProcessAndRelease(candidates);
-            // 线程在之后还会不断的扫描任务啊 这样的好处就是不会有任务残留
+            // 线程在之后还会不断的扫描任务 这样的好处就是不会有任务残留
             while (queue.isEmpty() == false && promiseSemaphore.tryAcquire()) {
                 // yet if the queue is not empty AND nobody else has yet made the promise to take over we continue processing
                 drainAndProcessAndRelease(candidates);
@@ -151,7 +151,7 @@ public abstract class AsyncIOProcessor<Item> {
     }
 
     /**
-     * 包装了一层异常处理对象 也就是在处理前会更换内部的context
+     * 实现上下文在不同线程间的传递
      * @param consumer
      * @return
      */

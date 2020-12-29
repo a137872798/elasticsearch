@@ -59,7 +59,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 /**
- * 这里定义了传输数据的逻辑
+ * 对于主分片来说 如何处理远端恢复请求
  */
 public class RemoteRecoveryTargetHandler implements RecoveryTargetHandler {
 
@@ -94,7 +94,7 @@ public class RemoteRecoveryTargetHandler implements RecoveryTargetHandler {
      * @param bigArrays
      * @param targetNode
      * @param recoverySettings
-     * @param onSourceThrottle
+     * @param onSourceThrottle  consumer只是做一些数据统计
      */
     public RemoteRecoveryTargetHandler(long recoveryId, ShardId shardId, TransportService transportService, BigArrays bigArrays,
                                        DiscoveryNode targetNode, RecoverySettings recoverySettings, Consumer<Long> onSourceThrottle) {
@@ -118,7 +118,6 @@ public class RemoteRecoveryTargetHandler implements RecoveryTargetHandler {
     }
 
     /**
-     * 在将本地数据传输到远端节点的过程中 分为几个阶段 其中一个阶段就是准备好数据
      * @param totalTranslogOps  total translog operations expected to be sent  预计会发送多少个operation的数据
      * @param listener 当相关操作完成时触发监听器
      */
@@ -165,7 +164,6 @@ public class RemoteRecoveryTargetHandler implements RecoveryTargetHandler {
     }
 
     /**
-     * 在发送完 lucene文件后    事务日志文件也需要同步
      * @param operations                          operations to index
      * @param totalTranslogOps                    current number of total operations expected to be indexed
      * @param maxSeenAutoIdTimestampOnPrimary     the maximum auto_id_timestamp of all append-only requests processed by the primary shard
@@ -177,6 +175,7 @@ public class RemoteRecoveryTargetHandler implements RecoveryTargetHandler {
      *                                            {@link org.elasticsearch.index.mapper.MapperException}; otherwise we should wait for a
      *                                            new mapping then retry.
      * @param listener                            a listener which will be notified with the local checkpoint on the target
+     *                                            在将最新的快照文件传输到 replica后 需要将事务日志也同步到对端
      */
     @Override
     public void indexTranslogOperations(
@@ -203,10 +202,10 @@ public class RemoteRecoveryTargetHandler implements RecoveryTargetHandler {
     }
 
     /**
-     * 将相关信息包装成req对象 并发送到target节点
+     * 通知需要恢复数据的节点 本次涉及到的文件信息
      * @param phase1FileNames
      * @param phase1FileSizes
-     * @param phase1ExistingFileNames
+     * @param phase1ExistingFileNames   代表这些文件不需要进行同步
      * @param phase1ExistingFileSizes
      * @param totalTranslogOps
      * @param listener
@@ -221,6 +220,9 @@ public class RemoteRecoveryTargetHandler implements RecoveryTargetHandler {
             TransportRequestOptions.builder().withTimeout(recoverySettings.internalActionTimeout()).build();
         final Writeable.Reader<TransportResponse.Empty> reader = in -> TransportResponse.Empty.INSTANCE;
         final ActionListener<TransportResponse.Empty> responseListener = ActionListener.map(listener, r -> null);
+
+        // 这里根据指定的action 不断进行重试 直到超时或成功
+        // 当收到响应结果时  代表target端已经确认了本次要恢复的文件信息  并将相关信息存储在  RecoveryTarget.RecoveryState.File中
         executeRetryableAction(action, request, options, responseListener, reader);
     }
 
@@ -324,7 +326,7 @@ public class RemoteRecoveryTargetHandler implements RecoveryTargetHandler {
     }
 
     /**
-     * 执行一个在满足某些条件下可以重试的action
+     * 某种action是支持重试的 这里发送到targetNode 并用监听器处理结果
      * @param action
      * @param request
      * @param options

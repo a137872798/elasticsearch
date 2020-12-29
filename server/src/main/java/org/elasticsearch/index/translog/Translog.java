@@ -2156,7 +2156,8 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
      *
      * @param location                a {@link Path} to the directory that will contains the translog files (translog + translog checkpoint)  存储事务文件信息的目录
      * @param shardId                 the {@link ShardId}
-     * @param initialGlobalCheckpoint the global checkpoint to initialize the translog with    本地检查点 是从segment_N文件中获取的
+     * @param initialGlobalCheckpoint the global checkpoint to initialize the translog with
+     *                                事务文件初始化时对应的全局检查点 如果本节点是leader 那么初始化时应该是-2
      * @param primaryTerm             the shard's primary term to initialize the translog with   创建该分片信息对应的term
      * @param translogUUID            the unique identifier to initialize the translog with     本次事务日志的id 可以为null
      * @param factory                 a {@link ChannelFactory} used to open translog files    通道工厂
@@ -2170,7 +2171,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
                                              final long primaryTerm,
                                              @Nullable final String translogUUID,
                                              @Nullable final ChannelFactory factory) throws IOException {
-        // 先清空目录下所有文件
+        // 清空事务文件目录
         IOUtils.rm(location);
         // 重新创建分片下的translog目录
         Files.createDirectories(location);

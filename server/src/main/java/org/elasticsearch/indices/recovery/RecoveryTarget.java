@@ -325,6 +325,11 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
 
     /*** Implementation of {@link RecoveryTargetHandler } */
 
+    /**
+     * 启动engine 并准备接收从 primaryShard发送的操作日志
+     * @param totalTranslogOps  total translog operations expected to be sent
+     * @param listener
+     */
     @Override
     public void prepareForTranslogOperations(int totalTranslogOps, ActionListener<Void> listener) {
         ActionListener.completeWith(listener, () -> {
@@ -407,18 +412,22 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
      *                                            {@link org.elasticsearch.index.mapper.MapperException}; otherwise we should wait for a
      *                                            new mapping then retry.
      * @param listener                            a listener which will be notified with the local checkpoint on the target
-     *                                            将source发来的事务文件数据 同步到本地
+     *                                            从primary接收safeCommit后的事务操作日志  用于恢复数据 同时也会记录在本地事务日志中
      */
     @Override
     public void indexTranslogOperations(
+            // 以下参数都是从 primary.indexShard携带过来的 //
             final List<Translog.Operation> operations,
             final int totalTranslogOps,
             final long maxSeenAutoIdTimestampOnPrimary,
             final long maxSeqNoOfDeletesOrUpdatesOnPrimary,
             final RetentionLeases retentionLeases,
+            // ------------------------------------------- //
             final long mappingVersionOnPrimary,
             final ActionListener<Long> listener) {
         ActionListener.completeWith(listener, () -> {
+
+            // 这个对象是统计本次恢复的事务日志信息的
             final RecoveryState.Translog translog = state().getTranslog();
             // 记录本次要恢复多少个operation
             translog.totalOperations(totalTranslogOps);
@@ -427,26 +436,27 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
             if (indexShard().state() != IndexShardState.RECOVERING) {
                 throw new IndexShardNotRecoveringException(shardId, indexShard().state());
             }
+            // 从主分片上携带过来的信息设置到了 副本上
+
             /*
              * The maxSeenAutoIdTimestampOnPrimary received from the primary is at least the highest auto_id_timestamp from any operation
              * will be replayed. Bootstrapping this timestamp here will disable the optimization for original append-only requests
              * (source of these operations) replicated via replication. Without this step, we may have duplicate documents if we
              * replay these operations first (without timestamp), then optimize append-only requests (with timestamp).
-             * 这里更新时间戳是啥意思
              */
             indexShard().updateMaxUnsafeAutoIdTimestamp(maxSeenAutoIdTimestampOnPrimary);
             /*
              * Bootstrap the max_seq_no_of_updates from the primary to make sure that the max_seq_no_of_updates on this replica when
              * replaying any of these operations will be at least the max_seq_no_of_updates on the primary when that op was executed on.
-             * 更新某个值
              */
             indexShard().advanceMaxSeqNoOfUpdatesOrDeletes(maxSeqNoOfDeletesOrUpdatesOnPrimary);
             /*
              * We have to update the retention leases before we start applying translog operations to ensure we are retaining according to
              * the policy.
-             * 在当前是副本的基础上 更新续约信息  既然采用了从远端节点恢复数据的方式 那么当前节点必然是副本节点
+             * 副本上更新续约信息 是不需要同步到集群其他分片的
              */
             indexShard().updateRetentionLeasesOnReplica(retentionLeases);
+
             for (Translog.Operation operation : operations) {
                 // 将operation 重新写入到 lucene中
                 Engine.Result result = indexShard().applyTranslogOperation(operation, Engine.Operation.Origin.PEER_RECOVERY);
@@ -472,7 +482,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
     }
 
     /**
-     * 恢复文件信息
+     * 主分片收到副本的恢复请求时 要先确定本次从哪里开始恢复数据   主分片会先将safeCommit的文件传过来
      * @param phase1FileNames
      * @param phase1FileSizes
      * @param phase1ExistingFileNames
@@ -488,12 +498,12 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                                 int totalTranslogOps,
                                 ActionListener<Void> listener) {
         ActionListener.completeWith(listener, () -> {
-            // 重置成init状态
+            // 在 IndexShardState中还有个recoveryState 这里重置它的状态
             indexShard.resetRecoveryStage();
             // 切换成index状态
             indexShard.prepareForIndexRecovery();
             final RecoveryState.Index index = state().getIndex();
-            // 将文件的描述信息写入到index中
+            // 将文件的描述信息写入到index中    已经存在的文件 直接复用就可以了 所以 reused为true
             for (int i = 0; i < phase1ExistingFileNames.size(); i++) {
                 index.addFileDetail(phase1ExistingFileNames.get(i), phase1ExistingFileSizes.get(i), true);
             }
@@ -507,10 +517,9 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
     }
 
     /**
-     * 清除文件信息
-     * 这一步是在完成所有文件传输后调用的
+     * 清除全局检查点之前的文件
      * @param totalTranslogOps an update number of translog operations that will be replayed later on
-     * @param globalCheckpoint the global checkpoint on the primary   从primaryShard传过来的全局检查点  用它来判断哪些文件可以被删除
+     * @param globalCheckpoint the global checkpoint on the primary
      * @param sourceMetadata   meta data of the source store
      * @param listener
      */
@@ -522,17 +531,23 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
             // first, we go and move files that were created with the recovery id suffix to
             // the actual names, its ok if we have a corrupted index here, since we have replicas
             // to recover from in case of a full cluster shutdown just when this code executes...
-            // 将所有写入的临时文件 修改成目标文件
+            // 之前在 FILE_CHUNK 阶段 某次恢复需要的所有索引文件都以文件片段的方式发送到primary 并在replica 完成拼接了
+            // 不过那时是以临时文件命名的 现在修改成索引文件名
             multiFileWriter.renameAllTempFiles();
             final Store store = store();
             store.incRef();
             try {
-                // 删除一些无用的文件
+                // 除了本次还原的索引文件外 其余文件都要清除  包括事务文件
+                // TODO 如果这个时候 本节点变成leader节点数据是否会丢失  应该是不会的  这时lucene中存储的应该是最接近globalCheckpoint的数据  也可以理解为这份数据就是所有副本认可的数据
                 store.cleanupAndVerify("recovery CleanFilesRequestHandler", sourceMetadata);
+
+                // 这里要重新创建事务日志文件
                 final String translogUUID = Translog.createEmptyTranslog(
                     indexShard.shardPath().resolveTranslog(), globalCheckpoint, shardId, indexShard.getPendingPrimaryTerm());
+                // 更新lucene.userData 中的translogUUID
                 store.associateIndexWithNewTranslog(translogUUID);
 
+                // TODO 主分片会将续约信息同步到所有副本上  这种情况应该不存在
                 if (indexShard.getRetentionLeases().leases().isEmpty()) {
                     // if empty, may be a fresh IndexShard, so write an empty leases file to disk
                     indexShard.persistRetentionLeases();
@@ -540,8 +555,9 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                 } else {
                     assert indexShard.assertRetentionLeasesPersisted();
                 }
+                // TODO 校验先忽略
                 indexShard.maybeCheckIndex();
-                // 切换到从事务日志中恢复数据的阶段    因为经过上一阶段 数据已经从remote节点传输过来了 在本地形成了事务文件 所以现在可以通过本地事务文件进行恢复
+                // 标记成事务日志恢复阶段  下一步 primary就会传输事务日志
                 state().setStage(RecoveryState.Stage.TRANSLOG);
             } catch (CorruptIndexException | IndexFormatTooNewException | IndexFormatTooOldException ex) {
                 // this is a fatal exception at this stage.
@@ -574,7 +590,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
     }
 
     /**
-     * 通过 multiFileWriter 将数据流写入到临时文件
+     * primaryShard 所在的节点会通过  MultiFileTransfer 将本次要恢复的文件数据通过网络发送到replicaShard 并在本地生成临时文件 写入数据
      * @param fileMetadata
      * @param position
      * @param content

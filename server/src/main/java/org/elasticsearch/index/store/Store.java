@@ -706,9 +706,11 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      *
      * @param reason         the reason for this cleanup operation logged for each deleted file
      * @param sourceMetadata the metadata used for cleanup. all files in this metadata should be kept around.
-     *                       对应某个segment_N 下所有索引文件
+     *                          这些文件应当被保留
      * @throws IOException           if an IOException occurs
      * @throws IllegalStateException if the latest snapshot in this store differs from the given one after the cleanup.
+     *
+     * 删除一些无效的文件
      */
     public void cleanupAndVerify(String reason, MetadataSnapshot sourceMetadata) throws IOException {
         metadataLock.writeLock().lock();
@@ -721,7 +723,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                     continue;
                 }
                 try {
-                    // 其余文件会被删除
+                    // 其余文件会被删除    也就是在恢复过程中 只有本次恢复相关的索引文件需要保留 其余文件 包含事务文件都需要删除
                     directory.deleteFile(reason, existingFile);
                     // FNF should not happen since we hold a write lock?
                 } catch (IOException ex) {
@@ -737,6 +739,8 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                     // ignore, we don't really care, will get deleted later on
                 }
             }
+
+            // 删除文件导致目录的元数据发生变化 这里要更新
             directory.syncMetaData();
             // 更新此时的 metadata 信息   正常的情况下 元数据应该没有变化 因为清除的不是segment_N下面的文件
             final Store.MetadataSnapshot metadataOrEmpty = getMetadata(null);

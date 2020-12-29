@@ -44,7 +44,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 可以往多个文件中写入数据
+ * 通过MultiFileTransfer传输过来的数据 通过 replicaShard.MultiFileWriter 将数据写入到本地的临时文件
  */
 public class MultiFileWriter extends AbstractRefCounted implements Releasable {
 
@@ -91,7 +91,7 @@ public class MultiFileWriter extends AbstractRefCounted implements Releasable {
     final Map<String, String> tempFileNames = ConcurrentCollections.newConcurrentMap();
 
     /**
-     * 代表开始某个文件的写入操作
+     * 将某个文件的某个数据片段写入到临时文件中
      * @param fileMetadata
      * @param position
      * @param content
@@ -102,7 +102,7 @@ public class MultiFileWriter extends AbstractRefCounted implements Releasable {
         throws IOException {
         assert Transports.assertNotTransportThread("multi_file_writer");
         final FileChunkWriter writer = fileChunkWriters.computeIfAbsent(fileMetadata.name(), name -> new FileChunkWriter());
-        // 将对应的chunk写入到 writer中 期间会创建一个临时文件
+        // 每次填充一个片段
         writer.writeChunk(new FileChunk(fileMetadata, content, position, lastChunk));
     }
 
@@ -240,6 +240,9 @@ public class MultiFileWriter extends AbstractRefCounted implements Releasable {
         store.renameTempFilesSafe(tempFileNames);
     }
 
+    /**
+     * 一个文件由多个片段组成 这里是单个片段
+     */
     static final class FileChunk {
 
         /**
@@ -286,6 +289,7 @@ public class MultiFileWriter extends AbstractRefCounted implements Releasable {
                 final FileChunk chunk;
                 synchronized (this) {
                     chunk = pendingChunks.peek();
+                    // 这里其实就是一个排序的逻辑 因为primary可能一次性会发送多个文件片段 接收端可能会出现乱序的情况 在这里通过 lastPosition+优先队列 实现顺序性
                     if (chunk == null || chunk.position != lastPosition) {
                         return;
                     }

@@ -2117,6 +2117,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final long globalCheckpoint = Translog.readGlobalCheckpoint(translogConfig.getTranslogPath(), translogUUID);
         // 将从持久化数据中取出的全局检查点 回填到 副本tracker对象
         // 同时会触发挂载在 GlobalCheckpointListeners内的监听器
+        // 在副本的数据恢复阶段  副本应该会感知到主分片传输的 globalCheckpoint 因为在创建续约对象时 会将globalCheckpoint 传输到所有副本
         replicationTracker.updateGlobalCheckpointOnReplica(globalCheckpoint, "read from translog checkpoint");
     }
 
@@ -2158,8 +2159,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     public void openEngineAndSkipTranslogRecovery() throws IOException {
         assert routingEntry().recoverySource().getType() == RecoverySource.Type.PEER : "not a peer recovery [" + routingEntry() + "]";
         assert recoveryState.getStage() == RecoveryState.Stage.TRANSLOG : "unexpected recovery stage [" + recoveryState.getStage() + "]";
+        // 尝试从事务日志中加载最新的全局检查点 如果此时内存中维护的更新就不需要处理
         loadGlobalCheckpointToReplicationTracker();
         innerOpenEngineAndTranslog(replicationTracker);
+        // 这种情况是通过primary的事务日志进行恢复  所以跳过本地恢复阶段
         getEngine().skipTranslogRecovery();
     }
 
@@ -2246,7 +2249,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * If a file-based recovery occurs, a recovery target calls this method to reset the recovery stage.
-     * 将recoveryState 修改回init
+     * 重置恢复阶段
      */
     public void resetRecoveryStage() {
         assert routingEntry().recoverySource().getType() == RecoverySource.Type.PEER : "not a peer recovery [" + routingEntry() + "]";
@@ -3355,7 +3358,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 根据相关信息生成续约对象 在远端节点从本节点上拉取恢复数据时会触发该函数
+     * 生成一个续约对象的副本
      *
      * @param nodeId
      * @param listener

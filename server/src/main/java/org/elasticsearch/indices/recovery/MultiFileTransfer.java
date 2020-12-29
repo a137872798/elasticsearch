@@ -56,7 +56,7 @@ import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
  * greater than {@code maxConcurrentFileChunks}), the sending/requesting thread will abort its execution. That process will be resumed by
  * one of the networking threads which receive/handle the responses of the current pending file chunk requests. This process will continue
  * until all chunk requests are sent/responded.
- * 与 MultiFileWriter相对应  将文件转换成数据流后 通过网络IO 传递到target的MultiFileWriter上 完成数据同步
+ * 代表该对象具备同时传输多个文件数据流的能力
  */
 public abstract class MultiFileTransfer<Request extends MultiFileTransfer.ChunkRequest> implements Closeable {
     /**
@@ -66,7 +66,7 @@ public abstract class MultiFileTransfer<Request extends MultiFileTransfer.ChunkR
     private final Logger logger;
     private final ActionListener<Void> listener;
     /**
-     * tracker 是在这里创建的吗   初始状态 localCheckpoint maxSeqNo 都是默认值 -1
+     * 在这个场景下创建该对象主要是为了追踪 seqNo的变化  或者说判断发出了多少个请求
      */
     private final LocalCheckpointTracker requestSeqIdTracker = new LocalCheckpointTracker(NO_OPS_PERFORMED, NO_OPS_PERFORMED);
 
@@ -76,15 +76,19 @@ public abstract class MultiFileTransfer<Request extends MultiFileTransfer.ChunkR
     private final AsyncIOProcessor<FileChunkResponseItem> processor;
     private final int maxConcurrentFileChunks;
     private StoreFileMetadata currentFile = null;
+
+    /**
+     * 还有多少文件未传输
+     */
     private final Iterator<StoreFileMetadata> remainingFiles;
     private Tuple<StoreFileMetadata, Request> readAheadRequest = null;
 
     /**
      * 文件流本身应该是挨个传输的
      * @param logger
-     * @param threadContext  什么场景下会需要在每个线程上单独维护上下文呢 ???
-     * @param listener  当本次涉及到的所有文件数据流都传递完毕后触发
-     * @param maxConcurrentFileChunks
+     * @param threadContext
+     * @param listener  当所有文件的数据流都传输完成后触发
+     * @param maxConcurrentFileChunks  传输的并发度
      * @param files  本次待传输的所有文件流
      */
     protected MultiFileTransfer(Logger logger, ThreadContext threadContext, ActionListener<Void> listener,
@@ -120,10 +124,12 @@ public abstract class MultiFileTransfer<Request extends MultiFileTransfer.ChunkR
     }
 
     /**
-     * 往IOProcessor插入item后会触发该方法
-     * @param items 当某个数据块在对端被处理后 返回的res会通过 AsyncIOProcess处理
+     * 处理 AsyncIOProcessor的任务时 会触发该方法
+     * @param items
      */
     private void handleItems(List<Tuple<FileChunkResponseItem, Consumer<Exception>>> items) {
+
+        // 确保此时还处于运行状态
         if (status != Status.PROCESSING) {
             assert status == Status.FAILED : "must not receive any response after the transfer was completed";
             // These exceptions will be ignored as we record only the first failure, log them for debugging purpose.
@@ -132,39 +138,42 @@ public abstract class MultiFileTransfer<Request extends MultiFileTransfer.ChunkR
             return;
         }
         try {
-            // 这里是处理resp
             for (Tuple<FileChunkResponseItem, Consumer<Exception>> item : items) {
                 final FileChunkResponseItem resp = item.v1();
                 // 跳过哨兵
                 if (resp.requestSeqId == UNASSIGNED_SEQ_NO) {
                     continue; // not an actual item
                 }
-                // 针对每个 source,target,shard 3元组 都会有一个对应的tracker对象  这里标记某个偏移量对应的数据已经处理完了
+                // 每个完成的任务会重新回到 AsyncIOProcessor  在这里就会更新 processedCheckpoint
                 requestSeqIdTracker.markSeqNoAsProcessed(resp.requestSeqId);
                 if (resp.failure != null) {
                     handleError(resp.md, resp.failure);
                     throw resp.failure;
                 }
             }
-            // 这里是发送req
-            // requestSeqIdTracker 默认从0开始
+
+            // 代表支持同时处理 maxConcurrentFileChunks 个数据
+            // 每当发出一个req  seqNo会+1  当收到确认结果时 processedCheckpoint会+1
             while (requestSeqIdTracker.getMaxSeqNo() - requestSeqIdTracker.getProcessedCheckpoint() < maxConcurrentFileChunks) {
                 // 获取下一个请求对象 其中包含了文件数据流 用于同步primary分片 与 副本分片的数据
                 final Tuple<StoreFileMetadata, Request> request = readAheadRequest != null ? readAheadRequest : getNextRequest();
                 readAheadRequest = null;
 
+                // 代表所有文件数据都已经发送完毕
                 if (request == null) {
                     assert currentFile == null && remainingFiles.hasNext() == false;
-                    // 追踪 maxSeq 会与 processedCheckpoint同步  此时通知初始化时传入的监听器
+                    // 代表此时所有发出去的请求 都已经收到结果了  触发一开始设置的监听器
                     if (requestSeqIdTracker.getMaxSeqNo() == requestSeqIdTracker.getProcessedCheckpoint()) {
                         onCompleted(null);
                     }
                     return;
                 }
-                // 这里不断增大 nextSeq 是避免无法跳出while
+                // seqNo 是不断增大的  每个数据片段对应一个req对象
                 final long requestSeqId = requestSeqIdTracker.generateSeqNo();
                 // 将req 发送到target
-                executeChunkRequest(request.v2(), ActionListener.wrap(
+                executeChunkRequest(request.v2(),
+                    // 当请求收到结果时 会重新将item加入到 io队列中 之后会更新processedCheckpoint
+                    ActionListener.wrap(
                     r -> addItem(requestSeqId, request.v1(), null),
                     e -> addItem(requestSeqId, request.v1(), e)));
             }
@@ -210,7 +219,7 @@ public abstract class MultiFileTransfer<Request extends MultiFileTransfer.ChunkR
                 }
             }
             final StoreFileMetadata md = currentFile;
-            // 抽取数据并包装成req对象
+            // 每次抽取文件中的部分数据 包装成req 对象
             final Request request = nextChunkRequest(md);
             // 当检测到此时读取到末尾了 将currentFile置空
             if (request.lastChunk()) {
@@ -236,7 +245,7 @@ public abstract class MultiFileTransfer<Request extends MultiFileTransfer.ChunkR
     protected abstract void handleError(StoreFileMetadata md, Exception e) throws Exception;
 
     /**
-     * 单次写入任务的相关信息
+     * 描述单个传输的文件
      */
     private static class FileChunkResponseItem {
         final long requestSeqId;

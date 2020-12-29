@@ -87,6 +87,8 @@ public interface RecoveryTargetHandler {
 
     /**
      * Notifies the target of the files it is going to receive
+     * @param totalTranslogOps 预计本次操作涉及到多少事务日志记录的op
+     * 通知目标节点 本次会对哪些文件进行恢复
      */
     void receiveFileInfo(List<String> phase1FileNames,
                          List<Long> phase1FileSizes,
@@ -105,7 +107,10 @@ public interface RecoveryTargetHandler {
      */
     void cleanFiles(int totalTranslogOps, long globalCheckpoint, Store.MetadataSnapshot sourceMetadata, ActionListener<Void> listener);
 
-    /** writes a partial file chunk to the target store */
+    /**
+     * writes a partial file chunk to the target store
+     * 将用于恢复lucene的文件数据流 从primary发送到replica
+     */
     void writeFileChunk(StoreFileMetadata fileMetadata, long position, BytesReference content,
                         boolean lastChunk, int totalTranslogOps, ActionListener<Void> listener);
 

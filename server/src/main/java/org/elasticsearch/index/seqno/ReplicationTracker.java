@@ -358,25 +358,28 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * @return the new retention lease
      * @throws RetentionLeaseNotFoundException      if the specified source retention lease does not exist
      * @throws RetentionLeaseAlreadyExistsException if the specified target retention lease already exists
-     * 生成续约对象 意味着什么
+     * 生成一个续约对象的副本
      */
     RetentionLease cloneRetentionLease(String sourceLeaseId, String targetLeaseId, ActionListener<ReplicationResponse> listener) {
         Objects.requireNonNull(listener);
         final RetentionLease retentionLease;
         final RetentionLeases currentRetentionLeases;
         synchronized (this) {
+            // 只有主分片才应该调用该方法
             assert primaryMode;
-            // 当前续约信息不存在会抛出异常
+            // 获取主分片的续约信息
             if (getRetentionLeases().contains(sourceLeaseId) == false) {
                 throw new RetentionLeaseNotFoundException(sourceLeaseId);
             }
             final RetentionLease sourceLease = getRetentionLeases().get(sourceLeaseId);
+            // 记得 不在in-sync的分片是不会自动创建续约对象的  而当它们向primary发起 recovery请求时 在完成了 索引文件数据的发送后 会生成续约对象
             retentionLease = innerAddRetentionLease(targetLeaseId, sourceLease.retainingSequenceNumber(), sourceLease.source());
             currentRetentionLeases = retentionLeases;
         }
 
         // Syncing here may not be strictly necessary, because this new lease isn't retaining any extra history that wasn't previously
         // retained by the source lease; however we prefer to sync anyway since we expect to do so whenever creating a new lease.
+        // 此时还是要将续约信息同步到其他节点上
         onSyncRetentionLeases.accept(currentRetentionLeases, listener);
         return retentionLease;
     }
@@ -1269,6 +1272,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * have been set up locally to track local checkpoint information for the shard and that the shard is added to the replication group.
      *
      * @param allocationId  the allocation ID of the shard for which recovery was initiated
+     *                      某个分片可以开始接收写入到primary的op了
      */
     public synchronized void initiateTracking(final String allocationId) {
         assert invariant();
@@ -1280,6 +1284,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             throw new IllegalStateException("no local checkpoint tracking information available");
         }
         cps.tracked = true;
+        // 当标识修改为true后 会加入到replicationGroup中
         updateReplicationGroupAndNotify();
         assert invariant();
     }
