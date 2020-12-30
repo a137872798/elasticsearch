@@ -25,7 +25,7 @@ import java.util.List;
 /**
  * A simple {@link ShardsIterator} that iterates a list or sub-list of
  * {@link ShardRouting shard indexRoutings}.
- * 一个基于list的迭代器实现
+ * 存储某个shardId 对应的所有路由信息
  */
 public class PlainShardsIterator implements ShardsIterator {
 

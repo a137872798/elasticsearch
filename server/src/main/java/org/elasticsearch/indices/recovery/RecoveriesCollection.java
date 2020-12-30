@@ -204,7 +204,10 @@ public class RecoveriesCollection {
         }
     }
 
-    /** mark the recovery with the given id as done (if found) */
+    /**
+     * mark the recovery with the given id as done (if found)
+     * 标记某个分片已经完成了数据恢复
+     */
     public void markRecoveryAsDone(long id) {
         RecoveryTarget removed = onGoingRecoveries.remove(id);
         if (removed != null) {

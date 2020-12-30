@@ -425,6 +425,7 @@ public class TranslogWriter extends BaseTranslogReader implements Closeable {
      *
      * @return <code>true</code> if this call caused an actual sync operation
      * 将此时的检查点状态持久化
+     * 每当触发事务日志的刷盘时 就会自动的同步 persistedCheckpoint
      */
     final boolean syncUpTo(long offset) throws IOException {
         // 每次提交的位置超过上次提交的offset

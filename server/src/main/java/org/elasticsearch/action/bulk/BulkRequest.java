@@ -55,6 +55,7 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
  *
  * Note that we only support refresh on the bulk request not per item.
  * @see org.elasticsearch.client.Client#bulk(BulkRequest)
+ * 批量发送一组请求  可以是插入索引信息  更新之前的索引信息 也可以是删除某个索引信息
  */
 public class BulkRequest extends ActionRequest implements CompositeIndicesRequest, WriteRequest<BulkRequest> {
 
@@ -69,6 +70,9 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
     private final Set<String> indices = new HashSet<>();
 
     protected TimeValue timeout = BulkShardRequest.DEFAULT_TIMEOUT;
+    /**
+     * 默认情况下没有要求副本数量
+     */
     private ActiveShardCount waitForActiveShards = ActiveShardCount.DEFAULT;
     private RefreshPolicy refreshPolicy = RefreshPolicy.NONE;
     private String globalPipeline;

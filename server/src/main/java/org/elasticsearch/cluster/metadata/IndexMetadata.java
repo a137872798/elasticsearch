@@ -295,12 +295,19 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     public static final String KEY_PRIMARY_TERMS = "primary_terms";
 
     public static final String INDEX_STATE_FILE_PREFIX = "state-";
+    /**
+     * 推测时能够被路由到的shardId数量
+     */
     private final int routingNumShards;
+    /**
+     * routingNumShards / numberOfShards
+     * 能够被路由到的shardId 数量比上 总的shardId数量
+     */
     private final int routingFactor;
     private final int routingPartitionSize;
 
     /**
-     * 该索引下总计有多少分片
+     * shardId 数量
      */
     private final int numberOfShards;
     /**
@@ -337,6 +344,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      */
     private final ImmutableOpenIntMap<Set<String>> inSyncAllocationIds;
 
+    /**
+     * 总计包含多少分片 (replica + primary)* shardId数量
+     */
     private final transient int totalNumberOfShards;
 
     private final DiscoveryNodeFilters requireFilters;

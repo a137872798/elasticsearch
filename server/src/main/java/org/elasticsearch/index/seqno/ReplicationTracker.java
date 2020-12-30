@@ -1295,7 +1295,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param allocationId    the allocation ID of the shard to mark as in-sync
      * @param localCheckpoint the current local checkpoint on the shard
-     *                        等待某个allocation的同步完成 如果localCheckpoint 超过了全局检查点 那么直接返回
+     *                        某个完成recovery的副本会进入到 in-sync 队列
      */
     public synchronized void markAllocationIdAsInSync(final String allocationId, final long localCheckpoint) throws InterruptedException {
         assert invariant();
@@ -1310,6 +1310,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             "expected known local checkpoint for " + allocationId + " but was " + localCheckpoint;
         assert pendingInSync.contains(allocationId) == false : "shard copy " + allocationId + " is already marked as pending in-sync";
         assert cps.tracked : "shard copy " + allocationId + " cannot be marked as in-sync as it's not tracked";
+
+        // 更新目标分片的本地检查点
         updateLocalCheckpoint(allocationId, cps, localCheckpoint);
         // if it was already in-sync (because of a previously failed recovery attempt), global checkpoint must have been
         // stuck from advancing
@@ -1317,7 +1319,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             "shard copy " + allocationId + " that's already in-sync should have a local checkpoint " + cps.localCheckpoint +
                 " that's above the global checkpoint " + getGlobalCheckpoint();
 
-        // 只要当前某个allocation 对应的localCheckpoint 小于全局检查点 就加入到待同步队列中
+
+        // 检测该分片是否超过了全局检查点  未超过加入到 pendingInSync中  并阻塞当前线程 直到完成同步
         if (cps.localCheckpoint < getGlobalCheckpoint()) {
             pendingInSync.add(allocationId);
             try {
@@ -1333,6 +1336,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 pendingInSync.remove(allocationId);
             }
         } else {
+            // 更新replicationGroup信息
             cps.inSync = true;
             updateReplicationGroupAndNotify();
             logger.trace("marked [{}] as in-sync", allocationId);

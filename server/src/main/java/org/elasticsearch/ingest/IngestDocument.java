@@ -717,10 +717,12 @@ public final class IngestDocument {
      * 使用某个管道来处理doc数据
      */
     public void executePipeline(Pipeline pipeline, BiConsumer<IngestDocument, Exception> handler) {
-        // 能够添加成功 代表首次使用这个管道
+        // 避免死循环
         if (executedPipelines.add(pipeline.getId())) {
             // 更新此时正在使用的 pipeline
             Object previousPipeline = ingestMetadata.put("pipeline", pipeline.getId());
+
+            // 通过一组链式调用后  IngestDocument会发生变化 这个就是 摄取的概念 通过pipeline对doc中的相关信息进行抽取和处理
             pipeline.execute(this,
                 // 当内部所有的processor都处理完后 会触发该函数
                 (result, e) -> {

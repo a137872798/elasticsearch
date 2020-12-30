@@ -235,7 +235,9 @@ public class RecoverySourceHandler {
 
             // 可以看到在基于 PEER 进行数据恢复的过程中 涉及到了几个流程
             final StepListener<SendFileResult> sendFileStep = new StepListener<>();
+            // replica 开启engine完成
             final StepListener<TimeValue> prepareEngineStep = new StepListener<>();
+            // 发送事务日志文件
             final StepListener<SendSnapshotResult> sendSnapshotStep = new StepListener<>();
             final StepListener<Void> finalizeStep = new StepListener<>();
 
@@ -372,7 +374,7 @@ public class RecoverySourceHandler {
             }, onFailure);
 
             // Recovery target can trim all operations >= startingSeqNo as we have sent all these operations in the phase 2
-            // 本次恢复操作已经完成 将之前的数据全部删除
+            // 在starting之前的数据都可以删除了
             final long trimAboveSeqNo = startingSeqNo - 1;
             sendSnapshotStep.whenComplete(r -> finalizeRecovery(r.targetLocalCheckpoint, trimAboveSeqNo, finalizeStep), onFailure);
 
@@ -934,7 +936,7 @@ public class RecoverySourceHandler {
     }
 
     /**
-     * 当整个恢复流程完结时触发
+     * 当整个恢复流程完结时触发   在trimAbove之前的数据都可以删除了
      * @param targetLocalCheckpoint
      * @param trimAboveSeqNo
      * @param listener
@@ -952,7 +954,7 @@ public class RecoverySourceHandler {
          * shard as in-sync and relocating a shard. If we acquire the permit then no relocation handoff can complete before we are done
          * marking the shard as in-sync. If the relocation handoff holds all the permits then after the handoff completes and we acquire
          * the permit then the state of the shard will be relocated and this recovery will fail.
-         * 在完成数据恢复后 如果当前检查点小于全局检查点 那么进入同步队列  如果 >= 全局检查点 那么标记已经完成同步
+         * 当某个replica 已经完成了recovery阶段 就会进入到 in-sync队列
          */
         runUnderPrimaryPermit(() -> shard.markAllocationIdAsInSync(request.targetAllocationId(), targetLocalCheckpoint),
             shardId + " marking " + request.targetAllocationId() + " as in sync", shard, cancellableThreads, logger);
@@ -965,6 +967,8 @@ public class RecoverySourceHandler {
         // 发送请求到对端 通知本次恢复已完成
         recoveryTarget.finalizeRecovery(globalCheckpoint, trimAboveSeqNo, finalizeListener);
         finalizeListener.whenComplete(r -> {
+
+            // 更新某个分片此时观测到的全局检查点
             runUnderPrimaryPermit(() -> shard.updateGlobalCheckpointForShard(request.targetAllocationId(), globalCheckpoint),
                 shardId + " updating " + request.targetAllocationId() + "'s global checkpoint", shard, cancellableThreads, logger);
 
@@ -985,6 +989,10 @@ public class RecoverySourceHandler {
     }
 
     static final class SendSnapshotResult {
+
+        /**
+         * 最终将事务日志同步到target后 目标节点此时的本地检查点
+         */
         final long targetLocalCheckpoint;
         final int totalOperations;
         final TimeValue tookTime;

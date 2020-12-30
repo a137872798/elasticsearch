@@ -1256,12 +1256,12 @@ public class InternalEngine extends Engine {
                             plan.versionForIndexing, index.primaryTerm(), index.seqNo(), plan.currentNotFoundOrDeleted);
                     }
                 }
-                // TODO 先忽略 非事务日志发起的情况
+                // 如果本次恢复不是通过本地事务日志  那么就需要将op写入到本地事务日志中
                 if (index.origin().isFromTranslog() == false) {
                     final Translog.Location location;
                     if (indexResult.getResultType() == Result.Type.SUCCESS) {
                         location = translog.add(new Translog.Index(index, indexResult));
-                        // 操作失败时 记录一个NOOP 因为即使是失败的记录 也有seqNo
+                        // 操作失败时 记录一个NOOP  事务日志本身不应该丢失任何信息
                     } else if (indexResult.getSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO) {
                         // if we have document failure, record it as a no-op in the translog and Lucene with the generated seq_no
                         final NoOp noOp = new NoOp(indexResult.getSeqNo(), index.primaryTerm(), index.origin(),
@@ -1270,7 +1270,7 @@ public class InternalEngine extends Engine {
                     } else {
                         location = null;
                     }
-                    // 如果本次不是由事务日志发起的操作 那么还需要将操作写回到事务日志中 同时在indexResult中记录位置信息
+                    // 如果本次不是由本地事务日志发起的操作 那么还需要将操作写回到事务日志中 同时在indexResult中记录位置信息
                     indexResult.setTranslogLocation(location);
                 }
 
@@ -1288,7 +1288,7 @@ public class InternalEngine extends Engine {
                 if (indexResult.getTranslogLocation() == null) {
                     // the op is coming from the translog (and is hence persisted already) or it does not have a sequence number
                     assert index.origin().isFromTranslog() || indexResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
-                    // 在写入事务文件时应该已经修改过 seqNoPersisted了  这里如果是从事务文件中恢复的 那么也要进行同步
+                    // 代表是从本地事务文件中恢复的 那么该seq必然已经存在于事务日志中了  完成了持久化
                     localCheckpointTracker.markSeqNoAsPersisted(indexResult.getSeqNo());
                 }
                 // 设置完成时间
@@ -1329,7 +1329,7 @@ public class InternalEngine extends Engine {
         // unlike the primary, replicas don't really care to about creation status of documents
         // this allows to ignore the case where a document was found in the live version maps in
         // a delete state and return false for the created flag in favor of code simplicity
-        // 获取此时最大的seq  在启动阶段会从lucene.userData中获取maxSeqNo
+        // TODO 这是什么???
         final long maxSeqNoOfUpdatesOrDeletes = getMaxSeqNoOfUpdatesOrDeletes();
         // 如果对应seq 小于 localCheckpoint.processed  代表之前已经处理过
         if (hasBeenProcessedBefore(index)) {
@@ -2255,14 +2255,14 @@ public class InternalEngine extends Engine {
     @Override
     public boolean shouldPeriodicallyFlush() {
         ensureOpen();
-        // 代表当发生了大块的数据合并后 需要做刷盘操作
+        // 代表最近发生了大块的数据合并 需要做刷盘操作
         if (shouldPeriodicallyFlushAfterBigMerge.get()) {
             return true;
         }
-        // 上次刷盘对应的检查点  检查从哪个文件开始刷盘 就是只要检查点要高于该值
+        // 上次刷盘对应的检查点
         final long localCheckpointOfLastCommit =
             Long.parseLong(lastCommittedSegmentInfos.userData.get(SequenceNumbers.LOCAL_CHECKPOINT_KEY));
-        // 检查点对应的事务文件的gen  每当开启一个新的事务文件 gen+1
+        // 通过检查点反查事务日志文件
         final long translogGenerationOfLastCommit =
             translog.getMinGenerationForSeqNo(localCheckpointOfLastCommit + 1).translogFileGeneration;
         // 达到该值时才推荐刷盘 是为了避免由于刷盘过于频繁导致太高的性能开销
@@ -2290,7 +2290,6 @@ public class InternalEngine extends Engine {
         final long translogGenerationOfNewCommit =
             translog.getMinGenerationForSeqNo(localCheckpointTracker.getProcessedCheckpoint() + 1).translogFileGeneration;
         return translogGenerationOfLastCommit < translogGenerationOfNewCommit
-            // 这个条件应该总是满足的吧
             || localCheckpointTracker.getProcessedCheckpoint() == localCheckpointTracker.getMaxSeqNo();
     }
 

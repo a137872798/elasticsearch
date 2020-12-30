@@ -63,10 +63,10 @@ public final class AutoCreateIndex {
     /**
      * Should the index be auto created?
      * @throws IndexNotFoundException if the index doesn't exist and shouldn't be auto created
-     * 检测某个索引是否支持自动创建
+     * 检测某个索引需要自动创建
      */
     public boolean shouldAutoCreate(String index, ClusterState state) {
-        // 首先检测该index是否存在于clusterState中
+        // 存在就不需要创建
         if (resolver.hasIndexOrAlias(index, state)) {
             return false;
         }
@@ -79,11 +79,11 @@ public final class AutoCreateIndex {
         }
 
         // matches not set, default value of "true"
+        // 只有满足表达式条件的index 才能自动创建
         if (autoCreate.expressions.isEmpty()) {
             return true;
         }
 
-        // TODO 先忽略 正常情况不会设置
         for (Tuple<String, Boolean> expression : autoCreate.expressions) {
             String indexExpression = expression.v1();
             boolean include = expression.v2();

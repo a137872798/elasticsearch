@@ -100,8 +100,7 @@ public class TranslogReader extends BaseTranslogReader implements Closeable {
             Closeable toCloseOnFailure = channel;
             final TranslogReader newReader;
             try {
-                // 每个reader都会关联一个检查点记录各种信息 当发生裁剪时 也就是之前的数据无效了 需要更新检查点的trimmedAboveSeqNo
-                // 只能越裁剪越小
+                // 变小了才有更新的必要 代表某些数据不应该被删除
                 if (aboveSeqNo < checkpoint.trimmedAboveSeqNo
                     // 代表首次裁剪
                     || aboveSeqNo < checkpoint.maxSeqNo && checkpoint.trimmedAboveSeqNo == SequenceNumbers.UNASSIGNED_SEQ_NO) {
@@ -114,7 +113,6 @@ public class TranslogReader extends BaseTranslogReader implements Closeable {
                     // 将最新的检查点写入到文件中
                     Checkpoint.write(channelFactory, checkpointFile, newCheckpoint, StandardOpenOption.WRITE);
 
-                    // TODO 不懂  不影响流程
                     IOUtils.fsync(checkpointFile, false);
                     IOUtils.fsync(checkpointFile.getParent(), true);
 
@@ -126,7 +124,6 @@ public class TranslogReader extends BaseTranslogReader implements Closeable {
                 toCloseOnFailure = null;
                 return newReader;
             } finally {
-                // channel是工厂生成的可能被特殊包装过
                 IOUtils.close(toCloseOnFailure);
             }
         } else {

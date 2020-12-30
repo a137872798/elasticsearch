@@ -2929,7 +2929,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @param allocationId    the allocation ID of the shard to mark as in-sync
      * @param localCheckpoint the current local checkpoint on the shard
-     *                        等待某个allocation的同步完成 如果localCheckpoint 超过了全局检查点 那么直接返回
+     *                        当某个副本通过primary 完成了recovery 就会进入到primary.in-sync 队列中
      */
     public void markAllocationIdAsInSync(final String allocationId, final long localCheckpoint) throws InterruptedException {
         assert assertPrimaryMode();
@@ -3950,7 +3950,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     /**
      * Schedules a flush or translog generation roll if needed but will not schedule more than one concurrently. The operation will be
      * executed asynchronously on the flush thread pool.
-     * TODO 这个方法的调用时机是 ???
+     * 检测是否需要开启自动刷盘
      */
     public void afterWriteOperation() {
         // shouldRollTranslogGeneration 当前事务文件写入的数据过多时 会返回true 推荐滚动到下一个事务文件
@@ -3963,7 +3963,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                  *
                  * Additionally, a flush implicitly executes a translog generation roll so if we execute a flush then we do not need to
                  * check if we should roll the translog generation.
-                 * 代表触发了刷盘操作
+                 * 代表需要开启定时刷盘
                  */
                 if (shouldPeriodicallyFlush()) {
                     logger.debug("submitting async flush request");
@@ -3985,7 +3985,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         @Override
                         public void onAfter() {
                             flushOrRollRunning.compareAndSet(true, false);
-                            // 刷盘之后也要触发该方法吗
                             afterWriteOperation();
                         }
                     };

@@ -630,30 +630,36 @@ public class Metadata implements Iterable<IndexMetadata>, Diffable<Metadata>, To
     /**
      * Returns indexing routing for the given <code>aliasOrIndex</code>. Resolves routing from the alias metadata used
      * in the write index.
-     * 根据索引/别名 解析出路由信息
+     * @param routing 本次已经传入了一个路由信息
+     * @param aliasOrIndex 需要获取哪个索引的路由信息
+     * 根据索引名 或者索引别名 解析出一个路由信息  首先这个路由决定了某次 DocWriterReq会写入到哪个路由上 应该都是主分片的路由 同时操作还会复写到所有副本上
      */
     public String resolveWriteIndexRouting(@Nullable String routing, String aliasOrIndex) {
+        // 未指定索引的情况下 无法确定路由信息
         if (aliasOrIndex == null) {
             return routing;
         }
 
-        // 如果传入的index无法找到对应数据 或者不是别名类型 就不进行处理
+        // 当没有找到匹配的 索引类时 无法确定路由信息 返回原参数
         IndexAbstraction result = getIndicesLookup().get(aliasOrIndex);
         if (result == null || result.getType() != IndexAbstraction.Type.ALIAS) {
             return routing;
         }
-        // 如果查询结果没有writeIndex 那么就无法处理  writeIndex 和普通index 的区别是什么???
+
+        // 该方法是查询 某个可写入索引的路由信息  如果 writeIndex为空 就无法获取路由信息
         IndexMetadata writeIndex = result.getWriteIndex();
         if (writeIndex == null) {
             throw new IllegalArgumentException("alias [" + aliasOrIndex + "] does not have a write index");
         }
-        // 这里如果命中了某个别名的元数据 将它的routing信息返回
+
+        // 在元数据中 只应该存在一个路由信息么
         AliasMetadata aliasMd = writeIndex.getAliases().get(result.getName());
         if (aliasMd.indexRouting() != null) {
             if (aliasMd.indexRouting().indexOf(',') != -1) {
                 throw new IllegalArgumentException("index/alias [" + aliasOrIndex + "] provided with routing value ["
                     + aliasMd.getIndexRouting() + "] that resolved to several routing values, rejecting operation");
             }
+            // 如果路由信息不为空 则是进行校验 如果为空 就返回从元数据中获取的路由信息
             if (routing != null) {
                 if (!routing.equals(aliasMd.indexRouting())) {
                     throw new IllegalArgumentException("Alias [" + aliasOrIndex + "] has index routing associated with it ["

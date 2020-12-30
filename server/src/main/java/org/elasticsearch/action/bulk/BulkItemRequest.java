@@ -28,8 +28,14 @@ import org.elasticsearch.common.io.stream.Writeable;
 import java.io.IOException;
 import java.util.Objects;
 
+/**
+ * 某次发起的 bulk操作 中某单个请求的相关信息
+ */
 public class BulkItemRequest implements Writeable {
 
+    /**
+     * 实际上对应这组DocWriteReq (BulkReq就是一组 DocWriteReq)的下标
+     */
     private int id;
     private DocWriteRequest<?> request;
     /**

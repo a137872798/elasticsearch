@@ -98,11 +98,12 @@ public class ShardStateAction {
         this.clusterService = clusterService;
         this.threadPool = threadPool;
 
-        // 代表分片在某个节点上成功启动 或者失败
+        // 代表分片在某个节点上成功启动 或者失败    成功的可能是主分片 也可能是副本
         transportService.registerRequestHandler(SHARD_STARTED_ACTION_NAME, ThreadPool.Names.SAME, StartedShardEntry::new,
             new ShardStartedTransportHandler(clusterService,
                 new ShardStartedClusterStateTaskExecutor(allocationService, rerouteService, logger),
                 logger));
+        // 当某个分片在恢复过程中失败 会上报给leader节点
         transportService.registerRequestHandler(SHARD_FAILED_ACTION_NAME, ThreadPool.Names.SAME, FailedShardEntry::new,
             new ShardFailedTransportHandler(clusterService,
                 new ShardFailedClusterStateTaskExecutor(allocationService, rerouteService, logger),
@@ -327,8 +328,7 @@ public class ShardStateAction {
     }
 
     /**
-     * 任务处理器对象  定义了如何处理更新任务
-     * TODO 当某个分片无法被正常处理时  会通过该executor更新clusterState
+     * 当某个分片分配到某个node后无法正常工作 就需要通过reroute更换分配节点
      */
     public static class ShardFailedClusterStateTaskExecutor implements ClusterStateTaskExecutor<FailedShardEntry> {
         private final AllocationService allocationService;

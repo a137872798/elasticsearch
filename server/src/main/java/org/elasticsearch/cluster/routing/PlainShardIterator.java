@@ -26,7 +26,7 @@ import java.util.List;
 /**
  * The {@link PlainShardIterator} is a {@link ShardsIterator} which iterates all
  * shards or a given {@link ShardId shard id}
- * 在PlainShardsIterator 的基础上拓展了 获取shardId的 能力
+ * 对应某个 shardId 下所有的路由
  */
 public class PlainShardIterator extends PlainShardsIterator implements ShardIterator {
 

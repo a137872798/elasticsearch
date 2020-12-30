@@ -372,7 +372,7 @@ public abstract class Engine implements Closeable {
     /**
      * Trims translog for terms below <code>belowTerm</code> and seq# above <code>aboveSeqNo</code>
      * @see Translog#trimOperations(long, long)
-     * 将指定term seqNo 后面的数据截取掉???
+     * 将之前seqNo之前的事务数据都删除
      */
     public abstract void trimOperationsFromTranslog(long belowTerm, long aboveSeqNo) throws EngineException;
 
@@ -1480,7 +1480,8 @@ public abstract class Engine implements Closeable {
             LOCAL_RESET;
 
             /**
-             * 在操作阶段可能会出现的origin  一个是从其他节点恢复数据 应该就是副本从primary恢复数据
+             * 对应恢复数据的origin
+             * 一种是通过primary传输的事务日志进行恢复
              * 还有就是主分片从本地事务日志恢复数据
              * @return
              */

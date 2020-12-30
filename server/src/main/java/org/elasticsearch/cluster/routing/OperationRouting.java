@@ -40,7 +40,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 该对象提供了寻找路由表的api
+ * 当发起对某个index的操作时 通过该对象确定会写入到哪个分片
  */
 public class OperationRouting {
 
@@ -70,7 +70,8 @@ public class OperationRouting {
     }
 
     /**
-     * 获取index 下某个 shardId 对应的所有分片
+     * 当需要往某个index写入数据时  需要确定应该将数据写入哪个shardId (下面会对应一组primary 和 replica)
+     * 这里根据优先级 对shardId 进行排序
      * @param clusterState
      * @param index
      * @param id  req.id
@@ -324,17 +325,17 @@ public class OperationRouting {
     }
 
     /**
-     * 获取目标索引相关的所有迭代器
-     * @param clusterState 此时的集群状态 内部包含了 metadata 记录此时分片信息
-     * @param index  索引名
-     * @param id   每当包含一个shardId时 会伴随着一个uuid 反过来用户使用这个uuid去查询的时候 通过hash函数会映射回之前的shardId
-     * @param routing  这个是只有设置了分区才会使用
+     * 获取一组满足插入条件的所有分片
+     * @param clusterState 该对象内部维护了所有的index -> shard 信息
+     * @param index  本次操作的目标索引
+     * @param id   这个是本次操作的索引信息id  针对同一id的操作 会被分片到同一shardId上
+     * @param routing    req可以通过携带routing来指定shardId
      * @return
      */
     protected IndexShardRoutingTable shards(ClusterState clusterState, String index, String id, String routing) {
-        // generateShardId 就是通过一种接近随机的方式获取分片id
+        // 通过对 req.id()/req.routing() 做hash的操作 得到一个shardId 同时也表明 相同的id 或者routing 会倾向于写入到同一个shardId上
         int shardId = generateShardId(indexMetadata(clusterState, index), id, routing);
-        // 通过路由表对象找到 目标索引下有关某个分片的路由表
+        // 获取该shardId 对应的所有 primary/replica的路由信息
         return clusterState.getRoutingTable().shardRoutingTable(index, shardId);
     }
 
@@ -352,13 +353,15 @@ public class OperationRouting {
     }
 
     /**
-     * 选择分片id
-     * @param indexMetadata  索引元数据信息
-     * @param id   一个uuid  当处理一个 bulkReq时 会为它生成一个随机id
-     * @param routing 路由信息
+     * 根据相关信息 选择最合适的分片id
+     * @param indexMetadata  本次操作定位到的索引元数据信息
+     * @param id             本次请求针对的数据id  每次往index写入数据时 都会携带一个id信息  相同的id 会优先选择上次使用的shardId
+     * @param routing        本次请求中携带的路由信息 会影响本次shardId的选择
      * @return
      */
     public static int generateShardId(IndexMetadata indexMetadata, @Nullable String id, @Nullable String routing) {
+
+        // id/routing 都可以左右选择
         final String effectiveRouting;
         final int partitionOffset;
 
@@ -369,9 +372,9 @@ public class OperationRouting {
             effectiveRouting = routing;
         }
 
-        // 代表这个索引还有多个分区  TODO 先忽略分区的概念
+        // TODO 先忽略分区的概念
         if (indexMetadata.isRoutingPartitionedIndex()) {
-            // 通过hash计算后 获得一个分区的offset
+            // 同一个id会倾向于分配到同一个分区
             partitionOffset = Math.floorMod(Murmur3HashFunction.hash(id), indexMetadata.getRoutingPartitionSize());
         } else {
             // we would have still got 0 above but this check just saves us an unnecessary hash calculation
@@ -383,16 +386,18 @@ public class OperationRouting {
 
     /**
      *
-     * @param indexMetadata  索引元数据
-     * @param effectiveRouting   有效的路由信息
-     * @param partitionOffset   索引所在分区的偏移量 某个索引可能存在多个分区  先假设始终为0
+     * @param indexMetadata      索引元数据
+     * @param effectiveRouting   这个信息将会影响本次选择的结果
+     * @param partitionOffset    分区偏移量 先忽略
      * @return
      */
     private static int calculateScaledShardId(IndexMetadata indexMetadata, String effectiveRouting, int partitionOffset) {
+        // 携带同一req.routing/req.id 信息的请求会作用到同一shardId上
         final int hash = Murmur3HashFunction.hash(effectiveRouting) + partitionOffset;
 
         // we don't use IMD#getNumberOfShards since the index might have been shrunk such that we need to use the size
         // of original index to hash documents
+        // 计算出来就是某个shardId
         return Math.floorMod(hash, indexMetadata.getRoutingNumShards()) / indexMetadata.getRoutingFactor();
     }
 

@@ -144,6 +144,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
         // 接收从primary传输过来的事务日志
         transportService.registerRequestHandler(Actions.TRANSLOG_OPS, ThreadPool.Names.GENERIC, RecoveryTranslogOperationsRequest::new,
             new TranslogOperationsRequestHandler());
+        // 当副本通过主分片传来的事务日志完成数据恢复  并且通知到leader节点后(此时还会进入in-sync中) 进入最后的阶段  删除一些无效的文件
         transportService.registerRequestHandler(Actions.FINALIZE, ThreadPool.Names.GENERIC, RecoveryFinalizeRecoveryRequest::new,
             new FinalizeRecoveryRequestHandler());
         transportService.registerRequestHandler(
@@ -327,7 +328,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
 
                 // 请求从 primaryShard拉取数据 恢复replica的action为 START_RECOVERY   目标节点就是 primaryShard所在节点
                 transportService.sendRequest(request.sourceNode(), PeerRecoverySourceService.Actions.START_RECOVERY, request,
-                    // 处理recoveryRes
+                    // 当通过primary进行数据恢复的整个流程结束后 触发监听器
                     new TransportResponseHandler<RecoveryResponse>() {
                         @Override
                         public void handleResponse(RecoveryResponse recoveryResponse) {

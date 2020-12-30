@@ -342,23 +342,22 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
     }
 
     /**
-     * 代表整个恢复操作已经完成了  可以清理长期不被使用的 translogReader了
+     * 代表整个恢复操作已经完成了  可以清理一些无效的事务文件了
      * @param globalCheckpoint the global checkpoint on the recovery source   此时从远端节点收到的globalCheckpoint
      * @param trimAboveSeqNo   The recovery target should erase its existing translog above this sequence number
-     *                         from the previous primary terms.
+     *                         from the previous primary terms.      本次恢复流程对应的 startingSeqNo-1   不过在前面拉取最新的快照数据时(索引文件)  已经清空了事务日志啊
      * @param listener         the listener which will be notified when this method is completed
      */
     @Override
     public void finalizeRecovery(final long globalCheckpoint, final long trimAboveSeqNo, ActionListener<Void> listener) {
         ActionListener.completeWith(listener, () -> {
-            // 更新 ReplicationTracker.globalCheckpoint
+            // 通过主分片传递过来的最新全局检查点 更新本地分片
             indexShard.updateGlobalCheckpointOnReplica(globalCheckpoint, "finalizing recovery");
             // Persist the global checkpoint.
             // 对事务日志进行刷盘
             indexShard.sync();
-            // 将续约信息写入到一个 _state 文件中
+            // 将续约信息写入到一个 _state 文件中     TODO 续约信息在整个恢复过程中好像没有被使用到
             indexShard.persistRetentionLeases();
-            // TODO 啥意思 如果这个值有效 就需要滚动事务文件
             if (trimAboveSeqNo != SequenceNumbers.UNASSIGNED_SEQ_NO) {
                 // We should erase all translog operations above trimAboveSeqNo as we have received either the same or a newer copy
                 // from the recovery source in phase2. Rolling a new translog generation is not strictly required here for we won't
@@ -369,9 +368,10 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
                 indexShard.rollTranslogGeneration();
                 // the flush or translog generation threshold can be reached after we roll a new translog
                 indexShard.afterWriteOperation();
-                // 将指定seq之前的数据全部清除
+                // 将指定seq之前的数据全部清除  实际上只是更新了 checkpoint.trimmedAboveSeqNo
                 indexShard.trimOperationOfPreviousPrimaryTerms(trimAboveSeqNo);
             }
+            // 如果还有事务日志没有刷盘 进行持久化
             if (hasUncommittedOperations()) {
                 indexShard.flush(new FlushRequest().force(true).waitIfOngoing(true));
             }
@@ -458,7 +458,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
             indexShard().updateRetentionLeasesOnReplica(retentionLeases);
 
             for (Translog.Operation operation : operations) {
-                // 将operation 重新写入到 lucene中
+                // 将operation 重新写入到 lucene中   注意使用的origin是PEER_RECOVERY
                 Engine.Result result = indexShard().applyTranslogOperation(operation, Engine.Operation.Origin.PEER_RECOVERY);
                 if (result.getResultType() == Engine.Result.Type.MAPPING_UPDATE_REQUIRED) {
                     throw new MapperException("mapping updates are not allowed [" + operation + "]");
@@ -473,9 +473,10 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
             // update stats only after all operations completed (to ensure that mapping updates don't mess with stats)
             // 记录当前总计恢复了多少operation
             translog.incrementRecoveredOperations(operations.size());
-            // 写入完成后将数据刷盘
+            // 写入完成后将事务日志刷盘   在写入过程中可能会被动的触发lucene的刷盘 不过事务日志中还记录着 globalCheckpoint 而最接近这个检查点的commit信息才是可靠的
+            // 在这种场景下 lucene刷盘只是为了缓解内存压力
             indexShard().sync();
-            // roll over / flush / trim if needed
+            // roll over / flush / trim if needed   检测是否需要开启定时任务 进行事务日志的滚动  以及lucene数据的刷盘
             indexShard().afterWriteOperation();
             return indexShard().getLocalCheckpoint();
         });
