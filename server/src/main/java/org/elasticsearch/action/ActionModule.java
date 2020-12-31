@@ -667,7 +667,7 @@ public class ActionModule extends AbstractModule {
         actions.register(TransportShardMultiGetAction.TYPE, TransportShardMultiGetAction.class);
         // 处理大块数据请求  这里的大块数据就是指一次性发起了多个请求
         actions.register(BulkAction.INSTANCE, TransportBulkAction.class);
-        // 以分片为单位处理请求
+        // 索引写入操作 以shardId为单位
         actions.register(TransportShardBulkAction.TYPE, TransportShardBulkAction.class);
         actions.register(SearchAction.INSTANCE, TransportSearchAction.class);
         actions.register(SearchScrollAction.INSTANCE, TransportSearchScrollAction.class);

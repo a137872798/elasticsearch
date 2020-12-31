@@ -116,8 +116,8 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
     }
 
     /**
-     * 当在 shardId 的主分片处理该请求时
-     * @param request
+     * bulk请求在主分片上处理
+     * @param request     该对象包含了一组 bulk请求
      * @param primary      the primary shard to perform the operation on
      * @param listener listener for the result of the operation on primary, including current translog location and operation response
      */
@@ -134,7 +134,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             mappingUpdateListener -> observer.waitForNextChange(new ClusterStateObserver.Listener() {
 
                 /**
-                 * 等待集群发生变化 并反向入参的监听器
+                 * 等待集群发生变化 通知监听器
                  * @param state
                  */
                 @Override
@@ -164,7 +164,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
      * @param updateHelper  该对象在update时起到一定的辅助作用
      * @param nowInMillisSupplier  用于获取当前时间戳的函数
      * @param mappingUpdater   包含更新逻辑
-     * @param waitForMappingUpdate   观察CS的变化 在符合条件时触发相关函数
+     * @param waitForMappingUpdate   配合mappingUpdater使用
      * @param listener   业务层监听器
      * @param threadPool
      */
@@ -182,7 +182,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             // 使用专门的 write线程进行处理
             private final Executor executor = threadPool.executor(ThreadPool.Names.WRITE);
 
-            // 在初始化上下文时 已经切换到某个req了
+            // 在处理这么多req的过程中 始终使用同一个上下文
             private final BulkPrimaryExecutionContext context = new BulkPrimaryExecutionContext(request, primary);
 
             final long startBulkTime = System.nanoTime();
@@ -195,8 +195,8 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             protected void doRun() throws Exception {
                 // 只要此时还有req可以被处理
                 while (context.hasMoreOperationsToExecute()) {
-                    // 执行某个 bulkItemReq 当处理成功时 会自动切换到下一个
                     if (executeBulkItemRequest(context, updateHelper, nowInMillisSupplier, mappingUpdater, waitForMappingUpdate,
+                        // 执行某个 bulkItemReq 当处理成功时 会自动切换到下一个
                         ActionListener.wrap(v -> executor.execute(this), this::onRejection)) == false) {
                         // We are waiting for a mapping update on another thread, that will invoke this action again once its done
                         // so we just break out here.
@@ -260,14 +260,15 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
 
     /**
      * Executes bulk item requests and handles request execution exceptions.
+     * @param context 处理过程中使用的上下文
      * @return {@code true} if request completed on this thread and the listener was invoked, {@code false} if the request triggered
      *                      a mapping update that will finish and invoke the listener on a different thread
-     *                      处理某个 bulkItemReq
+     *                      处理单个写入操作
      */
     static boolean executeBulkItemRequest(BulkPrimaryExecutionContext context, UpdateHelper updateHelper, LongSupplier nowInMillisSupplier,
                                        MappingUpdatePerformer mappingUpdater, Consumer<ActionListener<Void>> waitForMappingUpdate,
                                        ActionListener<Void> itemDoneListener) throws Exception {
-        // 获取本次req的操作类型
+        // 获取本次操作类型
         final DocWriteRequest.OpType opType = context.getCurrent().opType();
 
         final UpdateHelper.Result updateResult;
@@ -275,8 +276,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         if (opType == DocWriteRequest.OpType.UPDATE) {
             final UpdateRequest updateRequest = (UpdateRequest) context.getCurrent();
             try {
-                // 根据从engine中查询出来的结果 配合本次req信息 对doc.source进行更新 并返回更新结果
-                // 此时更新后的数据还没有写入到engine中
+                // 执行更新操作需要一个准备动作
                 updateResult = updateHelper.prepare(updateRequest, context.getPrimary(), nowInMillisSupplier);
             } catch (Exception failure) {
                 // we may fail translating a update to index or delete operation

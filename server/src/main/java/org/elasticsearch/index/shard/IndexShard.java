@@ -366,6 +366,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * 只有当分片启动完成时 以及恢复数据后 才处于可读状态
+     * 在分片初始化阶段  由于本地数据还未恢复 不支持查询
      */
     private static final EnumSet<IndexShardState> readAllowedStates = EnumSet.of(IndexShardState.STARTED, IndexShardState.POST_RECOVERY);
     // for primaries, we only allow to write when actually started (so the cluster has decided we started)
@@ -494,7 +495,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         searchListenersList.add(searchStats);
         this.searchOperationListener = new SearchOperationListener.CompositeListener(searchListenersList, logger);
 
-        // 通过该对象可以发起 获取某个分片数据的请求  实际上是通过engine实现的
+        // 通过该对象查询写入到lucene中的数据
         this.getService = new ShardGetService(indexSettings, this, mapperService);
         // 4个数据统计对象
         this.shardWarmerService = new ShardIndexWarmerService(shardId, indexSettings);
@@ -1327,7 +1328,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 发起一个get请求 实际上就是将数据包装成term 通过lucene查询结果
+     * Get 只支持通过id去查询lucene.doc
      *
      * @param get
      * @return
@@ -1336,7 +1337,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         readAllowed();
         // DocumentMapper 描述了如何映射doc (doc也就是从lucene中查询出来的结果)
         DocumentMapper mapper = mapperService.documentMapper();
-        // 既然映射对象本身都不存在 就无法
+        // 当映射服务的 docMapper对象还不存在  跳过查询
         if (mapper == null) {
             return GetResult.NOT_EXISTS;
         }
@@ -2300,8 +2301,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 是否允许读取
-     * 也就是在读取数据前还要先判断条件是否允许
+     * 检测当前分片的状态是否支持查询数据
      *
      * @throws IllegalIndexShardStateException
      */

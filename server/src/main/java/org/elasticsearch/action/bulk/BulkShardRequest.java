@@ -32,8 +32,14 @@ import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
 
+/**
+ * 当一批bulk请求 通过 OperationRouting 选择了某个shardId时  将请求按照shardId进行分组 这样每个shardId还可以对应到一组请求
+ */
 public class BulkShardRequest extends ReplicatedWriteRequest<BulkShardRequest> {
 
+    /**
+     * 每个请求代表一次索引操作   update/insert/delete
+     */
     private BulkItemRequest[] items;
 
     public BulkShardRequest(StreamInput in) throws IOException {

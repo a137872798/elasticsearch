@@ -74,6 +74,10 @@ class BulkPrimaryExecutionContext {
      * 本shard对应的bulk请求对象
      */
     private final BulkShardRequest request;
+
+    /**
+     * 在主分片节点执行任务时的主分片
+     */
     private final IndexShard primary;
     /**
      * 描述此时事务日志文件所在的位置

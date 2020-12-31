@@ -75,6 +75,10 @@ import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
  * 实际上是借助Engine实现查询功能
  */
 public final class ShardGetService extends AbstractIndexShardComponent {
+
+    /**
+     * 通过该对象将lucene.doc 转换成json格式数据
+     */
     private final MapperService mapperService;
     private final MeanMetric existsMetric = new MeanMetric();
     private final MeanMetric missingMetric = new MeanMetric();
@@ -116,11 +120,14 @@ public final class ShardGetService extends AbstractIndexShardComponent {
 
 
     /**
-     * @param id
-     * @param gFields  获取要求的fields的信息
-     * @param realtime  是否实时获取数据
+     * 从lucene中查询数据
+     * @param id        本次lucene.doc的 id Field对应的值
+     * @param gFields   获取要求的fields的信息
+     * @param realtime  是否获取实时数据 应该就是触发lucene的刷盘
      * @param version
-     * @param versionType
+     * @param versionType  版本号类型指的是什么???
+     *
+     * 请求中可以携带的本次查询结果 预期的seqNo/primaryTerm 如果不符合预期 抛出异常
      * @param ifSeqNo
      * @param ifPrimaryTerm
      * @param fetchSourceContext 本次是否要fetch  source数据
@@ -132,6 +139,8 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         currentMetric.inc();
         try {
             long now = System.nanoTime();
+
+            // 执行get请求
             GetResult getResult =
                 innerGet(id, gFields, realtime, version, versionType, ifSeqNo, ifPrimaryTerm, fetchSourceContext);
 
@@ -148,7 +157,8 @@ public final class ShardGetService extends AbstractIndexShardComponent {
     }
 
     /**
-     * 通过相关参数 利用engine进行数据的查询    默认情况下之获取routingField信息
+     * 根据 req.id() 查找之前写入到lucene中的 id匹配的最新doc
+     * 在 req中可以指定预期的数据对应的seqNo 以及此时 primary的任期  如果不符合预期会抛出异常
      * @param id
      * @param ifSeqNo
      * @param ifPrimaryTerm
@@ -177,7 +187,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         currentMetric.inc();
         try {
             long now = System.nanoTime();
-            // 当上下文为null时 尝试设置默认值
+            // 当上下文为null时 尝试设置默认值    当fetchSourceContext不为空时 不进行处理
             fetchSourceContext = normalizeFetchSourceContent(fetchSourceContext, fields);
             GetResult getResult = innerGetLoadFromStoredFields(id, fields, fetchSourceContext, engineGetResult, mapperService);
             if (getResult.isExists()) {
@@ -230,18 +240,18 @@ public final class ShardGetService extends AbstractIndexShardComponent {
      * @param versionType
      * @param ifSeqNo
      * @param ifPrimaryTerm
-     * @param fetchSourceContext  是否要拉取source
+     * @param fetchSourceContext  在执行get请求时使用的上下文信息
      * @return
      */
     private GetResult innerGet(String id, String[] gFields, boolean realtime, long version, VersionType versionType,
                                long ifSeqNo, long ifPrimaryTerm, FetchSourceContext fetchSourceContext) {
-        // 做一些标准化处理
+        // 做一些标准化处理   当fetchSourceContext不为空时 不需要处理
         fetchSourceContext = normalizeFetchSourceContent(fetchSourceContext, gFields);
 
-        // 将请求体中携带的id 作为term 去lucene中查询数据
+        // 将req.id() 作为查询条件 去lucene中查询数据
         Term uidTerm = new Term(IdFieldMapper.NAME, Uid.encodeId(id));
-        // 通过engine 对象获取到查询结果 应该就是在底层使用了 indexReader
-        // 注意在get请求时 没有传入field信息
+
+        // 执行get请求
         Engine.GetResult get = indexShard.get(new Engine.Get(realtime, realtime, id, uidTerm)
             .version(version).versionType(versionType).setIfSeqNo(ifSeqNo).setIfPrimaryTerm(ifPrimaryTerm));
         assert get.isFromTranslog() == false || realtime : "should only read from translog if realtime enabled";

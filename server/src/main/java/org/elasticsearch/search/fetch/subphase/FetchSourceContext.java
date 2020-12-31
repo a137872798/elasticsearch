@@ -45,9 +45,6 @@ import java.util.function.Function;
  */
 public class FetchSourceContext implements Writeable, ToXContentObject {
 
-    /**
-     * parseField 里面就是有很多name 也不知道是干嘛的
-     */
     public static final ParseField INCLUDES_FIELD = new ParseField("includes", "include");
     public static final ParseField EXCLUDES_FIELD = new ParseField("excludes", "exclude");
 
@@ -55,17 +52,26 @@ public class FetchSourceContext implements Writeable, ToXContentObject {
     public static final FetchSourceContext DO_NOT_FETCH_SOURCE = new FetchSourceContext(false);
     private final boolean fetchSource;
 
-    // 应该是执行在fetch中 包含的 以及不需要的field吧
     private final String[] includes;
     private final String[] excludes;
     private Function<Map<String, ?>, Map<String, Object>> filter;
 
+    /**
+     *
+     * @param fetchSource  是否拉取数据
+     * @param includes     包含哪些field
+     * @param excludes     排除哪些field
+     */
     public FetchSourceContext(boolean fetchSource, String[] includes, String[] excludes) {
         this.fetchSource = fetchSource;
         this.includes = includes == null ? Strings.EMPTY_ARRAY : includes;
         this.excludes = excludes == null ? Strings.EMPTY_ARRAY : excludes;
     }
 
+    /**
+     * 是否拉取数据源
+     * @param fetchSource
+     */
     public FetchSourceContext(boolean fetchSource) {
         this(fetchSource, Strings.EMPTY_ARRAY, Strings.EMPTY_ARRAY);
     }

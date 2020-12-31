@@ -1742,6 +1742,7 @@ public abstract class Engine implements Closeable {
 
     /**
      * 生成一个get请求
+     * get请求只能通过id 去匹配   每次写入一个索引数据时 如果没有指定id 那么会生成一个uuid
      */
     public static class Get {
         private final boolean realtime;
@@ -1753,13 +1754,16 @@ public abstract class Engine implements Closeable {
          */
         private long version = Versions.MATCH_ANY;
         private VersionType versionType = VersionType.INTERNAL;
-        // 查询出来的结果设置的值是否匹配
+
+        /**
+         * 在req中 可以指定预期的seqNo 与 primaryTerm 如果查询结果与预期不匹配会抛出异常
+         */
         private long ifSeqNo = UNASSIGNED_SEQ_NO;
         private long ifPrimaryTerm = UNASSIGNED_PRIMARY_TERM;
 
         /**
          *
-         * @param realtime
+         * @param realtime  是否查询实时数据 可能会间接触发lucene的刷盘
          * @param readFromTranslog
          * @param id
          * @param uid

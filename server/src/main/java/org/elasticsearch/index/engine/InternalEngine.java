@@ -884,6 +884,7 @@ public class InternalEngine extends Engine {
         try (ReleasableLock ignored = readLock.acquire()) {
             ensureOpen();
             SearcherScope scope;
+            // 当本次请求要求获取实时数据  对应的scope为Internal
             if (get.realtime()) {
                 VersionValue versionValue = null;
                 // 可以看到先是通过 get内部的数据流 也就是id信息  获取对应的verion 信息   上面只是版本的校验 还没有到读取数据的时候
@@ -945,7 +946,7 @@ public class InternalEngine extends Engine {
                 }
                 scope = SearcherScope.INTERNAL;
             } else {
-                // 对应非实时查询
+                // 非实时查询 对应外部查询源
                 // we expose what has been externally expose in a point in time snapshot via an explicit refresh
                 scope = SearcherScope.EXTERNAL;
             }
