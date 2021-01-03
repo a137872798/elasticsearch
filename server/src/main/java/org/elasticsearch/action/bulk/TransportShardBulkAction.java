@@ -292,25 +292,30 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             switch (updateResult.getResponseResult()) {
                 case CREATED:
                 case UPDATED:
-                    // 此时内部的indexRequest包含最新的source信息
+                    // 实际上更新操作 或者插入操作都是生成一个新的source 并准备插入到lucene中
                     IndexRequest indexRequest = updateResult.action();
+                    // 通过当前主分片 获取相关的索引信息
                     IndexMetadata metadata = context.getPrimary().indexSettings().getIndexMetadata();
                     MappingMetadata mappingMd = metadata.mapping();
-                    // 实际上就是为 indexReq设置id
+                    // 检测id是否已设置 未设置的情况 自动生成
                     indexRequest.process(metadata.getCreationVersion(), mappingMd, updateRequest.concreteIndex());
                     context.setRequestToExecute(indexRequest);
                     break;
+                    // 当使用script处理时 才会出现delete 先忽略
                 case DELETED:
                     context.setRequestToExecute(updateResult.action());
                     break;
+                    // 当执行更新数据 但是发现实际上数据没有变化时 就会选择插入一个noop
                 case NOOP:
                     context.markOperationAsNoOp(updateResult.action());
+                    // 本次处理已经结束  同时自动切换到下一个req
                     context.markAsCompleted(context.getExecutionResult());
                     return true;
                 default:
                     throw new IllegalStateException("Illegal update operation " + updateResult.getResponseResult());
             }
         } else {
+            // 其余类型不需要基于原来的数据 所以直接设置就好
             context.setRequestToExecute(context.getCurrent());
             updateResult = null;
         }
@@ -319,11 +324,13 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
 
         final IndexShard primary = context.getPrimary();
         final long version = context.getRequestToExecute().version();
+        // 代表本次发起的是删除操作
         final boolean isDelete = context.getRequestToExecute().opType() == DocWriteRequest.OpType.DELETE;
         final Engine.Result result;
-        // 使用 indexShard执行不同的操作  实际上就会委托给内部的engine执行任务
+        // 开始执行删除操作
         if (isDelete) {
             final DeleteRequest request = context.getRequestToExecute();
+            // 注意这些 ifXXX条件 当id对应的doc 不满足条件时 会抛出异常
             result = primary.applyDeleteOperationOnPrimary(version, request.id(), request.versionType(),
                 request.ifSeqNo(), request.ifPrimaryTerm());
         } else {
