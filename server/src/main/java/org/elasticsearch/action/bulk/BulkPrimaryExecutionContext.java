@@ -229,11 +229,12 @@ class BulkPrimaryExecutionContext {
     /**
      * sets the request that should actually be executed on the primary. This can be different then the request
      * received from the user (specifically, an update request is translated to an indexing or delete request).
-     * 设置当前正在处理的req   在bulk的prepare阶段  可能会更新 docWriterReq.source属性
+     * 设置某次 lucene操作时使用的 req对象
      */
     public void setRequestToExecute(DocWriteRequest writeRequest) {
         assert assertInvariants(ItemProcessingState.INITIAL);
         requestToExecute = writeRequest;
+        // 在恢复操作中 不会先对事务日志进行持久化   而在写入过程中是先进入到事务日志阶段
         currentItemState = ItemProcessingState.TRANSLATED;
         assert assertInvariants(ItemProcessingState.TRANSLATED);
     }
@@ -261,7 +262,10 @@ class BulkPrimaryExecutionContext {
         assertInvariants(ItemProcessingState.INITIAL);
     }
 
-    /** completes the operation without doing anything on the primary */
+    /**
+     * completes the operation without doing anything on the primary
+     * 当发现本次操作是一个 noop操作  并且因为是noop所以直接设置成 executed
+     */
     public void markOperationAsNoOp(DocWriteResponse response) {
         assertInvariants(ItemProcessingState.INITIAL);
         executionResult = new BulkItemResponse(getCurrentItem().id(), getCurrentItem().request().opType(), response);

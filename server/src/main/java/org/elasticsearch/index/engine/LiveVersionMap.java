@@ -359,6 +359,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
             return value;
         }
 
+        // 墓碑容器中仅 记录已经被删除的数据
         return tombstones.get(uid);
     }
 

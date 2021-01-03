@@ -1217,8 +1217,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 生成一次删除操作 并通过engine 进行写入
-     *
+     * 在主分片上执行删除操作
      * @param version
      * @param id
      * @param versionType
@@ -1232,6 +1231,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         throws IOException {
         assert versionType.validateVersionForWrites(version);
         return applyDeleteOperation(getEngine(), UNASSIGNED_SEQ_NO, getOperationPrimaryTerm(), version, id, versionType,
+            // 注意此时的 origin为 Primary  不同的origin会走不同的逻辑
             ifSeqNo, ifPrimaryTerm, Engine.Operation.Origin.PRIMARY);
     }
 
@@ -1274,6 +1274,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             : "op term [ " + opPrimaryTerm + " ] > shard term [" + getOperationPrimaryTerm() + "]";
         ensureWriteAllowed(origin);
         final Term uid = new Term(IdFieldMapper.NAME, Uid.encodeId(id));
+
+        // 将相关参数包装成一个 delete对象
         final Engine.Delete delete = prepareDelete(id, uid, seqNo, opPrimaryTerm, version,
             versionType, origin, ifSeqNo, ifPrimaryTerm);
         return delete(engine, delete);
@@ -1310,6 +1312,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @throws IOException
      */
     private Engine.DeleteResult delete(Engine engine, Engine.Delete delete) throws IOException {
+        // 每次执行操作时都会设置该标识   当其他后台线程尝试刷盘时 就会通过该标记判断是否有新数据写入
         active.set(true);
         final Engine.DeleteResult result;
         // 监听器只是做了一些数据统计工作
@@ -1323,6 +1326,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             indexingOperationListeners.postDelete(shardId, delete, e);
             throw e;
         }
+        // 执行删除后会更新 MemoryController 内部的计数值
         indexingOperationListeners.postDelete(shardId, delete, result);
         return result;
     }
@@ -2425,10 +2429,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     public void flushOnIdle(long inactiveTimeNS) {
         // 首先确保engine没有被关闭
         Engine engineOrNull = getEngineOrNull();
+
+        // 代表长时间没有刷盘
         if (engineOrNull != null && System.nanoTime() - engineOrNull.getLastWriteNanos() >= inactiveTimeNS) {
-            // 哦哦 这是active标记的作用 当定时触发刷盘时 如果这段时间内没有写入操作实际上就不需要进行刷盘了
+            // active 用于标记近期是否发生过操作 如果还是false 就不需要刷盘了
             boolean wasActive = active.getAndSet(false);
-            // 代表最近发起过一次写入操作
             if (wasActive) {
                 logger.debug("flushing shard on inactive");
                 threadPool.executor(ThreadPool.Names.FLUSH).execute(new AbstractRunnable() {

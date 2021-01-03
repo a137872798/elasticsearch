@@ -86,6 +86,9 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
 
     private static final ShardId NO_SHARD_ID = null;
 
+    /**
+     * 该请求对象在生成时 可以先不设置id属性  根据需要可以自动生成
+     */
     private String id;
     @Nullable
     private String routing;

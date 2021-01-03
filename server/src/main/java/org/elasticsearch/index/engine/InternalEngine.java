@@ -207,6 +207,7 @@ public class InternalEngine extends Engine {
     // max_seq_no_of_updates_or_deletes tracks the max seq_no of update or delete operations that have been processed in this engine.
     // An index request is considered as an update if it overwrites existing documents with the same docId in the Lucene index.
     // The value of this marker never goes backwards, and is tracked/updated differently on primary and replica.
+    // 记录update/delete最大的seqNo
     private final AtomicLong maxSeqNoOfUpdatesOrDeletes;
     private final CounterMetric numVersionLookups = new CounterMetric();
     private final CounterMetric numIndexVersionsLookups = new CounterMetric();
@@ -1014,7 +1015,6 @@ public class InternalEngine extends Engine {
         // 在safe模式下 获取该id对应的版本号信息
         VersionValue versionValue = getVersionFromMap(op.uid().bytes());
         assert incrementVersionLookup();
-        // TODO 先不考虑 存在的情况 因为refresh过程中会清空map的数据
         if (versionValue != null) {
             // 将本次的operation 信息 与查询出来的versionMap中的信息做比较
             status = compareOpToVersionMapOnSeqNo(op.id(), op.seqNo(), op.primaryTerm(), versionValue);
@@ -1046,14 +1046,16 @@ public class InternalEngine extends Engine {
 
     /**
      * resolves the current version of the document, returning null if not found
-     * 解析当前operation的版本  当没有找到时返回null
+     * 通过本次op的相关参数 找到原doc  并抽取出版本seqNo等信息
      */
     private VersionValue resolveDocVersion(final Operation op, boolean loadSeqNo) throws IOException {
         assert incrementVersionLookup(); // used for asserting in tests
+        // 尝试直接从 versionMap中查找
         VersionValue versionValue = getVersionFromMap(op.uid().bytes());
         // 当没有从 versionMap中直接找到 只能选择通过searcher查找
         if (versionValue == null) {
             assert incrementIndexVersionLookup(); // used for asserting in tests
+            // 以下操作和通过 UpdateHelper 在执行update前 先通过get查询旧数据的操作一样
             final VersionsAndSeqNoResolver.DocIdAndVersion docIdAndVersion;
             try (Searcher searcher = acquireSearcher("load_version", SearcherScope.INTERNAL)) {
                  docIdAndVersion = VersionsAndSeqNoResolver.loadDocIdAndVersion(searcher.getIndexReader(), op.uid(), loadSeqNo);
@@ -1061,7 +1063,8 @@ public class InternalEngine extends Engine {
             if (docIdAndVersion != null) {
                 versionValue = new IndexVersionValue(null, docIdAndVersion.version, docIdAndVersion.seqNo, docIdAndVersion.primaryTerm);
             }
-        // 当version存在的情况下 发现被标记成 delete了 返回null
+            // 这里开启了惰性检测 当获取到的versionValue 刚好是删除类型  并且超过了维护时间 (也就是应该有一个间接删除长时间存在的versionValue的逻辑)
+            // 那么手动置空   同时返回null的深层逻辑就是该记录本身已经从lucene中被删除了
         } else if (engineConfig.isEnableGcDeletes() && versionValue.isDelete() &&
             (engineConfig.getThreadPool().relativeTimeInMillis() - ((DeleteVersionValue)versionValue).time) > getGcDeletesInMillis()) {
             versionValue = null;
@@ -1150,7 +1153,7 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 为某个操作生成一个 seq
+     * 实际上只有主分片会调用该方法 因为只有主分片能够确定正确的seqNo
      * @param operation
      * @return
      */
@@ -1732,13 +1735,14 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 执行一次删除操作
+     * 到了 engine层就涉及到 与lucene的交互  这里根据delete信息 执行删除操作
      * @param delete operation to perform
      * @return
      * @throws IOException
      */
     @Override
     public DeleteResult delete(Delete delete) throws IOException {
+        // TODO 在执行删除前 将以id作为缓存键的 缓存对象设置成需要在安全模式下访问
         versionMap.enforceSafeAccess();
         assert Objects.equals(delete.uid().field(), IdFieldMapper.NAME) : delete.uid().field();
         assert assertIncomingSequenceNumber(delete.origin(), delete.seqNo());
@@ -1746,9 +1750,11 @@ public class InternalEngine extends Engine {
         // NOTE: we don't throttle this when merges fall behind because delete-by-id does not create new segments:
         try (ReleasableLock ignored = readLock.acquire(); Releasable ignored2 = versionMap.acquireLock(delete.uid().bytes())) {
             ensureOpen();
-            // 更新最后的写入时间戳 跟处理 Index时一样
+
+            // 记录最新一次op的时间戳
             lastWriteNanos = delete.startTime();
-            // 通过版本号校验后得到一个描述处理方式的 strategy
+
+            // 在进行相关判断后 生成策略对象 决定了本次操作会如何进行
             final DeletionStrategy plan = deletionStrategyForOperation(delete);
 
             // 如果已经产生了异常 那么结果也提前设置好了 是一个失败结果
@@ -1756,22 +1762,21 @@ public class InternalEngine extends Engine {
                 deleteResult = plan.earlyResultOnPreflightError.get();
             } else {
                 // generate or register sequence number
-                // TODO 先忽略 主分片的写入逻辑
                 if (delete.origin() == Operation.Origin.PRIMARY) {
-                    // 为delete生成seqNo
+                    // 唯一的区别就是生成了seqNo  只有主分片才能清楚的知道   实际上就是获取localCheckpointTracker.nextSeq
                     delete = new Delete(delete.id(), delete.uid(), generateSeqNoForOperationOnPrimary(delete),
                         delete.primaryTerm(), delete.version(), delete.versionType(), delete.origin(), delete.startTime(),
                         delete.getIfSeqNo(), delete.getIfPrimaryTerm());
 
                     advanceMaxSeqNoOfUpdatesOrDeletesOnPrimary(delete.seqNo());
                 } else {
-                    // 更新此时观测到的最大的seq
+                    // 作为副本则会更新此时观测到的最大的seq
                     markSeqNoAsSeen(delete.seqNo());
                 }
 
                 assert delete.seqNo() >= 0 : "ops should have an assigned seq no.; origin: " + delete.origin();
 
-                // 代表需要从lucene中删除该数据  当发现是stale操作 也需要重复执行(主要是为了重做事务日志)
+                // 代表需要从lucene中删除该数据  当发现是stale操作 也需要重复执行  TODO 旧数据执行的意义是什么???
                 if (plan.deleteFromLucene || plan.addStaleOpToLucene) {
                     deleteResult = deleteInLucene(delete, plan);
                 } else {
@@ -1826,7 +1831,7 @@ public class InternalEngine extends Engine {
      * @throws IOException
      */
     protected DeletionStrategy deletionStrategyForOperation(final Delete delete) throws IOException {
-        // TODO 先忽略主分片的删除操作
+        // 在主分片下的策略与其余情况不同
         if (delete.origin() == Operation.Origin.PRIMARY) {
             return planDeletionAsPrimary(delete);
         } else {
@@ -1857,9 +1862,9 @@ public class InternalEngine extends Engine {
         } else {
             // 实际上delete 也就是针对之前写入的index 这里就是匹配 seq/id 等信息
             // 推测是这样 如果某个op对应的seq已经更新到 processedCheckpoint上了 就代表这个操作已经同步到事务日志中了 就完全不需要处理了
-            // 下面的情况 当发现seq重复 却没有写入到事务文件中 会再一次作用到lucene上 TODO 是为了重做事务日志吗  如果本身不需要记录事务操作又要怎么处理???
+            // 下面的情况 当发现seq重复 却没有写入到事务文件中 会再一次作用到lucene上
             final OpVsLuceneDocStatus opVsLucene = compareOpToLuceneDocBasedOnSeqNo(delete);
-            // 如果查询到记录 应该就代表这条记录没有被删除
+            // 删除操作也会写入到lucene中  这里是代表本次操作对应的seqNo 实际上已经存在于lucene中了   TODO 事务日志是没有必要重做的啊
             if (opVsLucene == OpVsLuceneDocStatus.OP_STALE_OR_EQUAL) {
                 plan = DeletionStrategy.processAsStaleOp(delete.version());
             } else {
@@ -1884,21 +1889,21 @@ public class InternalEngine extends Engine {
     private DeletionStrategy planDeletionAsPrimary(Delete delete) throws IOException {
         assert delete.origin() == Operation.Origin.PRIMARY : "planing as primary but got " + delete.origin();
         // resolve operation from external to internal
-        // 找到当前delete.id 对应的版本
+        // 根据本次delete操作指定的id 找到数据并进行删除
         final VersionValue versionValue = resolveDocVersion(delete, delete.getIfSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO);
         assert incrementVersionLookup();
         final long currentVersion;
         final boolean currentlyDeleted;
-        // 版本不存在 代表已经被删除了
+
+        // 返回null 代表记录不存在
         if (versionValue == null) {
             currentVersion = Versions.NOT_FOUND;
             currentlyDeleted = true;
         } else {
-            // 设置当前版本号 以及是否已经被删除
+            // 代表VersionMap中 有该id的最新缓存信息 可能获取到的是一个已经删除的标识
             currentVersion = versionValue.version;
             currentlyDeleted = versionValue.isDelete();
         }
-        // 下面的处理和 IndexStrategy是一样的
 
         final DeletionStrategy plan;
         // 当前已经被删除 无法校验版本号 在strategy中生成异常结果
@@ -1906,10 +1911,9 @@ public class InternalEngine extends Engine {
             final VersionConflictEngineException e = new VersionConflictEngineException(shardId, delete.id(),
                 delete.getIfSeqNo(), delete.getIfPrimaryTerm(), SequenceNumbers.UNASSIGNED_SEQ_NO, SequenceNumbers.UNASSIGNED_PRIMARY_TERM);
             plan = DeletionStrategy.skipDueToVersionConflict(e, currentVersion, true);
-            // 当版本号不匹配时抛出异常
+            // 查询到结果 但是版本号不匹配
         } else if (delete.getIfSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO && (
-            versionValue.seqNo != delete.getIfSeqNo() || versionValue.term != delete.getIfPrimaryTerm()
-        )) {
+            versionValue.seqNo != delete.getIfSeqNo() || versionValue.term != delete.getIfPrimaryTerm())) {
             final VersionConflictEngineException e = new VersionConflictEngineException(shardId, delete.id(),
                 delete.getIfSeqNo(), delete.getIfPrimaryTerm(), versionValue.seqNo, versionValue.term);
             plan = DeletionStrategy.skipDueToVersionConflict(e, currentVersion, currentlyDeleted);
@@ -1917,6 +1921,7 @@ public class InternalEngine extends Engine {
             final VersionConflictEngineException e = new VersionConflictEngineException(shardId, delete, currentVersion, currentlyDeleted);
             plan = DeletionStrategy.skipDueToVersionConflict(e, currentVersion, currentlyDeleted);
         } else {
+            // 其余情况正常执行delete操作
             plan = DeletionStrategy.processNormally(currentlyDeleted, delete.versionType().updateVersion(currentVersion, delete.version()));
         }
         return plan;
@@ -1942,7 +1947,7 @@ public class InternalEngine extends Engine {
             assert doc.getField(SeqNoFieldMapper.TOMBSTONE_NAME) != null :
                 "Delete tombstone document but _tombstone field is not set [" + doc + " ]";
 
-            // 这些doc都追加上了 软删除字段 TODO 为啥
+            // 这些doc都追加上了 软删除字段 TODO 怎么使用
             doc.add(softDeletesField);
             // addStaleOpToLucene  代表需要再次写入 还不知道是为啥
             if (plan.addStaleOpToLucene || plan.currentlyDeleted) {
@@ -1999,20 +2004,30 @@ public class InternalEngine extends Engine {
                 Optional.empty() : Optional.of(earlyResultOnPreflightError);
         }
 
+        /**
+         * 请求中要求检测版本号  但是记录已经不存在 无法校验导致的异常情况
+         * 又或者是找到了结果 但是版本号不匹配
+         * @param e
+         * @param currentVersion
+         * @param currentlyDeleted
+         * @return
+         */
         public static DeletionStrategy skipDueToVersionConflict(
                 VersionConflictEngineException e, long currentVersion, boolean currentlyDeleted) {
             final DeleteResult deleteResult = new DeleteResult(e, currentVersion, SequenceNumbers.UNASSIGNED_PRIMARY_TERM,
                 SequenceNumbers.UNASSIGNED_SEQ_NO, currentlyDeleted == false);
+            // 这种情况将不会将删除操作作用到lucene上
             return new DeletionStrategy(false, false, currentlyDeleted, Versions.NOT_FOUND, deleteResult);
         }
 
         /**
          *
          * @param currentlyDeleted  true代表delete对应的doc信息在lucene中无法被找到
-         * @param versionOfDeletion
+         * @param versionOfDeletion  本次操作后记录对应的版本号  针对某个id的记录 每次操作都会增加版本号
          * @return
          */
         static DeletionStrategy processNormally(boolean currentlyDeleted, long versionOfDeletion) {
+            // deleteFromLucene 代表要将删除操作作用到lucene上
             return new DeletionStrategy(true, false, currentlyDeleted, versionOfDeletion, null);
         }
 
@@ -3406,7 +3421,6 @@ public class InternalEngine extends Engine {
     /**
      * Refresh this engine **internally** iff the requesting seq_no is greater than the last refreshed checkpoint.
      * 尝试刷新内部的数据  会间接触发lucene.commit 也就是刷盘操作
-     * @param requestingSeqNo 本次要求该序列对应的数据已经完成刷盘
      */
     protected final void refreshIfNeeded(String source, long requestingSeqNo) {
         // lastRefreshedCheckpoint 对应上一次刷新时得到的检查点 如果本次传入的seq比上次检查点大 才有刷新的必要
