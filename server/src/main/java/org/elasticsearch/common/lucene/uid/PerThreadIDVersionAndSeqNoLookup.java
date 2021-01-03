@@ -75,19 +75,23 @@ final class PerThreadIDVersionAndSeqNoLookup {
      */
     PerThreadIDVersionAndSeqNoLookup(LeafReader reader, String uidField) throws IOException {
         this.uidField = uidField;
-        // 获取每个包含_id的doc 的docValue被分词后的结果 也就是terms
+        // 将"_id" 对应的所有docValue取出来
         final Terms terms = reader.terms(uidField);
         if (terms == null) {
             // If a segment contains only no-ops, it does not have _uid but has both _soft_deletes and _tombstone fields.
-            // 会专门存 _soft_delete/_tombstone 吗 是ES自己加的吧
+
+            // 如果某个segment下没有任何doc携带"_id" 就代表仅包含 NOOP 这时获取2个特殊的field
             final NumericDocValues softDeletesDV = reader.getNumericDocValues(Lucene.SOFT_DELETES_FIELD);
             final NumericDocValues tombstoneDV = reader.getNumericDocValues(SeqNoFieldMapper.TOMBSTONE_NAME);
             // this is a special case when we pruned away all IDs in a segment since all docs are deleted.
+            // 这里是异常检测 先忽略
             final boolean allDocsDeleted = (softDeletesDV != null && reader.numDocs() == 0);
             if ((softDeletesDV == null || tombstoneDV == null) && allDocsDeleted == false) {
                 throw new IllegalArgumentException("reader does not have _uid terms but not a no-op segment; " +
                     "_soft_deletes [" + softDeletesDV + "], _tombstone [" + tombstoneDV + "]");
             }
+
+            // 获取所有id信息
             termsEnum = null;
         } else {
             termsEnum = terms.iterator();
@@ -105,6 +109,9 @@ final class PerThreadIDVersionAndSeqNoLookup {
      * still work with reader wrappers that hide some documents while still
      * using the same cache key. Otherwise we'd have to disable caching
      * entirely for these readers.
+     * @param id 根据目标条件查询数据
+     * @param loadSeqNo 本次查询结果是否要携带 seqNo等信息
+     * 从之前缓存的数据中 按照条件查询结果  缓存是什么时候失效的呢
      */
     public DocIdAndVersion lookupVersion(BytesRef id, boolean loadSeqNo, LeafReaderContext context)
         throws IOException {
@@ -125,6 +132,7 @@ final class PerThreadIDVersionAndSeqNoLookup {
                 term = UNASSIGNED_PRIMARY_TERM;
             }
             final long version = readNumericDocValues(context.reader(), VersionFieldMapper.NAME, docID);
+            // docId是某个segment上的相对偏移量  docBase代表起始位置
             return new DocIdAndVersion(docID, version, seqNo, term, context.reader(), context.docBase);
         } else {
             return null;
@@ -134,7 +142,7 @@ final class PerThreadIDVersionAndSeqNoLookup {
     /**
      * returns the internal lucene doc id for the given id bytes.
      * {@link DocIdSetIterator#NO_MORE_DOCS} is returned if not found
-     * 找到与id匹配的doc 在semgent下的id
+     * 找到与id匹配的doc
      * */
     private int getDocID(BytesRef id, LeafReaderContext context) throws IOException {
         // termsEnum can possibly be null here if this leaf contains only no-ops.
@@ -142,9 +150,11 @@ final class PerThreadIDVersionAndSeqNoLookup {
             final Bits liveDocs = context.reader().getLiveDocs();
             int docID = DocIdSetIterator.NO_MORE_DOCS;
             // there may be more than one matching docID, in the case of nested docs, so we want the last one:
+            // 通过terms命中的数据 获取到对应的doc数据  记得是每个term都有一个hash结构 记录每次term出现的位置 将他们的信息合并就是 docsEnum
             docsEnum = termsEnum.postings(docsEnum, 0);
             // 当匹配到多个doc时  只返回最后一个
             for (int d = docsEnum.nextDoc(); d != DocIdSetIterator.NO_MORE_DOCS; d = docsEnum.nextDoc()) {
+                // 确保该doc没有被删除
                 if (liveDocs != null && liveDocs.get(d) == false) {
                     continue;
                 }

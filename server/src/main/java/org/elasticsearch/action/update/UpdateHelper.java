@@ -68,11 +68,13 @@ public class UpdateHelper {
 
     /**
      * Prepares an update request by converting it into an index or delete request or an update response (no action).
-     * @param request 本次更新请求
+     *
+     * @param request    本次更新请求
      * @param indexShard 本次要处理的分片
      */
     public Result prepare(UpdateRequest request, IndexShard indexShard, LongSupplier nowInMillis) {
         // 根据参数信息从engine中获取结果信息
+        // 当realtime 为true时  使用SearcherScope.INTERNAL   否则使用 SearcherScope.EXTERNAL
         final GetResult getResult = indexShard.getService().getForUpdate(
             request.id(), request.ifSeqNo(), request.ifPrimaryTerm());
         return prepare(indexShard.shardId(), request, getResult, nowInMillis);
@@ -88,11 +90,11 @@ public class UpdateHelper {
         if (getResult.isExists() == false) {
             // If the document didn't exist, execute the update request as an upsert
             return prepareUpsert(shardId, request, getResult, nowInMillis);
-            // 如果查询到的结果没有source(field) 那么抛出异常
+            // 代表是更新请求  首先必须在之前的查询结果中返回原source 如果没有就无法进行更新
         } else if (getResult.internalSourceRef() == null) {
             // no source, we can't do anything, throw a failure...
             throw new DocumentSourceMissingException(shardId, request.id());
-            // 如果请求中没有包含脚本更新的描述信息  使用携带的doc
+            // 普通的更新请求
         } else if (request.script() == null && request.doc() != null) {
             // The request has no script, it is a new doc that should be merged with the old document
             // 处理普通的更新请求 核心实现就是将2个map进行合并
@@ -138,66 +140,70 @@ public class UpdateHelper {
     /**
      * Prepare the request for upsert, executing the upsert script if present, and returning a {@code Result} containing a new
      * {@code IndexRequest} to be executed on the primary and replicas.
-     * @param shardId 本次处理数据对应的分片id
-     * @param request 本次更新的请求体
+     *
+     * @param shardId   本次处理数据对应的分片id
+     * @param request   本次更新的请求体
      * @param getResult 之前的查询结果 此时内部应该是没有数据的 isExist为false
-     * 采用相关参数作为条件 无法get到数据 那么本次实质就是一次插入请求
+     *                  生成一个 插入用的请求   当查询原数据不存在时 无法进行更新请求 就会执行插入请求
      */
     Result prepareUpsert(ShardId shardId, UpdateRequest request, final GetResult getResult, LongSupplier nowInMillis) {
-            if (request.upsertRequest() == null && !request.docAsUpsert()) {
-                throw new DocumentMissingException(shardId, request.id());
+        // 如果 update请求中没有携带 IndexReq 那么无法执行插入操作
+        if (request.upsertRequest() == null && !request.docAsUpsert()) {
+            throw new DocumentMissingException(shardId, request.id());
+        }
+        // 根据情况选择不同的indexRequest
+        IndexRequest indexRequest = request.docAsUpsert() ? request.doc() : request.upsertRequest();
+        // TODO 先不看脚本更新的逻辑
+        // 代表尝试使用 脚本来进行更新
+        if (request.scriptedUpsert() && request.script() != null) {
+            // Run the script to perform the create logic
+            IndexRequest upsert = request.upsertRequest();
+            // 使用脚本来更新source数据
+            Tuple<UpdateOpType, Map<String, Object>> upsertResult = executeScriptedUpsert(upsert.sourceAsMap(), request.script,
+                nowInMillis);
+            switch (upsertResult.v1()) {
+                case CREATE:
+                    // 更新indexReq的数据
+                    indexRequest = Requests.indexRequest(request.index()).source(upsertResult.v2());
+                    break;
+                case NONE:
+                    // 代表本次实际上是一个 NOOP 操作
+                    UpdateResponse update = new UpdateResponse(shardId, getResult.getId(),
+                        getResult.getSeqNo(), getResult.getPrimaryTerm(), getResult.getVersion(), DocWriteResponse.Result.NOOP);
+                    update.setGetResult(getResult);
+                    return new Result(update, DocWriteResponse.Result.NOOP, upsertResult.v2(), XContentType.JSON);
+                default:
+                    // It's fine to throw an exception here, the leniency is handled/logged by `executeScriptedUpsert`
+                    throw new IllegalArgumentException("unknown upsert operation, got: " + upsertResult.v1());
             }
-            // 根据情况选择不同的indexRequest
-            IndexRequest indexRequest = request.docAsUpsert() ? request.doc() : request.upsertRequest();
-            // 代表尝试使用 脚本来进行更新
-            if (request.scriptedUpsert() && request.script() != null) {
-                // Run the script to perform the create logic
-                IndexRequest upsert = request.upsertRequest();
-                // 使用脚本来更新source数据
-                Tuple<UpdateOpType, Map<String, Object>> upsertResult = executeScriptedUpsert(upsert.sourceAsMap(), request.script,
-                    nowInMillis);
-                switch (upsertResult.v1()) {
-                    case CREATE:
-                        // 更新indexReq的数据
-                        indexRequest = Requests.indexRequest(request.index()).source(upsertResult.v2());
-                        break;
-                    case NONE:
-                        // 代表本次实际上是一个 NOOP 操作
-                        UpdateResponse update = new UpdateResponse(shardId, getResult.getId(),
-                                getResult.getSeqNo(), getResult.getPrimaryTerm(), getResult.getVersion(), DocWriteResponse.Result.NOOP);
-                        update.setGetResult(getResult);
-                        return new Result(update, DocWriteResponse.Result.NOOP, upsertResult.v2(), XContentType.JSON);
-                    default:
-                        // It's fine to throw an exception here, the leniency is handled/logged by `executeScriptedUpsert`
-                        throw new IllegalArgumentException("unknown upsert operation, got: " + upsertResult.v1());
-                }
-            }
+        }
 
-            // 其余信息 会沿用之前的req
-            indexRequest.index(request.index())
-                    .id(request.id()).setRefreshPolicy(request.getRefreshPolicy()).routing(request.routing())
-                    .timeout(request.timeout()).waitForActiveShards(request.waitForActiveShards())
-                    // it has to be a "create!"
-                    .create(true);
+        // 其余信息 会沿用之前的req
+        indexRequest.index(request.index())
+            .id(request.id()).setRefreshPolicy(request.getRefreshPolicy()).routing(request.routing())
+            .timeout(request.timeout()).waitForActiveShards(request.waitForActiveShards())
+            // it has to be a "create!"
+            .create(true);
 
-            if (request.versionType() != VersionType.INTERNAL) {
-                // in all but the internal versioning mode, we want to create the new document using the given version.
-                indexRequest.version(request.version()).versionType(request.versionType());
-            }
+        // 这里还指定了版本类型
+        if (request.versionType() != VersionType.INTERNAL) {
+            // in all but the internal versioning mode, we want to create the new document using the given version.
+            indexRequest.version(request.version()).versionType(request.versionType());
+        }
 
-            return new Result(indexRequest, DocWriteResponse.Result.CREATED, null, null);
+        return new Result(indexRequest, DocWriteResponse.Result.CREATED, null, null);
     }
 
     /**
      * Calculate a routing value to be used, either the included index request's routing, or retrieved document's routing when defined.
-     * 计算路由信息
+     * 获取路由信息   路由信息决定了本次写入操作实际会作用到哪个shardId
      */
     @Nullable
     static String calculateRouting(GetResult getResult, @Nullable IndexRequest updateIndexRequest) {
         // 如果请求中已经携带了路由信息 直接返回
         if (updateIndexRequest != null && updateIndexRequest.routing() != null) {
             return updateIndexRequest.routing();
-            // 首先 req中没有routing信息  其次get结果中包含routing的信息
+            // 本次请求中没有指定routing 就从之前的数据中获取routing信息
         } else if (getResult.getFields().containsKey(RoutingFieldMapper.NAME)) {
             return getResult.field(RoutingFieldMapper.NAME).getValue().toString();
         } else {
@@ -208,27 +214,31 @@ public class UpdateHelper {
     /**
      * Prepare the request for merging the existing document with a new one, can optionally detect a noop change. Returns a {@code Result}
      * containing a new {@code IndexRequest} to be executed on the primary and replicas.
-     * @param shardId 本次处理的分片id
-     * @param request 包含本次更新请求的具体参数
-     * @param getResult 本次get请求的结果
+     *
+     * @param shardId    本次处理的分片id
+     * @param request    包含本次更新请求的具体参数
+     * @param getResult  本次get请求的结果
      * @param detectNoop 在执行更新操作前是否要检测本次是不是 NOOP操作
+     *                   对update请求做一些处理
+     *                   更新操作会指定之前doc的id 所以可以定位到同一个shardId 确保能够找到 如果是插入操作可能就没有id信息就会分配一个合适的shardId
      */
     Result prepareUpdateIndexRequest(ShardId shardId, UpdateRequest request, GetResult getResult, boolean detectNoop) {
 
+        // doc() 就是本次用于更新的请求
         final IndexRequest currentRequest = request.doc();
-        // 从req 或者get结果的 routing.field中获取路由信息
+        // 从请求中 或者本次查询结果中 获取routing 信息
         final String routing = calculateRouting(getResult, currentRequest);
         // 将内部的source转换成结构化数据
         final Tuple<XContentType, Map<String, Object>> sourceAndContent = XContentHelper.convertToMap(getResult.internalSourceRef(), true);
         final XContentType updateSourceContentType = sourceAndContent.v1();
         final Map<String, Object> updatedSourceAsMap = sourceAndContent.v2();
 
-        // 尝试将原始数据对应的map与本次传入的map进行合并  实际上就是map操作   返回结果就是数据是否发生了变化
+        // 更新操作就是将原本的数据查询出来 与本次req携带的map信息进行合并 并将最新的数据写入到lucene中 就完成了更新操作
         final boolean noop = !XContentHelper.update(updatedSourceAsMap, currentRequest.sourceAsMap(), detectNoop);
 
         // We can only actually turn the update into a noop if detectNoop is true to preserve backwards compatibility and to handle cases
         // where users repopulating multi-fields or adding synonyms, etc.
-        // 如果本次没有数据发生变化
+        // 如果本次没有数据发生变化 就不会执行这个操作了
         if (detectNoop && noop) {
             UpdateResponse update = new UpdateResponse(shardId, getResult.getId(),
                 getResult.getSeqNo(), getResult.getPrimaryTerm(), getResult.getVersion(), DocWriteResponse.Result.NOOP);
@@ -237,13 +247,13 @@ public class UpdateHelper {
             // 将本次结果包装成result返回
             return new Result(update, DocWriteResponse.Result.NOOP, updatedSourceAsMap, updateSourceContentType);
         } else {
-            // 更新本次的indexResult  同时将更新后的map作为结果
+            // 通过合并后的map作为本次要插入的数据
             final IndexRequest finalIndexRequest = Requests.indexRequest(request.index())
-                    .id(request.id()).routing(routing)
-                    .source(updatedSourceAsMap, updateSourceContentType)
-                    .setIfSeqNo(getResult.getSeqNo()).setIfPrimaryTerm(getResult.getPrimaryTerm())
-                    .waitForActiveShards(request.waitForActiveShards()).timeout(request.timeout())
-                    .setRefreshPolicy(request.getRefreshPolicy());
+                .id(request.id()).routing(routing)
+                .source(updatedSourceAsMap, updateSourceContentType)
+                .setIfSeqNo(getResult.getSeqNo()).setIfPrimaryTerm(getResult.getPrimaryTerm())
+                .waitForActiveShards(request.waitForActiveShards()).timeout(request.timeout())
+                .setRefreshPolicy(request.getRefreshPolicy());
             return new Result(finalIndexRequest, DocWriteResponse.Result.UPDATED, updatedSourceAsMap, updateSourceContentType);
         }
     }
@@ -274,29 +284,28 @@ public class UpdateHelper {
 
         UpdateOpType operation = UpdateOpType.lenientFromString((String) ctx.get(ContextFields.OP), logger, request.script.getIdOrCode());
 
-        @SuppressWarnings("unchecked")
-        final Map<String, Object> updatedSourceAsMap = (Map<String, Object>) ctx.get(ContextFields.SOURCE);
+        @SuppressWarnings("unchecked") final Map<String, Object> updatedSourceAsMap = (Map<String, Object>) ctx.get(ContextFields.SOURCE);
 
         switch (operation) {
             case INDEX:
                 final IndexRequest indexRequest = Requests.indexRequest(request.index())
-                        .id(request.id()).routing(routing)
-                        .source(updatedSourceAsMap, updateSourceContentType)
-                        .setIfSeqNo(getResult.getSeqNo()).setIfPrimaryTerm(getResult.getPrimaryTerm())
-                        .waitForActiveShards(request.waitForActiveShards()).timeout(request.timeout())
-                        .setRefreshPolicy(request.getRefreshPolicy());
+                    .id(request.id()).routing(routing)
+                    .source(updatedSourceAsMap, updateSourceContentType)
+                    .setIfSeqNo(getResult.getSeqNo()).setIfPrimaryTerm(getResult.getPrimaryTerm())
+                    .waitForActiveShards(request.waitForActiveShards()).timeout(request.timeout())
+                    .setRefreshPolicy(request.getRefreshPolicy());
                 return new Result(indexRequest, DocWriteResponse.Result.UPDATED, updatedSourceAsMap, updateSourceContentType);
             case DELETE:
                 DeleteRequest deleteRequest = Requests.deleteRequest(request.index())
-                        .id(request.id()).routing(routing)
-                        .setIfSeqNo(getResult.getSeqNo()).setIfPrimaryTerm(getResult.getPrimaryTerm())
-                        .waitForActiveShards(request.waitForActiveShards())
-                        .timeout(request.timeout()).setRefreshPolicy(request.getRefreshPolicy());
+                    .id(request.id()).routing(routing)
+                    .setIfSeqNo(getResult.getSeqNo()).setIfPrimaryTerm(getResult.getPrimaryTerm())
+                    .waitForActiveShards(request.waitForActiveShards())
+                    .timeout(request.timeout()).setRefreshPolicy(request.getRefreshPolicy());
                 return new Result(deleteRequest, DocWriteResponse.Result.DELETED, updatedSourceAsMap, updateSourceContentType);
             default:
                 // If it was neither an INDEX or DELETE operation, treat it as a noop
                 UpdateResponse update = new UpdateResponse(shardId, getResult.getId(),
-                        getResult.getSeqNo(), getResult.getPrimaryTerm(), getResult.getVersion(), DocWriteResponse.Result.NOOP);
+                    getResult.getSeqNo(), getResult.getPrimaryTerm(), getResult.getVersion(), DocWriteResponse.Result.NOOP);
                 update.setGetResult(extractGetResult(request, request.index(), getResult.getSeqNo(), getResult.getPrimaryTerm(),
                     getResult.getVersion(), updatedSourceAsMap, updateSourceContentType, getResult.internalSourceRef()));
                 return new Result(update, DocWriteResponse.Result.NOOP, updatedSourceAsMap, updateSourceContentType);
@@ -305,6 +314,7 @@ public class UpdateHelper {
 
     /**
      * 使用脚本更新source数据
+     *
      * @param script
      * @param ctx
      * @return

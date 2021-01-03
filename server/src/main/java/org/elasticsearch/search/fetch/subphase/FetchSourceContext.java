@@ -41,7 +41,7 @@ import java.util.function.Function;
 
 /**
  * Context used to fetch the {@code _source}.
- * 拉取数据时使用的上下文对象
+ * 拉取数据时使用的上下文对象   应该是用于决定会拉取哪些field  因为lucene.doc中可以存储很多field  在一些场景下 全部查询出来显得多余
  */
 public class FetchSourceContext implements Writeable, ToXContentObject {
 
@@ -69,8 +69,7 @@ public class FetchSourceContext implements Writeable, ToXContentObject {
     }
 
     /**
-     * 是否拉取数据源
-     * @param fetchSource
+     * @param fetchSource 是否获取 source.field
      */
     public FetchSourceContext(boolean fetchSource) {
         this(fetchSource, Strings.EMPTY_ARRAY, Strings.EMPTY_ARRAY);

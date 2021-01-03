@@ -35,7 +35,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Maps _uid value to its version information.
- * 该对象是监控某个资源的刷新
+ * 每次操作过的doc.id 对应的最新的版本号会维护在这个map中
+ * 每次一些写入但未刷盘的操作会将内部map设置成unsafe 代表此时的版本是不可靠的 往往要通过refresh 进行强制刷盘
  */
 final class LiveVersionMap implements ReferenceManager.RefreshListener, Accountable {
 
@@ -46,7 +47,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
 
     /**
-     * 用于查询版本号的对象
+     * 查询id 对应的版本号 seqNo等信息  这样某些get请求就可以通过这个容器快速检测结果  而不需要通过luceneSearcher
      */
     private static final class VersionLookup {
 
@@ -72,15 +73,16 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         // NOTE: these values can both be non-volatile since it's ok to read a stale value per doc ID. We serialize changes in the engine
         // that will prevent concurrent updates to the same document ID and therefore we can rely on the happens-before guanratee of the
         // map reference itself.
-        // 描述是否安全  默认为false
+        // 当该标识为false 时 代表数据可靠
         private boolean unsafe;
 
         // minimum timestamp of delete operations that were made while this map was active. this is used to make sure they are kept in
         // the tombstone
+        // 这里记录的是该map中 最早触发移除操作的时间戳
         private final AtomicLong minDeleteTimestamp = new AtomicLong(Long.MAX_VALUE);
 
         /**
-         * 存储byte流 与 版本号的关联关系
+         * 存储id与版本号的关联关系
          * @param map
          */
         private VersionLookup(Map<BytesRef, VersionValue> map) {
@@ -116,7 +118,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         }
 
         /**
-         * 每当发生一次remove的时候 会触发该方法 记录deleteVersionValue中最小的时间
+         * 当记录id版本号信息的 map中某个id对应的数据被移除时 会更新deleteTimestamp
          * @param delete
          */
         public void updateMinDeletedTimestamp(DeleteVersionValue delete) {
@@ -139,7 +141,12 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
 
         // this is not volatile since we don't need to maintain a happens before relation ship across doc IDs so it's enough to
         // have the volatile read of the Maps reference to make it visible even across threads.
+        // 代表是否需要在安全模式下访问
         boolean needsSafeAccess;
+
+        /**
+         * 代表old容器是否需要在安全模式下访问
+         */
         final boolean previousMapsNeededSafeAccess;
 
 
@@ -162,7 +169,7 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
         }
 
         /**
-         * 需要安全访问 或者上一个map需要安全访问
+         * 只要 old current其中一个需要在安全模式下访问  返回true
          * @return
          */
         boolean isSafeAccessMode() {
@@ -174,7 +181,6 @@ final class LiveVersionMap implements ReferenceManager.RefreshListener, Accounta
          * @return
          */
         boolean shouldInheritSafeAccess() {
-            // 如果之前的maps中没有数据  并且是不安全的
             final boolean mapHasNotSeenAnyOperations = current.isEmpty() && current.isUnsafe() == false;
             return needsSafeAccess
                 // we haven't seen any ops and map before needed it so we maintain it

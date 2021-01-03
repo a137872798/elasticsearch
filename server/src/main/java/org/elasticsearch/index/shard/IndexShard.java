@@ -1337,7 +1337,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         readAllowed();
         // DocumentMapper 描述了如何映射doc (doc也就是从lucene中查询出来的结果)
         DocumentMapper mapper = mapperService.documentMapper();
-        // 当映射服务的 docMapper对象还不存在  跳过查询
+        // 当映射服务的 docMapper对象还不存在  跳过查询  该对象一般会在创建index时生成
         if (mapper == null) {
             return GetResult.NOT_EXISTS;
         }

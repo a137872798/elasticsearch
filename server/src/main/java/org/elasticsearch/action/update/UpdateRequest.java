@@ -116,7 +116,7 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest>
     private ActiveShardCount waitForActiveShards = ActiveShardCount.DEFAULT;
 
     /**
-     * 2个indexRequest请求 当旧数据不存在时 默认会使用这个数据进行插入
+     * updateReq 中可以携带一个普通的 indexReq 对象  含义为当原数据不存在时 使用该req执行插入操作
      */
     private IndexRequest upsertRequest;
 
@@ -125,14 +125,14 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest>
      */
     private boolean scriptedUpsert = false;
     /**
-     * 代表使用doc替代 upsertRequest的数据
+     * 允许使用doc作为无数据时的插入请求
      */
     private boolean docAsUpsert = false;
     private boolean detectNoop = true;
     private Boolean preferV2Templates;
 
     /**
-     * 默认情况使用这个数据作为更新数据
+     * 默认的更新请求
      */
     @Nullable
     private IndexRequest doc;

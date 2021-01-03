@@ -663,9 +663,9 @@ public abstract class Engine implements Closeable {
 
 
     /**
-     * 发起一次get请求
+     * 通过searcher对象查询结果
      * @param get
-     * @param searcherFactory  根据name 和scope 可以生成一个searcher对象 这个对象是可以查数据的 什么样的字符串能直接定位这个呢???
+     * @param searcherFactory
      * @param scope
      * @return
      * @throws EngineException
@@ -675,7 +675,7 @@ public abstract class Engine implements Closeable {
         final Engine.Searcher searcher = searcherFactory.apply("get", scope);
         final DocIdAndVersion docIdAndVersion;
         try {
-            // 从reader中读取数据 并将结果包装成 DocIdAndVersion   看来get是直接对应某个id   简单讲就是一次lucene的标准查询
+            // 这里尝试使用get.uid 信息去查询doc 对应的 版本信息 用于与get请求中的 ifXXX做比较
             docIdAndVersion = VersionsAndSeqNoResolver.loadDocIdAndVersion(searcher.getIndexReader(), get.uid(), true);
         } catch (Exception e) {
             Releasables.closeWhileHandlingException(searcher);
@@ -685,7 +685,7 @@ public abstract class Engine implements Closeable {
 
         // 代表查询到了结果
         if (docIdAndVersion != null) {
-            // 检测相关属性是否匹配 不匹配则抛出异常
+            // 检测与请求中携带的 ifXXX是否匹配
             if (get.versionType().isVersionConflictForReads(docIdAndVersion.version, get.version())) {
                 Releasables.close(searcher);
                 throw new VersionConflictEngineException(shardId, get.id(),
@@ -703,7 +703,7 @@ public abstract class Engine implements Closeable {
         if (docIdAndVersion != null) {
             // don't release the searcher on this path, it is the
             // responsibility of the caller to call GetResult.release
-            // 因为走的是 SegmentReader 而不是translog 所以相关标识传入 false
+            // 通过lucene.searcher 查询出来的 所以fromTranslog为false
             return new GetResult(searcher, docIdAndVersion, false);
         } else {
             Releasables.close(searcher);
@@ -712,7 +712,7 @@ public abstract class Engine implements Closeable {
     }
 
     /**
-     * getFromSearch 指定从reader中查询 那么该方法就是从translog中查询
+     * 通过lucene查询数据
      * @param get
      * @param searcherFactory
      * @return
@@ -1764,8 +1764,8 @@ public abstract class Engine implements Closeable {
         /**
          *
          * @param realtime  是否查询实时数据 可能会间接触发lucene的刷盘
-         * @param readFromTranslog
-         * @param id
+         * @param readFromTranslog   是否从事务日志中读取 有一种实时数据的查询方式就是直接查询事务日志
+         * @param id    本次查询的doc.id
          * @param uid
          */
         public Get(boolean realtime, boolean readFromTranslog, String id, Term uid) {
@@ -1865,7 +1865,7 @@ public abstract class Engine implements Closeable {
          *
          * @param searcher   查询结果时使用的searcher对象
          * @param docIdAndVersion  命中的结果对应的docId 版本号等信息
-         * @param fromTranslog
+         * @param fromTranslog  本次数据是直接从事务日志中还原的还是从lucene数据中还原的
          */
         public GetResult(Engine.Searcher searcher, DocIdAndVersion docIdAndVersion, boolean fromTranslog) {
             this(true, docIdAndVersion.version, docIdAndVersion, searcher, fromTranslog);

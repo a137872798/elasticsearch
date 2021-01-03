@@ -78,7 +78,7 @@ public class FieldsVisitor extends StoredFieldVisitor {
     }
 
     /**
-     * 代表是否要拦截 source
+     * 是否要解析doc.source
      * @param loadSource
      * @param sourceFieldName
      */
@@ -96,7 +96,7 @@ public class FieldsVisitor extends StoredFieldVisitor {
      */
     @Override
     public Status needsField(FieldInfo fieldInfo) {
-        // 看来一个field只需要处理一次啊
+        // 因为本对象只会作用在一个doc上 这里应该是为了避免重复处理
         if (requiredFields.remove(fieldInfo.name)) {
             return Status.YES;
         }
@@ -213,7 +213,6 @@ public class FieldsVisitor extends StoredFieldVisitor {
             return null;
         }
         assert values.size() == 1;
-        // TODO 为什么只取第一个值
         return values.get(0).toString();
     }
 
@@ -237,7 +236,7 @@ public class FieldsVisitor extends StoredFieldVisitor {
     }
 
     /**
-     * 代表此时已经解析到某个field了
+     * 除了几个内置的field外 其余数据会存储到这个容器中
      * @param name
      * @param value
      */

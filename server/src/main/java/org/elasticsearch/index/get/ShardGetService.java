@@ -216,9 +216,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
             return context;
         }
 
-        // 未设置context的场景
-
-        // 当用户没有显示声明要获取的field时 就会获取source
+        // 当用户没有指定要获取的field时  默认拉取source对应的field数据
         if (gFields == null) {
             return FetchSourceContext.FETCH_SOURCE;
         }
@@ -228,6 +226,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
                 return FetchSourceContext.FETCH_SOURCE;
             }
         }
+        // 其余情况都是返回空的fetchSource
         return FetchSourceContext.DO_NOT_FETCH_SOURCE;
     }
 
@@ -240,7 +239,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
      * @param versionType
      * @param ifSeqNo
      * @param ifPrimaryTerm
-     * @param fetchSourceContext  在执行get请求时使用的上下文信息
+     * @param fetchSourceContext  决定了会返回doc中的哪些field    默认的fetchSourceContext fetchSource为true 也就代表会拉取 fieldName为source的field
      * @return
      */
     private GetResult innerGet(String id, String[] gFields, boolean realtime, long version, VersionType versionType,
@@ -255,7 +254,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         Engine.GetResult get = indexShard.get(new Engine.Get(realtime, realtime, id, uidTerm)
             .version(version).versionType(versionType).setIfSeqNo(ifSeqNo).setIfPrimaryTerm(ifPrimaryTerm));
         assert get.isFromTranslog() == false || realtime : "should only read from translog if realtime enabled";
-        // 当没有查询到相关结果时 关闭get对象(关闭searcher对象)
+        // 当没有查询到相关结果时 关闭get对象(关闭searcher对象)  同时也会释放本线程的缓存 PerThreadIDVersionAndSeqNoLookup
         if (get.exists() == false) {
             get.close();
         }
@@ -267,7 +266,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
 
         try {
             // break between having loaded it from translog (so we only have _source), and having a document to load
-            // 查询到结果后 还需要做处理
+            // 当查询到结果后 根据一开始需要的field信息进行映射
             return innerGetLoadFromStoredFields(id, gFields, fetchSourceContext, get, mapperService);
         } finally {
             get.close();
@@ -295,7 +294,6 @@ public final class ShardGetService extends AbstractIndexShardComponent {
                 // 根据传入的field 找到field级别的映射对象
                 Mapper fieldMapper = docMapper.mappers().getMapper(field);
 
-                // 代表在创建index时 没有指定field的模板 这个时候要求不能存在objectMappers 是为啥???
                 if (fieldMapper == null) {
                     if (docMapper.objectMappers().get(field) != null) {
                         // Only fail if we know it is a object field, missing paths / fields shouldn't fail.
@@ -311,8 +309,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         // 本次查询出来的结果对应的版本号 和docId信息
         DocIdAndVersion docIdAndVersion = get.docIdAndVersion();
         // force fetching source if we read from translog and need to recreate stored fields
-        // 如果本次查询结果是从事务日志中获取的 并且本次需要获取的field信息中 包含某个fake属性
-        // 这样就会强制要求获取 source数据
+        // 事务日志只会存储几个固定的field信息 其余信息必须从source解析 所以当storedFields指定的field 超过了ALL_FIELD_NAMES时 就需要获取source
         boolean forceSourceForComputingTranslogStoredFields = get.isFromTranslog() && storedFields != null &&
             Stream.of(storedFields).anyMatch(f -> TranslogLeafReader.ALL_FIELD_NAMES.contains(f) == false);
 
@@ -336,7 +333,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
             if (get.isFromTranslog()) {
                 // Fast path: if only asked for the source or stored fields that have been already provided by TranslogLeafReader,
                 // just make source consistent by reapplying source filters from mapping (possibly also nulling the source)
-                // 本次没有强制获取source field
+                // 过滤查询出来的source 这时source是有可能为null的
                 if (forceSourceForComputingTranslogStoredFields == false) {
                     try {
                         // sourceMapper 就是专门转换field为source的数据流的 这里通过携带的filter做一层过滤
@@ -345,14 +342,14 @@ public final class ShardGetService extends AbstractIndexShardComponent {
                         throw new ElasticsearchException("Failed to reapply filters for [" + id + "] after reading from translog", e);
                     }
                 } else {
-                    // 这里获取到了 source对应的数据流
+                    // 这里实际上是代表 必然已经获取到source了
                     // Slow path: recreate stored fields from original source
                     assert source != null : "original source in translog must exist";
                     // 将路由信息/source信息/indexName等包装成 sourceParse对象
                     SourceToParse sourceToParse = new SourceToParse(shardId.getIndexName(), id, source, XContentHelper.xContentType(source),
                         fieldVisitor.routing());
 
-                    // TODO 暂时先不管解析的过程 当解析完成后就返回了一个 ParsedDocument对象
+                    // TODO 暂时先不管解析的过程 当解析完成后就返回了一个 ParsedDocument对象  完成了lucene的数据 到 ES使用的数据的转换
                     ParsedDocument doc = indexShard.mapperService().documentMapper().parse(sourceToParse);
                     assert doc.dynamicMappingsUpdate() == null : "mapping updates should not be required on already-indexed doc";
                     // update special fields
@@ -391,7 +388,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
             }
 
             // put stored fields into result objects
-            // 确保解析到field的数据后 才进行处理
+            // 如果获取到了一些自定义field
             if (!fieldVisitor.fields().isEmpty()) {
                 // 对field对应的数据进行再加工后 重新设置进去
                 fieldVisitor.postProcess(mapperService);
@@ -411,6 +408,7 @@ public final class ShardGetService extends AbstractIndexShardComponent {
         // 代表通过reader获取了doc信息 在当中有source信息
         if (source != null) {
             // apply request-level source filtering
+            // 如果查询时不需要返回source信息 则将source滞空
             if (fetchSourceContext.fetchSource() == false) {
                 source = null;
                 // 根据 includes/excludes 裁剪source     默认生成的fetchSourceContext是没有这些属性的 一定是从外部设置的
@@ -435,12 +433,14 @@ public final class ShardGetService extends AbstractIndexShardComponent {
     }
 
     /**
+     * 需要获取哪些field 就会生成对应的visitor对象
      * @param fields
      * @param fetchSourceContext
      * @return
      */
     private static FieldsVisitor buildFieldsVisitors(String[] fields, FetchSourceContext fetchSourceContext) {
-        // fieldsVisitor 就是拦截field 并记录value的对象 其中 id routing source(可选) 作为特殊字段会被保留
+        // fieldsVisitor 就是拦截field 并记录value的对象
+        // 当用户指定了要获取哪些fields时 会生成CustomFieldsVisitor 默认情况下会包含 id routing 根据需要选择是否保留source
         if (fields == null || fields.length == 0) {
             return fetchSourceContext.fetchSource() ? new FieldsVisitor(true) : null;
         }

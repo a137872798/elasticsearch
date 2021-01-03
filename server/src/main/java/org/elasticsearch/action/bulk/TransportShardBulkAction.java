@@ -276,7 +276,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         if (opType == DocWriteRequest.OpType.UPDATE) {
             final UpdateRequest updateRequest = (UpdateRequest) context.getCurrent();
             try {
-                // 执行更新操作需要一个准备动作
+                // 执行更新操作需要一个准备动作  这里面包含了查询原数据是否存在 不存在的情况就要更改成插入操作
                 updateResult = updateHelper.prepare(updateRequest, context.getPrimary(), nowInMillisSupplier);
             } catch (Exception failure) {
                 // we may fail translating a update to index or delete operation
@@ -292,7 +292,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             switch (updateResult.getResponseResult()) {
                 case CREATED:
                 case UPDATED:
-                    // 此时内部的indexRequest包含最新的source信息
+                    // 实际上插入以及更新对于lucene来说都是简单插入一条记录
                     IndexRequest indexRequest = updateResult.action();
                     IndexMetadata metadata = context.getPrimary().indexSettings().getIndexMetadata();
                     MappingMetadata mappingMd = metadata.mapping();

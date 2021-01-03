@@ -248,7 +248,7 @@ public class SourceFieldMapper extends MetadataFieldMapper {
     }
 
     /**
-     * 这是对数据源做拦截工作么 ???
+     * 对数据进行过滤
      */
     @Nullable
     public BytesReference applyFilters(@Nullable BytesReference originalSource, @Nullable XContentType contentType) throws IOException {

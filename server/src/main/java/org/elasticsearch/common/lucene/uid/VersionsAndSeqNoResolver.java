@@ -49,7 +49,7 @@ public final class VersionsAndSeqNoResolver {
     /**
      *
      * @param reader  通过该对象查询数据
-     * @param uidField 目标数据会携带的field
+     * @param uidField 对应 “_id"
      * @return
      * @throws IOException
      */
@@ -78,7 +78,7 @@ public final class VersionsAndSeqNoResolver {
         // 获取当前线程关联的 lookup对象 一般 ThreadLocal应该是配合长生命周期的线程使用的  比如线程池
         PerThreadIDVersionAndSeqNoLookup[] lookupState = ctl.get();
         if (lookupState == null) {
-            // 原来是每个 segmentReader 对应一个 lookup对象
+            // 原来是每个 segmentReader 对应一个 lookup对象  不过缓存是什么时候失效的呢
             lookupState = new PerThreadIDVersionAndSeqNoLookup[reader.leaves().size()];
             for (LeafReaderContext leaf : reader.leaves()) {
                 lookupState[leaf.ord] = new PerThreadIDVersionAndSeqNoLookup(leaf.reader(), uidField);
@@ -102,7 +102,10 @@ public final class VersionsAndSeqNoResolver {
     private VersionsAndSeqNoResolver() {
     }
 
-    /** Wraps an {@link LeafReaderContext}, a doc ID <b>relative to the context doc base</b> and a version. */
+    /**
+     * Wraps an {@link LeafReaderContext}, a doc ID <b>relative to the context doc base</b> and a version.
+     * 用于描述某个doc的id 以及在ES中的 序列号等等   每次往ES中执行一个操作都会有一个序列号
+     */
     public static class DocIdAndVersion {
         public final int docId;
         public final long version;
@@ -141,14 +144,14 @@ public final class VersionsAndSeqNoResolver {
      * <li>a doc ID and a version otherwise
      * </ul>
      * @param loadSeqNo 是否要将seq term 等信息一起查出来
-     * 从某个reader下查询该term能够命中的数据
      */
     public static DocIdAndVersion loadDocIdAndVersion(IndexReader reader, Term term, boolean loadSeqNo) throws IOException {
-        // reader对应的缓存键可以找到一个 ThreadLocal<PerThreadIDVersionAndSeqNoLookup[]> 对象
+        // 先从本地线程缓存 查询数据
         PerThreadIDVersionAndSeqNoLookup[] lookups = getLookupState(reader, term.field());
         List<LeafReaderContext> leaves = reader.leaves();
         // iterate backwards to optimize for the frequently updated documents
         // which are likely to be in the last segments
+        // 从后往前 尽可能查找最新的数据
         for (int i = leaves.size() - 1; i >= 0; i--) {
             final LeafReaderContext leaf = leaves.get(i);
             // 找到对应的lookup对象

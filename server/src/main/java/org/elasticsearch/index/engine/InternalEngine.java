@@ -874,7 +874,7 @@ public class InternalEngine extends Engine {
     /**
      * 执行get请求 并返回查询结果
      * @param get  在get请求中还可以严格要求版本
-     * @param searcherFactory   该对象可以根据要求 生成searcher
+     * @param searcherFactory  通过该函数获取工厂
      * @return
      * @throws EngineException
      */
@@ -887,23 +887,24 @@ public class InternalEngine extends Engine {
             // 当本次请求要求获取实时数据  对应的scope为Internal
             if (get.realtime()) {
                 VersionValue versionValue = null;
-                // 可以看到先是通过 get内部的数据流 也就是id信息  获取对应的verion 信息   上面只是版本的校验 还没有到读取数据的时候
+                // versionMap 维护了id最新的版本号
                 try (Releasable ignore = versionMap.acquireLock(get.uid().bytes())) {
                     // we need to lock here to access the version map to do this truly in RT
-                    // 获取某个byte 对应的version信息 包含seqNo 和 term
                     versionValue = getVersionFromMap(get.uid().bytes());
                 }
+                // 如果能够查询到id的相关数据 代表近期对这个id对应的doc做过改动
+                // 查询不到则代表近期无改动 但是数据还是可能存在于lucene中  那样会麻烦一点 必须通过searcher进行查询
                 if (versionValue != null) {
-                    // 如果version信息不存在 就是代表数据已经被删除
+                    // 当发起删除操作时  versionMap中存储的是 DeleteVersionValue  isDelete() 为true  这时直接返回结果不存在 VersionMap就起到了类似缓存的作用
                     if (versionValue.isDelete()) {
                         return GetResult.NOT_EXISTS;
                     }
-                    // 根据内部/外部发起的get请求 versionType是不一样的 会通过它来检验是否发生了版本冲突  冲突时抛出异常
+
+                    // 如果设置了 ifXXX条件 与versionValue进行匹配  失败时抛出异常
                     if (get.versionType().isVersionConflictForReads(versionValue.version, get.version())) {
                         throw new VersionConflictEngineException(shardId, get.id(),
                             get.versionType().explainConflictForReads(versionValue.version, get.version()));
                     }
-                    // getIfSeqNo 代表对 seqNo 做了限制 当不匹配时 抛出异常
                     if (get.getIfSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO && (
                         get.getIfSeqNo() != versionValue.seqNo || get.getIfPrimaryTerm() != versionValue.term
                         )) {
@@ -914,15 +915,15 @@ public class InternalEngine extends Engine {
                     if (get.isReadFromTranslog()) {
                         // this is only used for updates - API _GET calls will always read form a reader for consistency
                         // the update call doesn't need the consistency since it's source only + _parent but parent can go away in 7.0
+                        // 版本号信息中可能会携带此时写入到事务日志中的位置信息
                         if (versionValue.getLocation() != null) {
                             try {
                                 // 从事务日志文件中还原数据
                                 Translog.Operation operation = translog.readOperation(versionValue.getLocation());
                                 if (operation != null) {
                                     // in the case of a already pruned translog generation we might get null here - yet very unlikely
-                                    // 看来能被get查询到的一定是一个index
                                     final Translog.Index index = (Translog.Index) operation;
-                                    // 这是把一个 Operation 包装成了reader
+                                    // 通过单次操作 生成reader对象 读取内部的数据
                                     TranslogLeafReader reader = new TranslogLeafReader(index);
                                     // 直接把reader设置到 IndexSearcher中
                                     return new GetResult(new Engine.Searcher("realtime_get", reader,
@@ -935,13 +936,16 @@ public class InternalEngine extends Engine {
                                 throw new EngineException(shardId, "failed to read operation from translog", e);
                             }
                         } else {
+                            // 标记下次成功执行index时 要将事务日志的位置记录下来 推测是兼容性代码
                             trackTranslogLocation.set(true);
                         }
                     }
                     assert versionValue.seqNo >= 0 : versionValue;
-                    // 在实时查询 且通过searcher的情况 需要为reader做刷新工作
-                    // realtime 就是确保每次读取到的都是最新的数据 也就是刚刚刷新完的 因为在lucene中写入数据 并不会立即生成segment 一般要通过commit方法才能固化最新的segment
-                    // 而为了能感知到上一时刻写入的数据 就需要触发refresh
+
+                    // 代表无法直接通过 versionValue.getLocation + 事务日志来进行数据还原  那么只能依托于lucene本身的查询功能 以及自带的缓存
+                    // versionMap相当于是事务日志层的缓存
+
+                    // 当realtime为true时  按照条件先尝试执行刷盘操作
                     refreshIfNeeded("realtime_get", versionValue.seqNo);
                 }
                 scope = SearcherScope.INTERNAL;
@@ -952,6 +956,7 @@ public class InternalEngine extends Engine {
             }
 
             // no version, get the version from the index, we know that we refresh on flush
+            // 通过luceneSearcher 查询数据
             return getFromSearcher(get, searcherFactory, scope);
         }
     }
@@ -1065,12 +1070,12 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 使用 operation.id 去versionMap中查询版本号信息
+     * 获取某个doc对应的id 最新的版本号
      * @param id
      * @return
      */
     private VersionValue getVersionFromMap(BytesRef id) {
-        // 只要 current  old 中有一个是unsafe的  就认为versionMap是unsafe的
+        // unsafe代表着此时数据是不可靠的 会强制进行刷盘
         if (versionMap.isUnsafe()) {
             synchronized (versionMap) {
                 // we are switching from an unsafe map to a safe map. This might happen concurrently
@@ -1080,10 +1085,11 @@ public class InternalEngine extends Engine {
                     // 刷新操作会触发监听器 进而使得versionMap的old 和current被替换
                     refresh("unsafe_version_map", SearcherScope.INTERNAL, true);
                 }
+                // 代表此时已经被设置成安全模式了
                 versionMap.enforceSafeAccess();
             }
         }
-        // 本身获取版本号的操作好像和 是否处于safe状态没有直接联系啊
+        // 从内部容器  current/old/tombstones 中找到id对应的版本号
         return versionMap.getUnderLock(id);
     }
 
@@ -1278,6 +1284,8 @@ public class InternalEngine extends Engine {
                 // 这时已经完成了 operation在lucene的写入以及 事务日志的写入 注意都还没刷盘 (lucene还没提交)
                 // 如果频繁的调用lucene.commit 会影响效率
                 if (plan.indexIntoLucene && indexResult.getResultType() == Result.Type.SUCCESS) {
+
+                    // 如果在插入版本信息时 需要同时记录此时事务日志的位置  那么将位置信息设置到 IndexVersionValue中
                     final Translog.Location translogLocation = trackTranslogLocation.get() ? indexResult.getTranslogLocation() : null;
                     // 将该id对应的最新信息写入到 versionMap中 不过每次refresh  versionMap的数据都会被清除 那么意义在哪里
                     versionMap.maybePutIndexUnderLock(index.uid().bytes(),
@@ -3398,6 +3406,7 @@ public class InternalEngine extends Engine {
     /**
      * Refresh this engine **internally** iff the requesting seq_no is greater than the last refreshed checkpoint.
      * 尝试刷新内部的数据  会间接触发lucene.commit 也就是刷盘操作
+     * @param requestingSeqNo 本次要求该序列对应的数据已经完成刷盘
      */
     protected final void refreshIfNeeded(String source, long requestingSeqNo) {
         // lastRefreshedCheckpoint 对应上一次刷新时得到的检查点 如果本次传入的seq比上次检查点大 才有刷新的必要

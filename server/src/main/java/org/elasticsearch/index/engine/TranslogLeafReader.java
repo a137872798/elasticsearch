@@ -49,7 +49,7 @@ import java.util.Set;
 
 /**
  * Internal class that mocks a single doc read from the transaction log as a leaf reader.
- * 实际上是单个doc的数据
+ * 该reader对象专门用于读取某次事务日志操作
  */
 public final class TranslogLeafReader extends LeafReader {
 
