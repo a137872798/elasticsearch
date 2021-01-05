@@ -749,13 +749,18 @@ public class RestoreService implements ClusterStateApplier {
         // key1：SnapshotRecoverySource.uuid key2：shardId value：恢复状态(比如在哪个节点上进行恢复，此时执行到恢复的什么阶段)
         private final Map<String, Map<ShardId, ShardRestoreStatus>> shardChanges = new HashMap<>();
 
+        /**
+         * 当某个分片从 init->start
+         * @param initializingShard
+         * @param startedShard
+         */
         @Override
         public void shardStarted(ShardRouting initializingShard, ShardRouting startedShard) {
             // mark snapshot as completed
-            // 某个主分片由初始状态变化为 启动状态时
+            // 本次切换的是主分片
             if (initializingShard.primary()) {
                 RecoverySource recoverySource = initializingShard.recoverySource();
-                // 如果要求分片从快照中恢复数据  这里直接插入一个success的status对象   TODO 什么意思啊  主分片不需要从快照恢复数据吗
+                // TODO 目前只知道主分片从本地事务日志恢复数据  还不清楚别的恢复源是什么时候设置的
                 if (recoverySource.getType() == RecoverySource.Type.SNAPSHOT) {
                     changes(recoverySource).put(
                         initializingShard.shardId(),

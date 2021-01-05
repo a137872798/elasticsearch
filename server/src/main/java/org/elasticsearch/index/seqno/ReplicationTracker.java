@@ -711,7 +711,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
          * @param localCheckpoint
          * @param globalCheckpoint
          * @param inSync  是否已经与主分片完成同步
-         * @param tracked
+         * @param tracked 在进行索引操作时  tracked为true的副本也会执行索引操作
          */
         public CheckpointState(long localCheckpoint, long globalCheckpoint, boolean inSync, boolean tracked) {
             this.localCheckpoint = localCheckpoint;
@@ -1202,7 +1202,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * @param applyingClusterStateVersion the cluster state version being applied when updating the allocation IDs from the master
      *                                    此时集群的版本号
      * @param inSyncAllocationIds         the allocation IDs of the currently in-sync shard copies
-     *                                    同步队列中的分片代表已经将数据同步到 primary.globalCheckpoint 的位置了
+     *                                    此时认为与主分片完成数据同步的分片 比如刚从recovery中结束的副本
      * @param routingTable                the shard routing table
      * 代表接收到leader节点发来的更新分片信息的请求
      */
@@ -1226,7 +1226,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             boolean removedEntries = checkpoints.keySet().removeIf(
                 aid -> !inSyncAllocationIds.contains(aid) && !initializingAllocationIds.contains(aid));
 
-            // 当该对象首次被创建时应该是false
+            // 当该对象首次被创建时应该是false  当本分片完成recovery后会将primaryMode修改为true
             // 当设置成true后再接收 clusterState的变化就会走下面的逻辑
             if (primaryMode) {
                 // add new initializingIds that are missing locally. These are fresh shard copies - and not in-sync
@@ -1237,17 +1237,18 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                             " as in-sync but it does not exist locally";
                         final long localCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
                         final long globalCheckpoint = localCheckpoint;
-                        // 当新增了分片后  就加入到 checkpoints中 这个容器负责管理所有副本此时的检查点信息
+                        // 即使处于init状态的副本也会维护在 checkpoints中
                         checkpoints.put(initializingId, new CheckpointState(localCheckpoint, globalCheckpoint, inSync, inSync));
                     }
                 }
 
-                // 同步该容器与 checkpoints
+                // 不需要维护的分片也要从 pendingInSync中移除
                 if (removedEntries) {
                     pendingInSync.removeIf(aId -> checkpoints.containsKey(aId) == false);
                 }
 
             } else {
+                // 当本主分片首次从init转换成start时 进入下面的分支
                 // 为每个分片此时的检查点创建 checkpoints信息
                 for (String initializingId : initializingAllocationIds) {
                     final long localCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;

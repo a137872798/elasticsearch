@@ -634,7 +634,7 @@ public class ShardStateAction {
     }
 
     /**
-     * 在集群中更新某个分片可用的逻辑
+     * 某个之前处于init状态的分片在数据恢复完成后 修改成started状态
      */
     public static class ShardStartedClusterStateTaskExecutor
             implements ClusterStateTaskExecutor<StartedShardEntry>, ClusterStateTaskListener {
@@ -649,9 +649,9 @@ public class ShardStateAction {
         }
 
         /**
-         * 开始处理任务
+         * 处理分片切换成start状态的任务
          * @param currentState
-         * @param tasks  每个任务都表示某个分片成功启动了
+         * @param tasks
          * @return
          * @throws Exception
          */
@@ -687,7 +687,7 @@ public class ShardStateAction {
                             continue;
                         }
                     }
-                    // 如果分片已经启动了  静默处理
+                    // 只能从init状态转换成 started状态  其余情况静默处理
                     if (matched.initializing() == false) {
                         assert matched.active() : "expected active shard routing for task " + task + " but found " + matched;
                         // same as above, this might have been a stale in-flight request, so we just ignore.
@@ -696,6 +696,7 @@ public class ShardStateAction {
                         builder.success(task);
                     } else {
                         // remove duplicate actions as allocation service expects a clean list without duplicates
+                        // 代表任务重复了
                         if (seenShardRoutings.contains(matched)) {
                             logger.trace("{} ignoring shard started task [{}] (already scheduled to start {})",
                                 task.shardId, task, matched);
@@ -703,6 +704,7 @@ public class ShardStateAction {
                         } else {
                             logger.debug("{} starting shard {} (shard started task: [{}])", task.shardId, matched, task);
                             tasksToBeApplied.add(task);
+                            // 该列表中才存储真正会被处理的  分片
                             shardRoutingsToBeApplied.add(matched);
                             seenShardRoutings.add(matched);
                         }
@@ -713,7 +715,6 @@ public class ShardStateAction {
 
             ClusterState maybeUpdatedState = currentState;
             try {
-                // 处理分片状态的转换  并发布到集群中 这样分片就可以观测到主分片启动成功 并开始拉取数据
                 maybeUpdatedState = allocationService.applyStartedShards(currentState, shardRoutingsToBeApplied);
                 builder.successes(tasksToBeApplied);
             } catch (Exception e) {
@@ -733,6 +734,10 @@ public class ShardStateAction {
             }
         }
 
+        /**
+         * TODO
+         * @param clusterChangedEvent the change event for this cluster state change, containing
+         */
         @Override
         public void clusterStatePublished(ClusterChangedEvent clusterChangedEvent) {
             rerouteService.reroute("reroute after starting shards", Priority.NORMAL, ActionListener.wrap(
@@ -741,6 +746,9 @@ public class ShardStateAction {
         }
     }
 
+    /**
+     * 本次启动的某个分片
+     */
     public static class StartedShardEntry extends TransportRequest {
         final ShardId shardId;
         final String allocationId;

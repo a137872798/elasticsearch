@@ -653,12 +653,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      *
-     * @param newRouting
+     * @param newRouting                  本分片此时最新的路由信息 或者说状态
      * @param newPrimaryTerm              当前主分片的 term 每个在集群中更替 主分片在集群中的位置 就会增加term
      * @param primaryReplicaSyncer        the primary-replica resync action to trigger when a term is increased on a primary
      * @param applyingClusterStateVersion the cluster state version being applied when updating the allocation IDs from the master
-     * @param inSyncAllocationIds         the allocation ids of the currently in-sync shard copies    已经完成同步的所有分片
-     * @param routingTable                the shard routing table     某个shard在整个集群中最新的分布情况
+     * @param inSyncAllocationIds         the allocation ids of the currently in-sync shard copies
+     * @param routingTable                the shard routing table
      * @throws IOException
      * 比如本节点上报修改状态的请求被leader通过  在发布到集群通知本节点 就要做一些更新操作
      */
@@ -667,7 +667,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                                  final long newPrimaryTerm,
                                  final BiConsumer<IndexShard, ActionListener<ResyncTask>> primaryReplicaSyncer,
                                  final long applyingClusterStateVersion,
-                                 final Set<String> inSyncAllocationIds,
+                                 final Set<String> inSyncAllocationIds,  // 每当新的副本完成recovery后 会上报给leader节点 同时将自身加入到in-sync中 主分片会更新相关信息
                                  final IndexShardRoutingTable routingTable) throws IOException {
         final ShardRouting currentRouting;
         synchronized (mutex) {
@@ -690,7 +690,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     + currentRouting + ", new " + newRouting);
             }
 
-            // 当前如果是主分片 要更新副本组信息 这涉及到了 副本从主分片拉取数据进行recovery的过程
+            // 如果当前是主分片 根据相关信息更新
             if (newRouting.primary()) {
                 replicationTracker.updateFromMaster(applyingClusterStateVersion, inSyncAllocationIds, routingTable);
             }

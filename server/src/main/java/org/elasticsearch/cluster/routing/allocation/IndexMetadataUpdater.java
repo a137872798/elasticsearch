@@ -50,7 +50,7 @@ import java.util.stream.Collectors;
  * Primary terms are updated on primary initialization or when an active primary fails.
  *
  * Allocation ids are added for shards that become active and removed for shards that stop being active.
- * 该对象本身实现了 监控分片状态变化的钩子  同时可以使用某个路由表更新metadata数据
+ * 记录某次分片变化的信息
  */
 public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRoutingChangesObserver {
 
@@ -95,10 +95,10 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             : "initializingShard.allocationId [" + initializingShard.allocationId().getId()
             + "] and startedShard.allocationId [" + startedShard.allocationId().getId() + "] have to have the same";
 
-        // 获取对应的update对象
+        // update对象对应某个shardId 在某次操作中所有的变化记录
         Updates updates = changes(startedShard.shardId());
 
-        // 将本分片对应的分配者id 存储到一个 in-sync容器中 在这个容器中的所有分片应该会保持一个同步数据的动作 并且同时包含主分片和副本
+        // 当分片处于启动状态后 就需要进入到 in-sync 队列
         updates.addedAllocationIds.add(startedShard.allocationId().getId());
 
         // TODO 目前还不清楚什么时候会使用FORCE_STALE_PRIMARY_INSTANCE 这种恢复源
@@ -146,10 +146,11 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
      * @param oldMetadata {@link Metadata} object from before the routing nodes was changed.   之前的元数据信息
      * @param newRoutingTable {@link RoutingTable} object after routing changes were applied.   此时最新的路由表
      * @return adapted {@link Metadata}, potentially the original one if no change was needed.
+     *
+     * 根据此时最新的路由表信息更新  Metadata
      */
     public Metadata applyChanges(Metadata oldMetadata, RoutingTable newRoutingTable) {
-        // 在某个操作前后 会涉及到分片状态的变化 并且会被记录在 shardChanges中
-        // applyChanges相当于是操作已经处理完了 就需要处理在操作过程中发生的变化信息
+        // 获取在操作过程中更新的分片
         Map<Index, List<Map.Entry<ShardId, Updates>>> changesGroupedByIndex =
             shardChanges.entrySet().stream().collect(Collectors.groupingBy(e -> e.getKey().getIndex()));
 
@@ -163,9 +164,10 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                 ShardId shardId = shardEntry.getKey();
                 Updates updates = shardEntry.getValue();
 
-                // 某个分片发生的全部变化 会作用到metadata上
+                // 某些分片变成start状态后 就允许接收此时写入到主分片的数据了 被称为 in-sync
+                // 这里是根据分片的状态变化 更新 in-sync中的分片
                 indexMetadataBuilder = updateInSyncAllocations(newRoutingTable, oldIndexMetadata, indexMetadataBuilder, shardId, updates);
-                // 每次只有主分片发生变化 才会更新 primaryTerm  副本怎么变化都没关系
+                // TODO 先只看分片从init变成 start的逻辑
                 indexMetadataBuilder = updatePrimaryTerm(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
             }
 
@@ -186,12 +188,13 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
     /**
      * Updates in-sync allocations with routing changes that were made to the routing table.
-     * @param newRoutingTable 更新后的路由表 内部的shard信息已经被更新了 比如之前的某个unassigned 变成了init
+     * @param newRoutingTable   当分片状态修改后此时最新的路由表信息
      * @param oldIndexMetadata   本次待更新的元数据
      * @param indexMetadataBuilder 通过该对象构建新的元数据
-     * @param shardId 本次更新的数据相关的分片id
-     * @param updates 包含了本次的更新信息
-     *                更新  in-sync
+     * @param shardId   本次更新的是哪个分片id
+     * @param updates   包含了更新的具体数据
+     *
+     *                更新 in-sync 队列中的分片
      */
     private IndexMetadata.Builder updateInSyncAllocations(RoutingTable newRoutingTable, IndexMetadata oldIndexMetadata,
                                                           IndexMetadata.Builder indexMetadataBuilder, ShardId shardId, Updates updates) {
@@ -199,7 +202,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             "allocation ids cannot be both added and removed in the same allocation round, added ids: " +
                 updates.addedAllocationIds + ", removed ids: " + updates.removedAllocationIds;
 
-        // 获取此时处于同一 in-sync容器的分片分配id
+        // 获取此时本分片下 所有处于in-sync的分片
         Set<String> oldInSyncAllocationIds = oldIndexMetadata.inSyncAllocationIds(shardId.id());
 
         // check if we have been force-initializing an empty primary or a stale primary
@@ -241,7 +244,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
         } else {
             // standard path for updating in-sync ids
-            // 根据本次的变化 更新 in-sync
+            // 更新in-sync 容器
             Set<String> inSyncAllocationIds = new HashSet<>(oldInSyncAllocationIds);
             inSyncAllocationIds.addAll(updates.addedAllocationIds);
             inSyncAllocationIds.removeAll(updates.removedAllocationIds);
@@ -282,7 +285,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             // only remove allocation id of failed active primary if there is at least one active shard remaining. Assume for example that
             // the primary fails but there is no new primary to fail over to. If we were to remove the allocation id of the primary from the
             // in-sync set, this could create an empty primary on the next allocation.
-            // TODO 看不懂
+            // TODO 先只看分片从 init->start的逻辑
             if (newShardRoutingTable.activeShards().isEmpty() && updates.firstFailedPrimary != null) {
                 // add back allocation id of failed primary
                 inSyncAllocationIds.add(updates.firstFailedPrimary.allocationId().getId());
@@ -402,8 +405,9 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
         changes(shardId).increaseTerm = true;
     }
 
+
     /**
-     * 记录某次reroute 中某个shardId的所有primary replica 分片发生的变化
+     * 该对象用于描述分片的变化  一个RoutingAllocation对象 对应一次数据的变化(可能是多个请求)
      */
     private static class Updates {
         /**
@@ -411,8 +415,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
          */
         private boolean increaseTerm; // whether primary term should be increased
         /**
-         * 当某个分片完成了数据恢复  从init转变成 start状态时
-         * 会加入到这个容器中 之后会进入到 in-sync 队列中
+         * 当某些分片从init状态变成start状态后 就要开始跟随主分片并同步数据了  在索引操作阶段就会将数据同步发送到 tracked为true的分片上
          */
         private Set<String> addedAllocationIds = new HashSet<>(); // allocation ids that should be added to the in-sync set
 

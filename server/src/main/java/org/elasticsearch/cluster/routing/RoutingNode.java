@@ -168,11 +168,13 @@ public class RoutingNode implements Iterable<ShardRouting> {
      */
     void update(ShardRouting oldShard, ShardRouting newShard) {
         assert invariant();
+        // 如果之前的分片已经不存在了 不会处理新分片
         if (shards.containsKey(oldShard.shardId()) == false) {
             // Shard was already removed by routing nodes iterator
             // TODO: change caller logic in RoutingNodes so that this check can go away
             return;
         }
+        // 覆盖旧分片
         ShardRouting previousValue = shards.put(newShard.shardId(), newShard);
         assert previousValue == oldShard : "expected shard " + previousValue + " but was " + oldShard;
 

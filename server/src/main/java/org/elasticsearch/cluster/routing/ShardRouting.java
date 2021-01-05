@@ -490,6 +490,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
             // relocation target
             allocationId = AllocationId.finishRelocation(allocationId);
         }
+        // 将当前状态修改成 start
         return new ShardRouting(shardId, currentNodeId, null, primary, ShardRoutingState.STARTED, null, null, allocationId,
             UNAVAILABLE_EXPECTED_SHARD_SIZE);
     }

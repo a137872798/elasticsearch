@@ -117,9 +117,7 @@ public class AllocationService {
      * <p>
      * If the same instance of the {@link ClusterState} is returned, then no change has been made.</p>
      * @param clusterState
-     * @param startedShards
-     * 将某组分片从初始状态修改成start状态
-     * 某个shard被创建时 处于init状态 在进行了recovery阶段后 就会上报leader 本分片可以开始使用了
+     * @param startedShards 这组分片会被切换成start状态
      */
     public ClusterState applyStartedShards(ClusterState clusterState, List<ShardRouting> startedShards) {
         assert assertInitialized();
@@ -131,17 +129,18 @@ public class AllocationService {
         // shuffle the unassigned nodes, just so we won't have things like poison failed shards
         routingNodes.unassigned().shuffle();
 
-        // 通过相关信息生成 RoutingAllocation对象
+        // 该对象描述了此时所有分片的分配信息
         RoutingAllocation allocation = new RoutingAllocation(allocationDeciders, routingNodes, clusterState,
             clusterInfoService.getClusterInfo(), currentNanoTime());
         // as starting a primary relocation target can reinitialize replica shards, start replicas first
         startedShards = new ArrayList<>(startedShards);
+        // 将本次修改成启动状态的所有分片中的主分片排到前面
         startedShards.sort(Comparator.comparing(ShardRouting::primary));
 
         // 将所有分片修改成启动状态  同时触发 observer等逻辑
         applyStartedShards(allocation, startedShards);
 
-        // TODO 先忽略这种增强逻辑
+        // TODO 先忽略这种增强逻辑  目前看到GatewayAllocator 会关闭一些任务
         for (final ExistingShardsAllocator allocator : existingShardsAllocators.values()) {
             allocator.applyStartedShards(startedShards, allocation);
         }
@@ -150,6 +149,7 @@ public class AllocationService {
         // 生成格式化字符串
         String startedShardsAsString
             = firstListElementsToCommaDelimitedString(startedShards, s -> s.shardId().toString(), logger.isDebugEnabled());
+        // 根据此时的 RoutingAllocation 更新ClusterState
         return buildResultAndLogHealthChange(clusterState, allocation, "shards started [" + startedShardsAsString + "]");
     }
 
@@ -196,7 +196,7 @@ public class AllocationService {
             .routingTable(newRoutingTable)
             .metadata(newMetadata);
 
-        // restore 只针对 recoverySource 为快照的
+        // TODO restore 只针对 recoverySource 为snapshot的
         final RestoreInProgress restoreInProgress = allocation.custom(RestoreInProgress.TYPE);
         if (restoreInProgress != null) {
             // 更新 restoreInProgress
@@ -629,8 +629,8 @@ public class AllocationService {
 
     /**
      * 将目标分片转换成启动状态 同时触发监听器
-     * @param routingAllocation
-     * @param startedShardEntries
+     * @param routingAllocation  包含了为分片分配时需要的所有信息
+     * @param startedShardEntries   本次需要转换成start的所有分片
      */
     private void applyStartedShards(RoutingAllocation routingAllocation, List<ShardRouting> startedShardEntries) {
         assert startedShardEntries.isEmpty() == false : "non-empty list of started shard entries expected";

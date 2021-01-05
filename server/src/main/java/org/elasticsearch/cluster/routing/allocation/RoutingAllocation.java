@@ -45,8 +45,7 @@ import static java.util.Collections.emptySet;
  * The {@link RoutingAllocation} keep the state of the current allocation
  * of shards and holds the {@link AllocationDeciders} which are responsible
  *  for the current routing state.
- * 这个对象以集群为单位
- * 并且每个对象仅对应一个reroute流程  使用完即丢弃
+ *  描述此时所有分片的分配情况
  */
 public class RoutingAllocation {
 
@@ -131,6 +130,7 @@ public class RoutingAllocation {
     /**
      * Creates a new {@link RoutingAllocation}
      *  @param deciders {@link AllocationDeciders} to used to make decisions for routing allocations
+     *                                            分配策略
      * @param routingNodes Routing nodes in the current cluster
      * @param clusterState cluster state before rerouting
      * @param currentNanoTime the nano time to use for all delay allocation calculation (typically {@link System#nanoTime()})

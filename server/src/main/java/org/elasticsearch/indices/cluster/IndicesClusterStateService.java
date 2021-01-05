@@ -741,9 +741,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
     }
 
     /**
-     * 更新分片信息
-     * 比如主分片先是完成了本地的数据恢复  并通知到leader节点 之后在CS中 本shardRouting的状态被修改成 STARTED
-     * 之后会将这个信息发布到集群中
+     * 当某个分片的信息发生变化时 可以通过该方法进行更新 可以是主分片也可以是副本
      * @param nodes
      * @param shardRouting  此时从CS中获取的最新分片信息
      * @param shard  本地分片信息
@@ -761,7 +759,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         try {
             final IndexMetadata indexMetadata = clusterState.metadata().index(shard.shardId().getIndex());
             primaryTerm = indexMetadata.primaryTerm(shard.shardId().id());
-            // 该容器内存储已经完成同步的所有分片
+            // 每当有一个新的副本从init变成start后 会加入到in-sync队列中 代表这个副本已经准备好接受用户的索引请求
             final Set<String> inSyncIds = indexMetadata.inSyncAllocationIds(shard.shardId().id());
             final IndexShardRoutingTable indexShardRoutingTable = routingTable.shardRoutingTable(shardRouting.shardId());
 

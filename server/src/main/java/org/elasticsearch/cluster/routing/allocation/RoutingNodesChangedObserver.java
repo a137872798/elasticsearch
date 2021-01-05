@@ -26,7 +26,7 @@ import org.elasticsearch.cluster.routing.UnassignedInfo;
 
 /**
  * Records if changes were made to {@link RoutingNodes} during an allocation round.
- * 每当某个分片发生变化时 修改内部的标识
+ * 该对象比较简单 只是检查在某次大型操作中 是否有某个节点的分片发生了变化
  */
 public class RoutingNodesChangedObserver implements RoutingChangesObserver {
     private boolean changed;
@@ -45,6 +45,11 @@ public class RoutingNodesChangedObserver implements RoutingChangesObserver {
         setChanged();
     }
 
+    /**
+     *
+     * @param initializingShard
+     * @param startedShard
+     */
     @Override
     public void shardStarted(ShardRouting initializingShard, ShardRouting startedShard) {
         assert initializingShard.initializing() : "expected initializing shard " + initializingShard;
