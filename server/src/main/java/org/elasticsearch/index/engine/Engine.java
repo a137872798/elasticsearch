@@ -310,16 +310,20 @@ public abstract class Engine implements Closeable {
             return lock.acquire();
         }
 
-        /** Activate throttling, which switches the lock to be a real lock */
-        // 激活时才使用真正的锁 否则是个空锁
+        /**
+         * Activate throttling, which switches the lock to be a real lock
+         * 激活阀门对象
+         */
         public void activate() {
             assert lock == NOOP_LOCK : "throttling activated while already active";
             startOfThrottleNS = System.nanoTime();
             lock = lockReference;
         }
 
-        /** Deactivate throttling, which switches the lock to be an always-acquirable NoOpLock */
-        // 取消激活就是将锁重新变成 NOOP_LOCK
+        /**
+         * Deactivate throttling, which switches the lock to be an always-acquirable NoOpLock
+         * 取消激活就是将锁重新变成 NOOP_LOCK
+         */
         public void deactivate() {
             assert lock != NOOP_LOCK : "throttling deactivated but not active";
             lock = NOOP_LOCK;

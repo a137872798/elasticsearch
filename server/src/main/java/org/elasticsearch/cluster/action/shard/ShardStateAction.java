@@ -111,7 +111,7 @@ public class ShardStateAction {
     }
 
     /**
-     * 将某个请求发送到相关节点上
+     * 某个分片状态发生了变化
      * @param actionName    本次操作的名称 用于匹配action对象
      * @param currentState   当前集群状态
      * @param request   发送的请求体
@@ -121,7 +121,7 @@ public class ShardStateAction {
                                  final TransportRequest request, final ActionListener<Void> listener) {
         ClusterStateObserver observer =
             new ClusterStateObserver(currentState, clusterService, null, logger, threadPool.getThreadContext());
-        // 获取leader节点 看来某个分片的相关操作都是发送到主控节点去处理的
+        // 请求是发往leader节点的
         DiscoveryNode masterNode = currentState.nodes().getMasterNode();
 
         // 检测leader节点是否发生变化的谓语
@@ -178,7 +178,7 @@ public class ShardStateAction {
      * @param message            the reason for the failure
      * @param failure            the underlying cause of the failure
      * @param listener           callback upon completion of the request
-     * 将某个分片标记成失败状态
+     * 当索引操作写入到 primary时  某些副本可能还未进入到 in-sync 队列中 这时候就没必要将请求发送到该节点上  所以触发该方法  注意是由主分片发起的
      */
     public void remoteShardFailed(final ShardId shardId, String allocationId, long primaryTerm, boolean markAsStale, final String message,
                                   @Nullable final Exception failure, ActionListener<Void> listener) {

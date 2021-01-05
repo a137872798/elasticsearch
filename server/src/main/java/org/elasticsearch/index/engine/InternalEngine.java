@@ -250,6 +250,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 通过引擎的相关配置进行初始化
+     *
      * @param engineConfig
      */
     public InternalEngine(EngineConfig engineConfig) {
@@ -257,13 +258,12 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     *
-     * @param engineConfig  配置对象
-     * @param localCheckpointTrackerSupplier  会记录检查点的对象
+     * @param engineConfig                   配置对象
+     * @param localCheckpointTrackerSupplier 会记录检查点的对象
      */
     InternalEngine(
-            final EngineConfig engineConfig,
-            final BiFunction<Long, Long, LocalCheckpointTracker> localCheckpointTrackerSupplier) {
+        final EngineConfig engineConfig,
+        final BiFunction<Long, Long, LocalCheckpointTracker> localCheckpointTrackerSupplier) {
         super(engineConfig);
         final TranslogDeletionPolicy translogDeletionPolicy = new TranslogDeletionPolicy();
         // 该引擎此时引用了这个目录 避免被意外关闭
@@ -340,11 +340,11 @@ public class InternalEngine extends Engine {
             // 标记此时还未从事务日志中恢复数据
             pendingTranslogRecovery.set(true);
             // 从配置中获取相应的监听器对象并进行设置  对应 RefreshListeners,RefreshPendingLocationListener
-            for (ReferenceManager.RefreshListener listener: engineConfig.getExternalRefreshListener()) {
+            for (ReferenceManager.RefreshListener listener : engineConfig.getExternalRefreshListener()) {
                 this.externalReaderManager.addListener(listener);
             }
             // 对应 RefreshMetricUpdater
-            for (ReferenceManager.RefreshListener listener: engineConfig.getInternalRefreshListener()) {
+            for (ReferenceManager.RefreshListener listener : engineConfig.getInternalRefreshListener()) {
                 this.internalReaderManager.addListener(listener);
             }
 
@@ -386,6 +386,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 创建追踪本地检查点信息的对象
+     *
      * @param localCheckpointTrackerSupplier
      * @return
      * @throws IOException
@@ -406,6 +407,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 生成软删除策略对象
+     *
      * @return
      * @throws IOException
      */
@@ -419,11 +421,11 @@ public class InternalEngine extends Engine {
             lastMinRetainedSeqNo = Long.parseLong(commitUserData.get(SequenceNumbers.MAX_SEQ_NO)) + 1;
         }
         return new SoftDeletesPolicy(
-                translog::getLastSyncedGlobalCheckpoint,
-                lastMinRetainedSeqNo,
-                engineConfig.getIndexSettings().getSoftDeleteRetentionOperations(),
-                // 续约信息也是从 ReplicationTracker中获取的
-                engineConfig.retentionLeasesSupplier());
+            translog::getLastSyncedGlobalCheckpoint,
+            lastMinRetainedSeqNo,
+            engineConfig.getIndexSettings().getSoftDeleteRetentionOperations(),
+            // 续约信息也是从 ReplicationTracker中获取的
+            engineConfig.retentionLeasesSupplier());
     }
 
     @Override
@@ -436,7 +438,7 @@ public class InternalEngine extends Engine {
      * The main purpose for this is that if we have external refreshes happening we don't issue extra
      * refreshes to clear version map memory etc. this can cause excessive segment creation if heavy indexing
      * is happening and the refresh interval is low (ie. 1 sec)
-     *
+     * <p>
      * This also prevents segment starvation where an internal reader holds on to old segments literally forever
      * since no indexing is happening and refreshes are only happening to the external reader manager, while with
      * this specialized implementation an external refresh will immediately be reflected on the internal reader
@@ -461,6 +463,7 @@ public class InternalEngine extends Engine {
 
         /**
          * 类似与代理模式
+         *
          * @param internalReaderManager
          * @param refreshListener
          * @throws IOException
@@ -474,6 +477,7 @@ public class InternalEngine extends Engine {
 
         /**
          * externalReaderManager 与 internalReaderManager的区别就是 外部对象会维护缓存  比如此时由于lucene内存占用过大的场景 会触发强制刷盘(通过refresh) 但是不会刷新对外的缓存
+         *
          * @param referenceToRefresh
          * @return
          * @throws IOException
@@ -542,7 +546,8 @@ public class InternalEngine extends Engine {
 
     /**
      * 从事务日志中恢复历史数据
-     * @param translogRecoveryRunner  是一个函数对象  通过engint 和 Translog.Snapshot 进行数据还原
+     *
+     * @param translogRecoveryRunner 是一个函数对象  通过engint 和 Translog.Snapshot 进行数据还原
      * @return
      * @throws IOException
      */
@@ -561,6 +566,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 填满 seq 之间的缺口
+     *
      * @param primaryTerm the shards primary term this engine was created for   在leader节点上生成该shard路由信息的主分片任期 应该是每一次分配的结果对应一个term
      * @return
      * @throws IOException
@@ -575,9 +581,9 @@ public class InternalEngine extends Engine {
             int numNoOpsAdded = 0;
             // 这里是将 检查点与最大序列号之间的空缺补上
             for (
-                    long seqNo = localCheckpoint + 1;
-                    seqNo <= maxSeqNo;
-                    seqNo = localCheckpointTracker.getProcessedCheckpoint() + 1 /* leap-frog the local checkpoint */) {
+                long seqNo = localCheckpoint + 1;
+                seqNo <= maxSeqNo;
+                seqNo = localCheckpointTracker.getProcessedCheckpoint() + 1 /* leap-frog the local checkpoint */) {
                 // 这里往lucene中写入 noop  注意这里发起操作的 origin是 PRIMARY
                 innerNoOp(new NoOp(seqNo, primaryTerm, Operation.Origin.PRIMARY, System.nanoTime(), "filling gaps"));
                 numNoOpsAdded++;
@@ -596,6 +602,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 从最新的segment_N文件中获取userData信息
+     *
      * @param writer
      */
     private void bootstrapAppendOnlyInfoFromWriter(IndexWriter writer) {
@@ -611,6 +618,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 从事务日志中恢复数据
+     *
      * @param translogRecoveryRunner the translog recovery runner    这里定义了恢复数据的逻辑
      * @param recoverUpToSeqNo       the upper bound, inclusive, of sequence number to be recovered   最多加载到seq为多少的数据后 就不再恢复了
      * @return
@@ -654,9 +662,10 @@ public class InternalEngine extends Engine {
 
     /**
      * 从事务日志中恢复数据
-     * @param translogRecoveryRunner  该对象定义了如何通过engine 和从translog中获取的快照对象进行数据恢复
-     *                                返回的结果就是 总计恢复了多少operation
-     * @param recoverUpToSeqNo   代表最多加载到seq为多少的记录  默认情况下是不做限制的  Long.MAX_VALUE
+     *
+     * @param translogRecoveryRunner 该对象定义了如何通过engine 和从translog中获取的快照对象进行数据恢复
+     *                               返回的结果就是 总计恢复了多少operation
+     * @param recoverUpToSeqNo       代表最多加载到seq为多少的记录  默认情况下是不做限制的  Long.MAX_VALUE
      * @throws IOException
      */
     private void recoverFromTranslogInternal(TranslogRecoveryRunner translogRecoveryRunner, long recoverUpToSeqNo) throws IOException {
@@ -705,10 +714,11 @@ public class InternalEngine extends Engine {
 
     /**
      * 创建事务日志对象 每当执行一个操作就进行记录
+     *
      * @param engineConfig
      * @param translogDeletionPolicy
      * @param globalCheckpointSupplier
-     * @param persistedSequenceNumberConsumer  通过localCheckpointTracker 纪录此时持久化的seqNo
+     * @param persistedSequenceNumberConsumer 通过localCheckpointTracker 纪录此时持久化的seqNo
      * @return
      * @throws IOException
      */
@@ -740,6 +750,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 只要 translogWriter内部偏移量发生了变化 就代表需要刷盘 而每次记录operation时 就会增加偏移量
+     *
      * @return
      */
     @Override
@@ -749,6 +760,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 传入一组位置信息 并检测对应的operation是否已经刷盘成功了
+     *
      * @param locations
      * @return
      * @throws IOException
@@ -766,6 +778,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 将事务文件刷盘
+     *
      * @throws IOException
      */
     @Override
@@ -790,6 +803,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 在事务文件刷盘后检测是否有需要删除的文件
+     *
      * @throws IOException
      */
     private void revisitIndexDeletionPolicyOnTranslogSynced() throws IOException {
@@ -808,13 +822,17 @@ public class InternalEngine extends Engine {
         return historyUUID;
     }
 
-    /** returns the force merge uuid for the engine */
+    /**
+     * returns the force merge uuid for the engine
+     */
     @Nullable
     public String getForceMergeUUID() {
         return forceMergeUUID;
     }
 
-    /** Returns how many bytes we are currently moving from indexing buffer to segments on disk */
+    /**
+     * Returns how many bytes we are currently moving from indexing buffer to segments on disk
+     */
     @Override
     public long getWritingBytes() {
         return indexWriter.getFlushingBytes() + versionMap.getRefreshingBytes();
@@ -833,6 +851,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 生成一个资源管理对象
+     *
      * @param externalRefreshListener 该对象一旦感知到reader对象就会进行预热工作
      * @return
      * @throws EngineException
@@ -848,7 +867,7 @@ public class InternalEngine extends Engine {
 
                 // listener 监听到新的reader时 会检测缓存键 并与熔断器产生联动
                 internalReaderManager = new ElasticsearchReaderManager(directoryReader,
-                       new RamAccountingRefreshListener(engineConfig.getCircuitBreakerService()));
+                    new RamAccountingRefreshListener(engineConfig.getCircuitBreakerService()));
 
                 // 获取segment_N数据信息
                 lastCommittedSegmentInfos = store.readLastCommittedSegmentsInfo();
@@ -874,8 +893,9 @@ public class InternalEngine extends Engine {
 
     /**
      * 执行get请求 并返回查询结果
-     * @param get  在get请求中还可以严格要求版本
-     * @param searcherFactory  通过该函数获取工厂
+     *
+     * @param get             在get请求中还可以严格要求版本
+     * @param searcherFactory 通过该函数获取工厂
      * @return
      * @throws EngineException
      */
@@ -908,7 +928,7 @@ public class InternalEngine extends Engine {
                     }
                     if (get.getIfSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO && (
                         get.getIfSeqNo() != versionValue.seqNo || get.getIfPrimaryTerm() != versionValue.term
-                        )) {
+                    )) {
                         throw new VersionConflictEngineException(shardId, get.id(),
                             get.getIfSeqNo(), get.getIfPrimaryTerm(), versionValue.seqNo, versionValue.term);
                     }
@@ -977,12 +997,15 @@ public class InternalEngine extends Engine {
          * 2个op相同
          */
         OP_STALE_OR_EQUAL,
-        /** no doc was found in lucene */
+        /**
+         * no doc was found in lucene
+         */
         LUCENE_DOC_NOT_FOUND
     }
 
     /**
      * 检测  前3个参数与第4个参数的新旧关系
+     *
      * @param id
      * @param seqNo
      * @param primaryTerm
@@ -1003,8 +1026,7 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     *
-     * @param op  本次发起的operation
+     * @param op 本次发起的operation
      * @return
      * @throws IOException
      */
@@ -1058,7 +1080,7 @@ public class InternalEngine extends Engine {
             // 以下操作和通过 UpdateHelper 在执行update前 先通过get查询旧数据的操作一样
             final VersionsAndSeqNoResolver.DocIdAndVersion docIdAndVersion;
             try (Searcher searcher = acquireSearcher("load_version", SearcherScope.INTERNAL)) {
-                 docIdAndVersion = VersionsAndSeqNoResolver.loadDocIdAndVersion(searcher.getIndexReader(), op.uid(), loadSeqNo);
+                docIdAndVersion = VersionsAndSeqNoResolver.loadDocIdAndVersion(searcher.getIndexReader(), op.uid(), loadSeqNo);
             }
             if (docIdAndVersion != null) {
                 versionValue = new IndexVersionValue(null, docIdAndVersion.version, docIdAndVersion.seqNo, docIdAndVersion.primaryTerm);
@@ -1066,7 +1088,7 @@ public class InternalEngine extends Engine {
             // 这里开启了惰性检测 当获取到的versionValue 刚好是删除类型  并且超过了维护时间 (也就是应该有一个间接删除长时间存在的versionValue的逻辑)
             // 那么手动置空   同时返回null的深层逻辑就是该记录本身已经从lucene中被删除了
         } else if (engineConfig.isEnableGcDeletes() && versionValue.isDelete() &&
-            (engineConfig.getThreadPool().relativeTimeInMillis() - ((DeleteVersionValue)versionValue).time) > getGcDeletesInMillis()) {
+            (engineConfig.getThreadPool().relativeTimeInMillis() - ((DeleteVersionValue) versionValue).time) > getGcDeletesInMillis()) {
             versionValue = null;
         }
         return versionValue;
@@ -1074,6 +1096,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 获取某个doc对应的id 最新的版本号
+     *
      * @param id
      * @return
      */
@@ -1098,6 +1121,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 检测 addDoc的操作能否优化
+     *
      * @param index
      * @return
      */
@@ -1116,7 +1140,7 @@ public class InternalEngine extends Engine {
                     assert index.version() == 1 && index.versionType() == null
                         : "version: " + index.version() + " type: " + index.versionType();
                     return true;
-                    // 当从事务日志中重做数据时 返回true
+                // 当从事务日志中重做数据时 返回true
                 case LOCAL_TRANSLOG_RECOVERY:
                 case LOCAL_RESET:
                     assert index.isRetry();
@@ -1148,12 +1172,13 @@ public class InternalEngine extends Engine {
     protected boolean assertPrimaryIncomingSequenceNumber(final Engine.Operation.Origin origin, final long seqNo) {
         // sequence number should not be set when operation origin is primary
         assert seqNo == SequenceNumbers.UNASSIGNED_SEQ_NO
-                : "primary operations must never have an assigned sequence number but was [" + seqNo + "]";
+            : "primary operations must never have an assigned sequence number but was [" + seqNo + "]";
         return true;
     }
 
     /**
      * 实际上只有主分片会调用该方法 因为只有主分片能够确定正确的seqNo
+     *
      * @param operation
      * @return
      */
@@ -1181,6 +1206,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 将index内部的数据写入到lucene中
+     *
      * @param index operation to perform
      * @return
      * @throws IOException
@@ -1188,15 +1214,17 @@ public class InternalEngine extends Engine {
     @Override
     public IndexResult index(Index index) throws IOException {
         assert Objects.equals(index.uid().field(), IdFieldMapper.NAME) : index.uid().field();
-        // 恢复操作是不会被限制的
+        // 恢复操作会被限制
         final boolean doThrottle = index.origin().isRecovery() == false;
         try (ReleasableLock releasableLock = readLock.acquire()) {
             ensureOpen();
             assert assertIncomingSequenceNumber(index.origin(), index.seqNo());
-            // 以id为单位进行定制锁
+            // 并发处理doc时  以id为单位加锁
+            // 在 IndexMemoryController中  如果某个分片占用的内存过大会开启阀门对象 这样获取锁的操作就变成了阻塞的 避免继续写入数据 导致oom
             try (Releasable ignored = versionMap.acquireLock(index.uid().bytes());
-                Releasable indexThrottle = doThrottle ? () -> {} : throttle.acquireThrottle()) {
-                // startTime 对应index对象生成的时间
+                 Releasable indexThrottle = doThrottle ? () -> {} : throttle.acquireThrottle()) {
+
+                // 更新最近一次写入的时间
                 lastWriteNanos = index.startTime();
                 /* A NOTE ABOUT APPEND ONLY OPTIMIZATIONS:
                  * if we have an autoGeneratedID that comes into the engine we can potentially optimize
@@ -1228,13 +1256,12 @@ public class InternalEngine extends Engine {
                 final IndexingStrategy plan = indexingStrategyForOperation(index);
 
                 final IndexResult indexResult;
-                // TODO 在恢复过程中可能生成的几个策略都不会包含这个异常
                 if (plan.earlyResultOnPreFlightError.isPresent()) {
                     indexResult = plan.earlyResultOnPreFlightError.get();
                     assert indexResult.getResultType() == Result.Type.FAILURE : indexResult.getResultType();
                 } else {
                     // generate or register sequence number
-                    // TODO 代表在主分片执行写入操作 先忽略
+                    // 主分片的区别就是会生成 nextSeq 以及往事务日志中追加一条记录
                     if (index.origin() == Operation.Origin.PRIMARY) {
 
                         // index在传入时设置的是 ifSeq 并且校验使用的也是 ifSeq 而在写入时需要分配一个新的seq
@@ -1244,14 +1271,14 @@ public class InternalEngine extends Engine {
                             index.version(), index.versionType(), index.origin(), index.startTime(), index.getAutoGeneratedIdTimestamp(),
                             index.isRetry(), index.getIfSeqNo(), index.getIfPrimaryTerm());
 
-                        // indexIntoLucene 代表是否要写入到lucene中
-                        // TODO useLuceneUpdateDocument 这个是代表要覆盖的意思吗
+                        // 代表是一个新增操作 而不是更新操作
                         final boolean toAppend = plan.indexIntoLucene && plan.useLuceneUpdateDocument == false;
                         if (toAppend == false) {
+                            // 代表是更新操作   需要更新maxSeqNoOfUpdatesOrDeletes   该标识记录了 最新的删除或者更新操作对应的seq
                             advanceMaxSeqNoOfUpdatesOrDeletesOnPrimary(index.seqNo());
                         }
                     } else {
-                        // 通过localCheckpointTracker 记录此时最新的seqNo
+                        // 尝试更新本分片观测到的最大的seq
                         markSeqNoAsSeen(index.seqNo());
                     }
 
@@ -1262,6 +1289,7 @@ public class InternalEngine extends Engine {
                         indexResult = indexIntoLucene(index, plan);
                     } else {
                         // 不需要写入的话 直接生成结果(SUCCESS)
+                        // 这种情况对应数据已经存在于lucene中  所以seqNo还是要增加
                         indexResult = new IndexResult(
                             plan.versionForIndexing, index.primaryTerm(), index.seqNo(), plan.currentNotFoundOrDeleted);
                     }
@@ -1280,17 +1308,16 @@ public class InternalEngine extends Engine {
                     } else {
                         location = null;
                     }
-                    // 如果本次不是由本地事务日志发起的操作 那么还需要将操作写回到事务日志中 同时在indexResult中记录位置信息
                     indexResult.setTranslogLocation(location);
                 }
 
-                // 这时已经完成了 operation在lucene的写入以及 事务日志的写入 注意都还没刷盘 (lucene还没提交)
+                // 这时已经完成了 operation在lucene的写入以及 事务日志的写入 注意都还没刷盘
                 // 如果频繁的调用lucene.commit 会影响效率
                 if (plan.indexIntoLucene && indexResult.getResultType() == Result.Type.SUCCESS) {
 
                     // 如果在插入版本信息时 需要同时记录此时事务日志的位置  那么将位置信息设置到 IndexVersionValue中
                     final Translog.Location translogLocation = trackTranslogLocation.get() ? indexResult.getTranslogLocation() : null;
-                    // 将该id对应的最新信息写入到 versionMap中 不过每次refresh  versionMap的数据都会被清除 那么意义在哪里
+                    // 将该id对应的最新信息写入到 versionMap中
                     versionMap.maybePutIndexUnderLock(index.uid().bytes(),
                         new IndexVersionValue(translogLocation, plan.versionForIndexing, index.seqNo(), index.primaryTerm()));
                 }
@@ -1325,6 +1352,7 @@ public class InternalEngine extends Engine {
     /**
      * 当本对象作为副本 或者 从事务日志中恢复数据时走该分支
      * 生成一个index写入策略
+     *
      * @param index
      * @return
      * @throws IOException
@@ -1332,16 +1360,16 @@ public class InternalEngine extends Engine {
     protected final IndexingStrategy planIndexingAsNonPrimary(Index index) throws IOException {
         assert assertNonPrimaryOrigin(index);
         // needs to maintain the auto_id timestamp in case this replica becomes primary
-        // 当设置了 自动id时间戳  就允许进行优化
+        // 更新最近观测到的操作时间戳
         if (canOptimizeAddDocument(index)) {
-            // 更新 2个maxTimestamp
             mayHaveBeenIndexedBefore(index);
         }
         final IndexingStrategy plan;
         // unlike the primary, replicas don't really care to about creation status of documents
         // this allows to ignore the case where a document was found in the live version maps in
         // a delete state and return false for the created flag in favor of code simplicity
-        // TODO 这是什么???
+
+        // 记录最新的update/delete操作对应的seqNo
         final long maxSeqNoOfUpdatesOrDeletes = getMaxSeqNoOfUpdatesOrDeletes();
         // 如果对应seq 小于 localCheckpoint.processed  代表之前已经处理过
         if (hasBeenProcessedBefore(index)) {
@@ -1355,8 +1383,7 @@ public class InternalEngine extends Engine {
             // 这里返回的策略就是 会处理数据 但是跳过lucene的写入过程
             plan = IndexingStrategy.processButSkipLucene(false, index.version());
 
-            // 这种情况是可能出现的 maxSeqNoOfUpdatesOrDeletes 对应lucene.userData记录的maxSeq
-            // 而在初始化过程中会尽可能的读取此时lucene的doc数据 每个doc都有自己的seq  就有可能超过userData中记录的seq
+            // TODO 这里还没理解
         } else if (maxSeqNoOfUpdatesOrDeletes <= localCheckpointTracker.getProcessedCheckpoint()) {
             // see Engine#getMaxSeqNoOfUpdatesOrDeletes for the explanation of the optimization using sequence numbers
             assert maxSeqNoOfUpdatesOrDeletes < index.seqNo() : index.seqNo() + ">=" + maxSeqNoOfUpdatesOrDeletes;
@@ -1379,12 +1406,12 @@ public class InternalEngine extends Engine {
 
     /**
      * index的写入可以使用多种策略
+     *
      * @param index
      * @return IndexingStrategy 用于决定本次index操作 会是更新数据 或者插入数据等
      * @throws IOException
      */
     protected IndexingStrategy indexingStrategyForOperation(final Index index) throws IOException {
-        // TODO 先不看这个  先考虑从本地事务文件恢复数据怎么做
         if (index.origin() == Operation.Origin.PRIMARY) {
             return planIndexingAsPrimary(index);
         } else {
@@ -1395,7 +1422,8 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 当index.origin 是PRIMARY 时 使用这个策略
+     * 在主分片下 根据参数信息决定使用哪种写入策略
+     *
      * @param index
      * @return
      * @throws IOException
@@ -1404,9 +1432,9 @@ public class InternalEngine extends Engine {
         assert index.origin() == Operation.Origin.PRIMARY : "planing as primary but origin isn't. got " + index.origin();
         final IndexingStrategy plan;
         // resolve an external operation into an internal one which is safe to replay
-        // 默认情况下总是可以优化 index
+
+        // 这里的优化逻辑就是能否快速的判别某次请求是否是首次插入   这里就是根据请求携带的生成id时间戳信息  这样可以避免一次versionMap的检索 或者searcher的检索
         final boolean canOptimizeAddDocument = canOptimizeAddDocument(index);
-        // 可优化且之前没有写入过该index信息
         if (canOptimizeAddDocument && mayHaveBeenIndexedBefore(index) == false) {
             plan = IndexingStrategy.optimizedAppendOnly(1L);
         } else {
@@ -1414,7 +1442,7 @@ public class InternalEngine extends Engine {
             // 标志成需要安全访问
             versionMap.enforceSafeAccess();
             // resolves incoming version
-            // 默认情况下版本应该是null  但是如果之前已经写如果 那么应该会将版本信息存储到 versionMap中
+            // 尝试通过本次op.id 查询相同的数据
             final VersionValue versionValue =
                 resolveDocVersion(index, index.getIfSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO);
             final long currentVersion;
@@ -1427,7 +1455,8 @@ public class InternalEngine extends Engine {
                 // 找到的情况下查看是否已经被标记成删除了
                 currentNotFoundOrDeleted = versionValue.isDelete();
             }
-            // 代表需要seq 已经被删除了或者没找到
+
+            // 请求中携带了 ifXXX 需要进行校验
             if (index.getIfSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO && currentNotFoundOrDeleted) {
                 final VersionConflictEngineException e = new VersionConflictEngineException(shardId, index.id(),
                     index.getIfSeqNo(), index.getIfPrimaryTerm(), SequenceNumbers.UNASSIGNED_SEQ_NO,
@@ -1441,13 +1470,14 @@ public class InternalEngine extends Engine {
                     index.getIfSeqNo(), index.getIfPrimaryTerm(), versionValue.seqNo, versionValue.term);
                 // 这会产生一个 内部已经设置有包含 Exception 的 IndexResult对象
                 plan = IndexingStrategy.skipDueToVersionConflict(e, currentNotFoundOrDeleted, currentVersion);
-                // index 的versionType 定义了一套版本校验规则 这里要进行校验
             } else if (index.versionType().isVersionConflictForWrites(
                 currentVersion, index.version(), currentNotFoundOrDeleted)) {
                 final VersionConflictEngineException e =
-                        new VersionConflictEngineException(shardId, index, currentVersion, currentNotFoundOrDeleted);
+                    new VersionConflictEngineException(shardId, index, currentVersion, currentNotFoundOrDeleted);
                 plan = IndexingStrategy.skipDueToVersionConflict(e, currentNotFoundOrDeleted, currentVersion);
             } else {
+
+                // 版本校验通过的情况就可以正常插入
                 plan = IndexingStrategy.processNormally(currentNotFoundOrDeleted,
                     canOptimizeAddDocument ? 1L : index.versionType().updateVersion(currentVersion, index.version())
                 );
@@ -1458,6 +1488,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 将index数据写入到 lucene中
+     *
      * @param index
      * @param plan
      * @return
@@ -1471,7 +1502,7 @@ public class InternalEngine extends Engine {
         /* Update the document's sequence number and primary term; the sequence number here is derived here from either the sequence
          * number service if this is on the primary, or the existing document's sequence number if this is on the replica. The
          * primary term here has already been set, see IndexShard#prepareIndex where the Engine$Index operation is created.
-         * 这里就是填充数据
+         * 回填seq /version
          */
         index.parsedDoc().updateSeqID(index.seqNo(), index.primaryTerm());
         index.parsedDoc().version().setLongValue(plan.versionForIndexing);
@@ -1480,7 +1511,7 @@ public class InternalEngine extends Engine {
             // addStaleOpToLucene  代表本次要写入的 op 对应的seq,id 已经有过相同的数据存在于lucene中了
             if (plan.addStaleOpToLucene) {
                 addStaleDocs(index.docs(), indexWriter);
-                // 代表本次是一次更新请求 这种情况是本次写入的id 在lucene中已经存在 但是seq更新
+                // 代表本次是一次更新请求 这种情况是本次写入的id 在lucene中已经存在 但是seq较之前的数据更新
             } else if (plan.useLuceneUpdateDocument) {
                 assert assertMaxSeqNoOfUpdatesIsAdvanced(index.uid(), index.seqNo(), true, true);
                 updateDocs(index.uid(), index.docs(), indexWriter);
@@ -1540,12 +1571,12 @@ public class InternalEngine extends Engine {
         if (index.isRetry()) {
             // 可能该index已经写入到lucene中了
             mayHaveBeenIndexBefore = true;
-            // 就是更新时间戳的
+            // 更新此时观测到的最新op生成的时间戳
             updateAutoIdTimestamp(index.getAutoGeneratedIdTimestamp(), true);
             assert maxUnsafeAutoIdTimestamp.get() >= index.getAutoGeneratedIdTimestamp();
         } else {
             // in this case we force
-            // 如果此时的时间戳 已经超过了index的时间戳 就认为之前已经写入过了
+            // 如果本次请求的时间戳 小于此时观测到的最大的时间戳 那么就认为可能数据已经写入到lucene中了
             mayHaveBeenIndexBefore = maxUnsafeAutoIdTimestamp.get() >= index.getAutoGeneratedIdTimestamp();
             updateAutoIdTimestamp(index.getAutoGeneratedIdTimestamp(), false);
         }
@@ -1554,6 +1585,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 直接写入doc
+     *
      * @param docs
      * @param indexWriter
      * @throws IOException
@@ -1569,6 +1601,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 将一个过期的doc 写入到lucene中
+     *
      * @param docs
      * @param indexWriter
      * @throws IOException
@@ -1590,7 +1623,7 @@ public class InternalEngine extends Engine {
      */
     protected static final class IndexingStrategy {
         /**
-         * 代表对应的数据是否未找到 或者被删除
+         * 使用 op.id 能否查询到数据
          */
         final boolean currentNotFoundOrDeleted;
         final boolean useLuceneUpdateDocument;
@@ -1610,6 +1643,7 @@ public class InternalEngine extends Engine {
 
         /**
          * 这里只是最简单的赋值操作
+         *
          * @param currentNotFoundOrDeleted
          * @param useLuceneUpdateDocument
          * @param indexIntoLucene
@@ -1637,7 +1671,8 @@ public class InternalEngine extends Engine {
         }
 
         /**
-         * 针对仅追加的情况进行优化
+         * 代表必然是首次插入
+         * currentNotFoundOrDeleted 代表本次index.id 能否找到其他数据
          * @param versionForIndexing
          * @return
          */
@@ -1647,21 +1682,24 @@ public class InternalEngine extends Engine {
 
         /**
          * 将版本标记成 -1 同时设置了一个失败的IndexResult 设置到IndexingStrategy中
+         *
          * @param e
          * @param currentNotFoundOrDeleted
          * @param currentVersion
          * @return
          */
         public static IndexingStrategy skipDueToVersionConflict(
-                VersionConflictEngineException e, boolean currentNotFoundOrDeleted, long currentVersion) {
+            VersionConflictEngineException e, boolean currentNotFoundOrDeleted, long currentVersion) {
             final IndexResult result = new IndexResult(e, currentVersion);
             return new IndexingStrategy(
-                    currentNotFoundOrDeleted, false, false, false,
+                currentNotFoundOrDeleted, false, false, false,
                 Versions.NOT_FOUND, result);
         }
 
         /**
          * 正常处理 生成 IndexingStrategy
+         * 可能是一次更新请求 也可能是首次插入
+         *
          * @param currentNotFoundOrDeleted
          * @param versionForIndexing
          * @return
@@ -1674,6 +1712,7 @@ public class InternalEngine extends Engine {
 
         /**
          * 代表会处理 Operation  但是会跳过有关lucene的写入过程
+         *
          * @param currentNotFoundOrDeleted
          * @param versionForIndexing
          * @return
@@ -1685,6 +1724,7 @@ public class InternalEngine extends Engine {
 
         /**
          * 处理过期的 op
+         *
          * @param versionForIndexing
          * @return
          */
@@ -1719,6 +1759,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 更新doc的数据
+     *
      * @param uid
      * @param docs
      * @param indexWriter
@@ -1736,6 +1777,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 到了 engine层就涉及到 与lucene的交互  这里根据delete信息 执行删除操作
+     *
      * @param delete operation to perform
      * @return
      * @throws IOException
@@ -1764,6 +1806,7 @@ public class InternalEngine extends Engine {
                 // generate or register sequence number
                 if (delete.origin() == Operation.Origin.PRIMARY) {
                     // 唯一的区别就是生成了seqNo  只有主分片才能清楚的知道   实际上就是获取localCheckpointTracker.nextSeq
+                    // 并且在主分片上生成的 op 一开始都是不确定版本号的
                     delete = new Delete(delete.id(), delete.uid(), generateSeqNoForOperationOnPrimary(delete),
                         delete.primaryTerm(), delete.version(), delete.versionType(), delete.origin(), delete.startTime(),
                         delete.getIfSeqNo(), delete.getIfPrimaryTerm());
@@ -1777,6 +1820,7 @@ public class InternalEngine extends Engine {
                 assert delete.seqNo() >= 0 : "ops should have an assigned seq no.; origin: " + delete.origin();
 
                 // 代表需要从lucene中删除该数据  当发现是stale操作 也需要重复执行  TODO 旧数据执行的意义是什么???
+                // 在主分片上 即使doc已经被删除了 返回的策略中 deleteFromLucene也为true
                 if (plan.deleteFromLucene || plan.addStaleOpToLucene) {
                     deleteResult = deleteInLucene(delete, plan);
                 } else {
@@ -1784,15 +1828,17 @@ public class InternalEngine extends Engine {
                     deleteResult = new DeleteResult(
                         plan.versionOfDeletion, delete.primaryTerm(), delete.seqNo(), plan.currentlyDeleted == false);
                 }
-                // 代表本次操作作用到了lucene上 且不是之前已经存在于lucene的数据
+
+                // 代表正常的处理情况
                 if (plan.deleteFromLucene) {
                     numDocDeletes.inc();
+                    // 加入到 基于id的缓存容器中 便于快速判断数据是否被删除    即使此时数据已经被删除  之后再发起相同的删除操作还是会增加一个删除的doc
                     versionMap.putDeleteUnderLock(delete.uid().bytes(),
                         new DeleteVersionValue(plan.versionOfDeletion, delete.seqNo(), delete.primaryTerm(),
                             engineConfig.getThreadPool().relativeTimeInMillis()));
                 }
             }
-            // 如果本次操作不是从事务日志中获取的数据 就不需要记录到事务日志中
+            // 本次操作不是由事务日志的数据发起的 比如恢复流程     那么需要将信息记录到事务日志中
             if (delete.origin().isFromTranslog() == false && deleteResult.getResultType() == Result.Type.SUCCESS) {
                 final Translog.Location location = translog.add(new Translog.Delete(delete, deleteResult));
                 deleteResult.setTranslogLocation(location);
@@ -1818,14 +1864,15 @@ public class InternalEngine extends Engine {
             }
             throw e;
         }
-        // 处理delete操作会将数据存储到墓碑中 而每当间隔超过一定时间 会将太旧的墓碑数据清理掉
-        // 这个数据存储在 versionMap的意义是什么
+
+        // 当开启了GC删除时   如果发现此时versionMap中存储了太多删除的数据时 可以移除这部分数据
         maybePruneDeletes();
         return deleteResult;
     }
 
     /**
      * 通过本次传入的delete信息 生成一个删除策略
+     *
      * @param delete
      * @return
      * @throws IOException
@@ -1842,6 +1889,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 检测delete对应的id是否存在 或者是否已经处理过 生成不同的处理策略
+     *
      * @param delete
      * @return
      * @throws IOException
@@ -1864,7 +1912,7 @@ public class InternalEngine extends Engine {
             // 推测是这样 如果某个op对应的seq已经更新到 processedCheckpoint上了 就代表这个操作已经同步到事务日志中了 就完全不需要处理了
             // 下面的情况 当发现seq重复 却没有写入到事务文件中 会再一次作用到lucene上
             final OpVsLuceneDocStatus opVsLucene = compareOpToLuceneDocBasedOnSeqNo(delete);
-            // 删除操作也会写入到lucene中  这里是代表本次操作对应的seqNo 实际上已经存在于lucene中了   TODO 事务日志是没有必要重做的啊
+            // 删除操作也会写入到lucene中  这里是代表本次操作对应的seqNo 实际上已经存在于lucene中了
             if (opVsLucene == OpVsLuceneDocStatus.OP_STALE_OR_EQUAL) {
                 plan = DeletionStrategy.processAsStaleOp(delete.version());
             } else {
@@ -1882,6 +1930,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 在主分片下处理 delete请求
+     *
      * @param delete
      * @return
      * @throws IOException
@@ -1904,6 +1953,8 @@ public class InternalEngine extends Engine {
             currentVersion = versionValue.version;
             currentlyDeleted = versionValue.isDelete();
         }
+
+        // !!! 主分片不会出现 stale的情况
 
         final DeletionStrategy plan;
         // 当前已经被删除 无法校验版本号 在strategy中生成异常结果
@@ -1929,6 +1980,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 将删除操作作用到lucene上
+     *
      * @param delete
      * @param plan
      * @return
@@ -1949,11 +2001,11 @@ public class InternalEngine extends Engine {
 
             // 这些doc都追加上了 软删除字段 TODO 怎么使用
             doc.add(softDeletesField);
-            // addStaleOpToLucene  代表需要再次写入 还不知道是为啥
+            // 在当前文档已经被删除时  如果之后又发起了删除操作  还是会加入一个标记删除的doc
             if (plan.addStaleOpToLucene || plan.currentlyDeleted) {
                 indexWriter.addDocument(doc);
             } else {
-                // 代表本次处理的数据 seq更大 执行更新操作
+                // 这里是正常的删除操作 针对之前存在的doc进行删除
                 indexWriter.softUpdateDocument(delete.uid(), doc, softDeletesField);
             }
             return new DeleteResult(
@@ -2007,13 +2059,14 @@ public class InternalEngine extends Engine {
         /**
          * 请求中要求检测版本号  但是记录已经不存在 无法校验导致的异常情况
          * 又或者是找到了结果 但是版本号不匹配
+         *
          * @param e
          * @param currentVersion
          * @param currentlyDeleted
          * @return
          */
         public static DeletionStrategy skipDueToVersionConflict(
-                VersionConflictEngineException e, long currentVersion, boolean currentlyDeleted) {
+            VersionConflictEngineException e, long currentVersion, boolean currentlyDeleted) {
             final DeleteResult deleteResult = new DeleteResult(e, currentVersion, SequenceNumbers.UNASSIGNED_PRIMARY_TERM,
                 SequenceNumbers.UNASSIGNED_SEQ_NO, currentlyDeleted == false);
             // 这种情况将不会将删除操作作用到lucene上
@@ -2021,9 +2074,8 @@ public class InternalEngine extends Engine {
         }
 
         /**
-         *
          * @param currentlyDeleted  true代表delete对应的doc信息在lucene中无法被找到
-         * @param versionOfDeletion  本次操作后记录对应的版本号  针对某个id的记录 每次操作都会增加版本号
+         * @param versionOfDeletion 本次操作后记录对应的版本号  针对某个id的记录 每次操作都会增加版本号
          * @return
          */
         static DeletionStrategy processNormally(boolean currentlyDeleted, long versionOfDeletion) {
@@ -2033,6 +2085,7 @@ public class InternalEngine extends Engine {
 
         /**
          * 代表本次 Op的seq 已经记录到事务日志中了 所以不需要重做到lucene上
+         *
          * @param currentlyDeleted
          * @param versionOfDeletion
          * @return
@@ -2043,6 +2096,7 @@ public class InternalEngine extends Engine {
 
         /**
          * delete对应的doc信息还存在于lucene中
+         *
          * @param versionOfDeletion
          * @return
          */
@@ -2061,13 +2115,14 @@ public class InternalEngine extends Engine {
         // every 1/4 of gcDeletesInMillis:
         // 首先要确保开启了这个配置 其次2次删除应当有一个时间间隔
         if (engineConfig.isEnableGcDeletes() &&
-                engineConfig.getThreadPool().relativeTimeInMillis() - lastDeleteVersionPruneTimeMSec > getGcDeletesInMillis() * 0.25) {
+            engineConfig.getThreadPool().relativeTimeInMillis() - lastDeleteVersionPruneTimeMSec > getGcDeletesInMillis() * 0.25) {
             pruneDeletedTombstones();
         }
     }
 
     /**
      * 处理noop
+     *
      * @param noOp
      * @return
      * @throws IOException
@@ -2091,6 +2146,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 当需要处理一个 NOOP操作时 写入到lucene/事务日志中
+     *
      * @param noOp
      * @return
      * @throws IOException
@@ -2185,6 +2241,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 尝试进行刷新 如果抢占锁失败就不刷新了
+     *
      * @param source
      * @return
      * @throws EngineException
@@ -2196,6 +2253,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 发起刷新请求   当发现lucene内部有未持久化的数据 会间接触发lucene的刷盘
+     *
      * @param source
      * @param scope  由内部发起还是外部发起  不同的scope会使用不同的readerManager
      * @param block  是否需要阻塞
@@ -2264,6 +2322,7 @@ public class InternalEngine extends Engine {
     /**
      * 每当执行一个 operation时 会将数据存储在lucene管理的内存中  当超过一定值时 就会触发刷盘
      * refresh 实际上会间接触发 lucene.flush
+     *
      * @throws EngineException
      */
     @Override
@@ -2272,8 +2331,8 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 刷盘是异步的 或者通过req触发
-     * 检测是否需要定时触发刷盘
+     * 这个方法主要是判断是否要对 lucene进行刷盘
+     *
      * @return
      */
     @Override
@@ -2283,12 +2342,14 @@ public class InternalEngine extends Engine {
         if (shouldPeriodicallyFlushAfterBigMerge.get()) {
             return true;
         }
-        // 上次刷盘对应的检查点
+        // 对应lucene最近持久化的数据中 记录那个时刻事务日志写入到哪个op
         final long localCheckpointOfLastCommit =
             Long.parseLong(lastCommittedSegmentInfos.userData.get(SequenceNumbers.LOCAL_CHECKPOINT_KEY));
-        // 通过检查点反查事务日志文件
+        // 读取下一个事务日志的信息  因为每次lucene刷盘前 事务日志必然被刷盘 所以这里一定是获取到新的事务日志文件
+        // 极端情况下 可能有多个事务日志对应的lucene数据未刷盘 这时无论下一个事务日志是否已经持久化 主要都是观测lucene内存中的数据是否过多
         final long translogGenerationOfLastCommit =
             translog.getMinGenerationForSeqNo(localCheckpointOfLastCommit + 1).translogFileGeneration;
+
         // 达到该值时才推荐刷盘 是为了避免由于刷盘过于频繁导致太高的性能开销
         final long flushThreshold = config().getIndexSettings().getFlushThresholdSize().getBytes();
         if (translog.sizeInBytesByMinGen(translogGenerationOfLastCommit) < flushThreshold) {
@@ -2308,8 +2369,8 @@ public class InternalEngine extends Engine {
          * generations as the generation-threshold was reached, then the first condition (eg. [1]) is already satisfied.
          *
          * This method is to maintain translog only, thus IndexWriter#hasUncommittedChanges condition is not considered.
-         * 过了上面有关偏移量的限制
-         * 判断当前处理到的seqNo 是否比之前的gen 大
+         * 第一个条件代表如果此时某个事务日志已经刷盘 而lucene的数据还未刷盘 必然会触发刷盘
+         * 第二个条件应该能满足吧 那么主要刷盘的拦截点就是 lucene内存中的数据要比较大
          */
         final long translogGenerationOfNewCommit =
             translog.getMinGenerationForSeqNo(localCheckpointTracker.getProcessedCheckpoint() + 1).translogFileGeneration;
@@ -2319,6 +2380,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 将当前内存中的数据写入到磁盘
+     *
      * @param force         if <code>true</code> a lucene commit is executed even if no changes need to be committed.
      * @param waitIfOngoing if <code>true</code> this call will block until all currently running flushes have finished.
      * @throws EngineException
@@ -2406,12 +2468,12 @@ public class InternalEngine extends Engine {
      * 重新读取最大的 segment_N 对应的段文件
      */
     private void refreshLastCommittedSegmentInfos() {
-    /*
-     * we have to inc-ref the store here since if the engine is closed by a tragic event
-     * we don't acquire the write lock and wait until we have exclusive access. This might also
-     * dec the store reference which can essentially close the store and unless we can inc the reference
-     * we can't use it.
-     */
+        /*
+         * we have to inc-ref the store here since if the engine is closed by a tragic event
+         * we don't acquire the write lock and wait until we have exclusive access. This might also
+         * dec the store reference which can essentially close the store and unless we can inc the reference
+         * we can't use it.
+         */
         store.incRef();
         try {
             // reread the last committed segment infos
@@ -2434,6 +2496,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 切换到下一个事务文件 并尝试丢弃旧的文件
+     *
      * @throws EngineException
      */
     @Override
@@ -2457,6 +2520,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 该方法会在定时器内触发
+     *
      * @throws EngineException
      */
     @Override
@@ -2546,6 +2610,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 强制触发merge逻辑
+     *
      * @param flush
      * @param maxNumSegments
      * @param onlyExpungeDeletes
@@ -2632,6 +2697,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 获取此时lucene中最新一次提交的相关信息
+     *
      * @param flushFirst indicates whether the engine should flush before returning the snapshot
      * @return
      * @throws EngineException
@@ -2659,6 +2725,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 代表某个快照不再使用 就是从内部快照容器中移除
+     *
      * @param snapshot
      * @throws IOException
      */
@@ -2707,6 +2774,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 检测 engine 是否应该被关闭
+     *
      * @param source
      * @param e
      * @return
@@ -2721,10 +2789,10 @@ public class InternalEngine extends Engine {
         // exception that should only be thrown in a tragic event. we pass on the checks to failOnTragicEvent which will
         // throw and AssertionError if the tragic event condition is not met.
         if (e instanceof AlreadyClosedException) {
-            return failOnTragicEvent((AlreadyClosedException)e);
+            return failOnTragicEvent((AlreadyClosedException) e);
         } else if (e != null &&
-                ((indexWriter.isOpen() == false && indexWriter.getTragicException() == e)
-                        || (translog.isOpen() == false && translog.getTragicException() == e))) {
+            ((indexWriter.isOpen() == false && indexWriter.getTragicException() == e)
+                || (translog.isOpen() == false && translog.getTragicException() == e))) {
             // this spot on - we are handling the tragic event exception here so we have to fail the engine
             // right away
             failEngine(source, e);
@@ -2833,6 +2901,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 初始化indexWriter
+     *
      * @return
      * @throws IOException
      */
@@ -2858,6 +2927,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 获取 DirectoryReader的相关配置
+     *
      * @param directory
      * @param indexSettings
      * @return
@@ -2872,13 +2942,14 @@ public class InternalEngine extends Engine {
         if (IndexSettings.ON_HEAP_ID_TERMS_INDEX.exists(indexSettings.getSettings())) {
             final boolean idOffHeap = IndexSettings.ON_HEAP_ID_TERMS_INDEX.get(indexSettings.getSettings()) == false;
             attributes.put(BlockTreeTermsReader.FST_MODE_KEY + "." + IdFieldMapper.NAME,
-                    idOffHeap ? FSTLoadMode.OFF_HEAP.name() : FSTLoadMode.ON_HEAP.name());
+                idOffHeap ? FSTLoadMode.OFF_HEAP.name() : FSTLoadMode.ON_HEAP.name());
         }
         return Collections.unmodifiableMap(attributes);
     }
 
     /**
      * 获取相关配置
+     *
      * @return
      */
     private IndexWriterConfig getIndexWriterConfig() {
@@ -3041,6 +3112,7 @@ public class InternalEngine extends Engine {
 
         /**
          * merge 后执行
+         *
          * @param merge
          */
         @Override
@@ -3055,7 +3127,7 @@ public class InternalEngine extends Engine {
                 }
             }
             if (indexWriter.hasPendingMerges() == false &&
-                    System.nanoTime() - lastWriteNanos >= engineConfig.getFlushMergesAfter().nanos()) {
+                System.nanoTime() - lastWriteNanos >= engineConfig.getFlushMergesAfter().nanos()) {
                 // NEVER do this on a merge thread since we acquire some locks blocking here and if we concurrently rollback the writer
                 // we deadlock on engine#close for instance.
                 engineConfig.getThreadPool().executor(ThreadPool.Names.FLUSH).execute(new AbstractRunnable() {
@@ -3222,6 +3294,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 获取此时已经持久化到事务日志文件中的本地检查点
+     *
      * @return
      */
     @Override
@@ -3238,6 +3311,7 @@ public class InternalEngine extends Engine {
 
     /**
      * Checks if the given operation has been processed in this engine or not.
+     *
      * @return true if the given operation was processed; otherwise false.
      * 检测某个operation是否已经被处理
      */
@@ -3314,6 +3388,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 获取 2个序列号之前所有的op 并生成快照
+     *
      * @param source
      * @param mapperService
      * @param fromSeqNo
@@ -3348,6 +3423,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 确保此时 startingSeqNo的数据还存在于lucene中
+     *
      * @param reason
      * @param startingSeqNo
      * @return
@@ -3461,7 +3537,8 @@ public class InternalEngine extends Engine {
 
         /**
          * 当刷新流程结束时触发该方法
-         * @param didRefresh  是否真的刷新了数据
+         *
+         * @param didRefresh 是否真的刷新了数据
          */
         @Override
         public void afterRefresh(boolean didRefresh) {
@@ -3472,6 +3549,7 @@ public class InternalEngine extends Engine {
 
         /**
          * 当成功刷新时触发该方法
+         *
          * @param checkpoint
          */
         void updateRefreshedCheckpoint(long checkpoint) {
@@ -3492,6 +3570,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 更新自动id时间戳
+     *
      * @param newTimestamp
      * @param unsafe
      */
@@ -3510,7 +3589,8 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 更新maxSeqNoOfUpdatesOnPrimary
+     * 接收到主分片上 最新的 update/delete操作对应的seqNo时 与副本进行同步
+     *
      * @param maxSeqNoOfUpdatesOnPrimary
      */
     @Override
@@ -3553,7 +3633,7 @@ public class InternalEngine extends Engine {
         // BooleanQuery 是多个查询条件累加的结果  这里是获取 本次已经持久化后的checkpoint对应的doc
         final Query query = new BooleanQuery.Builder()
             .add(LongPoint.newRangeQuery(
-                    SeqNoFieldMapper.NAME, getPersistedLocalCheckpoint() + 1, Long.MAX_VALUE), BooleanClause.Occur.MUST)
+                SeqNoFieldMapper.NAME, getPersistedLocalCheckpoint() + 1, Long.MAX_VALUE), BooleanClause.Occur.MUST)
             // doc 必须要包含 _primary_term field
             .add(Queries.newNonNestedFilter(), BooleanClause.Occur.MUST) // exclude non-root nested documents
             .build();

@@ -315,11 +315,12 @@ class BulkPrimaryExecutionContext {
                 } else {
                     throw new AssertionError("unknown result type :" + result.getResultType());
                 }
+
                 executionResult = new BulkItemResponse(current.id(), current.request().opType(), response);
                 // set a blank ShardInfo so we can safely send it to the replicas. We won't use it in the real response though.
                 executionResult.getResponse().setShardInfo(new ReplicationResponse.ShardInfo());
 
-                // 在做过一些校验后 将 locationToSync 设置成 result.getTranslogLocation()
+                // 更新此时事务日志的最新location
                 locationToSync = TransportWriteAction.locationToSync(locationToSync, result.getTranslogLocation());
                 break;
             case FAILURE:

@@ -39,7 +39,7 @@ import java.util.function.Consumer;
 public class PendingReplicationActions implements Consumer<ReplicationGroup>, Releasable {
 
     /**
-     * 需要追踪链路的分片会在这里维护
+     * 记录此时正在往哪些副本执行索引任务
      */
     private final Map<String, Set<RetryableAction<?>>> onGoingReplicationActions = ConcurrentCollections.newConcurrentMap();
     private final ShardId shardId;
@@ -55,22 +55,22 @@ public class PendingReplicationActions implements Consumer<ReplicationGroup>, Re
     }
 
     /**
-     * 为某个副本分片设置一个可重试的任务
-     * @param allocationId    allocationId 应该是能唯一定位到一个分片
-     * @param replicationAction
+     * 在主分片通过 ReplicationOperation 向副本发起请求时 会将任务添加到该容器中
+     * @param allocationId    对应副本的id
+     * @param replicationAction    索引操作支持重试
      */
     public void addPendingAction(String allocationId, RetryableAction<?> replicationAction) {
         Set<RetryableAction<?>> ongoingActionsOnNode = onGoingReplicationActions.get(allocationId);
         if (ongoingActionsOnNode != null) {
-            // 为该分配者 追加一个任务
+            // 因为针对同一个分片可以同时执行多个索引操作 比如同时发起多个请求 所以这里可以存在多个重试任务
             ongoingActionsOnNode.add(replicationAction);
-            // 代表此时出现了问题 以异常形式关闭action   TODO 应该不会出现这种情况
             if (onGoingReplicationActions.containsKey(allocationId) == false) {
                 replicationAction.cancel(new IndexShardClosedException(shardId,
                     "Replica unavailable - replica could have left ReplicationGroup or IndexShard might have closed"));
             }
         } else {
-            // TODO 为什么能确保之前肯定已经有pending任务了呢 ???
+
+            // 只有tracked为true的分片才允许执行索引操作
             replicationAction.cancel(new IndexShardClosedException(shardId,
                 "Replica unavailable - replica could have left ReplicationGroup or IndexShard might have closed"));
         }
@@ -108,7 +108,7 @@ public class PendingReplicationActions implements Consumer<ReplicationGroup>, Re
 
     /**
      *
-     * @param trackedAllocationIds   全量数据 代表此时应该继续同步数据的分片
+     * @param trackedAllocationIds
      */
     synchronized void acceptNewTrackedAllocationIds(Set<String> trackedAllocationIds) {
         for (String targetAllocationId : trackedAllocationIds) {

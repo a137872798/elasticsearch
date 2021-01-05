@@ -629,7 +629,9 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                     bulkShardRequest.setParentTask(nodeId, task.getId());
                 }
                 // 以分片为单位处理请求
-                client.executeLocally(TransportShardBulkAction.TYPE, bulkShardRequest, new ActionListener<>() {
+                client.executeLocally(TransportShardBulkAction.TYPE, bulkShardRequest,
+                    // 某组索引操作完成后 触发监听器
+                    new ActionListener<>() {
                     @Override
                     public void onResponse(BulkShardResponse bulkShardResponse) {
                         for (BulkItemResponse bulkItemResponse : bulkShardResponse.getResponses()) {

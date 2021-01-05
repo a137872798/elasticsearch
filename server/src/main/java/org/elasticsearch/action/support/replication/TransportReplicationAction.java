@@ -318,7 +318,7 @@ public abstract class TransportReplicationAction<
     }
 
     /**
-     * 处理主分片
+     * 此时请求已经到达主分片 开始处理主分片逻辑
      */
     class AsyncPrimaryAction extends AbstractRunnable {
         private final ActionListener<Response> onCompletionListener;
@@ -437,13 +437,15 @@ public abstract class TransportReplicationAction<
                     // 在当前节点处理primary
                     setPhase(replicationTask, "primary");
 
-                    // 注意是操作完成后 尝试同步全局检查点
+                    // 此时所有索引操作都已经完成
+                    // 期间每个副本都会将自己此时已经持久化的 本地检查点和全局检查点上报给主分片 主分片根据全局最小的 persistedCheckpoint 来决定globalCheckpoint
                     final ActionListener<Response> responseListener = ActionListener.wrap(response -> {
 
                         // 对结果进行适配  默认为NOOP
                         adaptResponse(response, primaryShardReference.indexShard);
 
-                        // 根据标识决定是否要同步全局检查点
+                        // 根据标识决定是否要同步全局检查点   针对 TransportWriteAction来说 必然要在写入完成后同步全局检查点
+                        // TODO 用户是否只应该查询到全局检查点之前的数据
                         if (syncGlobalCheckpointAfterOperation) {
                             try {
                                 // 这里会尝试更新全局检查点  作用到每个分片上的大概逻辑就是
@@ -632,7 +634,7 @@ public abstract class TransportReplicationAction<
         }
 
         /**
-         * 当本对象对应的副本抢占到所有许可证后触发该方法
+         * 当副本抢占到许可证后 触发该方法
          * @param releasable
          */
         @Override
@@ -644,6 +646,7 @@ public abstract class TransportReplicationAction<
                 // 当某个副本完成了操作后 触发
                 replicaResult.runPostReplicaActions(
                     ActionListener.wrap(r -> {
+                        // 在返回结果中 包含了副本此时的检查点信息(已经刷盘到事务文件的op对应的seqNo) 以及 事务日志中记录的全局检查点信息
                         final TransportReplicationAction.ReplicaResponse response =
                             new ReplicaResponse(replica.getLocalCheckpoint(), replica.getLastSyncedGlobalCheckpoint());
 
@@ -919,7 +922,7 @@ public abstract class TransportReplicationAction<
                 }
 
                 /**
-                 * 当发往某个节点处理 primary的请求产生结果时  在处理的过程中可能会发现还需要将请求发往各个副本
+                 * 当产生处理结果时 通过该函数进行处理
                  * @param response
                  */
                 @Override
@@ -1038,7 +1041,8 @@ public abstract class TransportReplicationAction<
     /**
      * Executes the logic for acquiring one or more operation permit on a replica shard. The default is to acquire a single permit but this
      * method can be overridden to acquire more.
-     * @param maxSeqNoOfUpdatesOrDeletes  这个是请求在主分片执行完后  从主分片上获取到的  TODO 还不知道怎么用
+     * @param globalCheckpoint 主分片上记录的全局检查点
+     * @param maxSeqNoOfUpdatesOrDeletes  主分片上记录的此时最新的 删除/更新操作的seqNo
      */
     protected void acquireReplicaOperationPermit(final IndexShard replica,
                                                  final ReplicaRequest request,
@@ -1117,6 +1121,11 @@ public abstract class TransportReplicationAction<
             indexShard.updateLocalCheckpointForShard(allocationId, checkpoint);
         }
 
+        /**
+         * 某个副本将此时已经持久化的全局检查点 上报给主分片  主分片根据情况处理
+         * @param allocationId     the allocation ID to update the global checkpoint for
+         * @param globalCheckpoint the global checkpoint
+         */
         @Override
         public void updateGlobalCheckpointForShard(final String allocationId, final long globalCheckpoint) {
             indexShard.updateGlobalCheckpointForShard(allocationId, globalCheckpoint);
@@ -1221,12 +1230,11 @@ public abstract class TransportReplicationAction<
      * interface that performs the actual {@code ReplicaRequest} on the replica
      * shards. It also encapsulates the logic required for failing the replica
      * if deemed necessary as well as marking it as stale when needed.
-     * 在主分片所在节点打算处理副本的相关操作时 会委托给该对象  副本代理对象 也就是通过副本来实现功能 并伪装成在本地处理
      */
     protected class ReplicasProxy implements ReplicationOperation.Replicas<ReplicaRequest> {
 
         /**
-         * 当需要使用副本来处理请求时 会委托给该方法
+         * 在主分片所在节点打算处理副本的相关操作时 会委托给该对象  副本代理对象 也就是通过副本来实现功能 并伪装成在本地处理
          * @param replica                    the shard this request should be executed on
          * @param request
          * @param primaryTerm                the primary term
@@ -1252,9 +1260,11 @@ public abstract class TransportReplicationAction<
                 listener.onFailure(new NoNodeAvailableException("unknown node [" + nodeId + "]"));
                 return;
             }
-            // 这里初始化req对象时 使用的是副本的allocationId
+            // 将主分片的一些信息填充到req中
             final ConcreteReplicaRequest<ReplicaRequest> replicaRequest = new ConcreteReplicaRequest<>(
                 request, replica.allocationId().getId(), primaryTerm, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes);
+
+            // 当副本处理完毕 返回结果时通过该对象处理
             final ActionListenerResponseHandler<ReplicaResponse> handler = new ActionListenerResponseHandler<>(listener,
                 ReplicaResponse::new);
             // 交由副本对应的 transportHandler 处理请求
@@ -1271,6 +1281,13 @@ public abstract class TransportReplicationAction<
             listener.onResponse(null);
         }
 
+        /**
+         * 默认情况下不做任何处理 这样其他分片还是可以正常接收数据  这个stale就是指该副本不在 in-sync容器中
+         * @param shardId      shard id
+         * @param allocationId allocation id to remove from the set of in-sync allocation ids
+         * @param primaryTerm  the primary term
+         * @param listener     a listener that will be notified when the failing shard has been removed from the in-sync set
+         */
         @Override
         public void markShardCopyAsStaleIfNeeded(ShardId shardId, String allocationId, long primaryTerm, ActionListener<Void> listener) {
             // This does not need to make the shard stale. The idea is that this

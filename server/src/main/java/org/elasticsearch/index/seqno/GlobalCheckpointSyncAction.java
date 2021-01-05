@@ -112,13 +112,15 @@ public class GlobalCheckpointSyncAction extends TransportReplicationAction<
     }
 
     /**
-     * 同步全局检查点的操作实现
+     * 首先事务日志的刷盘是基于req来触发的
+     * 同时全局检查点发生了更新
+     * 并且请求副本进行操作的时候 会将此时的globalCheckpoint携带过去 这样就完成了 主副本的globalCheckpoint的同步
+     *
+     * 即使事务日志是异步刷盘的  也完成了 将globalCheckpoint 从主分片携带到副本的任务
      * @param indexShard
      * @throws IOException
      */
     private void maybeSyncTranslog(final IndexShard indexShard) throws IOException {
-        // 如果当前分片指定的持久化方式 确实是基于 req触发  且当前已持久化的全局检查点小于 当前已知的全局检查点 就可以进行同步
-        // 在其他的操作中就会更新 lastKnownGlobalCheckpoint
         if (indexShard.getTranslogDurability() == Translog.Durability.REQUEST &&
             indexShard.getLastSyncedGlobalCheckpoint() < indexShard.getLastKnownGlobalCheckpoint()) {
             // 这个操作就是将事务日志刷盘

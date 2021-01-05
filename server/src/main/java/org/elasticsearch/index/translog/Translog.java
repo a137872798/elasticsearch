@@ -1729,12 +1729,12 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
 
         /**
          * Async durability - translogs are synced based on a time interval.
-         * 通过定时任务定期触发刷盘
+         * 通过后台任务定时触发
          */
         ASYNC,
         /**
          * Request durability - translogs are synced for each high level request (bulk, index, delete)
-         * 基于请求来触发刷盘
+         * 每执行一次索引操作就会执行一次持久化
          */
         REQUEST
 

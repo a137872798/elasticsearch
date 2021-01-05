@@ -166,6 +166,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     /**
      * The current in-memory global checkpoint. In primary mode, this is a cached version of the checkpoint computed from the local
      * checkpoints. In replica mode, this is the in-memory global checkpoint that's communicated by the primary.
+     * 每个副本都有自己持久化的进度 全局检查点就是这么多副本中最小的persistedCheckpoint
      */
     volatile long globalCheckpoint;
 
@@ -696,7 +697,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         long globalCheckpoint;
         /**
          * whether this shard is treated as in-sync and thus contributes to the global checkpoint calculation
-         * 是否已经与全局检查点同步 同时localCheckpoint超过了全局检查点该标识就会被修改成true
+         * 代表某个副本此时已经持久化的全局检查点 与主分片的全局检查点一致
          */
         boolean inSync;
 
@@ -786,7 +787,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * Get the local knowledge of the persisted global checkpoints for all in-sync allocation IDs.
      *
      * @return a map from allocation ID to the local knowledge of the persisted global checkpoint for that allocation ID
-     * 将此时所有完成同步的 分片的全局检查点取出来 设置到map中
+     * inSync 为true  代表该分片的persistedCheckpoint 已经超过了 全局检查点
      */
     public synchronized ObjectLongMap<String> getInSyncGlobalCheckpoints() {
         assert primaryMode;
@@ -1081,8 +1082,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param newGlobalCheckpoint the new global checkpoint
      * @param reason              the reason the global checkpoint was updated
-     *                            因为某些操作使得副本感知到了主分片此时的全局检查点 进行同步
-     *                            比如 一些需要在分片上所有主副本执行的操作  (并且根据需要可能在操作执行完成后会将最新的全局检查点刷盘)
+     *                            当主分片数据恢复完成后 会将最新的全局检查点告知分片
      */
     public synchronized void updateGlobalCheckpointOnReplica(final long newGlobalCheckpoint, final String reason) {
         assert invariant();
@@ -1109,6 +1109,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * @param allocationId     the allocation ID to update the global checkpoint for
      * @param globalCheckpoint the global checkpoint
      *                         更新某个分片的全局检查点
+     *                         副本的全局检查点变化 并不会影响到主分片的
+     *
      */
     public synchronized void updateGlobalCheckpointForShard(final String allocationId, final long globalCheckpoint) {
         assert primaryMode;
@@ -1220,11 +1222,12 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             // 找到所有处于 init阶段的shard对应的allocationId 并生成集合
             Set<String> initializingAllocationIds = routingTable.getAllInitializingShards().stream()
                 .map(ShardRouting::allocationId).map(AllocationId::getId).collect(Collectors.toSet());
-            // 将此时既不存在于已经同步的 all 也不存在于 init的allocation 从checkpoints中移除 也就是不再需要维护它们了
+            // 将此时既不存在于 in-sync 也不存在于 init的移除
             boolean removedEntries = checkpoints.keySet().removeIf(
                 aid -> !inSyncAllocationIds.contains(aid) && !initializingAllocationIds.contains(aid));
 
-            // 当该对象首次被创建时应该是false  该值不会因为当前分片是主分片而设置成true
+            // 当该对象首次被创建时应该是false
+            // 当设置成true后再接收 clusterState的变化就会走下面的逻辑
             if (primaryMode) {
                 // add new initializingIds that are missing locally. These are fresh shard copies - and not in-sync
                 for (String initializingId : initializingAllocationIds) {
@@ -1234,16 +1237,19 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                             " as in-sync but it does not exist locally";
                         final long localCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
                         final long globalCheckpoint = localCheckpoint;
+                        // 当新增了分片后  就加入到 checkpoints中 这个容器负责管理所有副本此时的检查点信息
                         checkpoints.put(initializingId, new CheckpointState(localCheckpoint, globalCheckpoint, inSync, inSync));
                     }
                 }
+
+                // 同步该容器与 checkpoints
                 if (removedEntries) {
                     pendingInSync.removeIf(aId -> checkpoints.containsKey(aId) == false);
                 }
 
             } else {
+                // 为每个分片此时的检查点创建 checkpoints信息
                 for (String initializingId : initializingAllocationIds) {
-                    // 在初始阶段还不清楚这个分片此时的检查点信息
                     final long localCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
                     final long globalCheckpoint = localCheckpoint;
                     checkpoints.put(initializingId, new CheckpointState(localCheckpoint, globalCheckpoint, false, false));
@@ -1374,7 +1380,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param allocationId    the allocation ID of the shard to update the local checkpoint for
      * @param localCheckpoint the local checkpoint for the shard
-     *                        更新某个分片的本地检查点
+     *                        更新某个分片的本地检查点 已持久化 (persistedCheckpoint)
      */
     public synchronized void updateLocalCheckpoint(final String allocationId, final long localCheckpoint) {
         assert invariant();
@@ -1391,11 +1397,10 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
         // 代表该分片在主分片上认为还处于未完成数据同步的状态
         boolean pending = pendingInSync.contains(allocationId);
-        // 因为在updateLocalCheckpoint 可能会更新 cps.localCheckpoint 并且可能该副本已经超过了主分片设定的全局检查点
+        // 当副本最新的 persistedCheckpoint 追赶上主分片的globalCheckpoint时  认为已经完成了同步阶段  进入到 in-sync 队列中
         if (pending && cps.localCheckpoint >= getGlobalCheckpoint()) {
             pendingInSync.remove(allocationId);
             pending = false;
-            // 完成数据同步 进入in-sync 队列中
             cps.inSync = true;
             // 因为cps发生了变化 所以要更新 replicationGroup
             updateReplicationGroupAndNotify();
@@ -1429,8 +1434,9 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
         // 代表所有分片都已经同步到全局检查点的位置
         for (final CheckpointState cps : localCheckpoints) {
-            // 在IndexMetadata中 可以获取到此时已经完成数据同步的副本 inSync为true
+            // 只要分片完成了同步 该标识为true
             if (cps.inSync) {
+                // 这应该是特殊情况 不可靠 还是不修改检查点
                 if (cps.localCheckpoint == SequenceNumbers.UNASSIGNED_SEQ_NO) {
                     // unassigned in-sync replica
                     return fallback;
@@ -1446,7 +1452,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
     /**
      * Scans through the currently known local checkpoint and updates the global checkpoint accordingly.
-     * 主分片发起全局检查点更新操作
+     * 每个副本分片在处理完索引请求的同时 都会携带 persistedCheckpoint
      */
     private synchronized void updateGlobalCheckpointOnPrimary() {
         assert primaryMode;
@@ -1456,7 +1462,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert computedGlobalCheckpoint >= globalCheckpoint : "new global checkpoint [" + computedGlobalCheckpoint +
             "] is lower than previous one [" + globalCheckpoint + "]";
 
-        // 更新全局检查点 并触发函数
+        // 最小分片持久化的checkpoint增加了 主分片记录的全局检查点也要变化
         if (globalCheckpoint != computedGlobalCheckpoint) {
             globalCheckpoint = computedGlobalCheckpoint;
             logger.trace("updated global checkpoint to [{}]", computedGlobalCheckpoint);

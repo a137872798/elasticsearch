@@ -336,7 +336,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
     }
 
     /**
-     * 同步全局检查点
+     * 通知所有副本更新全局检查点
      * @param shardId
      */
     protected void updateGlobalCheckpointForShard(final ShardId shardId) {

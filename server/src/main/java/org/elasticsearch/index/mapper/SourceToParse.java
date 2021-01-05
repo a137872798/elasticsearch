@@ -26,9 +26,6 @@ import org.elasticsearch.common.xcontent.XContentType;
 
 import java.util.Objects;
 
-/**
- * 该对象专门负责解析 field.name=source 的数据流
- */
 public class SourceToParse {
 
     /**

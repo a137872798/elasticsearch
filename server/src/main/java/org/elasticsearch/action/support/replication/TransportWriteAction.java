@@ -52,25 +52,41 @@ import java.util.concurrent.atomic.AtomicReference;
  * Allows performing async actions (e.g. refresh) after performing write operations on primary and replica shards
  * 这是一个写入操作
  * 继承自 TransportReplicationAction  代表会先作用在 primary上 之后作用到所有replica
- * 本对象在父类的基础上包含了一些location信息
  */
 public abstract class TransportWriteAction<
-            Request extends ReplicatedWriteRequest<Request>,
-            ReplicaRequest extends ReplicatedWriteRequest<ReplicaRequest>,
-            Response extends ReplicationResponse & WriteResponse
-        > extends TransportReplicationAction<Request, ReplicaRequest, Response> {
+    Request extends ReplicatedWriteRequest<Request>,
+    ReplicaRequest extends ReplicatedWriteRequest<ReplicaRequest>,
+    Response extends ReplicationResponse & WriteResponse
+    > extends TransportReplicationAction<Request, ReplicaRequest, Response> {
 
+
+    /**
+     * WriteAction 在写入到主副本后 会要求同步全局检查点
+     * @param settings
+     * @param actionName
+     * @param transportService
+     * @param clusterService
+     * @param indicesService
+     * @param threadPool
+     * @param shardStateAction
+     * @param actionFilters
+     * @param request
+     * @param replicaRequest
+     * @param executor
+     * @param forceExecutionOnPrimary
+     */
     protected TransportWriteAction(Settings settings, String actionName, TransportService transportService,
                                    ClusterService clusterService, IndicesService indicesService, ThreadPool threadPool,
                                    ShardStateAction shardStateAction, ActionFilters actionFilters, Writeable.Reader<Request> request,
                                    Writeable.Reader<ReplicaRequest> replicaRequest, String executor, boolean forceExecutionOnPrimary) {
         super(settings, actionName, transportService, clusterService, indicesService, threadPool, shardStateAction, actionFilters,
-              // 注意操作完成后需要同步全局检查点
-              request, replicaRequest, executor, true, forceExecutionOnPrimary);
+            // 注意操作完成后需要同步全局检查点
+            request, replicaRequest, executor, true, forceExecutionOnPrimary);
     }
 
     /**
      * Syncs operation result to the translog or throws a shard not available failure
+     *
      * @param operationResult 本次操作的结果
      * @param currentLocation 本次操作生成的结果在事务日志中的位置
      */
@@ -99,7 +115,7 @@ public abstract class TransportWriteAction<
          * the previous file is fsynced on after closing if needed.*/
         assert next != null : "next operation can't be null";
         assert current == null || current.compareTo(next) < 0 :
-                "translog locations are not increasing";
+            "translog locations are not increasing";
         return next;
     }
 
@@ -112,11 +128,11 @@ public abstract class TransportWriteAction<
      * Called on the primary with a reference to the primary {@linkplain IndexShard} to modify.
      *
      * @param listener listener for the result of the operation on primary, including current translog location and operation response
-     * and failure async refresh is performed on the <code>primary</code> shard according to the <code>Request</code> refresh policy
+     *                 and failure async refresh is performed on the <code>primary</code> shard according to the <code>Request</code> refresh policy
      */
     @Override
     protected abstract void shardOperationOnPrimary(
-            Request request, IndexShard primary, ActionListener<PrimaryResult<ReplicaRequest, Response>> listener);
+        Request request, IndexShard primary, ActionListener<PrimaryResult<ReplicaRequest, Response>> listener);
 
     /**
      * Called once per replica with a reference to the replica {@linkplain IndexShard} to modify.
@@ -126,19 +142,28 @@ public abstract class TransportWriteAction<
      */
     @Override
     protected abstract WriteReplicaResult<ReplicaRequest> shardOperationOnReplica(
-            ReplicaRequest request, IndexShard replica) throws Exception;
+        ReplicaRequest request, IndexShard replica) throws Exception;
 
     /**
      * Result of taking the action on the primary.
-     *
+     * <p>
      * NOTE: public for testing
+     * 代表某个写入到主分片的操作结果
      */
     public static class WritePrimaryResult<ReplicaRequest extends ReplicatedWriteRequest<ReplicaRequest>,
-            Response extends ReplicationResponse & WriteResponse> extends PrimaryResult<ReplicaRequest, Response> {
+        Response extends ReplicationResponse & WriteResponse> extends PrimaryResult<ReplicaRequest, Response> {
         public final Location location;
         public final IndexShard primary;
         private final Logger logger;
 
+        /**
+         * @param request          本次写入任务的请求体
+         * @param finalResponse    处理结果
+         * @param location         此时事务日志所在的位置 应当要确保这个位置及之前的事务日志持久化
+         * @param operationFailure
+         * @param primary
+         * @param logger
+         */
         public WritePrimaryResult(ReplicaRequest request, @Nullable Response finalResponse,
                                   @Nullable Location location, @Nullable Exception operationFailure,
                                   IndexShard primary, Logger logger) {
@@ -147,10 +172,15 @@ public abstract class TransportWriteAction<
             this.primary = primary;
             this.logger = logger;
             assert location == null || operationFailure == null
-                    : "expected either failure to be null or translog location to be null, " +
-                    "but found: [" + location + "] translog location and [" + operationFailure + "] failure";
+                : "expected either failure to be null or translog location to be null, " +
+                "but found: [" + location + "] translog location and [" + operationFailure + "] failure";
         }
 
+        /**
+         * 当主分片完成写入操作 并往相关副本发起写入操作后  触发该方法
+         *
+         * @param listener calllback that is invoked after post replication actions have completed
+         */
         @Override
         public void runPostReplicationActions(ActionListener<Void> listener) {
             // 代表在第一阶段就出现异常了
@@ -162,6 +192,11 @@ public abstract class TransportWriteAction<
                  * This way we wait for the refresh in parallel on the primary and on the replica.
                  */
                 new AsyncAfterWriteAction(primary, replicaRequest, location, new RespondingWriteResult() {
+
+                    /**
+                     * 当执行刷盘任务时 是否执行了 refresh
+                     * @param forcedRefresh <code>true</code> iff this write has caused a refresh
+                     */
                     @Override
                     public void onSuccess(boolean forcedRefresh) {
                         finalResponseIfSuccessful.setForcedRefresh(forcedRefresh);
@@ -195,22 +230,28 @@ public abstract class TransportWriteAction<
             this.logger = logger;
         }
 
+        /**
+         * 在副本上执行完操作后触发该方法
+         * @param listener
+         */
         @Override
         public void runPostReplicaActions(ActionListener<Void> listener) {
             if (finalFailure != null) {
                 listener.onFailure(finalFailure);
             } else {
-                new AsyncAfterWriteAction(replica, request, location, new RespondingWriteResult() {
-                    @Override
-                    public void onSuccess(boolean forcedRefresh) {
-                        listener.onResponse(null);
-                    }
+                new AsyncAfterWriteAction(replica, request, location,
+                    // 当写入完成后 通过该对象处理
+                    new RespondingWriteResult() {
+                        @Override
+                        public void onSuccess(boolean forcedRefresh) {
+                            listener.onResponse(null);
+                        }
 
-                    @Override
-                    public void onFailure(Exception ex) {
-                        listener.onFailure(ex);
-                    }
-                }, logger).run();
+                        @Override
+                        public void onFailure(Exception ex) {
+                            listener.onFailure(ex);
+                        }
+                    }, logger).run();
             }
         }
     }
@@ -232,6 +273,7 @@ public abstract class TransportWriteAction<
     interface RespondingWriteResult {
         /**
          * Called on successful processing of all post write actions
+         *
          * @param forcedRefresh <code>true</code> iff this write has caused a refresh
          */
         void onSuccess(boolean forcedRefresh);
@@ -259,19 +301,31 @@ public abstract class TransportWriteAction<
         private final WriteRequest<?> request;
         private final Logger logger;
 
+
+        /**
+         * @param indexShard
+         * @param request    本次在所有分片中执行的req
+         * @param location   最后一个操作在事务日志中对应的位置
+         * @param respond    负责处理写入结果的回调对象
+         * @param logger
+         */
         AsyncAfterWriteAction(final IndexShard indexShard,
-                             final WriteRequest<?> request,
-                             @Nullable final Translog.Location location,
-                             final RespondingWriteResult respond,
-                             final Logger logger) {
+                              final WriteRequest<?> request,
+                              @Nullable final Translog.Location location,
+                              final RespondingWriteResult respond,
+                              final Logger logger) {
             this.indexShard = indexShard;
             this.request = request;
             boolean waitUntilRefresh = false;
+
+            // 写入请求本身可以指定刷盘策略
             switch (request.getRefreshPolicy()) {
+                // 这里是针对lucene数据进行刷盘  但是这个操作并不会更新userData   这时用户可以直接观测到数据变化
                 case IMMEDIATE:
                     indexShard.refresh("refresh_flag_index");
                     refreshed.set(true);
                     break;
+                // 阻塞直到检测到 refresh时 才会从索引操作返回
                 case WAIT_UNTIL:
                     if (location != null) {
                         waitUntilRefresh = true;
@@ -286,6 +340,8 @@ public abstract class TransportWriteAction<
             this.waitUntilRefresh = waitUntilRefresh;
             this.respond = respond;
             this.location = location;
+
+            // 当采用 req作为事务日志持久化策略 那么每次索引操作都会引起事务日志的刷盘  如果采用异步刷盘策略 那么通过后台线程刷盘 索引操作不会强制刷盘
             if ((sync = indexShard.getTranslogDurability() == Translog.Durability.REQUEST && location != null)) {
                 pendingOps.incrementAndGet();
             }
@@ -293,7 +349,9 @@ public abstract class TransportWriteAction<
             assert pendingOps.get() >= 0 && pendingOps.get() <= 3 : "pendingOpts was: " + pendingOps.get();
         }
 
-        /** calls the response listener if all pending operations have returned otherwise it just decrements the pending opts counter.*/
+        /**
+         * calls the response listener if all pending operations have returned otherwise it just decrements the pending opts counter.
+         */
         private void maybeFinish() {
             final int numPending = pendingOps.decrementAndGet();
             if (numPending == 0) {
@@ -303,30 +361,37 @@ public abstract class TransportWriteAction<
                     respond.onSuccess(refreshed.get());
                 }
             }
-            assert numPending >= 0 && numPending <= 2: "numPending must either 2, 1 or 0 but was " + numPending ;
+            assert numPending >= 0 && numPending <= 2 : "numPending must either 2, 1 or 0 but was " + numPending;
         }
 
+        /**
+         * 开始执行刷盘任务
+         */
         void run() {
             /*
              * We either respond immediately (i.e., if we do not fsync per request or wait for
              * refresh), or we there are past async operations and we wait for them to return to
              * respond.
+             * 这里只是尝试性刷盘  多副本实际上已经实现了高可用 不同于选举算法 任何操作都必须立即刷盘 并确保写入1/2以上
+             * 这里只要能确保最终刷盘成功就可以
              */
             indexShard.afterWriteOperation();
             // decrement pending by one, if there is nothing else to do we just respond with success
             maybeFinish();
+            // 如果设置等待直到refresh 就是追加一个刷新的监听器
             if (waitUntilRefresh) {
                 assert pendingOps.get() > 0;
                 indexShard.addRefreshListener(location, forcedRefresh -> {
                     if (forcedRefresh) {
                         logger.warn(
-                                "block until refresh ran out of slots and forced a refresh: [{}]",
-                                request);
+                            "block until refresh ran out of slots and forced a refresh: [{}]",
+                            request);
                     }
                     refreshed.set(forcedRefresh);
                     maybeFinish();
                 });
             }
+            // 如果指定的刷盘策略为 req 也就是不具备后台线程刷盘功能  那么还是会强制刷盘  仅针对事务日志
             if (sync) {
                 assert pendingOps.get() > 0;
                 indexShard.sync(location, (ex) -> {
@@ -341,13 +406,22 @@ public abstract class TransportWriteAction<
      * A proxy for <b>write</b> operations that need to be performed on the
      * replicas, where a failure to execute the operation should fail
      * the replica shard and/or mark the replica as stale.
-     *
+     * <p>
      * This extends {@code TransportReplicationAction.ReplicasProxy} to do the
      * failing and stale-ing.
      */
     class WriteActionReplicasProxy extends ReplicasProxy {
 
 
+        /**
+         * 当在某个分片上执行任务失败 是否需要通知给leader节点进行关闭
+         *
+         * @param replica
+         * @param primaryTerm
+         * @param message
+         * @param exception
+         * @param listener
+         */
         @Override
         public void failShardIfNeeded(ShardRouting replica, long primaryTerm, String message, Exception exception,
                                       ActionListener<Void> listener) {
@@ -359,7 +433,9 @@ public abstract class TransportWriteAction<
         }
 
         /**
-         * 是否需要将分片标记为过期
+         * 在这个阶段  原本应该将请求 发往所有副本  但是某些分片此时还未处于 in-sync 容器中  就不需要发送了
+         * 同时上报给leader节点 该分片启动失败 那么leader节点就会选择其他节点初始化分片
+         *
          * @param shardId
          * @param allocationId
          * @param primaryTerm

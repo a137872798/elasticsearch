@@ -212,6 +212,7 @@ public class GlobalCheckpointListeners implements Closeable {
      *
      * @param globalCheckpoint the updated global checkpoint
      *                         当在 ReplicationTracker中 更新了globalCheckpoint时   就会触发该方法
+     *                         这时代表着该shardId相关的所有副本都已经将全局检查点至少持久化到这个位置 (持久化指的是写入到事务文件中)
      */
     synchronized void globalCheckpointUpdated(final long globalCheckpoint) {
         assert globalCheckpoint >= NO_OPS_PERFORMED;

@@ -93,6 +93,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
      * 更新的辅助对象
      */
     private final UpdateHelper updateHelper;
+    /**
+     * TODO mapping 相关的先忽略
+     */
     private final MappingUpdatedAction mappingUpdatedAction;
 
     @Inject
@@ -152,7 +155,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     mappingUpdateListener.onFailure(new MapperException("timed out while waiting for a dynamic mapping update"));
                 }
             }),
-            // 将处理逻辑桥接到这个监听器上
+            // 当产生处理结果后 触发该监听器
             listener, threadPool
         );
     }
@@ -248,8 +251,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
              */
             private void finishRequest() {
                 ActionListener.completeWith(listener,
-
-                    // 该函数产生结果 并触发listener
+                    // 执行该函数产生结果 并触发listener    这里应该会涉及到事务日志的持久化
                     () -> new WritePrimaryResult<>(
                         context.getBulkShardRequest(), context.buildShardResponse(), context.getLocationToSync(), null,
                         context.getPrimary(), logger));
@@ -335,6 +337,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             result = primary.applyDeleteOperationOnPrimary(version, request.id(), request.versionType(),
                 request.ifSeqNo(), request.ifPrimaryTerm());
         } else {
+            // 这里只可能是 IndexReq了  如果在检测更新任务时发现是noop会直接返回
             final IndexRequest request = context.getRequestToExecute();
             result = primary.applyIndexOperationOnPrimary(version, request.versionType(), new SourceToParse(
                     request.index(), request.id(), request.source(), request.getContentType(), request.routing()),
@@ -447,12 +450,12 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
 
     /**
      * Creates a new bulk item result from the given requests and result of performing the update operation on the shard.
-     * 处理更新成功后的结果
+     * 更新操作成功后
      */
     private static BulkItemResponse processUpdateResponse(final UpdateRequest updateRequest, final String concreteIndex,
                                                           BulkItemResponse operationResponse, final UpdateHelper.Result translate) {
         final BulkItemResponse response;
-        // 如果本次操作失败 相当于就是生成一个结果副本 并返回
+        // 如果本次操作失败
         if (operationResponse.isFailed()) {
             response = new BulkItemResponse(operationResponse.getItemId(), DocWriteRequest.OpType.UPDATE, operationResponse.getFailure());
         } else {
@@ -503,7 +506,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
     }
 
     /**
-     * 在副本上处理该请求  TODO 将结果写入到多少副本才算成功呢 会跟kafka一样 写入超过一半么???
+     * 在副本上处理该请求
      * @param request
      * @param replica      the replica shard to perform the operation on
      * @return
@@ -518,7 +521,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
     }
 
     /**
-     * 在主分片上处理请求是不需要获取 location信息的  但是在分片上处理就需要location信息
+     * 在副本上处理请求
      * @param request
      * @param replica
      * @return
@@ -528,19 +531,20 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         Translog.Location location = null;
         for (int i = 0; i < request.items().length; i++) {
             final BulkItemRequest item = request.items()[i];
-            // 因为处理过程是先走primary 之后转发到replica  而在primary处理时已经为每个itemReq设置了对应的 response了
+
+            // 获取在主分片上的执行结果
             final BulkItemResponse response = item.getPrimaryResponse();
             final Engine.Result operationResult;
 
-            // 如果在主分片处理失败了   在engine处理后返回的 Result中会携带seqNo信息  至少能确定该seqNo之前的数据都需要同步
+            // 代表在主分片上执行失败了
             if (item.getPrimaryResponse().isFailed()) {
-                // 如果连seq都无法确认 就无法继续处理了
+                // 如果连seq都无法确认 就无法继续处理了   一般错误信息都是这种
                 if (response.getFailure().getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO) {
                     continue; // ignore replication as we didn't generate a sequence number for this request.
                 }
 
                 final long primaryTerm;
-                // TODO 可能是主分片已经过时 ???
+                // 失败信息中未设置 primaryTerm信息
                 if (response.getFailure().getTerm() == SequenceNumbers.UNASSIGNED_PRIMARY_TERM) {
                     // primary is on older version, just take the current primary term
                     // 使用副本当前知晓的最新的主分片term
@@ -548,11 +552,11 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 } else {
                     primaryTerm = response.getFailure().getTerm();
                 }
-                // 在这个seqNo位 生成了一个 noop对象
+                // 在这个seqNo位 生成了一个 noop对象   也就是 包含seqNo的失败信息也需要记录
                 operationResult = replica.markSeqNoAsNoop(response.getFailure().getSeqNo(), primaryTerm,
                     response.getFailure().getMessage());
             } else {
-                // 本次虽然操作成功 但是操作类型就是 NOOP 那么不做处理
+                // 这种情况对应  更新操作 且数据前后没有变化
                 if (response.getResponse().getResult() == DocWriteResponse.Result.NOOP) {
                     continue; // ignore replication as it's a noop
                 }
@@ -562,7 +566,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             }
             assert operationResult != null : "operation result must never be null when primary response has no failure";
 
-            // 将location信息同步到本次操作后的result的位置信息
+            // 将本次写入的事务日志文件位置信息返回
             location = syncOperationResultOrThrow(operationResult, location);
         }
         return location;
@@ -586,6 +590,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 final ShardId shardId = replica.shardId();
                 final SourceToParse sourceToParse = new SourceToParse(shardId.getIndexName(), indexRequest.id(),
                     indexRequest.source(), indexRequest.getContentType(), indexRequest.routing());
+                // 与主分片写入的区别就是 origin变成了  replica  seqNo跟主分片保持一致
                 result = replica.applyIndexOperationOnReplica(primaryResponse.getSeqNo(), primaryResponse.getPrimaryTerm(),
                     primaryResponse.getVersion(), indexRequest.getAutoGeneratedTimestamp(), indexRequest.isRetry(), sourceToParse);
                 break;

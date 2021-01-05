@@ -65,8 +65,8 @@ public class ReplicationGroup {
     /**
      *
      * @param routingTable  记录某个索引下所有的分片 以及它们会被分配到哪里
-     * @param inSyncAllocationIds   完成同步的所有分片
-     * @param trackedAllocationIds  需要追踪信息的所有分片  应该就是要持续同步数据的分片
+     * @param inSyncAllocationIds   完成同步的所有分片    也就是副本已经持久化的全局检查点与 追赶上主分片的全局检查点
+     * @param trackedAllocationIds  需要追踪信息的所有分片  应该就是要持续同步数据的分片  在往主分片写入索引操作时  只会同时写入到tracked为true的分片上
      * @param version 当前副本组的版本号 每次变化 版本号+1
      */
     public ReplicationGroup(IndexShardRoutingTable routingTable, Set<String> inSyncAllocationIds, Set<String> trackedAllocationIds,

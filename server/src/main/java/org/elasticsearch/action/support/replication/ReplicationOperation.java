@@ -102,6 +102,9 @@ public class ReplicationOperation<
      */
     private volatile PrimaryResultT primaryResult = null;
 
+    /**
+     * 存储在分片上执行失败的数量
+     */
     private final List<ReplicationResponse.ShardInfo.Failure> shardReplicaFailures = Collections.synchronizedList(new ArrayList<>());
 
     /**
@@ -163,9 +166,10 @@ public class ReplicationOperation<
      */
     private void handlePrimaryResult(final PrimaryResultT primaryResult) {
         this.primaryResult = primaryResult;
+
+        // result中 同时包含了本次接收的请求req 以及处理的结果res
         final ReplicaRequest replicaRequest = primaryResult.replicaRequest();
 
-        // 实际上就是本对象的req
         if (replicaRequest != null) {
             if (logger.isTraceEnabled()) {
                 logger.trace("[{}] op [{}] completed on primary for request [{}]", primary.routingEntry().shardId(), opType, request);
@@ -183,12 +187,12 @@ public class ReplicationOperation<
             // max_seq_no_of_updates on replica when this request is executed is at least the value on the primary when it was executed
             // on.
 
-            // TODO 更新或者删除的 maxSeqNo是什么时候设置的 ???
+            // 每当发现执行的index是update操作 或者执行delete操作时 会记录此时的时间戳
             final long maxSeqNoOfUpdatesOrDeletes = primary.maxSeqNoOfUpdatesOrDeletes();
             assert maxSeqNoOfUpdatesOrDeletes != SequenceNumbers.UNASSIGNED_SEQ_NO : "seqno_of_updates still uninitialized";
-            // 获取该主分片相关的副本组
+            // 副本组描述了当前分片的状态
             final ReplicationGroup replicationGroup = primary.getReplicationGroup();
-            // 应该是已经存在于 inSync队列中 并继续同步最新写入primary数据的replica
+            // 该对象本身会监听 replicationGroup的变化 并抽取信息  只维护tracked相关的数据
             final PendingReplicationActions pendingReplicationActions = primary.getPendingReplicationActions();
             // 根据条件判断 是否要将此时不可用的分片关闭
             markUnavailableShardsAsStale(replicaRequest, replicationGroup);
@@ -197,14 +201,16 @@ public class ReplicationOperation<
             performOnReplicas(replicaRequest, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, replicationGroup, pendingReplicationActions);
         }
 
-        // 当发送副本请求后 触发该函数
+        // 当发送副本请求后 触发该函数   此时action可能还没有在副本上执行完   在子类中这里就是对 lucene/事务日志进行持久化
         primaryResult.runPostReplicationActions(new ActionListener<>() {
 
             @Override
             public void onResponse(Void aVoid) {
                 successfulShards.incrementAndGet();
                 try {
-                    // 本地检查点和全局检查点都是会进行持久化的  这里主要是将最新的检查点 同步到 tracer对象中
+                    // 在执行完刷盘后 此时localCheckpoint 对应事务日志此时的seqNo
+                    // 全局检查点则是每个副本的localCheckpoint 都会上报给主分片  当中的最小值会作为globalCheckpoint
+                    // 而当事务日志要持久化时 就会将此时最新的 globalCheckpoint 写入到ckp文件中
                     updateCheckPoints(primary.routingEntry(), primary::localCheckpoint, primary::globalCheckpoint);
                 } finally {
                     // 对 pending计数-1 当归0的时候 触发finish方法
@@ -212,6 +218,10 @@ public class ReplicationOperation<
                 }
             }
 
+            /**
+             * 如果在写入主分片的过程中就已经失败了 触发该方法   以失败的情况触发监听器
+             * @param e
+             */
             @Override
             public void onFailure(Exception e) {
                 logger.trace("[{}] op [{}] post replication actions failed for [{}]", primary.routingEntry().shardId(), opType, request);
@@ -223,18 +233,18 @@ public class ReplicationOperation<
     }
 
     /**
-     * 将不可用的分片标记成过期状态
+     * 将某些分片不可用的信息上报给 leader节点
      * @param replicaRequest
      * @param replicationGroup
      */
     private void markUnavailableShardsAsStale(ReplicaRequest replicaRequest, ReplicationGroup replicationGroup) {
         // if inSyncAllocationIds contains allocation ids of shards that don't exist in RoutingTable, mark copies as stale
-        // 这些副本分片还没有完成一开始的数据同步  应该就是还没有完成 recovery
+        // 还未处于 in-sync 容器中的分片
         for (String allocationId : replicationGroup.getUnavailableInSyncShards()) {
             // 增加一个此时正在运行的任务
             pendingActions.incrementAndGet();
 
-            // 是否要将分片标记为过期
+            // 根据情况选择是否将分片无效的信息上报给leader节点  这时leader节点一般会重新选择一个节点去创建分片
             replicasProxy.markShardCopyAsStaleIfNeeded(replicaRequest.shardId(), allocationId, primaryTerm,
                 // decPendingAndFinishIfNeeded 对冲刚才增加的pendingActions
                 ActionListener.wrap(r -> decPendingAndFinishIfNeeded(), ReplicationOperation.this::onNoLongerPrimary));
@@ -244,9 +254,9 @@ public class ReplicationOperation<
     /**
      * 在副本上处理请求
      * @param replicaRequest  本次传入的请求对象
-     * @param globalCheckpoint   全局检查点
-     * @param maxSeqNoOfUpdatesOrDeletes    当前处理的最大序列号
-     * @param replicationGroup   副本组
+     * @param globalCheckpoint   主分片此时的全局检查点
+     * @param maxSeqNoOfUpdatesOrDeletes    更新或者删除操作对应的最大的seqNo
+     * @param replicationGroup
      * @param pendingReplicationActions
      */
     private void performOnReplicas(final ReplicaRequest replicaRequest, final long globalCheckpoint,
@@ -254,14 +264,14 @@ public class ReplicationOperation<
                                    final PendingReplicationActions pendingReplicationActions) {
         // for total stats, add number of unassigned shards and
         // number of initializing shards that are not ready yet to receive operations (recovery has not opened engine yet on the target)
-        // 如果有些副本组被标记成需要跳过 增加跳过的数值
+        // 某些分片此时处于初始化未结束的状态 无法将请求发往这些分片 所以需要跳过
         totalShards.addAndGet(replicationGroup.getSkippedShards().size());
 
         final ShardRouting primaryRouting = primary.routingEntry();
 
-        // 对应每个副本信息
+        // 这些副本是需要同步数据的目标分片
         for (final ShardRouting shard : replicationGroup.getReplicationTargets()) {
-            // allocationId 应该是不一致的
+            // 跳过主分片自身
             if (shard.isSameAllocation(primaryRouting) == false) {
                 performOnReplica(shard, replicaRequest, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, pendingReplicationActions);
             }
@@ -272,8 +282,8 @@ public class ReplicationOperation<
      * 处理某个副本
      * @param shard  副本对应的分片
      * @param replicaRequest   本次发起的原请求
-     * @param globalCheckpoint     当前持久化的全局检查点
-     * @param maxSeqNoOfUpdatesOrDeletes    持久化的序列号
+     * @param globalCheckpoint     此时主分片的全局检查点
+     * @param maxSeqNoOfUpdatesOrDeletes    最近的一次更新/删除操作对应的seqNo
      * @param pendingReplicationActions
      */
     private void performOnReplica(final ShardRouting shard, final ReplicaRequest replicaRequest,
@@ -288,6 +298,8 @@ public class ReplicationOperation<
 
 
         // 每当成功作用在某个副本后 返回的结果会触发该函数
+        // ReplicaResponse 中包含了副本此时最新的事务日志文件op的seqNo  (persistedCheckpoint)
+        // 以及事务日志中记录的最新的全局检查点 都是此时已经明确持久化的值
         final ActionListener<ReplicaResponse> replicationListener = new ActionListener<>() {
             @Override
             public void onResponse(ReplicaResponse response) {
@@ -302,6 +314,10 @@ public class ReplicationOperation<
                 }
             }
 
+            /**
+             * 当在某个分片上执行写入操作 并失败时
+             * @param replicaException
+             */
             @Override
             public void onFailure(Exception replicaException) {
                 logger.trace(() -> new ParameterizedMessage(
@@ -314,6 +330,8 @@ public class ReplicationOperation<
                         shard.shardId(), shard.currentNodeId(), replicaException, restStatus, false));
                 }
                 String message = String.format(Locale.ROOT, "failed to perform %s on replica %s", opType, shard);
+
+                // 当处理失败时 是否需要通知到leader节点
                 replicasProxy.failShardIfNeeded(shard, primaryTerm, message, replicaException,
                     ActionListener.wrap(r -> decPendingAndFinishIfNeeded(), ReplicationOperation.this::onNoLongerPrimary));
             }
@@ -355,14 +373,15 @@ public class ReplicationOperation<
             }
         };
 
-        // 将该任务添加到管理副本操作的 actions对象中
+        // 通过 pendingReplicationActions 维护此时正在执行的索引任务
         pendingReplicationActions.addPendingAction(allocationId, replicationAction);
-        // 执行副本任务
+        // 执行副本任务  这里是通过线程池执行的
         replicationAction.run();
     }
 
     /**
-     * 更新某个分片的 localCheckpoint/globalCheckpoint
+     * 更新某个分片的 localCheckpoint/globalCheckpoint   注意这里的2个检查点都是已经确定持久化到副本的
+     * 比如localCheckpoint就是此时写入到事务日志中最新的checkpoint  而global对应事务日志中最新的 checkpoint对象对应的globalCheckpoint
      * @param shard
      * @param localCheckpointSupplier   将此时持久化的检查点同步到 tracer上
      * @param globalCheckpointSupplier
@@ -444,7 +463,7 @@ public class ReplicationOperation<
     }
 
     /**
-     * 代表本次任务已经执行完毕
+     * 所有主分片/副本已经写入完成
      */
     private void finish() {
         if (finished.compareAndSet(false, true)) {
@@ -519,6 +538,7 @@ public class ReplicationOperation<
          *
          * @param allocationId     the allocation ID to update the global checkpoint for
          * @param globalCheckpoint the global checkpoint
+         *
          */
         void updateGlobalCheckpointForShard(String allocationId, long globalCheckpoint);
 
