@@ -65,7 +65,7 @@ public class ReplicationGroup {
     /**
      *
      * @param routingTable  记录某个索引下所有的分片 以及它们会被分配到哪里
-     * @param inSyncAllocationIds   完成同步的所有分片    也就是副本已经持久化的全局检查点与 追赶上主分片的全局检查点
+     * @param inSyncAllocationIds
      * @param trackedAllocationIds  需要追踪信息的所有分片  应该就是要持续同步数据的分片  在往主分片写入索引操作时  只会同时写入到tracked为true的分片上
      * @param version 当前副本组的版本号 每次变化 版本号+1
      */
@@ -76,7 +76,7 @@ public class ReplicationGroup {
         this.trackedAllocationIds = trackedAllocationIds;
         this.version = version;
 
-        // 这些分片还没有完成数据同步
+        // 这些分片还没有完成数据同步 在写入索引操作阶段这些未完成数据同步的分片信息会上报给leader  (ShardState.remoteShardFailed())
         this.unavailableInSyncShards = Sets.difference(inSyncAllocationIds, routingTable.getAllAllocationIds());
         this.replicationTargets = new ArrayList<>();
         this.skippedShards = new ArrayList<>();
@@ -92,6 +92,7 @@ public class ReplicationGroup {
                 if (trackedAllocationIds.contains(shard.allocationId().getId())) {
                     replicationTargets.add(shard);
                 } else {
+                    // 从这个断言中可以看出  tracked 与 in-sync 应该是一样的
                     assert inSyncAllocationIds.contains(shard.allocationId().getId()) == false :
                         "in-sync shard copy but not tracked: " + shard;
                     skippedShards.add(shard);

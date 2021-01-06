@@ -53,7 +53,7 @@ public class RetentionLeaseSyncer {
         (shardId, primaryAllocationId, primaryTerm, retentionLeases) -> { });
 
     /**
-     * 通过续约同步器 发起一个同步请求
+     * 主分片会为所有需要同步数据的分片生成一个续约对象 这里是将续约信息写入到副本上
      * @param shardId
      * @param primaryAllocationId
      * @param primaryTerm

@@ -1146,7 +1146,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         // 首次触发时其他副本还没有上报自己的localCheckpoint 应该就是 -2  那么此时全局检查点还没有变化 还是-2
         updateGlobalCheckpointOnPrimary();
 
-        // 更新本地续约信息
+        // 只插入一个主分片的续约信息
         addPeerRecoveryRetentionLeaseForSolePrimary();
         assert invariant();
     }
@@ -1167,7 +1167,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
         // 当续约信息不存在时 进行创建
         if (retentionLeases.get(leaseId) == null) {
-            // 代表此时完成数据同步的只有主分片自己  TODO 先忽略这种情况
+
+            // 此时需要接收数据的分片 首先要求  tracked为true
             if (replicationGroup.getReplicationTargets().equals(Collections.singletonList(primaryShard))) {
                 assert primaryShard.allocationId().getId().equals(shardAllocationId)
                     : routingTable.assignedShards() + " vs " + shardAllocationId;
@@ -1255,7 +1256,10 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                     final long globalCheckpoint = localCheckpoint;
                     checkpoints.put(initializingId, new CheckpointState(localCheckpoint, globalCheckpoint, false, false));
                 }
-                // 处于该容器中的分片已经完成了与主分片的数据同步   tracked为true 就代表需要继续同步主分片最新写入的数据
+
+                // 当主分片首次变成start状态 这时同时启动的副本是可以直接进入 in-sync的
+                // 如果主分片已经运行了一段时间 那么即使副本此时从主分片恢复了数据 也无法确保它们之间的数据是完全同步的
+                // 所以在那个时候副本应该是设置到pending-insync
                 for (String inSyncId : inSyncAllocationIds) {
                     final long localCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
                     final long globalCheckpoint = localCheckpoint;
@@ -1264,10 +1268,16 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             }
             appliedClusterStateVersion = applyingClusterStateVersion;
             this.routingTable = routingTable;
+
+            // 根据当前最新的 checkpoints 信息  更新 replicationGroup对象
             updateReplicationGroupAndNotify();
+
+            // 当本主分片已经启动 并接收副本分片的更新信息时  某些副本可能不再需要同步数据了 就从相关容器中移除
             if (primaryMode && removedEntries) {
+                // 由于某些分片的移除 全局检查点就可以更新
                 updateGlobalCheckpointOnPrimary();
                 // notify any waiter for local checkpoint advancement to recheck that their shard is still being tracked.
+                // 唤醒阻塞在 pending-in-sync的线程
                 notifyAllWaiters();
             }
         }

@@ -97,7 +97,8 @@ public class RoutingAllocation {
     private DebugMode debugDecision = DebugMode.OFF;
 
     /**
-     * 代表此时正在执行某个拉取任务
+     * 该对象本身相当于一个 reroute流程中的上下文
+     * 在分片的分配过程中 会需要通过每个节点此时对应的shard元数据信息来判断作为分配节点是否合适  但是拉取过程是异步的 设置该标识就代表此时无法直接生成分配结果
      */
     private boolean hasPendingAsyncFetch = false;
 
@@ -260,7 +261,7 @@ public class RoutingAllocation {
     }
 
     /**
-     * 该分片不应该出现在哪些node上
+     * 该分片不会分配在这些node上 所以就不需要获取这些该shardId在该node上的探测数据了
      * @param shardId
      * @return
      */

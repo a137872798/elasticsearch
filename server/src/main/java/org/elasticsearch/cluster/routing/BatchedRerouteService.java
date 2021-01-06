@@ -79,7 +79,6 @@ public class BatchedRerouteService implements RerouteService {
     /**
      * Initiates a reroute.
      * 开始执行重路由服务   就是用来决定某个shard的 primary replicate 应该怎样分配在集群中
-     * reroute会自动去重
      */
     @Override
     public final void reroute(String reason, Priority priority, ActionListener<ClusterState> listener) {

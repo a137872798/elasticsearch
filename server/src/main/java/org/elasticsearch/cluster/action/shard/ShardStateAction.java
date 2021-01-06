@@ -735,7 +735,13 @@ public class ShardStateAction {
         }
 
         /**
-         * TODO
+         * 当分片状态发生改变会触发reroute
+         * 实际上在ES中 应该是推荐自己创建主分片 而副本是通过 AutoExpandReplicas功能来创建的  reroute中就包含了自动创建副本的逻辑
+         * 这里应该就是先创建主分片->主分片数据恢复完成->通知leader节点->自动生成副本->为副本分配路由->副本完成数据恢复->将写入主分片的数据双写到副本上
+         *
+         *
+         * 在 reroute中除了自动创建副本外 还有自动调节副本数的功能  当副本数超过了max数量时 会自动进行关闭
+         * ES内置的decides中 每个节点都可以设置副本
          * @param clusterChangedEvent the change event for this cluster state change, containing
          */
         @Override

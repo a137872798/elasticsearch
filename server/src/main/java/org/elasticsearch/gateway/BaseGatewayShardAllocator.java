@@ -51,22 +51,22 @@ public abstract class BaseGatewayShardAllocator {
      * to make decisions on assigning shards to nodes.
      * @param shardRouting the shard to allocate
      * @param allocation the allocation state container object
-     * @param unassignedAllocationHandler handles the allocation of the current shard
+     * @param unassignedAllocationHandler handles the allocation of the current shard    修改分片状态时通过该对象
      *
-     *                                    将某个unassigned的分片分配到一个合适的位置  主分片和副本的分配策略有所不同
+     *                                    为某个处于 unassigned的分片进行分配
      */
     public void allocateUnassigned(ShardRouting shardRouting, RoutingAllocation allocation,
                                    ExistingShardsAllocator.UnassignedAllocationHandler unassignedAllocationHandler) {
-        // allocateUnassignedDecision 决定分配的结果
+        // 获取该分片的分配结果
         final AllocateUnassignedDecision allocateUnassignedDecision = makeAllocationDecision(shardRouting, allocation, logger);
 
-        // notToken 代表校验没有通过  直接静默处理了
+        // 本身该分片不需要分配 静默处理
         if (allocateUnassignedDecision.isDecisionTaken() == false) {
             // no decision was taken by this allocator
             return;
         }
 
-        // 代表本次找到了一个合适的node
+        // TODO
         if (allocateUnassignedDecision.getAllocationDecision() == AllocationDecision.YES) {
             // TODO 这里获取到的node 应该是还未分配该shard的节点  那么已经分配过的节点又是在什么时候排除的呢 推测是利用 ignoreNode机制
             unassignedAllocationHandler.initialize(allocateUnassignedDecision.getTargetNode().getId(),
@@ -76,7 +76,8 @@ public abstract class BaseGatewayShardAllocator {
                 // 这个对象会观测某个分片的状态变化 比如某个新的unassigned 转换成init状态
                 allocation.changes());
         } else {
-            // 无法分配或者以异步形式处理 则可以从迭代器中移除这个分片了  同时会更新 unassignedInfo信息 以及触发相关的钩子
+            // 因为已经尝试为该分片进行分配了  所以从unassignedAllocationHandler 中移除该分片   同时会加入到ignore 列表中 避免下次重复处理
+            // unassignedAllocationHandler 内存储了所有需要分配的分片    通过observer观测被移除的 unassigned分片
             unassignedAllocationHandler.removeAndIgnore(allocateUnassignedDecision.getAllocationStatus(), allocation.changes());
         }
     }

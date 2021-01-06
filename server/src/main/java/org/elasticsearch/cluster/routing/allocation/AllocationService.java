@@ -347,21 +347,22 @@ public class AllocationService {
     /**
      * Checks if the are replicas with the auto-expand feature that need to be adapted.
      * Returns an updated cluster state if changes were necessary, or the identical cluster if no changes were required.
+     * 根据当前集群状态 判断需要创建多少副本
      */
     public ClusterState adaptAutoExpandReplicas(ClusterState clusterState) {
         // 该对象描述了当前集群所有分片的分配情况
         RoutingAllocation allocation = new RoutingAllocation(allocationDeciders, clusterState.getRoutingNodes(), clusterState,
             clusterInfoService.getClusterInfo(), currentNanoTime());
 
-        // key 对应合适的副本数量 value 对应有哪些索引应该存在这么多数量的副本
+
+        // 推算每个索引合适的副本数量   key对应副本数量 value对应使用该副本数量的所有索引
         final Map<Integer, List<String>> autoExpandReplicaChanges =
             AutoExpandReplicas.getAutoExpandReplicaChanges(clusterState.metadata(), allocation);
-        // 索引副本数没有发生变化
+        // 代表自适应机制被关闭 不会自动创建副本   不对clusterState进行修改
         if (autoExpandReplicaChanges.isEmpty()) {
             return clusterState;
         } else {
-            // RoutingTable 中记录了所有分片的分配情况  这里使用原数据快速填充builder
-            // autoExpandReplicaChanges 只包含了本次变化的副本
+            // 更新 ClusterState信息
             final RoutingTable.Builder routingTableBuilder = RoutingTable.builder(clusterState.routingTable());
             final Metadata.Builder metadataBuilder = Metadata.builder(clusterState.metadata());
             for (Map.Entry<Integer, List<String>> entry : autoExpandReplicaChanges.entrySet()) {
@@ -392,22 +393,21 @@ public class AllocationService {
 
     /**
      * Removes delay markers from unassigned shards based on current time stamp.
-     * 移除延时标识
+     * 尝试将达到时限的分片的延时标记移除
      */
     private void removeDelayMarkers(RoutingAllocation allocation) {
-        // 迭代所有unassigned 分片
+        // 迭代所有unassigned 分片  每个自适应创建的副本一开始都处于 unassigned状态
         final RoutingNodes.UnassignedShards.UnassignedIterator unassignedIterator = allocation.routingNodes().unassigned().iterator();
-        // 该对象内部存储了各种各样的元数据信息
         final Metadata metadata = allocation.metadata();
         while (unassignedIterator.hasNext()) {
             ShardRouting shardRouting = unassignedIterator.next();
             UnassignedInfo unassignedInfo = shardRouting.unassignedInfo();
-            // 如果这个未分配信息包含延迟标识
+            // 只针对设置了延时标识的分片
             if (unassignedInfo.isDelayed()) {
                 // 计算还有多少剩余时间
                 final long newComputedLeftDelayNanos = unassignedInfo.getRemainingDelay(allocation.getCurrentNanoTime(),
                     metadata.getIndexSafe(shardRouting.index()).getSettings());
-                // 代表已经达到时限
+                // 代表已满足延时条件
                 if (newComputedLeftDelayNanos == 0) {
                     // 移除延时标识
                     unassignedIterator.updateUnassigned(new UnassignedInfo(unassignedInfo.getReason(), unassignedInfo.getMessage(),
@@ -494,20 +494,20 @@ public class AllocationService {
      * Reroutes the routing table based on the live nodes.
      * <p>
      * If the same instance of ClusterState is returned, then no change has been made.
-     * @param clusterState 此时最新的集群状态
-     * 根据此时最新的集群状态(主要是内部的配置) 进行重路由
-     *                     BatchedRerouteService.reroute 也会转发到该方法
+     * @param clusterState
+     * 根据当前最新的集群状态 进行重路由 包括了自动创建副本以及为副本分配位置的逻辑
      */
     public ClusterState reroute(ClusterState clusterState, String reason) {
-        // 自适应调整此时的副本数量 并更新到集群状态中  减少的话不需要做处理 但是增加的话 就会有新的副本处于未分配的状态
+        // 自适应条件当前的副本数量  一个隐含的好处就是只需要创建主分片 并启动完成后  通过调用reroute 就可以自动创建副本
         ClusterState fixedClusterState = adaptAutoExpandReplicas(clusterState);
 
-        // 将此时所有分片的分配情况按照node来划分
+        // 新创建的副本此时都处于 unassigned状态
         RoutingNodes routingNodes = getMutableRoutingNodes(fixedClusterState);
         // shuffle the unassigned nodes, just so we won't have things like poison failed shards
         // 打乱内部未分配的分片副本
         routingNodes.unassigned().shuffle();
-        // 该对象描述的是整个集群下所有primary replicate的分配情况
+
+        // 将执行分配相关的参数包装成该对象
         RoutingAllocation allocation = new RoutingAllocation(allocationDeciders, routingNodes, fixedClusterState,
             clusterInfoService.getClusterInfo(), currentNanoTime());
         reroute(allocation);
@@ -541,8 +541,8 @@ public class AllocationService {
     }
 
     /**
-     * 根据现有的所有副本的分配情况 进行重路由
-     * @param allocation  该对象内部还记录了哪些节点处于 unassigned状态
+     * 对处于unassigned的分片进行分配
+     * @param allocation
      */
     private void reroute(RoutingAllocation allocation) {
         assert hasDeadNodes(allocation) == false : "dead nodes should be explicitly cleaned up. See disassociateDeadNodes";
@@ -550,7 +550,7 @@ public class AllocationService {
             "auto-expand replicas out of sync with number of nodes in the cluster";
         assert assertInitialized();
 
-        // 如果某些unassigned 超过了延时时间 就将延时标记去除
+        // 某些处于 unassigned的分片 可以设置延时标识 未超时的分片在本轮中将不会被分配
         removeDelayMarkers(allocation);
 
         // 针对这些未分配的副本进行重分配
@@ -565,6 +565,7 @@ public class AllocationService {
      * @param allocation
      */
     private void allocateExistingUnassignedShards(RoutingAllocation allocation) {
+        // 所有分片会按照 index的优先级进行排序
         allocation.routingNodes().unassigned().sort(PriorityComparator.getAllocationComparator(allocation)); // sort for priority ordering
 
         // 这是分配器 这里允许在处理前增加一些逻辑
@@ -573,16 +574,19 @@ public class AllocationService {
             existingShardsAllocator.beforeAllocation(allocation);
         }
 
+        // 优先对主分片进行分配
         final RoutingNodes.UnassignedShards.UnassignedIterator primaryIterator = allocation.routingNodes().unassigned().iterator();
         while (primaryIterator.hasNext()) {
             final ShardRouting shardRouting = primaryIterator.next();
-            // 优先为主分片进行分配
             if (shardRouting.primary()) {
+                // 通过 index信息找到对应的 Allocator 并进行分配
                 getAllocatorForShard(shardRouting, allocation).allocateUnassigned(shardRouting, allocation, primaryIterator);
             }
         }
 
-        // 在完成了primary的分配后  开始replicate的分配前 执行的钩子  这里是寻找某些shard是否被分配在了不合适的node (考核的标准就是在该node上与 primary所在的node数据同步率是否太小， 如果是的话会取消本次的恢复操作)
+        // 在完成了primary的分配后  开始replicate的分配前 执行的钩子
+        // 这里是寻找某些shard是否被分配在了不合适的node (考核的标准就是在该node上与 primary所在的node数据同步率是否太小， 如果是的话会取消本次的恢复操作)
+        // 当然本操作也是异步的
         for (final ExistingShardsAllocator existingShardsAllocator : existingShardsAllocators.values()) {
             existingShardsAllocator.afterPrimariesBeforeReplicas(allocation);
         }
@@ -713,6 +717,7 @@ public class AllocationService {
 
     /**
      * 以index为单位 相关的配置中可以指定使用的 allocator
+     * 默认使用 GatewayAllocator
      * @param shardRouting   与某个分片对应
      * @param routingAllocation 这个对象可以获取到所有分片的分配信息
      * @return

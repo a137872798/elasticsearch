@@ -58,10 +58,8 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
      * match. Today, a better match is one that can perform a no-op recovery while the previous recovery
      * has to copy segment files.
      *
-     * @param allocation 该对象包含了此时集群下所有分片的分配情况
-     *                   处理当前正在执行恢复操作的分片 可能会关闭一些恢复操作
-     *                   这些操作应该是都交由leader节点来控制
-     *                   该方法的调用场景是 当主分片完成分配后  副本进行分配前 可以对这些这些 recovery的动作进行处理  以确保replicate操作能正常执行
+     * @param allocation
+     * 检测之前已经分配出去 处于init状态的副本  是否分配到了一个合理的节点上   就是通过匹配副本节点与主分片lucene数据的同步率
      */
     public void processExistingRecoveries(RoutingAllocation allocation) {
         // 获取各种元数据的总集对象
@@ -74,31 +72,33 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
             // 遍历每个分片
             for (ShardRouting shard : routingNode) {
 
-                // 只处理 init状态的replicate  TODO 主分片的数据恢复该怎么做???
+                // 忽略主分片
                 if (shard.primary()) {
                     continue;
                 }
+                // 未分配或者已经恢复完数据的跳过
                 if (shard.initializing() == false) {
                     continue;
                 }
+                // 处于重定向状态的跳过
                 if (shard.relocatingNodeId() != null) {
                     continue;
                 }
 
                 // if we are allocating a replica because of index creation, no need to go and find a copy, there isn't one...
-                // TODO INDEX_CREATE 应该是代表索引刚刚被创建 此时没有需要恢复的数据
+                // TODO 目前看到副本的创建只有  REPLICA_ADDED 先忽略这种情况
                 if (shard.unassignedInfo() != null && shard.unassignedInfo().getReason() == UnassignedInfo.Reason.INDEX_CREATED) {
                     continue;
                 }
 
-                // 这里针对所有处于init状态的副本分片都发起了 拉取索引文件元数据的请求
+                // 只要有副本处于恢复阶段  就检测所有分片与主分片数据的同步率  太低的就尝试切换到更合适的节点
                 AsyncShardFetch.FetchResult<NodeStoreFilesMetadata> shardStores = fetchData(shard, allocation);
+                // 针对所有shardId 都发起请求后 退出for循环
                 if (shardStores.hasData() == false) {
                     logger.trace("{}: fetching new stores for initializing shard", shard);
                     continue; // still fetching
                 }
 
-                // 获取对应的主分片
                 ShardRouting primaryShard = allocation.routingNodes().activePrimary(shard.shardId());
                 assert primaryShard != null : "the replica shard can be allocated on at least one node, so there must be an active primary";
                 assert primaryShard.currentNodeId() != null;
@@ -114,6 +114,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
                     continue;
                 }
 
+                // TODO
                 // 找到这个副本合适的一系列node  其中还有一个最接近primary的node
                 MatchingNodes matchingNodes = findMatchingNodes(shard, allocation, true, primaryNode, primaryStore, shardStores, false);
                 if (matchingNodes.getNodeWithHighestMatch() != null) {
@@ -152,6 +153,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
 
     /**
      * Is the allocator responsible for allocating the given {@link ShardRouting}?
+     * 检测该副本分片是否需要分配
      */
     private static boolean isResponsibleFor(final ShardRouting shard) {
         return shard.primary() == false // must be a replica
@@ -161,7 +163,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
     }
 
     /**
-     * 针对 unassigned的副本进行分配
+     * 为副本分片选择合适的节点
      *
      * @param unassignedShard the unassigned shard to allocate
      * @param allocation      the current routing state
@@ -172,7 +174,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
     public AllocateUnassignedDecision makeAllocationDecision(final ShardRouting unassignedShard,
                                                              final RoutingAllocation allocation,
                                                              final Logger logger) {
-        // 先进行校验 未通过时返回 NOT_TOKEN 在外层会静默处理
+        // 检测该分片是否需要分配
         if (isResponsibleFor(unassignedShard) == false) {
             // this allocator is not responsible for deciding on this shard
             return AllocateUnassignedDecision.NOT_TAKEN;
@@ -181,11 +183,11 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
         final RoutingNodes routingNodes = allocation.routingNodes();
         final boolean explain = allocation.debugDecision();
         // pre-check if it can be allocated to any node that currently exists, so we won't list the store for it for nothing
-        // 首先确保至少能分配到某个节点上
+        // 确保该分片至少能分配到某个node上  如果某个节点上已经存在该shardId的分片了 就不允许分配
         Tuple<Decision, Map<String, NodeAllocationResult>> result = canBeAllocatedToAtLeastOneNode(unassignedShard, allocation);
         Decision allocateDecision = result.v1();
 
-        // 代表此时无合适的位置可设置
+        // 当前分片没有合适的节点分配   直接返回失败结果   如果此时正在拉取该分片的元数据 那么先进入下一步判断 情况可能会发生改变
         if (allocateDecision.type() != Decision.Type.YES
             && (explain == false || hasInitiatedFetching(unassignedShard) == false)) {
             // only return early if we are not in explain mode, or we are in explain mode but we have not
@@ -298,7 +300,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
      * node decided YES, THROTTLE if at least one node decided THROTTLE, and NO if none of the nodes decided
      * YES or THROTTLE).  If in explain mode, also returns the node-level explanations as the second element
      * in the returned tuple.
-     * 检查是否至少有一个节点可以分配这个副本
+     * 检测是否还有节点可以分配该副本分片
      */
     private static Tuple<Decision, Map<String, NodeAllocationResult>> canBeAllocatedToAtLeastOneNode(ShardRouting shard,
                                                                                                      RoutingAllocation allocation) {
@@ -312,7 +314,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
             }
             // if we can't allocate it on a node, ignore it, for example, this handles
             // cases for only allocating a replica after a primary
-            // 通过deciders对象判断分片副本能否设置到该node上
+            // 首先检测该分片能否分配到该node上
             Decision decision = allocation.deciders().canAllocate(shard, node, allocation);
             // 代表首次设置
             if (decision.type() == Decision.Type.YES && madeDecision.type() != Decision.Type.YES) {
@@ -329,6 +331,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
                 nodeDecisions.put(node.nodeId(), new NodeAllocationResult(node.node(), null, decision));
             }
         }
+        // v2 对应的是描述信息 先忽略
         return Tuple.tuple(madeDecision, nodeDecisions);
     }
 

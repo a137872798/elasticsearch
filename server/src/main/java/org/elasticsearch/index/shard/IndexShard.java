@@ -564,7 +564,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         readerWrapper = indexReaderWrapper;
         refreshListeners = buildRefreshListeners();
         lastSearcherAccess.set(threadPool.relativeTimeInMillis());
-        // 在初始化完成后 将此时分片的元数据信息写入到相关目录中  写入的元数据是 ShardStateMetadata
+
+        // 当某分片创建在该节点后 需要写一个元数据文件   好处是下次为分片选择节点时
+        // 有该文件的就会被优先选择  因为之前该节点上存在过该分片数据 那么数据恢复的耗时就会短些
         persistMetadata(path, indexSettings, shardRouting, null, logger);
         // 默认为true
         this.useRetentionLeasesInPeerRecovery = replicationTracker.hasAllPeerRecoveryRetentionLeases();
@@ -661,6 +663,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param routingTable                the shard routing table
      * @throws IOException
      * 比如本节点上报修改状态的请求被leader通过  在发布到集群通知本节点 就要做一些更新操作
+     * 如果作为副本分片 触发该方法只是简单的将state修改成 started
      */
     @Override
     public void updateShardState(final ShardRouting newRouting,
@@ -691,11 +694,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             }
 
             // 如果当前是主分片 根据相关信息更新
+            // 这里的逻辑主要就是维护 checkpoints globalCheckpoint 等信息
             if (newRouting.primary()) {
                 replicationTracker.updateFromMaster(applyingClusterStateVersion, inSyncAllocationIds, routingTable);
             }
 
-            // 更新本地分片状态
+            // 对应主分片从init->start的状态
             if (state == IndexShardState.POST_RECOVERY && newRouting.active()) {
                 assert currentRouting.active() == false : "we are in POST_RECOVERY, but our shard routing is active " + currentRouting;
                 assert currentRouting.isRelocationTarget() == false || currentRouting.primary() == false ||
@@ -715,7 +719,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             assert newRouting.active() == false || state == IndexShardState.STARTED || state == IndexShardState.CLOSED :
                 "routing is active, but local shard state isn't. routing: " + newRouting + ", local state: " + state;
 
-            // 更新最新的路由信息 并进行持久化
+            // 更新最新的路由信息 并进行持久化  在为分片进行分配时 就会访问所有可能分配的节点的该数据
             persistMetadata(path, indexSettings, newRouting, currentRouting, logger);
             final CountDownLatch shardStateUpdated = new CountDownLatch(1);
 
@@ -728,6 +732,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         // the master started a recovering primary, activate primary mode.
                         // 激活主分片模式 这样其他分片才可以从主分片恢复数据
                         replicationTracker.activatePrimaryMode(getLocalCheckpoint());
+                        // 如果此时有其他的 tracked分片 那么就需要在这些分片上存储最新的续约信息 续约信息包含了每个分片此时最新的全局检查点
                         ensurePeerRecoveryRetentionLeasesExist();
                     }
                 } else {
@@ -841,7 +846,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             indexEventListener.shardRoutingChanged(this, currentRouting, newRouting);
         }
 
-        // TODO
+        // TODO useRetentionLeasesInPeerRecovery  默认为 true
         if (indexSettings.isSoftDeleteEnabled() && useRetentionLeasesInPeerRecovery == false) {
             final RetentionLeases retentionLeases = replicationTracker.getRetentionLeases();
             final Set<ShardRouting> shardRoutings = new HashSet<>(routingTable.getShards());
@@ -3435,7 +3440,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 将最新的元数据进行持久化
+     * 将本节点上有关该分片的元数据信息持久化
      *
      * @param shardPath      当前创建的分片的文件路径
      * @param indexSettings
@@ -3454,11 +3459,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
         // only persist metadata if routing information that is persisted in shard state metadata actually changed
         final ShardId shardId = newRouting.shardId();
-        // 只有在前后路由信息发生变化时 才有必要进行处理
-        // 只有state的变化 是不会触发写入的
-        if (currentRouting == null
-            || currentRouting.primary() != newRouting.primary()
-            || currentRouting.allocationId().equals(newRouting.allocationId()) == false) {
+
+        if (currentRouting == null    // 该节点上首次创建该分片
+            || currentRouting.primary() != newRouting.primary()   // 分片的角色发生变化 也会存储
+            || currentRouting.allocationId().equals(newRouting.allocationId()) == false) {  // 代表不是同一轮的分配 需要覆盖上一轮的结果
             assert currentRouting == null || currentRouting.isSameAllocation(newRouting);
             final String writeReason;
             if (currentRouting == null) {

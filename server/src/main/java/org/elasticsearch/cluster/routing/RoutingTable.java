@@ -490,7 +490,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
          * @param numberOfReplicas the number of replicas  本次设置的新的副本数
          * @param indices          the indices to update the number of replicas for  本次更新涉及到的索引
          * @return the builder
-         * 更新某些索引推荐的副本数量
+         * 将某些索引的副本数更新到指定值
          */
         public Builder updateNumberOfReplicas(final int numberOfReplicas, final String[] indices) {
             // 代表已经调用过build()方法了
@@ -503,8 +503,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
                     // ignore index missing failure, its closed...
                     continue;
                 }
-                // 一个索引的数据会被拆分成多份  也就出来了分片的概念  而副本是针对分片而言的 同一索引的多个分片可以在同一node下  但是副本就必须在不同的节点
-                // 这个是主分片的副本数量
+                // 任意一个shardId 的 副本数量都是一致的 所以直接获取第一个shardId
                 int currentNumberOfReplicas = indexRoutingTable.shards().get(0).size() - 1; // remove the required primary
                 IndexRoutingTable.Builder builder = new IndexRoutingTable.Builder(indexRoutingTable.getIndex());
 

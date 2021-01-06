@@ -445,7 +445,6 @@ public abstract class TransportReplicationAction<
                         adaptResponse(response, primaryShardReference.indexShard);
 
                         // 根据标识决定是否要同步全局检查点   针对 TransportWriteAction来说 必然要在写入完成后同步全局检查点
-                        // TODO 用户是否只应该查询到全局检查点之前的数据
                         if (syncGlobalCheckpointAfterOperation) {
                             try {
                                 // 这里会尝试更新全局检查点  作用到每个分片上的大概逻辑就是

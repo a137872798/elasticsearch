@@ -64,19 +64,19 @@ import java.util.stream.Stream;
 public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
     /**
      * Is the allocator responsible for allocating the given {@link ShardRouting}?
-     * 对状态进行一些校验工作
+     * 确保该分片需要分配
      */
     private static boolean isResponsibleFor(final ShardRouting shard) {
         return shard.primary() // must be primary
                 && shard.unassigned() // must be unassigned
                 // only handle either an existing store or a snapshot recovery
-                // 主分片仅支持从 store / snapshot 进行数据恢复 而不支持remote恢复
-                && (shard.recoverySource().getType() == RecoverySource.Type.EXISTING_STORE
+                && (shard.recoverySource().getType() == RecoverySource.Type.EXISTING_STORE     // 对应从本地事务日志进行恢复
                     || shard.recoverySource().getType() == RecoverySource.Type.SNAPSHOT);
     }
 
     /**
-     * 决定某个分片被分配的位置
+     * 决定某个主分片应该分片在哪个节点上   那么判断的依据是什么呢 应该是根据目标节点该分片数据此时已持久化的数据量
+     * 应该是包含最新数据的才能做主分片  当执行 bulk任务时 每个req会携带一个id 通过id 或者 routing信息 并经过operationRouting处理后会发往同一个shardId
      * @param unassignedShard  the unassigned shard to allocate
      * @param allocation       the current routing state
      * @param logger           the logger
@@ -86,25 +86,27 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
     public AllocateUnassignedDecision makeAllocationDecision(final ShardRouting unassignedShard,
                                                              final RoutingAllocation allocation,
                                                              final Logger logger) {
+        // 首先判断该分片是否允许进行分配
         if (isResponsibleFor(unassignedShard) == false) {
             // this allocator is not responsible for allocating this shard
-            // 状态校验未通过
+            // 该分片不需要分配时 返回该标识
             return AllocateUnassignedDecision.NOT_TAKEN;
         }
 
         final boolean explain = allocation.debugDecision();
-        // 从目标节点拉取数据  内部可能会有异步/同步处理 但是异步在回调中又会触发reroute最终和同步走一样的流程
+
+        // 需要每个节点此时shard的元数据 用于作为判断该分片最合适的分配节点的依据
         final FetchResult<NodeGatewayStartedShards> shardState = fetchData(unassignedShard, allocation);
-        // 代表会以异步形式处理拉取到的结果
+        // 此时还处于等待元数据返回的阶段
         if (shardState.hasData() == false) {
             // 设置一个异步等待的标识
             allocation.setHasPendingAsyncFetch();
             List<NodeAllocationResult> nodeDecisions = null;
+            // TODO 忽略debug
             if (explain) {
-                // 生成一些描述信息
                 nodeDecisions = buildDecisionsForAllNodes(unassignedShard, allocation);
             }
-            // 代表此时还处于异步拉取数据的阶段 无法直接返回分片决策结果  而当异步任务结束后会主动发起一次 reroute
+            // 此时无法得出分配结果
             return AllocateUnassignedDecision.no(AllocationStatus.FETCHING_SHARD_DATA, nodeDecisions);
         }
 

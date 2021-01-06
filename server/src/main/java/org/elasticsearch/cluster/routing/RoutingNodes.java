@@ -1037,7 +1037,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         private final List<ShardRouting> unassigned;
 
         /**
-         * 某些分片会通过异步方式处理 就会先存入到这个列表中
+         * 某些分片处于 unassigned 与 assigned 的中间状态  比如正在准备生成分配结果的数据  会暂存在该容器中
          */
         private final List<ShardRouting> ignored;
 
@@ -1047,7 +1047,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         private int primaries = 0;
 
         /**
-         * 每当有某个标记成 primary的分片被 ignore时 增加该值
+         * 处于 unassigned 与 assigned 中间状态的分片是主分片
          */
         private int ignoredPrimaries = 0;
 
@@ -1108,7 +1108,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
          * @see #ignored()
          * @see UnassignedIterator#removeAndIgnore(AllocationStatus, RoutingChangesObserver)
          * @see #isIgnoredEmpty()
-         * 某个分片将不会被处理
+         * 比如某个未分配的分片 此时正在获取该分片在所有node上的元数据信息  无法立即生成分配结果  为了避免重复处理 先设置成忽略
          */
         public void ignoreShard(ShardRouting shard, AllocationStatus allocationStatus, RoutingChangesObserver changes) {
             nodes.ensureMutable();
@@ -1116,7 +1116,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                 ignoredPrimaries++;
                 UnassignedInfo currInfo = shard.unassignedInfo();
                 assert currInfo != null;
-                // 更新 unassignedInfo信息
+
+                // 更新当前 unassignedInfo的状态
                 if (allocationStatus.equals(currInfo.getLastAllocationStatus()) == false) {
                     UnassignedInfo newInfo = new UnassignedInfo(currInfo.getReason(), currInfo.getMessage(), currInfo.getFailure(),
                                                                 currInfo.getNumFailedAllocations(), currInfo.getUnassignedTimeInNanos(),
@@ -1133,8 +1134,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         }
 
         /**
-         * 该对象负责遍历此时所有未分配的副本
-         * 该对象同时实现了 UnassignedAllocationHandler 接口 具备更新unassigned分片的能力
+         * 该对象维护了所有未分配的分配  同时对外暴露一些处理用的api (unassignedAllocationHandler)
          */
         public class UnassignedIterator implements Iterator<ShardRouting>, ExistingShardsAllocator.UnassignedAllocationHandler {
 
@@ -1179,8 +1179,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
              * that subsequent consumers of this API won't try to allocate this shard again.
              *
              * @param attempt the result of the allocation attempt
-             * @param changes 分片变化钩子
-             *                从迭代器中移除当前的分片
+             * @param changes 观测被移除的分片
+             *                某个 unassigned分片已经被处理了  不需要继续维护
              */
             @Override
             public void removeAndIgnore(AllocationStatus attempt, RoutingChangesObserver changes) {

@@ -105,6 +105,12 @@ public class RetentionLeaseSyncAction extends
                 ThreadPool.Names.MANAGEMENT, false);
     }
 
+    /**
+     * 不应该通过其他入口调用该对象 需要通过sync调用
+     * @param parentTask
+     * @param request
+     * @param listener
+     */
     @Override
     protected void doExecute(Task parentTask, Request request, ActionListener<Response> listener) {
         assert false : "use RetentionLeaseSyncAction#sync";
@@ -116,7 +122,7 @@ public class RetentionLeaseSyncAction extends
      * @param shardId
      * @param primaryAllocationId
      * @param primaryTerm
-     * @param retentionLeases  此时本节点最新的续约集信息
+     * @param retentionLeases  主分片最新的续约信息
      * @param listener   处理结果的监听器
      */
     final void sync(ShardId shardId, String primaryAllocationId, long primaryTerm, RetentionLeases retentionLeases,

@@ -64,7 +64,7 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 以节点为单位  获取某个shard在该节点上的数据文件信息
+ * 拉取lucene数据
  */
 public class TransportNodesListShardStoreMetadata extends TransportNodesAction<TransportNodesListShardStoreMetadata.Request,
     TransportNodesListShardStoreMetadata.NodesStoreFilesMetadata,
@@ -122,7 +122,7 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
     }
 
     /**
-     * 根据请求体内部的参数 获取数据文件元数据
+     * 根据lucene数据 生成元数据
      * @param request
      * @return
      * @throws IOException
@@ -133,14 +133,15 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
         long startTimeNS = System.nanoTime();
         boolean exists = false;
         try {
-            // 首先直接通过 indicesService 来定位到对应分片
+
+            // 如果某个shard的副本或者主分片已经分配在该node上了 并且正在运行
             IndexService indexService = indicesService.indexService(shardId.getIndex());
             if (indexService != null) {
                 IndexShard indexShard = indexService.getShardOrNull(shardId.id());
                 if (indexShard != null) {
                     try {
-                        // 这里获取快照元数据 续约信息 和分片id   TODO 为什么会需要续约的概念啊
-                        // 快照元数据 就是lucene目录下 相关信息的文件元数据
+                        // snapshotStoreMetadata 对应基于lucene文件生成的元数据信息   这里还将续约信息返回
+                        // TODO 续约信息意味着什么 ???
                         final StoreFilesMetadata storeFilesMetadata = new StoreFilesMetadata(shardId,
                             indexShard.snapshotStoreMetadata(), indexShard.getPeerRecoveryRetentionLeases());
                         exists = true;
@@ -155,7 +156,7 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
                 }
             }
 
-            // 无法通过indicesService 直接定位到元数据时 通过明确的数据路径查找数据
+            // 获取已经持久化的lucene数据的描述信息   针对该shardId之前分配在该节点的情况
             final String customDataPath;
             if (request.getCustomDataPath() != null) {
                 customDataPath = request.getCustomDataPath();
@@ -175,7 +176,8 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
                     }
                 }
             }
-            // 找到当前分片在 env下的路径
+
+            // 认为该节点上之前没有该shardId 对应的数据
             final ShardPath shardPath = ShardPath.loadShardPath(logger, nodeEnv, shardId, customDataPath);
             if (shardPath == null) {
                 return new StoreFilesMetadata(shardId, Store.MetadataSnapshot.EMPTY, Collections.emptyList());
@@ -184,7 +186,8 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
             // 1) a shard is being constructed, which means the master will not use a copy of this replica
             // 2) A shard is shutting down and has not cleared it's content within lock timeout. In this case the master may not
             //    reuse local resources.
-            // 也就是无法直接借助 indexShard的数据
+
+            // 读取快照数据
             final Store.MetadataSnapshot metadataSnapshot =
                 Store.readMetadataSnapshot(shardPath.resolveIndex(), shardId, nodeEnv::shardLock, logger);
             // We use peer recovery retention leases from the primary for allocating replicas. We should always have retention leases when
@@ -219,6 +222,13 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
          */
         private final List<RetentionLease> peerRecoveryRetentionLeases;
 
+
+        /**
+         *
+         * @param shardId
+         * @param metadataSnapshot
+         * @param peerRecoveryRetentionLeases  此时该分片所有相关节点的续约信息  (primary + replica)
+         */
         public StoreFilesMetadata(ShardId shardId, Store.MetadataSnapshot metadataSnapshot,
                                   List<RetentionLease> peerRecoveryRetentionLeases) {
             this.shardId = shardId;

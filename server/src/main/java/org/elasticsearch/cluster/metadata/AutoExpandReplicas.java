@@ -79,7 +79,7 @@ public final class AutoExpandReplicas {
                 "] from value: [" + value + "] at index "  + dash, e);
         }
         String sMax = value.substring(dash + 1);
-        // all代表上限值 也就是要在每个node上都创建一个该索引的分片
+        // 代表副本数没有上限
         if (sMax.equals(ALL_NODES_VALUE)) {
             max = Integer.MAX_VALUE;
         } else {
@@ -138,6 +138,7 @@ public final class AutoExpandReplicas {
             if (allocation.nodes().getMinNodeVersion().onOrAfter(Version.V_7_6_0)) {
                 for (ObjectCursor<DiscoveryNode> cursor : allocation.nodes().getDataNodes().values()) {
                     // 检测某个节点是否应该存在该索引的分片  将集群中允许存在该分片的所有节点数加起来
+                    // 从 ES内置的 Decision来看
                     Decision decision = allocation.deciders().shouldAutoExpandToNode(indexMetadata, cursor.value, allocation);
                     if (decision.type() != Decision.Type.NO) {
                         numMatchingDataNodes ++;
@@ -149,7 +150,7 @@ public final class AutoExpandReplicas {
             }
 
             final int min = getMinReplicas();
-            // 获得一个更合理的范围
+            // 生成副本的数量 最大为 numMatchingDataNodes -1  最小为 maxReplicas
             final int max = getMaxReplicas(numMatchingDataNodes);
             int numberOfReplicas = numMatchingDataNodes - 1;
             if (numberOfReplicas < min) {

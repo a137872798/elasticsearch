@@ -147,7 +147,7 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
     public enum AllocationStatus implements Writeable {
         /**
          * The shard was denied allocation to a node because the allocation deciders all returned a NO decision
-         * 没有找到可以分配的节点了
+         * 该分片无法分配到任何节点上
          */
         DECIDERS_NO((byte) 0),
         /**
@@ -172,6 +172,7 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
         DELAYED_ALLOCATION((byte) 4),
         /**
          * No allocation attempt has been made yet
+         * 还没尝试过分配
          */
         NO_ATTEMPT((byte) 5);
 
@@ -229,7 +230,7 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
     private final Reason reason;
     private final long unassignedTimeMillis; // used for display and log messages, in milliseconds
     /**
-     * 推测是该对象的创建时间  用于计算延迟相关的东西
+     *
      */
     private final long unassignedTimeNanos; // in nanoseconds, used to calculate delay for delayed shard allocation
     /**

@@ -76,7 +76,7 @@ public class AllocationDeciders extends AllocationDecider {
     }
 
     /**
-     * 决定能否将分片分配到某个node
+     * 检测某个分片是否支持分配到该node上
      * @param shardRouting
      * @param node
      * @param allocation
@@ -84,12 +84,14 @@ public class AllocationDeciders extends AllocationDecider {
      */
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
-        // 如果该分配对象本身不支持将某个分片设置到该node上 直接返回结果
+        // 检测是否在 ignore 容器中 如果存在代表无法分配
         if (allocation.shouldIgnoreShardForNode(shardRouting.shardId(), node.nodeId())) {
             return Decision.NO;
         }
         Decision.Multi ret = new Decision.Multi();
+        // 通过 decider对象进行决策
         for (AllocationDecider allocationDecider : allocations) {
+            // 在这里就有检测某个node是否已经存在 该shardId 分片的逻辑
             Decision decision = allocationDecider.canAllocate(shardRouting, node, allocation);
             // short track if a NO is returned.
             if (decision == Decision.NO) {
@@ -188,9 +190,11 @@ public class AllocationDeciders extends AllocationDecider {
             Decision decision = allocationDecider.shouldAutoExpandToNode(indexMetadata, node, allocation);
             // short track if a NO is returned.
             if (decision == Decision.NO) {
+                // 不需要输出日志信息 那么直接将该失败结果返回
                 if (!allocation.debugDecision()) {
                     return decision;
                 } else {
+                    // 如果需要输出日志信息 就将所有决策结果都包含进去
                     ret.add(decision);
                 }
             } else {

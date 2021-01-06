@@ -807,13 +807,14 @@ public class RestoreService implements ClusterStateApplier {
         }
 
         /**
-         * 当未分配信息发生变化时触发
+         * 一个分片进行分配需要经过很多流程   在其中 unassignedInfo 也会发生变化
          * @param unassignedShard
          * @param newUnassignedInfo
          */
         @Override
         public void unassignedInfoUpdated(ShardRouting unassignedShard, UnassignedInfo newUnassignedInfo) {
             RecoverySource recoverySource = unassignedShard.recoverySource();
+            // TODO 非快照恢复 忽略
             if (recoverySource.getType() == RecoverySource.Type.SNAPSHOT) {
                 if (newUnassignedInfo.getLastAllocationStatus() == UnassignedInfo.AllocationStatus.DECIDERS_NO) {
                     String reason = "shard could not be allocated to any of the nodes";

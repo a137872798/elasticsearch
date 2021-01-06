@@ -160,7 +160,7 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     }
 
     /**
-     * 在进行分配前需要做的前置工作
+     * 每当开始一次新的分配任务时 要将之前的数据清理
      * @param allocation
      */
     @Override
@@ -177,16 +177,15 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     @Override
     public void afterPrimariesBeforeReplicas(RoutingAllocation allocation) {
         assert replicaShardAllocator != null;
-        // 当此时存在非活跃状态的分片时   应该就代表它们可能正在进行数据恢复
+        // inactiveShards 对应处于init 的分片数量  只要此时主分片处于start状态 那么处于init状态的副本就会开始恢复数据
         if (allocation.routingNodes().hasInactiveShards()) {
             // cancel existing recoveries if we have a better match
-            // 当某个shard存在更好的候选node时 关闭掉之前的恢复操作
             replicaShardAllocator.processExistingRecoveries(allocation);
         }
     }
 
     /**
-     * 为某些还未分配位置的 replicate primary 分配位置
+     * 为某个 unassigned分片进行分配
      * @param shardRouting
      * @param allocation
      * @param unassignedAllocationHandler  该对象可以更新此时unassigned分片的状态
@@ -236,15 +235,14 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     /**
      * Clear the fetched data for the primary to ensure we do not cancel recoveries based on excessively stale data.
      * @param allocation 包含了此时集群中所有分片的分配信息
-     * 在进行一轮新的 replicate primary分配前 需要调用该方法
+     *                   每次执行分配任务的时候 某些节点有关某shard的数据可能已经发生了变化 所以要清除之前存储的探测结果
      */
     private void ensureAsyncFetchStorePrimaryRecency(RoutingAllocation allocation) {
         // 本次分配涉及到的所有node
         DiscoveryNodes nodes = allocation.nodes();
 
-        // 相当于是惰性清理 只有在需要分配时 并且与上次相比node发生了变化  清理之前有关shard在node上分布状况的数据
+        // 当node本身更新 或者新增 减少就不需要清理了
         if (hasNewNodes(nodes)) {
-            // 将之前的node的 ephemeralId取出来
             final Set<String> newEphemeralIds = StreamSupport.stream(nodes.getDataNodes().spliterator(), false)
                 .map(node -> node.value.getEphemeralId()).collect(Collectors.toSet());
             // Invalidate the cache if a data node has been added to the cluster. This ensures that we do not cancel a recovery if a node
@@ -254,7 +252,7 @@ public class GatewayAllocator implements ExistingShardsAllocator {
             logger.trace(() -> new ParameterizedMessage(
                 "new nodes {} found, clearing primary async-fetch-store cache", Sets.difference(newEphemeralIds, lastSeenEphemeralIds)));
 
-            // 将上一次拉取的相关缓存清理掉
+            // 清理上次拉取的数据
             asyncFetchStore.values().forEach(fetch -> clearCacheForPrimary(fetch, allocation));
             // recalc to also (lazily) clear out old nodes.
             // 更新最近的瞬时id 通过它可以判断是否有新增的node
@@ -263,13 +261,13 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     }
 
     /**
-     * 由于某些原因 将缓存清空  这层缓存是针对什么情况使用的呢
-     * @param fetch   某次拉取任务会被包装在该对象内部 包含了一些额外的信息 比如针对的是哪个分片 对应的数据目录路径等
-     * @param allocation  包含了本次集群中所有分片的分配情况
+     * 清理之前拉取的缓存数据
+     * @param fetch
+     * @param allocation
      */
     private static void clearCacheForPrimary(AsyncShardFetch<NodeStoreFilesMetadata> fetch,
                                              RoutingAllocation allocation) {
-        // 首先确保这个shard对应的primary 此时处于可用状态
+        // 如果此时主分片都还没有激活 那么其他节点存储的探测结果就不可能发生变化  就不需要清理
         ShardRouting primary = allocation.routingNodes().activePrimary(fetch.shardId);
         if (primary != null) {
             // 将该节点对应的缓存数据清除
@@ -278,7 +276,7 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     }
 
     /**
-     * 只要本次有某个node 没有在lastSeenEphemeralIds 中找到对应的id 就代表本次node是新增的
+     * 2种情况 一种是同一个node的 ephemeralId发生变化  还有一种就是新增了node
      * @param nodes
      * @return
      */
@@ -323,7 +321,7 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         }
 
         /**
-         * 获取某个shard在node上的分配情况
+         * 这里定义了 从其他节点拉取分片数据信息的逻辑  根据返回结果决定主分片最合适分配在哪个节点
          * @param shard
          * @param allocation
          * @return
@@ -333,30 +331,32 @@ public class GatewayAllocator implements ExistingShardsAllocator {
             // explicitely type lister, some IDEs (Eclipse) are not able to correctly infer the function type
             Lister<BaseNodesResponse<NodeGatewayStartedShards>, NodeGatewayStartedShards> lister = this::listStartedShards;
 
-            // 插入一个拉取任务
             AsyncShardFetch<NodeGatewayStartedShards> fetch =
+                // 存储每个shard对应的数据   每个fetch对象 内部以nodeId为key存储该shardId的数据在每个node下的描述信息
                 asyncFetchStarted.computeIfAbsent(shard.shardId(),
                             // 初始化拉取任务 同时设置监听器
                             shardId -> new InternalAsyncFetch<>(logger, "shard_started", shardId,
                                 IndexMetadata.INDEX_DATA_PATH_SETTING.get(allocation.metadata().index(shard.index()).getSettings()),
                                 lister));
+
+            // 当短时间内收到多个reroute请求时 只要primary处于未工作状态 处理应该要去重
             AsyncShardFetch.FetchResult<NodeGatewayStartedShards> shardState =
-                // 这个时候应该还是不知道分片所在的节点的 选择往全节点上发送  ignoreNodes 只是指定不会出现在哪些node上
+                // 这个时候应该还是不知道分片所在的节点的 选择往全节点上发送   IgnoreNodes 代表 必然不会分配到这些node上
                 fetch.fetchData(allocation.nodes(), allocation.getIgnoreNodes(shard.shardId()));
 
-            // 代表fetch内部采用同步方式 (比如直接使用了之前缓存的数据 如果采用异步请求的方式那么本次不需要处理 只要在asyncShardFetch中设置回调逻辑就可以了 目前就是会在回调中重走一次 reroute)
             if (shardState.hasData()) {
                 shardState.processAllocation(allocation);
             }
+            // 返回拉取结果
             return shardState;
         }
 
         /**
-         * 当开始执行某个分片的拉取任务时 就会触发该方法   这里只是拉取某个shard在相关node上的allocationId 和 primary信息而已 没有涉及到数据层面
+         * 定义了 拉取探测数据的逻辑
          * @param shardId   本次查询的分片
          * @param customDataPath  对端节点应该是通过这个目录来定位数据文件的
          * @param nodes     需要发送fetch请求的所有节点
-         * @param listener
+         * @param listener  当获取到结果后回调的监听器
          */
         private void listStartedShards(ShardId shardId, String customDataPath, DiscoveryNode[] nodes,
                                        ActionListener<BaseNodesResponse<NodeGatewayStartedShards>> listener) {
@@ -367,7 +367,8 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     }
 
     /**
-     * 副本对象拉取的数据与 primaryShardAllocator不同
+     * 对副本而言 通过比较lucene数据与主分片数据的匹配度来决定哪些节点更适合作为副本节点
+     *
      */
     class InternalReplicaShardAllocator extends ReplicaShardAllocator {
 
@@ -391,6 +392,7 @@ public class GatewayAllocator implements ExistingShardsAllocator {
             AsyncShardFetch<NodeStoreFilesMetadata> fetch = asyncFetchStore.computeIfAbsent(shard.shardId(),
                     shardId -> new InternalAsyncFetch<>(logger, "shard_store", shard.shardId(),
                         IndexMetadata.INDEX_DATA_PATH_SETTING.get(allocation.metadata().index(shard.index()).getSettings()), lister));
+
             AsyncShardFetch.FetchResult<NodeStoreFilesMetadata> shardStores =
                     fetch.fetchData(allocation.nodes(), allocation.getIgnoreNodes(shard.shardId()));
             if (shardStores.hasData()) {
