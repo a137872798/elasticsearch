@@ -1046,7 +1046,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 整个中枢对象 通过该函数启动
+     * 启动选举对象 参与选举
      */
     @Override
     protected void doStart() {

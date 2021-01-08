@@ -258,7 +258,7 @@ public class MetadataCreateIndexService {
      *
      * @param request the index creation cluster state update request
      * @param listener the listener on which to send the index creation cluster state update response
-     *                 发布一个更新clusterState的任务
+     *                 在集群中创建一个新的索引
      */
     public void createIndex(final CreateIndexClusterStateUpdateRequest request,
                             final ActionListener<CreateIndexClusterStateUpdateResponse> listener) {
@@ -329,6 +329,7 @@ public class MetadataCreateIndexService {
      * @param currentState 当前集群状态
      * @param request 申请创建索引的请求
      * @param silent 是否静默处理
+     * @param metadataTransformer 元数据转换器
      */
     public ClusterState applyCreateIndexRequest(ClusterState currentState, CreateIndexClusterStateUpdateRequest request, boolean silent,
                                                 BiConsumer<Metadata.Builder, IndexMetadata> metadataTransformer) throws Exception {
@@ -337,12 +338,12 @@ public class MetadataCreateIndexService {
         // 校验indexName是否已经存在 以及配置项是否合法
         validate(request, currentState);
 
-        // 代表该index 会从哪个索引获取数据  (初始化数据的过程被称为 recover)
+        // 代表索引配置项 会借助之前某个已经存在的索引
         final Index recoverFromIndex = request.recoverFrom();
-        // 如果指定了recoverFrom 使用该index的元数据
+        // 获取作为恢复源的索引的元数据
         final IndexMetadata sourceMetadata = recoverFromIndex == null ? null : currentState.metadata().getIndexSafe(recoverFromIndex);
 
-        // TODO
+        // 根据某个已经存在的索引元数据 生成本次元数据
         if (sourceMetadata != null) {
             // If source metadata was provided, it means we're recovering from an existing index,
             // in which case templates don't apply, so create the index from the source metadata
@@ -396,7 +397,7 @@ public class MetadataCreateIndexService {
     }
 
     /**
-     * 使用请求去更新 clusterState    是一个创建index的请求
+     * 执行创建索引的请求
      * @param currentState
      * @param request
      * @param silent  是否静默处理
@@ -436,7 +437,7 @@ public class MetadataCreateIndexService {
                                                               final BiConsumer<Metadata.Builder, IndexMetadata> metadataTransformer)
                                                                                         throws Exception {
         // create the index here (on the master) to validate it can be created, as well as adding the mapping
-        // 这里生成IndexService 并进行处理后 最终还是会关闭indexService的  但是已经生成了最新的元数据  并且此时还没有开始为分片recovery数据
+        // 只是检测能否正常生成index
         return indicesService.<ClusterState, Exception>withTempIndexService(temporaryIndexMeta,
             // 当临时性的 indexService被创建后 使用该函数进行处理
             indexService -> {
@@ -468,8 +469,7 @@ public class MetadataCreateIndexService {
             // 可以看到此时index 还没有加入到cluster中
             indexService.getIndexEventListener().beforeIndexAddedToCluster(indexMetadata.getIndex(),
                 indexMetadata.getSettings());
-            // 为index创建分片 并将相关信息填充到routingTable
-            // 伴随着的还有为这些分片设置路由信息(借助allocationService)
+
             return clusterStateCreateIndex(currentState, request.blocks(), indexMetadata, allocationService::reroute, metadataTransformer);
         });
     }
@@ -478,8 +478,8 @@ public class MetadataCreateIndexService {
      * Given a state and index settings calculated after applying templates, validate metadata for
      * the new index, returning an {@link IndexMetadata} for the new index
      * @param aggregatedIndexSettings 此时已经整合了相关配置 以及填充了一些缺省值
-     * @param routingNumShards 应该是 shardid的数量
-     * @param request 本次创建index的请求对象
+     * @param routingNumShards    该index下 shardId的数量
+     * @param request     本次创建index的请求对象 内部包含一些配置项信息
      *
      *                根据相关参数 构建本次index的元数据对象
      */
@@ -496,13 +496,14 @@ public class MetadataCreateIndexService {
 
         // remove the setting it's temporary and is only relevant once we create the index
         final Settings.Builder settingsBuilder = Settings.builder().put(aggregatedIndexSettings);
-        // 这里将 routing_shards 的配置项移除掉了 又插入了 prefer_v2 配置
+
+        // 将原本的 shardId数量配置项移除 同时插入 prefer_V2
         settingsBuilder.remove(IndexMetadata.INDEX_NUMBER_OF_ROUTING_SHARDS_SETTING.getKey());
         settingsBuilder.put(IndexMetadata.PREFER_V2_TEMPLATES_SETTING.getKey(), preferV2Templates);
         final Settings indexSettings = settingsBuilder.build();
 
+        // 根据相关信息生成索引元数据
         final IndexMetadata.Builder tmpImdBuilder = IndexMetadata.builder(request.index());
-        // 相当于使用 IndexMetadata中的分片数来替代settings的分片数么
         tmpImdBuilder.setRoutingNumShards(routingNumShards);
         tmpImdBuilder.settings(indexSettings);
 
@@ -611,6 +612,16 @@ public class MetadataCreateIndexService {
         return mappings;
     }
 
+    /**
+     * 本次创建的索引 打算从另一个已经存在的索引处恢复数据
+     * @param currentState
+     * @param request
+     * @param silent
+     * @param sourceMetadata
+     * @param metadataTransformer
+     * @return
+     * @throws Exception
+     */
     private ClusterState applyCreateIndexRequestWithExistingMetadata(final ClusterState currentState,
                                                                      final CreateIndexClusterStateUpdateRequest request,
                                                                      final boolean silent,
@@ -619,10 +630,14 @@ public class MetadataCreateIndexService {
                                                                                             throws Exception {
         logger.info("applying create index request using existing index [{}] metadata", sourceMetadata.getIndex().getName());
 
+        // 这个是定义index的数据结构的  先不看mapping相关的东西
         final Map<String, Object> mappings = Collections.unmodifiableMap(MapperService.parseMapping(xContentRegistry, request.mappings()));
 
+        // settings 对应全局配置项     这里会借鉴sourceIndex的部分配置项
         final Settings aggregatedIndexSettings =
             aggregateIndexSettings(currentState, request, Settings.EMPTY, mappings, sourceMetadata, settings, indexScopedSettings);
+
+        // TODO 有关创建多少shardId的逻辑不是重点 主要看shard的recoverySource是怎么决定的
         final int routingNumShards = getIndexNumberOfRoutingShards(aggregatedIndexSettings, sourceMetadata);
         IndexMetadata tmpImd = buildAndValidateTemporaryIndexMetadata(currentState, aggregatedIndexSettings, request, routingNumShards,
             IndexMetadata.PREFER_V2_TEMPLATES_SETTING.get(sourceMetadata.getSettings()));
@@ -793,8 +808,9 @@ public class MetadataCreateIndexService {
      *
      * @param currentState 当前集群状态
      * @param templateSettings  当前 IndexTemplate 以及相关的ComponentTemplate 的所有配置项
-     * @param mappings 从模板 以及req中抽取出来的json字符串 转换为map对象后 并合并产生的
-     * @param settings 当前对象在初始化时 传入的配置
+     * @param mappings    用于表明index下doc的数据结构
+     * @param sourceMetadata   如果创建的索引选择从其他索引恢复数据 会设置该值  否则为null
+     * @param settings   全局默认配置
      * @param indexScopedSettings  索引范围的配置
      * @return the aggregated settings for the new index
      *
@@ -805,12 +821,12 @@ public class MetadataCreateIndexService {
                                            IndexScopedSettings indexScopedSettings) {
         Settings.Builder indexSettingsBuilder = Settings.builder();
 
-        // 默认为null  会将当前template中已经存在的所有 settings设置到builder中
+        // 如果没有指定从其他索引恢复数据  那么必然设置了template配置
         if (sourceMetadata == null) {
             indexSettingsBuilder.put(templateSettings);
         }
         // now, put the request settings, so they override templates
-        // 将请求中携带的settings也插入进去
+        // 使用请求携带的settings覆盖部分配置
         indexSettingsBuilder.put(request.settings());
 
         // 这里是插入一些内置的配置
@@ -821,11 +837,12 @@ public class MetadataCreateIndexService {
             final Version createdVersion = Version.min(Version.CURRENT, nodes.getSmallestNonClientNodeVersion());
             indexSettingsBuilder.put(IndexMetadata.SETTING_INDEX_VERSION_CREATED.getKey(), createdVersion);
         }
-        // 2.该索引下有多少分片
+        // 2.该索引下有多少分片   也就是shardId的数量
         if (indexSettingsBuilder.get(SETTING_NUMBER_OF_SHARDS) == null) {
             indexSettingsBuilder.put(SETTING_NUMBER_OF_SHARDS, settings.getAsInt(SETTING_NUMBER_OF_SHARDS, 1));
         }
-        // 3.有多少副本  总计的分片数是 SETTING_NUMBER_OF_SHARDS*(1+SETTING_NUMBER_OF_REPLICAS)
+        // 3.有多少副本  虽然这里已经设置了副本数   每当触发 allocationService.reroute 的时候还是会根据index携带的autoExpand配置项自动拓展副本数(该配置项默认处于关闭状态)
+        // 总计的分片数是 SETTING_NUMBER_OF_SHARDS*(1+SETTING_NUMBER_OF_REPLICAS)
         if (indexSettingsBuilder.get(SETTING_NUMBER_OF_REPLICAS) == null) {
             indexSettingsBuilder.put(SETTING_NUMBER_OF_REPLICAS, settings.getAsInt(SETTING_NUMBER_OF_REPLICAS, 1));
         }
@@ -841,7 +858,7 @@ public class MetadataCreateIndexService {
         indexSettingsBuilder.put(IndexMetadata.SETTING_INDEX_PROVIDED_NAME, request.getProvidedName());
         indexSettingsBuilder.put(SETTING_INDEX_UUID, UUIDs.randomBase64UUID());
 
-        // TODO
+        // 如果指定了从其他索引恢复数据  配置项也是尽可能采用目标索引的
         if (sourceMetadata != null) {
             assert request.resizeType() != null;
             prepareResizeIndexSettings(
@@ -850,8 +867,8 @@ public class MetadataCreateIndexService {
                 indexSettingsBuilder,
                 request.recoverFrom(),
                 request.index(),
-                request.resizeType(),
-                request.copySettings(),
+                request.resizeType(),   // 如果设置了 recoveryFrom 必然要设置该参数   recoveryFrom参数指定了索引配置项从哪个现有的索引抽取  resizeType指定了覆盖方式
+                request.copySettings(),   // 是否使用source配置进行覆盖
                 indexScopedSettings);
         }
 
@@ -879,10 +896,12 @@ public class MetadataCreateIndexService {
      * 计算总计会创建多少shardId
      */
     static int getIndexNumberOfRoutingShards(Settings indexSettings, @Nullable IndexMetadata sourceMetadata) {
-        // 会创建多少 shardId
+        // 每个索引会存在多少shardId  默认为1 通过指定配置项可以申请多个shardId
         final int numTargetShards = IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.get(indexSettings);
         final Version indexVersionCreated = IndexMetadata.SETTING_INDEX_VERSION_CREATED.get(indexSettings);
         final int routingNumShards;
+
+        // 某些索引的配置项可能会参照其他索引  如果其他索引未设置 或者为1 则不进行覆盖
         if (sourceMetadata == null || sourceMetadata.getNumberOfShards() == 1) {
             // in this case we either have no index to recover from or
             // we have a source index with 1 shard and without an explicit split factor
@@ -976,13 +995,12 @@ public class MetadataCreateIndexService {
      * table based on the live nodes.
      * @param clusterBlocks 本次插入indexMetadata 可能伴随着某些集群操作被阻塞
      * @param metadataTransformer 默认为null
-     * 本次要将某个index加入到集群中 伴随着的还有分片的路由信息分配 以及 clusterState的变化
      */
     static ClusterState clusterStateCreateIndex(ClusterState currentState, Set<ClusterBlock> clusterBlocks, IndexMetadata indexMetadata,
                                                 BiFunction<ClusterState, String, ClusterState> rerouteRoutingTable,
                                                 BiConsumer<Metadata.Builder, IndexMetadata> metadataTransformer) {
 
-        // 在metadata中插入一个新的indexMetadata
+        // 首先在集群中增加一个新的索引 在元数据中的体现就是在 Metadata中插入一个新的 IndexMetadata
         Metadata.Builder builder = Metadata.builder(currentState.metadata())
             .put(indexMetadata, false);
         // TODO 先不考虑这个
@@ -992,6 +1010,7 @@ public class MetadataCreateIndexService {
         Metadata newMetadata = builder.build();
 
         String indexName = indexMetadata.getIndex().getName();
+        // TODO block 相关的先忽略
         // 此时可能会阻止集群中的一些操作   基于之前旧的block数据 以及此时的新数据 生成新的blockBuilder对象
         ClusterBlocks.Builder blocks = createClusterBlocksBuilder(currentState, indexName, clusterBlocks);
         // 使用元数据中的 blocks 覆盖之前的数据
@@ -1000,11 +1019,11 @@ public class MetadataCreateIndexService {
         // 更新 ClusterState
         ClusterState updatedState = ClusterState.builder(currentState).blocks(blocks).metadata(newMetadata).build();
 
-        // 更新路由表信息
+        // 更新路由表信息   这里就涉及了 主副本分片的创建
         RoutingTable.Builder routingTableBuilder = RoutingTable.builder(updatedState.routingTable())
             .addAsNew(updatedState.metadata().index(indexName));
         updatedState = ClusterState.builder(updatedState).routingTable(routingTableBuilder.build()).build();
-        // 因为路由表发生了变化 进行reroute
+        // 为这些新创建的分片分配节点
         return rerouteRoutingTable.apply(updatedState, "index [" + indexName + "] created");
     }
 
@@ -1077,7 +1096,7 @@ public class MetadataCreateIndexService {
     }
 
     /**
-     * 根据现有信息 以及新的 blocks 生成一个新的 ClusterBlocks.Builder
+     * 为index的某些操作增加block   在执行一个action时 会检测此时的ClusterState是否满足某些操作 如果不满足会等待clusterState发生变化
      * @param currentState
      * @param index
      * @param blocks
@@ -1238,13 +1257,18 @@ public class MetadataCreateIndexService {
     /**
      * Validates the settings and mappings for shrinking an index.
      *
+     * @param sourceIndex 源索引名
+     * @param targetIndexName  目标索引名     某些索引在创建时 可以指定recoveryFrom索引
      * @return the list of nodes at least one instance of the source index shards are allocated
      */
     static List<String> validateShrinkIndex(ClusterState state, String sourceIndex,
                                             Set<String> targetIndexMappingsTypes, String targetIndexName,
                                             Settings targetIndexSettings) {
+        // 检测分片数是否成倍数关系
         IndexMetadata sourceMetadata = validateResize(state, sourceIndex, targetIndexMappingsTypes, targetIndexName, targetIndexSettings);
         assert IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.exists(targetIndexSettings);
+
+        // 为target分片数进行扩容
         IndexMetadata.selectShrinkShards(0, sourceMetadata, IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.get(targetIndexSettings));
 
         if (sourceMetadata.getNumberOfShards() == 1) {
@@ -1287,21 +1311,34 @@ public class MetadataCreateIndexService {
         IndexMetadata.selectCloneShard(0, sourceMetadata, IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.get(targetIndexSettings));
     }
 
+    /**
+     * 需要将source索引的配置项覆盖到目标索引的配置项上
+     * @param state
+     * @param sourceIndex
+     * @param targetIndexMappingsTypes
+     * @param targetIndexName
+     * @param targetIndexSettings
+     * @return
+     */
     static IndexMetadata validateResize(ClusterState state, String sourceIndex,
                                         Set<String> targetIndexMappingsTypes, String targetIndexName,
                                         Settings targetIndexSettings) {
+        // 如果新索引已经发布到cluster中  不应该调用该方法
         if (state.metadata().hasIndex(targetIndexName)) {
             throw new ResourceAlreadyExistsException(state.metadata().index(targetIndexName).getIndex());
         }
+        // 如果源索引项不存在 抛出异常
         final IndexMetadata sourceMetadata = state.metadata().index(sourceIndex);
         if (sourceMetadata == null) {
             throw new IndexNotFoundException(sourceIndex);
         }
         // ensure index is read-only
+        // 要求此时sourceIndex 处于不可变状态
         if (state.blocks().indexBlocked(ClusterBlockLevel.WRITE, sourceIndex) == false) {
             throw new IllegalStateException("index " + sourceIndex + " must be read-only to resize index. use \"index.blocks.write=true\"");
         }
 
+        // 因为从source处获取 mappings信息 所以此时mappings信息应该为空
         if (targetIndexMappingsTypes.size() > 0) {
             throw new IllegalArgumentException("mappings are not allowed when resizing indices" +
                 ", all mappings are copied from the source index");
@@ -1310,12 +1347,24 @@ public class MetadataCreateIndexService {
         if (IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.exists(targetIndexSettings)) {
             // this method applies all necessary checks ie. if the target shards are less than the source shards
             // of if the source shards are divisible by the number of target shards
+            // 这里要求 source/target的shardId数量必须满足倍数关系
             IndexMetadata.getRoutingFactor(sourceMetadata.getNumberOfShards(),
                 IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.get(targetIndexSettings));
         }
         return sourceMetadata;
     }
 
+    /**
+     * 以其他索引配置项覆盖当前索引配置项
+     * @param currentState
+     * @param mappingKeys           index对应的doc中所有的key
+     * @param indexSettingsBuilder    当前配置项
+     * @param resizeSourceIndex    通过该索引配置项覆盖当前配置
+     * @param resizeIntoName       当前创建的新索引名
+     * @param type
+     * @param copySettings
+     * @param indexScopedSettings
+     */
     static void prepareResizeIndexSettings(
             final ClusterState currentState,
             final Set<String> mappingKeys,
@@ -1328,8 +1377,10 @@ public class MetadataCreateIndexService {
 
         // we use "i.r.a.initial_recovery" rather than "i.r.a.require|include" since we want the replica to allocate right away
         // once we are allocated.
+        // 生成一个 "initial_recovery._id" 字符串
         final String initialRecoveryIdFilter = IndexMetadata.INDEX_ROUTING_INITIAL_RECOVERY_GROUP_SETTING.getKey() + "_id";
 
+        // TODO 有关resize的先不看 无非就是shardId数量会与source有一定关系  但是主要还是看shard的init/recovery/index/relocate等操作
         final IndexMetadata sourceMetadata = currentState.metadata().index(resizeSourceIndex.getName());
         if (type == ResizeType.SHRINK) {
             final List<String> nodesToAllocateOn = validateShrinkIndex(currentState, resizeSourceIndex.getName(),
@@ -1342,10 +1393,13 @@ public class MetadataCreateIndexService {
             validateCloneIndex(currentState, resizeSourceIndex.getName(), mappingKeys, resizeIntoName, indexSettingsBuilder.build());
             indexSettingsBuilder.putNull(initialRecoveryIdFilter);
         } else {
+            // 当使用了recoveryFrom属性时  必须要设置 resizeType
             throw new IllegalStateException("unknown resize type is " + type);
         }
 
         final Settings.Builder builder = Settings.builder();
+
+        // 使用source配置进行覆盖
         if (copySettings) {
             // copy all settings and non-copyable settings and settings that have already been set (e.g., from the request)
             for (final String key : sourceMetadata.getSettings().keySet()) {
@@ -1362,6 +1416,7 @@ public class MetadataCreateIndexService {
                 builder.copy(key, sourceMetadata.getSettings());
             }
         } else {
+            // 当某些索引项target不存在时 可以选择设置
             final Predicate<String> sourceSettingsPredicate =
                     (s) -> (s.startsWith("index.similarity.") || s.startsWith("index.analysis.") ||
                             s.startsWith("index.sort.") || s.equals("index.soft_deletes.enabled"))

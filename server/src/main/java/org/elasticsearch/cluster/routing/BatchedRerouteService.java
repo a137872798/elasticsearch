@@ -78,7 +78,7 @@ public class BatchedRerouteService implements RerouteService {
 
     /**
      * Initiates a reroute.
-     * 开始执行重路由服务   就是用来决定某个shard的 primary replicate 应该怎样分配在集群中
+     * 很多操作都会引起reroute 并且内部涉及分片的state变化  这里在接口层做了并发处理
      */
     @Override
     public final void reroute(String reason, Priority priority, ActionListener<ClusterState> listener) {

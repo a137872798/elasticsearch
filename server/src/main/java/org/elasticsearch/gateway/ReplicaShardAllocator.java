@@ -86,7 +86,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
                 }
 
                 // if we are allocating a replica because of index creation, no need to go and find a copy, there isn't one...
-                // TODO 目前看到副本的创建只有  REPLICA_ADDED 先忽略这种情况
+                // 当通过indexCreate 请求创建索引时 会根据配置项中的 主副本数量创建副本  同时reason就是 INDEX_CREATED  如果是自适应创建的副本就是 REPLICA_ADDED
                 if (shard.unassignedInfo() != null && shard.unassignedInfo().getReason() == UnassignedInfo.Reason.INDEX_CREATED) {
                     continue;
                 }
@@ -153,7 +153,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
 
     /**
      * Is the allocator responsible for allocating the given {@link ShardRouting}?
-     * 检测该副本分片是否需要分配
+     * 该分片是否支持被本对象处理  不是所有处于 assigned的分片都能被处理的   比如创建原因是 INDEX_CREATED 也就是自然创建的副本实际上不会受到该对象的影响
      */
     private static boolean isResponsibleFor(final ShardRouting shard) {
         return shard.primary() == false // must be a replica
@@ -187,7 +187,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
         Tuple<Decision, Map<String, NodeAllocationResult>> result = canBeAllocatedToAtLeastOneNode(unassignedShard, allocation);
         Decision allocateDecision = result.v1();
 
-        // 当前分片没有合适的节点分配   直接返回失败结果   如果此时正在拉取该分片的元数据 那么先进入下一步判断 情况可能会发生改变
+        // 当前分片没有合适的节点分配   直接返回失败结果   如果已经针对某个shardId 拉取到节点的数据 那么先进入下一步判断 情况可能会发生改变
         if (allocateDecision.type() != Decision.Type.YES
             && (explain == false || hasInitiatedFetching(unassignedShard) == false)) {
             // only return early if we are not in explain mode, or we are in explain mode but we have not
@@ -200,7 +200,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
         // 副本分片拉取的数据与primary的不同
         // 发送范围也是集群内所有节点
         AsyncShardFetch.FetchResult<NodeStoreFilesMetadata> shardStores = fetchData(unassignedShard, allocation);
-        // 代表本次通过异步调用 之后会在回调中重新触发 reroute
+        // 代表本次通过异步调用 无法直接返回结果
         if (shardStores.hasData() == false) {
             logger.trace("{}: ignoring allocation, still fetching shard stores", unassignedShard);
             // 标记此时处于一个异步状态
@@ -212,7 +212,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
             return AllocateUnassignedDecision.no(AllocationStatus.FETCHING_SHARD_DATA, nodeDecisions);
         }
 
-        // 该shard关联的主分片
+        // 如果此时没有活跃状态的主分片是无法对副本进行分配的   TODO 可是主分片如果不是snapshot作为恢复源  并且in-sync为空 也无法完成分配
         ShardRouting primaryShard = routingNodes.activePrimary(unassignedShard.shardId());
         if (primaryShard == null) {
             assert explain : "primary should only be null here if we are in explain mode, so we didn't " +

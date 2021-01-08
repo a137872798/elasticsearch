@@ -113,7 +113,7 @@ public class GatewayMetaState implements Closeable {
                       MetadataUpgrader metadataUpgrader, PersistedClusterStateService persistedClusterStateService) {
         assert persistedState.get() == null : "should only start once, but already have " + persistedState.get();
 
-        // 当本节点是数据节点或者是 参选节点时
+        // 只有本节点是数据节点 或者 选举节点时才有必要加载数据
         if (DiscoveryNode.isMasterNode(settings) || DiscoveryNode.isDataNode(settings)) {
             try {
                 // 从dataPath中读取最新的元数据信息    metadata/indexMetadata 数据都以lucene.doc的形式存储在_state目录下

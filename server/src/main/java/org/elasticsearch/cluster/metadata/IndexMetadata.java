@@ -360,6 +360,33 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     private final ActiveShardCount waitForActiveShards;
     private final ImmutableOpenMap<String, RolloverInfo> rolloverInfos;
 
+    /**
+     * 索引的元数据中 没有recoverySource的信息
+     * @param index
+     * @param version
+     * @param mappingVersion
+     * @param settingsVersion
+     * @param aliasesVersion
+     * @param primaryTerms
+     * @param state
+     * @param numberOfShards
+     * @param numberOfReplicas
+     * @param settings
+     * @param mappings
+     * @param aliases
+     * @param customData
+     * @param inSyncAllocationIds
+     * @param requireFilters
+     * @param initialRecoveryFilters
+     * @param includeFilters
+     * @param excludeFilters
+     * @param indexCreatedVersion
+     * @param indexUpgradedVersion
+     * @param routingNumShards
+     * @param routingPartitionSize
+     * @param waitForActiveShards
+     * @param rolloverInfos
+     */
     private IndexMetadata(
             final Index index,
             final long version,
@@ -1054,7 +1081,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         }
 
         /**
-         * 覆盖更新   比如某个primary重启 那么会重置更新in-sync
+         * 更新某个分片下的 inSync容器  可能是增加 也可能是减少
          * @param shardId
          * @param allocationIds
          * @return
@@ -1170,6 +1197,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             }
             // fill missing slots in inSyncAllocationIds with empty set if needed and make all entries immutable
             ImmutableOpenIntMap.Builder<Set<String>> filledInSyncAllocationIds = ImmutableOpenIntMap.builder();
+            // 对应每个 shardId 此时处于start状态的primary/replica  如果不存在也要为每个shardId 填入空容器
             for (int i = 0; i < numberOfShards; i++) {
                 if (inSyncAllocationIds.containsKey(i)) {
                     filledInSyncAllocationIds.put(i, Set.copyOf(inSyncAllocationIds.get(i)));
@@ -1633,8 +1661,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
     /**
      * Returns the source shard ids to shrink into the given shard id.
-     * @param shardId the id of the target shard to shrink to   当前遍历到了第几个分片
-     * @param sourceIndexMetadata the source index metadata
+     * @param shardId the id of the target shard to shrink to
+     * @param sourceIndexMetadata the source index metadata      源索引的元数据信息
      * @param numTargetShards the total number of shards in the target index   本次预计总共生成多少分片
      * @return a set of shard IDs to shrink into the given shard ID.
      *
@@ -1652,7 +1680,6 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         // 获取一个倍数因子
         int routingFactor = getRoutingFactor(sourceIndexMetadata.getNumberOfShards(), numTargetShards);
         Set<ShardId> shards = new HashSet<>(routingFactor);
-        // 那么shardId 相比之前数量就会有所减少
         for (int i = shardId * routingFactor; i < routingFactor*shardId + routingFactor; i++) {
             shards.add(new ShardId(sourceIndexMetadata.getIndex(), i));
         }
@@ -1665,13 +1692,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * {@link org.elasticsearch.cluster.routing.OperationRouting#generateShardId(IndexMetadata, String, String)} to guarantee consistent
      * hashing / routing of documents even if the number of shards changed (ie. a shrunk index).
      *
-     * @param sourceNumberOfShards the total number of shards in the source index
-     * @param targetNumberOfShards the total number of shards in the target index
-     * 计算一个路由因子
+     * @param sourceNumberOfShards the total number of shards in the source index     源索引的shardid数量
+     * @param targetNumberOfShards the total number of shards in the target index     目标索引的shardid数量
      */
     public static int getRoutingFactor(int sourceNumberOfShards, int targetNumberOfShards) {
         final int factor;
-        // 代表本次是一个扩容的操作  这里要求至少翻倍 TODO 先不去考虑为什么要翻倍
         if (sourceNumberOfShards < targetNumberOfShards) { // split
             factor = targetNumberOfShards / sourceNumberOfShards;
             if (factor * sourceNumberOfShards != targetNumberOfShards || factor <= 1) {

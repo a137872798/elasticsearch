@@ -316,6 +316,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         DiscoveryNode masterNode = state.nodes().getMasterNode();
 
         // remove items from cache which are not in our routing table anymore and resend failures that have not executed on master yet
+        // 这里缓存失败的分片 是为了能够确保通知到leader某分片的失败 如果请求失败 那么leader与本节点就会出现信息不一致的情况
+        // 而本节点的直接下线会被leader感知到 也就会自动为分配到本节点的分片进行重分配了
         for (Iterator<Map.Entry<ShardId, ShardRouting>> iterator = failedShardsCache.entrySet().iterator(); iterator.hasNext(); ) {
             ShardRouting failedShardRouting = iterator.next().getValue();
 
@@ -561,7 +563,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
     }
 
     /**
-     * 创建新索引
+     * 创建新索引   只有当某个index下的分片被分配到该节点 才有在该节点创建indexService的必要
      * @param state
      */
     private void createIndices(final ClusterState state) {
@@ -771,9 +773,12 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
             return;
         }
 
-        // 代表分片此时
         final IndexShardState state = shard.state();
-        // 代表状态从启动变回了 init
+        // 本分片启动成功会 会上报leader   但是leader如果此时宕机 就会丢失这条消息
+        // 而当本节点收到新的请求后 发现本分片认为已经恢复完数据 需要转换成start了
+        // 而leader节点却认为本分片还处于init状态 显然是发生了信息丢失  那么就要重新发送start请求通知leader节点  并通过leader将最新的ClusterState 发布到整个集群中
+        // 泛化开来说 如果注册中心本身是基于持久化实现的  那么其余节点不需要通过重试机制确保数据的写入成功  不过在写入时必须确保刷盘成功才触发监听器
+        // 如果注册中心本身是基于非持久化实现的 也就是将数据存储在内存中  那么其余节点就需要通过定时续约或者检查的方式来确保自身最新的数据被leader节点感知  否则就会发生数据的不同步
         if (shardRouting.initializing() && (state == IndexShardState.STARTED || state == IndexShardState.POST_RECOVERY)) {
             // the master thinks we are initializing, but we are already started or on POST_RECOVERY and waiting
             // for master to confirm a shard started message (either master failover, or a cluster event before

@@ -220,7 +220,6 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
 
     /**
      * recovery from other shards on same node (shrink index action)
-     * 应该是这样  当前机器起了2个节点  他们同时存在某个分片  当其中一个分片数据丢失时 通过另一个分片数据进行恢复
      */
     public static class LocalShardsRecoverySource extends RecoverySource {
 

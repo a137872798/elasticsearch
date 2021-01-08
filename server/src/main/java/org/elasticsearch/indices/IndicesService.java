@@ -727,7 +727,8 @@ public class IndicesService extends AbstractLifecycleComponent
         if (hasIndex(index)) {
             throw new ResourceAlreadyExistsException(index);
         }
-        // 创建了一个只要 创建shard/store 就会抛出异常的监听器
+
+        // 只是为了检测indexService   不期望生成store或者shard 所以一旦发现这种操作就抛出异常
         List<IndexEventListener> finalListeners = List.of(
             // double check that shard is not created.
             new IndexEventListener() {

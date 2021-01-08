@@ -150,7 +150,7 @@ public final class AutoExpandReplicas {
             }
 
             final int min = getMinReplicas();
-            // 生成副本的数量 最大为 numMatchingDataNodes -1  最小为 maxReplicas
+            // 生成副本的数量 最大为 numMatchingDataNodes -1  最小为 minReplicas
             final int max = getMaxReplicas(numMatchingDataNodes);
             int numberOfReplicas = numMatchingDataNodes - 1;
             if (numberOfReplicas < min) {

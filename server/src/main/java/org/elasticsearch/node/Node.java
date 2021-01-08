@@ -924,7 +924,7 @@ public class Node implements Closeable {
             }
         }
 
-        // 选举完成后 才能开放rest端口  这里实际上就是在bind serverSocketChannel     httpServerTransport的handler对象做了特殊处理 会以http协议解析数据流
+        // 上面的latch会阻塞直到选举完成  之后才能开放rest端口  这里实际上就是在bind serverSocketChannel     httpServerTransport的handler对象做了特殊处理 会以http协议解析数据流
         injector.getInstance(HttpServerTransport.class).start();
 
         // TODO

@@ -484,7 +484,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
          * Initializes a new empty index, with an option to control if its from an API or not.
          * @param indexMetadata
          * @param unassignedInfo
-         *                       初始化一个空的index
+         *                       初始化一个空的 indexRoutingTable  在内部还按照 shardId为单位进一步划分(IndexShardRoutingTable)
          */
         private Builder initializeEmpty(IndexMetadata indexMetadata, UnassignedInfo unassignedInfo) {
             assert indexMetadata.getIndex().equals(index);
@@ -498,17 +498,16 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
                 // shardNumber 作为分片id
                 ShardId shardId = new ShardId(index, shardNumber);
                 final RecoverySource primaryRecoverySource;
-                // 下面3种判断都只是处理 primary的恢复源  与副本无关
+                // 默认情况下 创建indexMetadata时  in-sync 应该是空的    但是如果不为空的情况下 会选择从本地恢复数据
                 if (indexMetadata.inSyncAllocationIds(shardNumber).isEmpty() == false) {
                     // we have previous valid copies for this shard. use them for recovery
                     primaryRecoverySource = ExistingStoreRecoverySource.INSTANCE;
-                    // TODO 如果有resize相关的配置
+                    // TODO resize这种特性与主流程无关  先忽略
                 } else if (indexMetadata.getResizeSourceIndex() != null) {
                     // this is a new index but the initial shards should merged from another index
                     primaryRecoverySource = LocalShardsRecoverySource.INSTANCE;
                 } else {
-                    // 正常情况下应该就是 EmptyStoreRecoverySource
-                    // a freshly created index with no restriction
+                    // 默认的恢复源是Empty
                     primaryRecoverySource = EmptyStoreRecoverySource.INSTANCE;
                 }
                 IndexShardRoutingTable.Builder indexShardRoutingBuilder = new IndexShardRoutingTable.Builder(shardId);
@@ -516,6 +515,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
                 for (int i = 0; i <= indexMetadata.getNumberOfReplicas(); i++) {
                     boolean primary = i == 0;
                     // 除了主分片外 副本都使用PeerRecoverySource 作为恢复源 代表着都是从主分片拉取数据
+                    // 注意此时所有分片的 unassigned.reason 都是 INDEX_CREATED
                     indexShardRoutingBuilder.addShard(ShardRouting.newUnassigned(shardId, primary,
                         primary ? primaryRecoverySource : PeerRecoverySource.INSTANCE, unassignedInfo));
                 }

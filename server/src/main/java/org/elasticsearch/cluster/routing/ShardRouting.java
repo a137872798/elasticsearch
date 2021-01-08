@@ -378,6 +378,12 @@ public final class ShardRouting implements Writeable, ToXContentObject {
 
     // -- 以下操作都是将原有对象的某些属性做更新后 生成新的分片对象  -- //
 
+    /**
+     * 更新  unassigned信息后返回
+     * @param unassignedInfo
+     * @param recoverySource
+     * @return
+     */
     public ShardRouting updateUnassigned(UnassignedInfo unassignedInfo, RecoverySource recoverySource) {
         assert this.unassignedInfo != null : "can only update unassign info if they are already set";
         assert this.unassignedInfo.isDelayed() || (unassignedInfo.isDelayed() == false) : "cannot transition from non-delayed to delayed";
@@ -392,10 +398,13 @@ public final class ShardRouting implements Writeable, ToXContentObject {
     public ShardRouting moveToUnassigned(UnassignedInfo unassignedInfo) {
         assert state != ShardRoutingState.UNASSIGNED : this;
         final RecoverySource recoverySource;
+        // 代表在写入过程出现异常
         if (active()) {
+            // 如果是主分片 那么本地事务日志一定是最新的 所以直接从本地恢复
             if (primary()) {
                 recoverySource = ExistingStoreRecoverySource.INSTANCE;
             } else {
+                // 只要是副本都选择PEER作为恢复源
                 recoverySource = PeerRecoverySource.INSTANCE;
             }
         } else {
@@ -409,20 +418,19 @@ public final class ShardRouting implements Writeable, ToXContentObject {
      * Initializes an unassigned shard on a node.
      *
      * @param existingAllocationId allocation id to use. If null, a fresh allocation id is generated.
-     *                             将当前分片更新成初始状态
+     *                             某个分片此时已经找到了分配的节点  并进入到init状态  之后就是进行数据恢复
      */
     public ShardRouting initialize(String nodeId, @Nullable String existingAllocationId, long expectedShardSize) {
         assert state == ShardRoutingState.UNASSIGNED : this;
         assert relocatingNodeId == null : this;
 
-        // 每当初始化状态时 就会生成一个新的allocationId
-        // AllocationId 内部总计包含2个属性 一个是 relocateId 还有个是 allocationId
         final AllocationId allocationId;
         if (existingAllocationId == null) {
             allocationId = AllocationId.newInitializing();
         } else {
             allocationId = AllocationId.newInitializing(existingAllocationId);
         }
+        // 可以看到 unassignedInfo 还是携带过去了 即使此时分片已经处于init状态
         return new ShardRouting(shardId, nodeId, null, primary, ShardRoutingState.INITIALIZING, recoverySource,
             unassignedInfo, allocationId, expectedShardSize);
     }
@@ -431,7 +439,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
      * Relocate the shard to another node.
      *
      * @param relocatingNodeId id of the node to relocate the shard  本分片本次要前往的目标节点
-     *                         生成一个处于重定向的node
+     *                         原分片修改成 relocating状态 同时将目标节点设置到 relocatingNodeId上
      */
     public ShardRouting relocate(String relocatingNodeId, long expectedShardSize) {
         assert state == ShardRoutingState.STARTED : "current shard has to be started in order to be relocated " + this;
@@ -514,6 +522,8 @@ public final class ShardRouting implements Writeable, ToXContentObject {
      * Set the unassigned primary shard to non-primary
      *
      * @throws IllegalShardRoutingStateException if shard is already a replica
+     * 某个主分片降级成副本
+     * 这里强制将恢复源修改成  PEER
      */
     public ShardRouting moveUnassignedFromPrimary() {
         assert state == ShardRoutingState.UNASSIGNED : "expected an unassigned shard " + this;

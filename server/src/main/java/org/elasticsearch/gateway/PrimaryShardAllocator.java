@@ -64,7 +64,7 @@ import java.util.stream.Stream;
 public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
     /**
      * Is the allocator responsible for allocating the given {@link ShardRouting}?
-     * 确保该分片需要分配
+     * 本对象能否为该分片进行分配
      */
     private static boolean isResponsibleFor(final ShardRouting shard) {
         return shard.primary() // must be primary
@@ -110,31 +110,31 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
             return AllocateUnassignedDecision.no(AllocationStatus.FETCHING_SHARD_DATA, nodeDecisions);
         }
 
-        // 最终都会走到这个逻辑  此时已经获取了 unassignedShard 对应的shard在所有node上的分布情况了 比如 存在于哪些node 是否是primary
         // don't create a new IndexSetting object for every shard as this could cause a lot of garbage
         // on cluster restart if we allocate a boat load of shards
         final IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(unassignedShard.index());
 
-        // 获取之前该shard相关的一组 allocationId 这个insync 应该就是代表这个allocationId是在全局中被承认的 某个分片可能分配到某个node 但是没有同步到其他节点 那么它的allocationId 就是不被承认的
+        // 获取此时元数据中维护的所有启动的 start分片    这些分片下发到主分片会生成 ReplicationTracker
+        // 也就是在IndexMetadata中的 in-sync 与 数据传输中的 in-sync 的概念是不一样的
         final Set<String> inSyncAllocationIds = indexMetadata.inSyncAllocationIds(unassignedShard.id());
-        // 是否通过快照恢复数据
+        // TODO 先忽略通过快照恢复数据的情况   从目前来看 副本必然是通过PEER进行数据恢复的   在createIndex处理中 可以看到 主分片默认恢复源是Empty 如果此时in-sync队列中有元素 就选择基于本地事务日志进行恢复
         final boolean snapshotRestore = unassignedShard.recoverySource().getType() == RecoverySource.Type.SNAPSHOT;
 
         assert inSyncAllocationIds.isEmpty() == false;
         // use in-sync allocation ids to select nodes
-        // TODO 先忽略 ignoreNodes 因为有它的话 应该会不断的递归调用reroute 现在又没有找到清理的逻辑 无限递归???
 
-        // 将之前获取到的结果与相关信息合并成 result对象
+        // 为当前主分片选择合适的节点  如果此时没有分片处于 in-sync 那么该result为空
         final NodeShardsResult nodeShardsResult = buildNodeShardsResult(unassignedShard, snapshotRestore,
             allocation.getIgnoreNodes(unassignedShard.shardId()), inSyncAllocationIds, shardState, logger);
-        // 代表该shard此时分配在了某些node上
+
+        // 如果in-sync 为空  那么该标识为false
         final boolean enoughAllocationsFound = nodeShardsResult.orderedAllocationCandidates.size() > 0;
         logger.debug("[{}][{}]: found {} allocation candidates of {} based on allocation ids: [{}]", unassignedShard.index(),
             unassignedShard.id(), nodeShardsResult.orderedAllocationCandidates.size(), unassignedShard, inSyncAllocationIds);
 
-        // 代表没有任何可选的分片  属于异常
+        // 由于in-sync中没有分片 无法进行分配
         if (enoughAllocationsFound == false) {
-            // TODO 这2个什么区别???
+            // TODO 先忽略快照恢复
             if (snapshotRestore) {
                 // let BalancedShardsAllocator take care of allocating this shard
                 logger.debug("[{}][{}]: missing local data, will restore from [{}]",
@@ -146,6 +146,7 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
                 // this shard will be picked up when the node joins and we do another allocation reroute
                 logger.debug("[{}][{}]: not allocating, number_of_allocated_shards_found [{}]",
                              unassignedShard.index(), unassignedShard.id(), nodeShardsResult.allocationsFound);
+                // 注意这里返回的结果是  无分片数据可拷贝
                 return AllocateUnassignedDecision.no(AllocationStatus.NO_VALID_SHARD_COPY,
                     explain ? buildNodeDecisions(null, shardState, inSyncAllocationIds) : null);
             }
@@ -272,11 +273,11 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
      * Builds a list of nodes. If matchAnyShard is set to false, only nodes that have an allocation id matching
      * inSyncAllocationIds are added to the list. Otherwise, any node that has a shard is added to the list, but
      * entries with matching allocation id are always at the front of the list.
-     * @param shard 本次待分配的某个shard(primary replicate)
-     * @param matchAnyShard 当需要通过snapshot恢复数据时 该标识为true
-     * @param ignoreNodes 本次分片不会分配到这些node上
-     * @param inSyncAllocationIds  此时已经设置的相关分片的allocationId
-     * @param shardState 本次拉取的结果
+     * @param shard       本次需要分配的主分片
+     * @param matchAnyShard     当恢复源为 Snapshot时 该标识为true
+     * @param ignoreNodes     本次分配不会选择这些节点
+     * @param inSyncAllocationIds      TODO 如果有些分片已经启动了 还有分配主分片的必要吗  这些分片是副本还是???
+     * @param shardState    用于决策分片分配节点的相关数据
      */
     protected static NodeShardsResult buildNodeShardsResult(ShardRouting shard, boolean matchAnyShard,
                                                             Set<String> ignoreNodes, Set<String> inSyncAllocationIds,
@@ -284,12 +285,12 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
                                                             Logger logger) {
         List<NodeGatewayStartedShards> nodeShardStates = new ArrayList<>();
         int numberOfAllocationsFound = 0;
-        // 在每个节点上的分配情况
+
         for (NodeGatewayStartedShards nodeShardState : shardState.getData().values()) {
             DiscoveryNode node = nodeShardState.getNode();
             String allocationId = nodeShardState.allocationId();
 
-            // 忽略该node TODO 先忽略ignore 目前的逻辑中没有从该容器中移除元素的逻辑 不合理
+            // 因为每次拉取元数据是都是针对所有数据  如果有已经被排除的节点 就跳过
             if (ignoreNodes.contains(node.getId())) {
                 continue;
             }
@@ -301,8 +302,9 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
                     logger.trace("[{}] on node [{}] has allocation id [{}]", shard, nodeShardState.getNode(), allocationId);
                 }
             } else {
-                // 代表分片所在的那个节点的index数据出现了异常  这里只是打印日志 TODO 这种情况要怎么处理才好
+                // 代表该shardId 对应的数据在目标节点存储过程中出现了异常  那么不应该选择该节点
                 final String finalAllocationId = allocationId;
+                // 只是获取锁失败的话 还是允许选择的
                 if (nodeShardState.storeException() instanceof ShardLockObtainFailedException) {
                     logger.trace(() -> new ParameterizedMessage("[{}] on node [{}] has allocation id [{}] but the store can not be " +
                         "opened as it's locked, treating as valid shard", shard, nodeShardState.getNode(), finalAllocationId),
@@ -320,9 +322,10 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
                     nodeShardState.storeException() instanceof ShardLockObtainFailedException :
                     "only allow store that can be opened or that throws a ShardLockObtainFailedException while being opened but got a " +
                         "store throwing " + nodeShardState.storeException();
+                // 代表找到了一个允许分配的候选节点
                 numberOfAllocationsFound++;
 
-                // matchAnyShard为true 或者包含在一开始传入的inSyncAllocationIds中 才被承认
+                // TODO 先忽略通过快照进行数据恢复   什么时候in-sync 内有分片
                 if (matchAnyShard || inSyncAllocationIds.contains(nodeShardState.allocationId())) {
                     nodeShardStates.add(nodeShardState);
                 }
@@ -330,7 +333,7 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
         }
 
         final Comparator<NodeGatewayStartedShards> comparator; // allocation preference
-        // 如果本次将所有allocationId 对应的node结果都写入到nodeShardStates 中了 就优先将匹配的放到前面
+        // TODO
         if (matchAnyShard) {
             // prefer shards with matching allocation ids
             Comparator<NodeGatewayStartedShards> matchingAllocationsFirst = Comparator.comparing(
@@ -338,7 +341,8 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
             comparator = matchingAllocationsFirst.thenComparing(NO_STORE_EXCEPTION_FIRST_COMPARATOR)
                 .thenComparing(PRIMARY_FIRST_COMPARATOR);
         } else {
-            // 优先将 storeException == null的 排在前面 其次是 primary为true的
+            // 优先将 primary为true的放在前面  其次是storeException为null的   primary为true就代表该节点之前就是作为主分片节点在存储数据
+            // 那么本地的数据必然是最新的  有利于主分片的数据恢复
             comparator = NO_STORE_EXCEPTION_FIRST_COMPARATOR.thenComparing(PRIMARY_FIRST_COMPARATOR);
         }
 
@@ -396,9 +400,6 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
 
     private static class NodeShardsResult {
 
-        /**
-         * 描述了某个shard在所有node上的分配情况
-         */
         final List<NodeGatewayStartedShards> orderedAllocationCandidates;
 
         /**

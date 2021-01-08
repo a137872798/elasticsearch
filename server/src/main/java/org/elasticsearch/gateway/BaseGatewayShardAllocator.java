@@ -60,13 +60,12 @@ public abstract class BaseGatewayShardAllocator {
         // 获取该分片的分配结果
         final AllocateUnassignedDecision allocateUnassignedDecision = makeAllocationDecision(shardRouting, allocation, logger);
 
-        // 本身该分片不需要分配 静默处理
+        // 该分片无法通过该对象进行分配  跳过
         if (allocateUnassignedDecision.isDecisionTaken() == false) {
             // no decision was taken by this allocator
             return;
         }
 
-        // TODO
         if (allocateUnassignedDecision.getAllocationDecision() == AllocationDecision.YES) {
             // TODO 这里获取到的node 应该是还未分配该shard的节点  那么已经分配过的节点又是在什么时候排除的呢 推测是利用 ignoreNode机制
             unassignedAllocationHandler.initialize(allocateUnassignedDecision.getTargetNode().getId(),
@@ -76,8 +75,7 @@ public abstract class BaseGatewayShardAllocator {
                 // 这个对象会观测某个分片的状态变化 比如某个新的unassigned 转换成init状态
                 allocation.changes());
         } else {
-            // 因为已经尝试为该分片进行分配了  所以从unassignedAllocationHandler 中移除该分片   同时会加入到ignore 列表中 避免下次重复处理
-            // unassignedAllocationHandler 内存储了所有需要分配的分片    通过observer观测被移除的 unassigned分片
+            // 无法在本轮为目标分片选择节点  从 nodeRoutings中将分片转移到ignore容器中 这样后续操作就可以跳过对该分片的处理了  比如进行 rebalance时
             unassignedAllocationHandler.removeAndIgnore(allocateUnassignedDecision.getAllocationStatus(), allocation.changes());
         }
     }

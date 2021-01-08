@@ -57,6 +57,9 @@ public class CreateIndexClusterStateUpdateRequest extends ClusterStateUpdateRequ
 
     private final Set<ClusterBlock> blocks = new HashSet<>();
 
+    /**
+     * 要求创建的index 的 primary+replica 必须超过该值
+     */
     private ActiveShardCount waitForActiveShards = ActiveShardCount.DEFAULT;
 
     /**

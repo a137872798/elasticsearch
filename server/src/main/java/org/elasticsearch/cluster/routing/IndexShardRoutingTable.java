@@ -629,7 +629,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
     }
 
     /**
-     * 找到与分配id 匹配的分片对象  TODO 分配id可能会重复么
+     * 找到与分配id 匹配的分片对象
      * @param allocationId
      * @return
      */

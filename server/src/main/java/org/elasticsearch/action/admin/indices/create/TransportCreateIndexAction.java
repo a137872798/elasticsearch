@@ -77,6 +77,7 @@ public class TransportCreateIndexAction extends TransportMasterNodeAction<Create
             cause = "api";
         }
 
+        // 如果索引名采用了特殊的时间格式  进行转换
         final String indexName = indexNameExpressionResolver.resolveDateMathExpression(request.index());
         final CreateIndexClusterStateUpdateRequest updateRequest =
             new CreateIndexClusterStateUpdateRequest(cause, indexName, request.index())

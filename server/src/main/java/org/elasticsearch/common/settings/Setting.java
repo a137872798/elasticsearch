@@ -133,6 +133,7 @@ public class Setting<T> implements ToXContentObject {
         /**
          * Mark this setting as not copyable during an index resize (shrink or split). This property can only be applied to settings that
          * also have {@link Property#IndexScope}.
+         * 代表该分配项 不可从其他indexSettings中拷贝
          */
         NotCopyableOnResize,
 

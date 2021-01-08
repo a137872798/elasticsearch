@@ -87,6 +87,10 @@ public abstract class Decision implements ToXContent, Writeable {
      */
     public enum Type implements Writeable {
         YES(1),
+
+        /**
+         * 还是允许 但是优先级没有 YES高
+         */
         THROTTLE(2),
         NO(0);
 

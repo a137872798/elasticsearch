@@ -103,7 +103,7 @@ public class ShardStateAction {
             new ShardStartedTransportHandler(clusterService,
                 new ShardStartedClusterStateTaskExecutor(allocationService, rerouteService, logger),
                 logger));
-        // 当某个分片在恢复过程中失败 会上报给leader节点
+        // 当某个分片在恢复过程中失败 会上报给leader节点     在进行索引操作时 如果某些节点还未处于in-sync中 也会发起shardFailed请求
         transportService.registerRequestHandler(SHARD_FAILED_ACTION_NAME, ThreadPool.Names.SAME, FailedShardEntry::new,
             new ShardFailedTransportHandler(clusterService,
                 new ShardFailedClusterStateTaskExecutor(allocationService, rerouteService, logger),
@@ -119,6 +119,10 @@ public class ShardStateAction {
      */
     private void sendShardAction(final String actionName, final ClusterState currentState,
                                  final TransportRequest request, final ActionListener<Void> listener) {
+
+        // 实际上需要监控 ClusterStateObserver 的操作都可以认为是具备 重试机制的任务
+        // 比如通知leader 某个分片已经处于start状态 如果此时leader不可用 那么集群状态就会不一致 这里就等待集群leader重新选举后再进行重发
+        // 而leader如果主动观测到本节点下线了 也会自动为本节点上的分片进行重分配
         ClusterStateObserver observer =
             new ClusterStateObserver(currentState, clusterService, null, logger, threadPool.getThreadContext());
         // 请求是发往leader节点的
@@ -174,7 +178,7 @@ public class ShardStateAction {
      * @param shardId            shard id of the shard to fail
      * @param allocationId       allocation id of the shard to fail
      * @param primaryTerm        the primary term associated with the primary shard that is failing the shard. Must be strictly positive.
-     * @param markAsStale        whether or not to mark a failing shard as stale (eg. removing from in-sync set) when failing the shard.
+     * @param markAsStale        whether or not to mark a failing shard as stale (eg. removing from in-sync set) when failing the shard.    在关闭的同时 是否还要从inSync中移除
      * @param message            the reason for the failure
      * @param failure            the underlying cause of the failure
      * @param listener           callback upon completion of the request
@@ -249,7 +253,7 @@ public class ShardStateAction {
     }
 
     /**
-     * 代表某个分片在之前的某个节点上无法正常启动  就要借助relocation服务 重新指定位置
+     * 某个分片无法正常运作  需要切换到其他节点
      */
     private static class ShardFailedTransportHandler implements TransportRequestHandler<FailedShardEntry> {
 
@@ -351,17 +355,16 @@ public class ShardStateAction {
         @Override
         public ClusterTasksResult<FailedShardEntry> execute(ClusterState currentState, List<FailedShardEntry> tasks) throws Exception {
 
-            // 该对象用于处理某个集群状态更新的结果
             ClusterTasksResult.Builder<FailedShardEntry> batchResultBuilder = ClusterTasksResult.builder();
             List<FailedShardEntry> tasksToBeApplied = new ArrayList<>();
 
             // 能够在路由表中找到的分片 就会被划分到这个列表中
             List<FailedShard> failedShardsToBeApplied = new ArrayList<>();
 
-            // 检测到未完成数据同步的分片存储到这个列表中
+            // 无法在clusterState最新的路由表中找到  但是能够在 indexMetadata.inSync队列中找到的分片会被包装成该对象并存储到列表中
             List<StaleShard> staleShardsToBeApplied = new ArrayList<>();
 
-            // 每个task 都代表某个分片处理失败了
+            // 遍历失败的分片
             for (FailedShardEntry task : tasks) {
                 IndexMetadata indexMetadata = currentState.metadata().index(task.shardId.getIndex());
                 if (indexMetadata == null) {
@@ -394,28 +397,29 @@ public class ShardStateAction {
                         }
                     }
 
-                    // 找到匹配的路由信息  路由表会在集群内所有节点做同步
+                    // 通过task携带的信息 定位到对应的分片路由对象   每为一个分片分配节点时 unassigned->init 时会产生一个 allocationId
                     ShardRouting matched = currentState.getRoutingTable().getByAllocationId(task.shardId, task.allocationId);
 
-                    // 当没有找到匹配信息时
                     if (matched == null) {
+                        // in-sync 容器与 clusterState的同步可能不是瞬时的
                         Set<String> inSyncAllocationIds = indexMetadata.inSyncAllocationIds(task.shardId.id());
                         // mark shard copies without routing entries that are in in-sync allocations set only as stale if the reason why
                         // they were failed is because a write made it into the primary but not to this copy (which corresponds to
                         // the check "primaryTerm > 0").
-                        // 应该是同步完成后的分片 才会进行分配 才会到路由表中  所以上面没有分配信息 就从同步队列中查找
+
+                        // 代表in-sync中存在已经过期的数据 需要做清理操作
                         if (task.primaryTerm > 0 && inSyncAllocationIds.contains(task.allocationId)) {
                             logger.debug("{} marking shard {} as stale (shard failed task: [{}])",
                                 task.shardId, task.allocationId, task);
 
-                            // 这种情况代表这个分片是一个过期的分片  也就是未完成数据同步的分片
+                            // 需要处理的任务
                             tasksToBeApplied.add(task);
                             // 将分片包装成 stale对象并存储到队列中
                             staleShardsToBeApplied.add(new StaleShard(task.shardId, task.allocationId));
                         } else {
                             // tasks that correspond to non-existent shards are marked as successful
                             logger.debug("{} ignoring shard failed task [{}] (shard does not exist anymore)", task.shardId, task);
-                            // 静默处理
+                            // task.allocationId 已经失效了 代表已经发起了重分配 本次静默处理
                             batchResultBuilder.success(task);
                         }
                     } else {
@@ -431,7 +435,7 @@ public class ShardStateAction {
 
             ClusterState maybeUpdatedState = currentState;
             try {
-                // 根据这些失败/过期的分片  更新集群状态  其中会涉及到某些分片被剔除  以及更新集群内分片的分布情况
+                // 处理失败的分片
                 maybeUpdatedState = applyFailedShards(currentState, failedShardsToBeApplied, staleShardsToBeApplied);
                 // 这组任务都成功执行
                 batchResultBuilder.successes(tasksToBeApplied);
@@ -447,18 +451,18 @@ public class ShardStateAction {
         }
 
         /**
-         * 某些分片此时被标记成无效分片了 可能其他相关分片会发生 reroute
+         * 某些分片此时被标记成无效分片了 某些分片会变回unassigned 并调用reroute重新进行分配
          * @param currentState
          * @param failedShards
          * @param staleShards
          * @return
          */
         ClusterState applyFailedShards(ClusterState currentState, List<FailedShard> failedShards, List<StaleShard> staleShards) {
+            // 在该方法内部调用了reroute
             return allocationService.applyFailedShards(currentState, failedShards, staleShards);
         }
 
         /**
-         * 将状态变化的事件发布到集群中
          * @param clusterChangedEvent the change event for this cluster state change, containing
          */
         @Override
@@ -470,7 +474,7 @@ public class ShardStateAction {
                 // assign it again, even if that means putting it back on the node on which it previously failed:
                 final String reason = String.format(Locale.ROOT, "[%d] unassigned shards after failing shards", numberOfUnassignedShards);
                 logger.trace("{}, scheduling a reroute", reason);
-                // 执行重路由 并监听结果
+                // 尝试调用reroute 该方法本身做了接口级串行 不用担心并发问题
                 rerouteService.reroute(reason, Priority.NORMAL, ActionListener.wrap(
                     r -> logger.trace("{}, reroute completed", reason),
                     e -> logger.debug(new ParameterizedMessage("{}, reroute failed", reason), e)));
@@ -735,13 +739,7 @@ public class ShardStateAction {
         }
 
         /**
-         * 当分片状态发生改变会触发reroute
-         * 实际上在ES中 应该是推荐自己创建主分片 而副本是通过 AutoExpandReplicas功能来创建的  reroute中就包含了自动创建副本的逻辑
-         * 这里应该就是先创建主分片->主分片数据恢复完成->通知leader节点->自动生成副本->为副本分配路由->副本完成数据恢复->将写入主分片的数据双写到副本上
-         *
-         *
-         * 在 reroute中除了自动创建副本外 还有自动调节副本数的功能  当副本数超过了max数量时 会自动进行关闭
-         * ES内置的decides中 每个节点都可以设置副本
+         * 一旦有新的分片生成 就可以尝试进行reroute  在内部allocator对象可以对已经处于start的分片选择更合适的节点  并进行relocate
          * @param clusterChangedEvent the change event for this cluster state change, containing
          */
         @Override

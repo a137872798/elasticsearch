@@ -122,6 +122,7 @@ public enum AllocationDecision implements Writeable {
                     return AWAITING_INFO;
                 case DELAYED_ALLOCATION:
                     return ALLOCATION_DELAYED;
+                    // 代表此时没有可以恢复分片数据的地方
                 case NO_VALID_SHARD_COPY:
                     return NO_VALID_SHARD_COPY;
                 case NO_ATTEMPT:

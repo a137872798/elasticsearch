@@ -63,7 +63,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
     private final Map<ShardId, Updates> shardChanges = new HashMap<>();
 
     /**
-     * 感知到某个分片从未分配状态转变成init状态 (代表找到了一个目标节点)
+     * 感知到某个分片从未分配状态转变成init状态 (完成了分片的分配任务)
      * @param unassignedShard
      * @param initializedShard
      */
@@ -73,7 +73,8 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
         // 只有主分片的分配需要被记录
         if (initializedShard.primary()) {
-            // 代表本次reroute过程中 某个分片的primary发生了变化 就需要记录
+
+            // 每当某个主分片确定了要分配的node时  就可以增加主分片的任期了 代表主分片发生过一次变化
             increasePrimaryTerm(initializedShard.shardId());
 
             Updates updates = changes(initializedShard.shardId());
@@ -167,7 +168,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                 // 某些分片变成start状态后 就允许接收此时写入到主分片的数据了 被称为 in-sync
                 // 这里是根据分片的状态变化 更新 in-sync中的分片
                 indexMetadataBuilder = updateInSyncAllocations(newRoutingTable, oldIndexMetadata, indexMetadataBuilder, shardId, updates);
-                // TODO 先只看分片从init变成 start的逻辑
+                // 更新 primaryTerm
                 indexMetadataBuilder = updatePrimaryTerm(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
             }
 
@@ -206,7 +207,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
         Set<String> oldInSyncAllocationIds = oldIndexMetadata.inSyncAllocationIds(shardId.id());
 
         // check if we have been force-initializing an empty primary or a stale primary
-        // TODO
+        // TODO 目前还不清楚怎么出现主分片为init 并且 inSync不为空
         if (updates.initializedPrimary != null && oldInSyncAllocationIds.isEmpty() == false &&
             oldInSyncAllocationIds.contains(updates.initializedPrimary.allocationId().getId()) == false) {
             // we're not reusing an existing in-sync allocation id to initialize a primary, which means that we're either force-allocating
@@ -238,7 +239,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                     allocationId = updates.initializedPrimary.allocationId().getId();
                 }
                 // forcing a stale primary resets the in-sync allocations to the singleton set with the stale id
-                // 每当主分片发生变化时 都会重置 in-sync (replica 则是加入到in-sync)
+                // 当某个分片从init->start后 就会加入到in-sync 队列中
                 indexMetadataBuilder.putInSyncAllocationIds(shardId.id(), Collections.singleton(allocationId));
             }
 
@@ -247,6 +248,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             // 更新in-sync 容器
             Set<String> inSyncAllocationIds = new HashSet<>(oldInSyncAllocationIds);
             inSyncAllocationIds.addAll(updates.addedAllocationIds);
+            // 当某些位于 inSync的副本写入失败时  会变成unassigned 并等待重新分配 可能在本轮就会变回 init   如果副本此时在inSync中 就会被移除
             inSyncAllocationIds.removeAll(updates.removedAllocationIds);
 
             assert oldInSyncAllocationIds.contains(RecoverySource.ExistingStoreRecoverySource.FORCED_ALLOCATION_ID) == false
@@ -285,7 +287,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             // only remove allocation id of failed active primary if there is at least one active shard remaining. Assume for example that
             // the primary fails but there is no new primary to fail over to. If we were to remove the allocation id of the primary from the
             // in-sync set, this could create an empty primary on the next allocation.
-            // TODO 先只看分片从 init->start的逻辑
+            // 如果仅剩一个失败的主分片 还是保留在 inSync中
             if (newShardRoutingTable.activeShards().isEmpty() && updates.firstFailedPrimary != null) {
                 // add back allocation id of failed primary
                 inSyncAllocationIds.add(updates.firstFailedPrimary.allocationId().getId());
@@ -311,31 +313,34 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
      * This method is called in AllocationService before any changes to the routing table are made.
      * @param clusterState 当前集群状态信息
      * @param staleShards 此时已经过期的分片
-     * 移除掉过期的分片
+     *                    某些分片数据在 indexMetadata中已经过期 需要清理
+     *                    通过 shardId + allocationId 进行定位
      */
     public static ClusterState removeStaleIdsWithoutRoutings(ClusterState clusterState, List<StaleShard> staleShards, Logger logger) {
         Metadata oldMetadata = clusterState.metadata();
         RoutingTable oldRoutingTable = clusterState.routingTable();
         Metadata.Builder metadataBuilder = null;
         // group staleShards entries by index
-        // 将过期分片 按照索引进行分组
+        // 以index 分组进行清理
         for (Map.Entry<Index, List<StaleShard>> indexEntry : staleShards.stream().collect(
             Collectors.groupingBy(fs -> fs.getShardId().getIndex())).entrySet()) {
             final IndexMetadata oldIndexMetadata = oldMetadata.getIndexSafe(indexEntry.getKey());
             IndexMetadata.Builder indexMetadataBuilder = null;
             // group staleShards entries by shard id
-            // 进一步按照分片id 分组
+            // 之后按照shardId 进行分组
             for (Map.Entry<ShardId, List<StaleShard>> shardEntry : indexEntry.getValue().stream().collect(
                 Collectors.groupingBy(staleShard -> staleShard.getShardId())).entrySet()) {
                 int shardNumber = shardEntry.getKey().getId();
-                // 找到某个shardId 对应的 primary + replica 的 allocationId
+
+                // 定位到shardId 组的 inSync 集合
                 Set<String> oldInSyncAllocations = oldIndexMetadata.inSyncAllocationIds(shardNumber);
 
-                // 通过allocationId 来进行匹配
+                // 找到所有要移除的分片
                 Set<String> idsToRemove = shardEntry.getValue().stream().map(e -> e.getAllocationId()).collect(Collectors.toSet());
                 assert idsToRemove.stream().allMatch(id -> oldRoutingTable.getByAllocationId(shardEntry.getKey(), id) == null) :
                     "removing stale ids: " + idsToRemove + ", some of which have still a routing entry: " + oldRoutingTable;
-                // 去差集 就是应当被保留的分片allocationId 集合
+
+                // 移除后最新的in-sync 容器
                 Set<String> remainingInSyncAllocations = Sets.difference(oldInSyncAllocations, idsToRemove);
                 assert remainingInSyncAllocations.isEmpty() == false : "Set of in-sync ids cannot become empty for shard " +
                     shardEntry.getKey() + " (before: " + oldInSyncAllocations + ", ids to remove: " + idsToRemove + ")";
@@ -345,7 +350,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                     if (indexMetadataBuilder == null) {
                         indexMetadataBuilder = IndexMetadata.builder(oldIndexMetadata);
                     }
-                    // 使用剩余的 分配者id 覆盖之前的数据
+                    // 覆盖之前的 in-sync容器
                     indexMetadataBuilder.putInSyncAllocationIds(shardNumber, remainingInSyncAllocations);
                 }
                 logger.warn("{} marking unavailable shards as stale: {}", shardEntry.getKey(), idsToRemove);
@@ -393,6 +398,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
      * 记录一组之后会移除的分片
      */
     void removeAllocationId(ShardRouting shardRouting) {
+        // 首先该分片已经完成了数据恢复才有可能进入 inSync 才有移除的必要
         if (shardRouting.active()) {
             changes(shardRouting.shardId()).removedAllocationIds.add(shardRouting.allocationId().getId());
         }
@@ -411,7 +417,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
      */
     private static class Updates {
         /**
-         * 只要在reroute中 主分片发生了变化就打上标记
+         * 每当主分片分配到了一个新的节点时 需要更新任期
          */
         private boolean increaseTerm; // whether primary term should be increased
         /**
@@ -424,12 +430,12 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
          */
         private Set<String> removedAllocationIds = new HashSet<>(); // allocation ids that should be removed from the in-sync set
         /**
-         * 如果本次更新 该shardId对应的primary 从unassigned 变成了 init 则通过该变量记录
+         * 某次 reroute过程中 某个主分片变成了init状态
          */
         private ShardRouting initializedPrimary = null; // primary that was initialized from unassigned
 
         /**
-         * 代表在这个变化周期中 主分片处理失败了
+         * 在本次处理过程中 主分片处理失败 比如恢复数据失败 或者进行索引操作时失败
          */
         private ShardRouting firstFailedPrimary = null; // first active primary that was failed
     }

@@ -151,7 +151,7 @@ public class PersistedClusterStateService {
     }
 
     /**
-     *
+     * 从本地磁盘中加载之前持久化的有关集群的数据
      * @param dataPaths 存储数据的路径
      * @param nodeId  当前节点id
      * @param namedXContentRegistry  通过name可以找到对应的 reader对象 定义了如何将数据流反序列化成对象

@@ -56,7 +56,9 @@ import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
 /**
- * ES默认的 replicate primary分配器
+ * 网关分配器
+ * 实际上是一种增强逻辑  某些未分配的分片 本身是交给 balancedShardsAllocator进行处理的
+ * 但是该对象可以对满足特殊条件的一些 unassigned分片进行拦截   并做一些特殊处理
  */
 public class GatewayAllocator implements ExistingShardsAllocator {
 
@@ -70,7 +72,6 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     private final PrimaryShardAllocator primaryShardAllocator;
     private final ReplicaShardAllocator replicaShardAllocator;
 
-    // 这个缓存存储的是某个shard在相关node上的分配情况 具体包含 primary allocatedId
     private final ConcurrentMap<ShardId, AsyncShardFetch<NodeGatewayStartedShards>>
         asyncFetchStarted = ConcurrentCollections.newConcurrentMap();
 
@@ -133,13 +134,12 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     }
 
     /**
-     * 当某些分片从初始状态修改为启动状态时触发
+     * TODO 为什么分片的启动 要将为了主副本分配的相关数据都清除 ???
      * @param startedShards
      * @param allocation
      */
     @Override
     public void applyStartedShards(final List<ShardRouting> startedShards, final RoutingAllocation allocation) {
-        // 为啥分片启动了 就要关闭相关的fetch任务啊
         for (ShardRouting startedShard : startedShards) {
             Releasables.close(asyncFetchStarted.remove(startedShard.shardId()));
             Releasables.close(asyncFetchStore.remove(startedShard.shardId()));
@@ -147,7 +147,7 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     }
 
     /**
-     * 当分片失败时 也在相关容器中移除并触发close
+     * 因为某个shardId 的分片分配失败了 之后就要重新分配 同时之前的节点上数据可能发生了变化  这里需要重新拉取
      * @param failedShards
      * @param allocation
      */
@@ -241,7 +241,7 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         // 本次分配涉及到的所有node
         DiscoveryNodes nodes = allocation.nodes();
 
-        // 当node本身更新 或者新增 减少就不需要清理了
+        // 当node本身更新或者新增时触发
         if (hasNewNodes(nodes)) {
             final Set<String> newEphemeralIds = StreamSupport.stream(nodes.getDataNodes().spliterator(), false)
                 .map(node -> node.value.getEphemeralId()).collect(Collectors.toSet());
@@ -270,7 +270,8 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         // 如果此时主分片都还没有激活 那么其他节点存储的探测结果就不可能发生变化  就不需要清理
         ShardRouting primary = allocation.routingNodes().activePrimary(fetch.shardId);
         if (primary != null) {
-            // 将该节点对应的缓存数据清除
+            // 将该节点对应的缓存数据清除    不过如果主分片已经分配完成
+            // 那么之后就不需要再对主分片进行分配了  asyncFetchStore 也就失去意义了   怎么移除数据都不重要
             fetch.clearCacheForNode(primary.currentNodeId());
         }
     }
@@ -339,12 +340,15 @@ public class GatewayAllocator implements ExistingShardsAllocator {
                                 IndexMetadata.INDEX_DATA_PATH_SETTING.get(allocation.metadata().index(shard.index()).getSettings()),
                                 lister));
 
-            // 当短时间内收到多个reroute请求时 只要primary处于未工作状态 处理应该要去重
+            // 当短时间内收到多个reroute请求时 只要primary处于未分配状态 处理应该要去重
             AsyncShardFetch.FetchResult<NodeGatewayStartedShards> shardState =
                 // 这个时候应该还是不知道分片所在的节点的 选择往全节点上发送   IgnoreNodes 代表 必然不会分配到这些node上
                 fetch.fetchData(allocation.nodes(), allocation.getIgnoreNodes(shard.shardId()));
 
+            // 本次已经拿到一部分节点的元数据信息了   其余节点由于未能正常访问等原因 会在其他线程中再执行一次reroute 并重新发起拉取请求
+            // 总结就是想尽办法拿到所有的节点元数据
             if (shardState.hasData()) {
+                // 因为这里是第二次发起的 reroute了  需要将之前的  ignoreNode回填进去
                 shardState.processAllocation(allocation);
             }
             // 返回拉取结果

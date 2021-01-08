@@ -1023,7 +1023,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
      * 检测是否要开启 fsyncTask
      */
     private void updateFsyncTaskIfNecessary() {
-        // 通过rest请求手动触发刷盘  不需要开启定时刷盘功能
+        // 代表每执行一个请求就触发一次事务日志刷盘  就不需要定时机制了
         if (indexSettings.getTranslogDurability() == Translog.Durability.REQUEST) {
             try {
                 if (fsyncTask != null) {

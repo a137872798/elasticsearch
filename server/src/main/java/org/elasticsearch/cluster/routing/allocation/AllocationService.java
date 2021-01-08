@@ -140,7 +140,6 @@ public class AllocationService {
         // 将所有分片修改成启动状态  同时触发 observer等逻辑
         applyStartedShards(allocation, startedShards);
 
-        // TODO 先忽略这种增强逻辑  目前看到GatewayAllocator 会关闭一些任务
         for (final ExistingShardsAllocator allocator : existingShardsAllocators.values()) {
             allocator.applyStartedShards(startedShards, allocation);
         }
@@ -227,28 +226,28 @@ public class AllocationService {
      *
      * <p>
      * If the same instance of ClusterState is returned, then no change has been made.</p>
-     * @param clusterState 当前集群状态
-     * @param failedShards 本次被标记成失败的分片
-     * @param staleShards  本次过期的分片
+     * @param clusterState   当前集群状态
+     * @param failedShards   某些处理失败的分片会上报给leader节点  这些 failedShard对象就是处理失败的分片
+     * @param staleShards    某些处理失败的分片已经无法从集群路由表中找到 但是依然能够在 indexMetadata.inSync容器中找到 那么就会标记成过期分片
      * 处理失败或者过期的分片
      */
     public ClusterState applyFailedShards(final ClusterState clusterState, final List<FailedShard> failedShards,
                                           final List<StaleShard> staleShards) {
         assert assertInitialized();
-        // 代表不需要处理
+        // 没有需要处理的分片
         if (staleShards.isEmpty() && failedShards.isEmpty()) {
             return clusterState;
         }
 
-        // 从clusterState中移除掉 stale分片
+        // 处理 staleShards 的数据  也就是从 indexMetadata中移除 inSync
         ClusterState tmpState = IndexMetadataUpdater.removeStaleIdsWithoutRoutings(clusterState, staleShards, logger);
 
-        // 将 clusterState转换成 RoutingNodes 此时还不是最终结果 还需要剔除 failedShard
         RoutingNodes routingNodes = getMutableRoutingNodes(tmpState);
         // shuffle the unassigned nodes, just so we won't have things like poison failed shards
         routingNodes.unassigned().shuffle();
         long currentNanoTime = currentNanoTime();
-        // 该对象就是描述了当前集群内所有分片的分配状态
+
+        // 该对象包含了分配需要的全部信息 相当于一个context
         RoutingAllocation allocation = new RoutingAllocation(allocationDeciders, routingNodes, tmpState,
             clusterInfoService.getClusterInfo(), currentNanoTime);
 
@@ -260,21 +259,22 @@ public class AllocationService {
             // 获取分片相关的索引元数据
             IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shardToFail.shardId().getIndex());
 
-            // 因为这个分片无法分配到这个node上 将这个关系添加到内部的 ignore容器中
+            // 标记这个分片无法分配到这个node上  每次进行reroute时 这些node会被跳过
             allocation.addIgnoreShardForNode(shardToFail.shardId(), shardToFail.currentNodeId());
             // failing a primary also fails initializing replica shards, re-resolve ShardRouting
 
             ShardRouting failedShard = routingNodes.getByAllocationId(shardToFail.shardId(), shardToFail.allocationId().getId());
             if (failedShard != null) {
-                // 在迭代过程中被修改
+                // 先忽略这种情况吧  allocationId 应该是唯一的不会出现这种情况
                 if (failedShard != shardToFail) {
                     logger.trace("{} shard routing modified in an earlier iteration (previous: {}, current: {})",
                         shardToFail.shardId(), shardToFail, failedShard);
                 }
-                // 该分片在此前已经分配失败过多少次
+
+                // unassignedInfo 中会记录分片全部的失败记录
                 int failedAllocations = failedShard.unassignedInfo() != null ? failedShard.unassignedInfo().getNumFailedAllocations() : 0;
 
-                // 记录该分片之前在哪些节点上分配失败了
+                // 通过unassignedInfo 甚至可以追溯之前分配失败的所有node
                 final Set<String> failedNodeIds;
                 if (failedShard.unassignedInfo() != null) {
                     failedNodeIds = new HashSet<>(failedShard.unassignedInfo().getFailedNodeIds().size() + 1);
@@ -285,29 +285,30 @@ public class AllocationService {
                 }
                 String message = "failed shard on node [" + shardToFail.currentNodeId() + "]: " + failedShardEntry.getMessage();
 
-                // 更新 unassignedInfo 在原有的基础上增加了一个分配失败的node
+                // 更新 unassignedInfo
                 UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.ALLOCATION_FAILED, message,
                     failedShardEntry.getFailure(), failedAllocations + 1, currentNanoTime, System.currentTimeMillis(), false,
                     AllocationStatus.NO_ATTEMPT, failedNodeIds);
 
-                // 当该分片被标记成失败时 是否需要从 insync容器中移除 如果是 则将分片设置到 update对象的一个removedAllocationIds容器中
+                // 本分片是否需要同时从 inSync 中移除
                 if (failedShardEntry.markAsStale()) {
                     allocation.removeAllocationId(failedShard);
                 }
                 logger.warn(new ParameterizedMessage("failing shard [{}]", failedShardEntry), failedShardEntry.getFailure());
-                // 将该分片标记成失败 在内部会做一些状态的转换
+                // 将该分片标记成失败 在内部会做一些状态的转换   变化会记录到 changes中  在最后需要生成 clusterState时 会借助内部的信息
+                // 内部可能会出现副本升级成主分片 主分片降级   以及 重分配分片取消  原分片删除等等特殊情况
                 routingNodes.failShard(logger, failedShard, unassignedInfo, indexMetadata, allocation.changes());
             } else {
                 logger.trace("{} shard routing failed in an earlier iteration (routing: {})", shardToFail.shardId(), shardToFail);
             }
         }
 
-        // 默认就是 GatewayAllocator   因为这些分片已经被关闭了 所以可以将拉取相关数据的请求从容器中移除
+        // 先使用增强的分配器进行处理  这里主要是之前拉取到的节点数据不再可靠 进行清理 并在之后reroute时尝试重新拉取
         for (final ExistingShardsAllocator allocator : existingShardsAllocators.values()) {
             allocator.applyFailedShards(failedShards, allocation);
         }
 
-        // 因为此时某些分片已经发生了变化 所以需要在集群内为这些分片重新分配节点 使得每个节点的负载合理
+        // 对unassigned分片进行分配
         reroute(allocation);
         // 生成描述信息
         String failedShardsAsString
@@ -510,8 +511,11 @@ public class AllocationService {
         // 将执行分配相关的参数包装成该对象
         RoutingAllocation allocation = new RoutingAllocation(allocationDeciders, routingNodes, fixedClusterState,
             clusterInfoService.getClusterInfo(), currentNanoTime());
+
+        // 针对 unassigned的分片进行分配  同时为那些处于start状态的分片选择更合适的节点(relocate)
         reroute(allocation);
-        // 代表没有副本发生变化 直接返回原state
+
+        // 没有任何分片发生变化 直接返回
         if (fixedClusterState == clusterState && allocation.routingNodesChanged() == false) {
             return clusterState;
         }
@@ -541,7 +545,7 @@ public class AllocationService {
     }
 
     /**
-     * 对处于unassigned的分片进行分配
+     * 对处于unassigned的分片进行分配   以及尝试对一些处于运作状态的分片进行relocate
      * @param allocation
      */
     private void reroute(RoutingAllocation allocation) {
@@ -553,15 +557,15 @@ public class AllocationService {
         // 某些处于 unassigned的分片 可以设置延时标识 未超时的分片在本轮中将不会被分配
         removeDelayMarkers(allocation);
 
-        // 针对这些未分配的副本进行重分配
+        // 这里可以自定义前置分配器  默认使用 gatewayAllocator进行分配 而在本轮无法处理的分片就会交由  shardsAllocator进行兜底处理
         allocateExistingUnassignedShards(allocation);  // try to allocate existing shard copies first
-        // 实际上这里只是做了一些balance工作 就是将集群下某个index对应的所有分片在node级别做平衡
+        // 兜底分配策略  除了对一些unassigned进行分配外 一些已经分配好的节点会根据集群中节点的负载情况 进行relocate
         shardsAllocator.allocate(allocation);
         assert RoutingNodes.assertShardStats(allocation.routingNodes());
     }
 
     /**
-     * 处理所有未分配的 分片
+     * 处理所有未分配的分片
      * @param allocation
      */
     private void allocateExistingUnassignedShards(RoutingAllocation allocation) {

@@ -77,7 +77,7 @@ public class AllocateUnassignedDecision extends AbstractAllocationDecision {
     private final long configuredDelayInMillis;
 
     /**
-     *
+     * 描述某个unassigned分片的分配结果
      * @param allocationStatus  描述分配状态的 当本次decision是yes时 为null
      * @param assignedNode   本次倾向于分配的节点
      * @param allocationId
@@ -174,10 +174,11 @@ public class AllocateUnassignedDecision extends AbstractAllocationDecision {
 
     /**
      * Creates a {@link AllocateUnassignedDecision} from the given {@link Decision} and the assigned node, if any.
-     * 根据参数信息生成一个为某个未分配分配尝试分配的结果描述对象
+     * 某个未分配分片的 分配结果
      */
     public static AllocateUnassignedDecision fromDecision(Decision decision, @Nullable DiscoveryNode assignedNode,
                                                           @Nullable List<NodeAllocationResult> nodeDecisions) {
+
         final Type decisionType = decision.type();
         AllocationStatus allocationStatus = decisionType != Type.YES ? AllocationStatus.fromDecision(decisionType) : null;
         return new AllocateUnassignedDecision(allocationStatus, assignedNode, null, nodeDecisions, false, 0L, 0L);

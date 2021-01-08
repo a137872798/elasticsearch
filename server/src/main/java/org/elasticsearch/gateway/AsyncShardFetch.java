@@ -151,6 +151,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
         if (closed) {
             throw new IllegalStateException(shardId + ": can't fetch data on closed async fetch");
         }
+        // 会先从ignore对应的node拉取数据 但是在处理时 又会将ignore设置到结果中 这样在处理时就可以跳过这些节点
         nodesToIgnore.addAll(ignoreNodes);
 
         // 因为短时间内是可能会连续发起 reroute的 都需要获取某分片在某节点上的描述信息  为了避免重复执行 就将以node为单位进行去重
@@ -159,6 +160,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
         // 这里是本次还未发起请求的entry   实际上是并发场景下的去重
         List<NodeEntry<T>> nodesToFetch = findNodesToFetch(cache);
 
+        // 可以看到 一旦有新的节点需要拉取数据  之前其他节点拉取的数据并不会立即使用 而是确保获取某次集群中所有的节点后才进行选择
         if (nodesToFetch.isEmpty() == false) {
             // mark all node as fetching and go ahead and async fetch them
             // use a unique round id to detect stale responses in processAsyncFetch
@@ -179,11 +181,13 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
         if (hasAnyNodeFetching(cache)) {
             return new FetchResult<>(shardId, null, emptySet());
         } else {
-            // 代表此时所有nodeEntry的数据都已经设置  使用缓存中的数据
+
+            // 这时所有node的数据都已经获得  可以根据它们之前设置的元数据信息来判断哪个节点更适合做主分片节点
+
             // nothing to fetch, yay, build the return value
-            // 存储有效的结果
             Map<DiscoveryNode, T> fetchData = new HashMap<>();
-            // 所有处理失败的节点会被存储到该列表中
+
+            // 存储拉取数据失败的节点
             Set<String> failedNodes = new HashSet<>();
             for (Iterator<Map.Entry<String, NodeEntry<T>>> it = cache.entrySet().iterator(); it.hasNext(); ) {
                 Map.Entry<String, NodeEntry<T>> entry = it.next();
@@ -192,6 +196,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
 
                 DiscoveryNode node = nodes.get(nodeId);
                 if (node != null) {
+                    // 在尝试获取该节点相关的数据时失败  不作为考虑对象
                     if (nodeEntry.isFailed()) {
                         // if its failed, remove it from the list of nodes, so if this run doesn't work
                         // we try again next round to fetch it again
@@ -204,17 +209,20 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
                     }
                 }
             }
-            // 在本轮拉取结束后 将ignore清空
+
+            // 本轮处理结束后  清空 ignore内的数据
             Set<String> allIgnoreNodes = Set.copyOf(nodesToIgnore);
             // clear the nodes to ignore, we had a successful run in fetching everything we can
             // we need to try them if another full run is needed
             nodesToIgnore.clear();
             // if at least one node failed, make sure to have a protective reroute
             // here, just case this round won't find anything, and we need to retry fetching data
-            // 有节点不可用 或者 该分片在某个node下被禁用 那么以防万一 就要重新分配路由 避免导致之前某个分片不可以使用
+            // 这里的逻辑是针对本轮没有任何结果返回 或者说所有节点都被排除在外 所以在异步线程中又发起了一个拉取任务
+            // 新的reroute调用并不会立即产生结果 也是通过回调触发分配  如果本次已经产生分配结果了 那么下次触发回调就不会继续分配了
             if (failedNodes.isEmpty() == false || allIgnoreNodes.isEmpty() == false) {
                 reroute(shardId, "nodes failed [" + failedNodes.size() + "], ignored [" + allIgnoreNodes.size() + "]");
             }
+            // 返回本次用于参考选择节点的数据  allIgnoreNodes 对应本次排除在外的节点
             return new FetchResult<>(shardId, fetchData, allIgnoreNodes);
         }
     }
@@ -430,6 +438,9 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
 
         /**
          * Process any changes needed to the allocation based on this fetch result.
+         * 因为这里是第二次发起的 reroute了  需要将之前的  ignoreNode回填进去
+         * 第一次reroute发起拉取任务
+         * 第二次根据上次拉取的结果进行分配   这里相当于是尽量恢复之前的状态
          */
         public void processAllocation(RoutingAllocation allocation) {
             for (String ignoreNode : ignoreNodes) {

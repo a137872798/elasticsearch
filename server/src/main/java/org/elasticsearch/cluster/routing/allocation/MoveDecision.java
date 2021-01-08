@@ -96,7 +96,7 @@ public final class MoveDecision extends AbstractAllocationDecision {
      * Creates a move decision for the shard being able to remain on its current node, so the shard won't
      * be forced to move to another node.
      * @param canRemainDecision 通过一组deciders对象生成的决策结果
-     * 生成了一个不需要移动的decision
+     *                          代表不需要迁移
      */
     public static MoveDecision stay(Decision canRemainDecision) {
         if (canRemainDecision != null) {

@@ -230,7 +230,7 @@ public class RoutingAllocation {
     }
 
     /**
-     * 标记该shardId 下的所有分配不会被分配到这个node下
+     * 标记该shardId 下的所有分配不会被分配到这个node下   一般是在该分片已经在该node处理失败 并上报信息后  作为下次分配的重要参考
      * @param shardId
      * @param nodeId
      */

@@ -463,6 +463,13 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
         return autoCreateIndex.shouldAutoCreate(index, state);
     }
 
+    /**
+     * 执行创建索引请求
+     * @param index
+     * @param preferV2Templates
+     * @param timeout
+     * @param listener
+     */
     void createIndex(String index, Boolean preferV2Templates, TimeValue timeout, ActionListener<CreateIndexResponse> listener) {
         CreateIndexRequest createIndexRequest = new CreateIndexRequest();
         createIndexRequest.index(index);
