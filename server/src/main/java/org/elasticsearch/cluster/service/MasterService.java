@@ -416,6 +416,7 @@ public class MasterService extends AbstractLifecycleComponent {
      * @param exception
      */
     void onPublicationFailed(ClusterChangedEvent clusterChangedEvent, TaskOutputs taskOutputs, long startTimeMillis, Exception exception) {
+        // 当此时正在执行发布任务  或者本节点不再是leader 或者term不匹配的情况会抛出该异常
         if (exception instanceof FailedToCommitClusterStateException) {
             final long version = clusterChangedEvent.state().version();
             logger.warn(() -> new ParameterizedMessage(

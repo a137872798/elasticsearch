@@ -799,7 +799,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
     /**
      * 当本节点对外发送startJoin请求 并且被对端认可时 对端会返回一个join请求
-     * 新上线的node通过finder对象探测到leader 也会发起join请求 但是不一定携带join对象  (source.term >= leader.term)
+     * 新上线的node通过finder对象探测到leader 也会发起join请求 但是不一定携带join对象  (当source.term >= leader.term时 不携带)
      *
      * @param joinRequest
      * @param joinCallback
@@ -819,7 +819,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             // 处理join请求
             optionalJoin.ifPresent(this::handleJoin);
 
-            // 处理收到的join请求 此时可能是以 candidator/leader接收到的  主要都是为了处理join的节点 并回调监听器
+            // 处理收到的join请求 此时可能是以 candidator/leader接收到的  主要都是为了将发起join的节点加入到clsuterState中 比如刚启动的dataNode 只能通过finder找到leader节点并加入
             joinAccumulator.handleJoinRequest(joinRequest.getSourceNode(), joinCallback);
 
             // 如果此时发现当前节点已经获取了足够的选票 晋升成leader
@@ -1415,17 +1415,16 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
             // 在接收到新的join请求时 发现选举已经成功了
             if (coordinationState.get().electionWon()) {
                 // If we have already won the election then the actual join does not matter for election purposes, so swallow any exception
-                // 成功加入到投票箱中返回true
+                // 代表又收到了一个新的支持者
                 final boolean isNewJoinFromMasterEligibleNode = handleJoinIgnoringExceptions(join);
 
                 // If we haven't completely finished becoming master then there's already a publication scheduled which will, in turn,
                 // schedule a reconfiguration if needed. It's benign to schedule a reconfiguration anyway, but it might fail if it wins the
                 // race against the election-winning publication and log a big error message, which we can prevent by checking this here:
-                // 当此时已经成为leader节点   并且此时已经将最新的term信息持久化了
+                // 当本节点 已经成为leader节点 并且已经成功发布到集群中其他节点 将最新的term信息持久化
                 final boolean establishedAsMaster = mode == Mode.LEADER && getLastAcceptedState().term() == getCurrentTerm();
                 // 代表此时节点已经完成晋升成leader节点  并且加入了一个新的支持者  并且此时没有其他发布任务
                 if (isNewJoinFromMasterEligibleNode && establishedAsMaster && publicationInProgress() == false) {
-                    // TODO
                     scheduleReconfigurationIfNeeded();
                 }
             } else {
@@ -1517,12 +1516,12 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     }
 
     /**
-     * 将集群变化的事件通知到所有节点  比如当前节点晋升成了master节点  又或者 集群下感知到了新的node并加入到clusterState (通过join请求感知到)
-     * 成为leader节点最基本的要求就是首先将最新的集群状态发布到超过半数节点  如果连这次通知都失败了 实际上本次选举就是失败的 所以leader会直接降级成candidate
+     * 每当clusterState发生变化时 就要发布到集群中  如果本节点选举成功也要发布
      *
-     * @param clusterChangedEvent 存储了集群的前后状态 以及新增的node
+     * @param clusterChangedEvent 存储了集群的前后状态 以及变化的node
      * @param publishListener     当任务完成时往future中设置结果
      * @param ackListener         桥接到一组 Ack监听器上 可能为空列表 这样就是NOOP
+     *                            对于由join请求生成的更新任务 不设置ack监听器
      */
     @Override
     public void publish(ClusterChangedEvent clusterChangedEvent, ActionListener<Void> publishListener, AckListener ackListener) {
@@ -1537,10 +1536,12 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                     return;
                 }
 
-                // 因为发布任务本身会将最新的集群状态持久化 如果同时执行2个发布任务 且写入到不同的节点中 那么此时clusteState是不可控的 会产生混乱
-                // 所以最好的方式就是确保每次的集群配置变化后  才进行持久化 这里指的集群状态配置主要是说参与投票的节点数发生变化 因为每个节点进行选举时都是根据本地的选举配置发起选举的
-                // 在发布过程中 其他join都会失败 但是其他节点可以通过finder对象持续不断的发起join请求 直到join成功
-                // 原本就在集群中的node 重启时 由于集群状态没有发生变化 所以join会直接成功
+                // *** 重点 ***
+                // 如果有正在执行的发布任务 无法执行新任务
+                // join 失败的情况有2种 一种是本轮收到startJoin 并打算投票给本节点 此时刚好发现此时在发布其他信息 本次join失败   失败会进行重试么???  不重试的话也可以通过finder发现leader
+                // 另一种是 非masterNode 或者刚启动的masterNode 通过finder对象检测到leader 也会发起join   finder具备重试机制所以不怕失败
+
+                // 上一次的发布任务还未完成 无法继续执行发布任务
                 if (currentPublication.isPresent()) {
                     assert false : "[" + currentPublication.get() + "] in progress, cannot start new publication";
                     logger.warn(() -> new ParameterizedMessage("[{}] failed publication as already publication in progress",
@@ -1557,7 +1558,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                 assert getLocalNode().equals(clusterState.getNodes().get(getLocalNode().getId())) :
                     getLocalNode() + " should be in published " + clusterState;
 
-                // 基于要发布的内容 创建一个上下文对象 该对象已经定义了publish/commit怎么处理
+                // 基于要发布的内容 创建一个上下文对象 该对象已经定义了publish/commit怎么处理   并且知道往每个node发送怎么样的数据
                 final PublicationTransportHandler.PublicationContext publicationContext =
                     publicationHandler.newPublicationContext(clusterChangedEvent);
 
@@ -1657,8 +1658,13 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         }
 
         /**
+         * *** 重点 ***
          * 在处于candidate阶段时 通过finder对象的探测功能感知到了集群中存在某个leader节点 尝试加入  对term有要求
-         *
+         * 发起join请求后 该节点就会加入到集群中 之后再通过followerCheckReq 将本节点转换成 follower节点
+         * 比如一些其他role的node在启动时 主要就是通过finder对象感知到leader 之后尝试加入到集群 再由leader.followerCheck 将目标节点修改成follower
+         * 而masterNode 在finder探测过程中就可以发起预投票 以及之后的startJoin拉票行为
+         * 当某个新leader产生时  其他已经在clusterState的节点可以通过followerChecker 进行转换 而一开始不再集群中的节点只能依靠finder对象找到leader 并需要发送join请求
+         * 即使本次join失败 因为finder的探测是定时的 所以总有一轮会让本节点成功加入集群
          * @param masterNode
          * @param term
          */
@@ -1686,7 +1692,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
         /**
          * 通过 peerFinder对象最终会获得此时集群中最新的集群快照
-         * 首次启动的节点还是需要借助 seed对象/init_config检测到集群中其他节点 否则无法被集群发现 也就无法加入集群
+         * 首次启动的节点还是需要借助 seed对象/init_config检测到集群中其他节点 否则无法探测到leader节点 也就无法通过发送join请求来加入集群
          */
         @Override
         protected void onFoundPeersUpdated() {
@@ -1730,7 +1736,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
     private void startElectionScheduler() {
         assert electionScheduler == null : electionScheduler;
 
-        // 非参选节点 无法竞选
+        // 非参选节点 无法竞选   因为其他role的节点也可以通过 finder对象发现集群中的其他节点 或者感知leader  这时就要杜绝他们发起预投票
         if (getLocalNode().isMasterNode() == false) {
             return;
         }

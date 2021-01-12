@@ -414,8 +414,7 @@ public class JoinHelper {
     }
 
     /**
-     * 处理join任务相关的监听器
-     * 这里包装了callback 以解耦
+     * join处理器本身是没有实现ack接口的
      */
     static class JoinTaskListener implements ClusterStateTaskListener {
 

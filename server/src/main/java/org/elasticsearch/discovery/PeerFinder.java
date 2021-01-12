@@ -320,7 +320,7 @@ public abstract class PeerFinder {
 
 
         logger.trace("probing master nodes from cluster state: {}", lastAcceptedNodes);
-        // 这里只探测master节点  因为只有master节点参与选举
+        // 这里只探测master节点  因为只有master节点参与选举   但是本节点可以不是masterNode 比如本节点是dataNode 但是通过探测masterNode节点发现 leader
         // 这里已经在与新的地址建立连接了  注意是异步的
         for (ObjectCursor<DiscoveryNode> discoveryNodeObjectCursor : lastAcceptedNodes.getMasterNodes().values()) {
             startProbe(discoveryNodeObjectCursor.value.getAddress());
@@ -351,7 +351,7 @@ public abstract class PeerFinder {
             @Override
             protected void doRun() {
                 synchronized (mutex) {
-                    // 如果本对象长时间未建立连接 不需要处理 或者此时确认了leader 节点
+                    // 如果本对象长时间未建立连接 不需要处理 或者此时确认了leader
                     if (handleWakeUp() == false) {
                         return;
                     }

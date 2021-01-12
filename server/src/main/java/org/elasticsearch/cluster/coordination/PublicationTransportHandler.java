@@ -172,6 +172,9 @@ public class PublicationTransportHandler {
             compatibleClusterStateDiffReceivedCount.get());
     }
 
+    /**
+     * 发布动作分为2步 第一步是将新的clusterState发布到其他节点上   第二步是进行提交
+     */
     public interface PublicationContext {
 
         void sendPublishRequest(DiscoveryNode destination, PublishRequest publishRequest,
@@ -185,7 +188,7 @@ public class PublicationTransportHandler {
 
     /**
      * 根据本次集群的变化 生成一个发布的上下文对象 该对象定义了如何发送请求 以及处理的逻辑
-     * @param clusterChangedEvent
+     * @param clusterChangedEvent   描述本次clusterState的变化
      * @return
      */
     public PublicationContext newPublicationContext(ClusterChangedEvent clusterChangedEvent) {
@@ -194,7 +197,7 @@ public class PublicationTransportHandler {
         final DiscoveryNodes nodes = clusterChangedEvent.state().nodes();
         final ClusterState newState = clusterChangedEvent.state();
         final ClusterState previousState = clusterChangedEvent.previousState();
-        // TODO 先前描述阻塞相关的信息中 只要有一个不支持持久化 就要将所有版本的数据都发送出去
+        // 代表不支持持久化 那么必须传播全量数据
         final boolean sendFullVersion = clusterChangedEvent.previousState().getBlocks().disableStatePersistence();
         final Map<Version, BytesReference> serializedStates = new HashMap<>();
         final Map<Version, BytesReference> serializedDiffs = new HashMap<>();
