@@ -38,7 +38,7 @@ import java.util.Set;
 /**
  * The core class of the cluster state coordination algorithm, directly implementing the
  * <a href="https://github.com/elastic/elasticsearch-formal-models/blob/master/ZenWithTerms/tla/ZenWithTerms.tla">formal model</a>
- * 描述此时的协调状态
+ * 该对象决定了选举的状态  比如当前采集到多少票数  条件是否允许触发某种动作 比如晋升
  */
 public class CoordinationState {
 
@@ -53,7 +53,7 @@ public class CoordinationState {
 
     // transient state
     /**
-     * 专门用于选举leader的投票箱
+     * 接收其他节点返回的 join请求
      */
     private VoteCollection joinVotes;
 
@@ -67,7 +67,7 @@ public class CoordinationState {
     private boolean electionWon;
 
     /**
-     * 每当更新任期的时候可以发现该属性被重置了  可以推测这个version就是在同一任期中leader调用pub的次数
+     * 当某个节点晋升成leader时 会设置成 getLastAcceptedVersion
      */
     private long lastPublishedVersion;
 
@@ -81,7 +81,7 @@ public class CoordinationState {
     /**
      *
      * @param localNode 本节点信息
-     * @param persistedState  描述持久化后的CS信息
+     * @param persistedState  该对象具备将clusterState持久化的能力   在masterNode对应直接持久化对象  在dataNode中则是先将数据暂存到内存中
      * @param electionStrategy   采用的选举策略
      */
     public CoordinationState(DiscoveryNode localNode, PersistedState persistedState, ElectionStrategy electionStrategy) {
@@ -198,10 +198,11 @@ public class CoordinationState {
      * @param startJoinRequest The startJoinRequest, specifying the node requesting the join.
      * @return A Join that should be sent to the target node of the join.
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
-     *
+     * 当收到某个节点的  加团申请    本节点不一定会通过
      */
     public Join handleStartJoin(StartJoinRequest startJoinRequest) {
-        // 当本节点收到一个任期大于自己的startJoin时 会更新本地任期 并生成一个join对象 如果落后的任期 不予处理
+        // 当本节点收到落后的请求时 直接拒绝  但是不影响发起startJoin的节点  只要超半数收到请求 还是可以晋升成leader
+        // 通过预投票的节点在 发起startJoin时 会将term+1
         if (startJoinRequest.getTerm() <= getCurrentTerm()) {
             logger.debug("handleStartJoin: ignoring [{}] as term provided is not greater than current term [{}]",
                 startJoinRequest, getCurrentTerm());
@@ -211,8 +212,8 @@ public class CoordinationState {
 
         logger.debug("handleStartJoin: leaving term [{}] due to {}", getCurrentTerm(), startJoinRequest);
 
-        // joinVotes 填充了数据应该就代表本节点也正好发起了startJoin请求
-        // 但是由于收到的新请求的任期更大 所以直接放弃了本次选举
+        // joinVotes 填充了数据就代表本节点也正好发起了startJoin请求
+        // 但是由于收到的新请求的任期更大 所以直接放弃了本次选举   这里仅是打印日志 还没有做清理操作
         if (joinVotes.isEmpty() == false) {
             final String reason;
             if (electionWon == false) {
@@ -225,25 +226,28 @@ public class CoordinationState {
             logger.debug("handleStartJoin: discarding {}: {}", joinVotes, reason);
         }
 
-        // 这里更新任期  1.candidate发起新的选举 此时他们的任期会+1 并通过startJoin使得其他落后的节点的任期也更新
-        //               2.新启动的节点感应到之前的leader节点 会模拟leader发出了一个startJoin请求  之后同步任期
+        // 这里同步任期
         persistedState.setCurrentTerm(startJoinRequest.getTerm());
         assert getCurrentTerm() == startJoinRequest.getTerm();
-        // 每当更新任期的时候可以发现 pub的version重置了  可以推测这个version就是在同一任期中leader调用pub的次数
+        // 每一个term不一定会选举出leader 但是每个term至多对应一个leader 并且每发起一次pub请求都会增加 pubVersion
         lastPublishedVersion = 0;
-        // 在更新任期前 集群中参与投票的配置会被记录下来
+
+        // 最后一次发布的配置项会被记录下来 注意不是 commit
         lastPublishedConfiguration = getLastAcceptedConfiguration();
 
-        // 代表在重启过后同步过任期
+        // 当收到某节点发送的startJoin时 会修改该标识
         startedJoinSinceLastReboot = true;
-        // 在更新任期的同时代表在最新的任期中该节点已经选举失败了
+
+        // 因为收到了任期更大的节点的startJoin请求 所以本次选举自动失败
+        // 注意 在极端情况下允许多个节点同时进入预投票阶段 每个节点都会拒绝其他节点的startJoin请求 但是本轮很有可能每个节点各自拉拢了一些跟随着 但是没有到1/2的界限导致本轮选举无结果
+        // 甚至多个不同的term 也可能同时发起 startJoin请求 但是低term的接受到高term的就会自动放弃 并尝试加入到发起startJoin的节点
         electionWon = false;
 
-        // 清空之前的投票箱 因为本节点在当前任期已经无法发送startJoin 和 pubReq了
+        // 本节点在本轮已经无法胜出 选择跟随发起节点
         joinVotes = new VoteCollection();
         publishVotes = new VoteCollection();
 
-        // 生成一个当前节点加入到目标节点的join对象  这里携带了请求加入到集群的 节点记录的选举配置信息
+        // 生成一个加入到目标节点的join请求
         return new Join(localNode, startJoinRequest.getSourceNode(), getCurrentTerm(), getLastAcceptedTerm(),
             getLastAcceptedVersion());
     }
@@ -254,13 +258,12 @@ public class CoordinationState {
      * @param join The Join received.
      * @return true iff this instance does not already have a join vote from the given source node for this term
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
-     * 当收到其他节点发来的join请求时触发
-     * 此时处理join时 可能本节点已经成为了leader 又或者 收到某个节点加入集群的申请
+     * 收到某节点发送的join请求
      */
     public boolean handleJoin(Join join) {
         assert join.targetMatches(localNode) : "handling join " + join + " for the wrong node " + localNode;
 
-        // 必须同一任期的join才有意义  落后的节点会在同步任期后发起请求 所以任期是一致的 而某个candidate发起选举时 其他节点收到startJoin请求也会同步任期
+        // 要求处理join时  join.term 与本节点的term必须相同
         if (join.getTerm() != getCurrentTerm()) {
             logger.debug("handleJoin: ignored join due to term mismatch (expected: [{}], actual: [{}])",
                 getCurrentTerm(), join.getTerm());
@@ -268,14 +271,14 @@ public class CoordinationState {
                 "incoming term " + join.getTerm() + " does not match current term " + getCurrentTerm());
         }
 
-        // 修改为true的条件是接收过startJoin 而成为leader时 也要给自己发送startJoin请求 所以这个条件必然能通过
+        // 发起startJoin的节点必然能保证在处理其他节点的join请求前会先处理投选自己的join请求  同时还会重置投票箱
         if (startedJoinSinceLastReboot == false) {
             logger.debug("handleJoin: ignored join as term was not incremented yet after reboot");
             throw new CoordinationStateRejectedException("ignored join as term has not been incremented yet after reboot");
         }
 
-        // 请求端最近一次写入的集群状态必然比作为leader的节点最近一次集群状态要旧或相等 这个条件也必然会满足
         final long lastAcceptedTerm = getLastAcceptedTerm();
+        // join请求应该比本节点 的数据要旧
         if (join.getLastAcceptedTerm() > lastAcceptedTerm) {
             logger.debug("handleJoin: ignored join as joiner has a better last accepted term (expected: <=[{}], actual: [{}])",
                 lastAcceptedTerm, join.getLastAcceptedTerm());
@@ -283,7 +286,7 @@ public class CoordinationState {
                 " of join higher than current last accepted term " + lastAcceptedTerm);
         }
 
-        // 如果在同一个任期中 但是join 此时集群的集群状态版本更新 也是异常情况  这些应该都是伪造请求吧 正常操作不会出现这种情况
+        // 如果在同一个任期中 但是join 此时集群的集群状态版本更新 也是异常情况
         if (join.getLastAcceptedTerm() == lastAcceptedTerm && join.getLastAcceptedVersion() > getLastAcceptedVersion()) {
             logger.debug(
                 "handleJoin: ignored join as joiner has a better last accepted version (expected: <=[{}], actual: [{}]) in term {}",
@@ -305,7 +308,7 @@ public class CoordinationState {
         // 将当前的join请求加入到投票箱中
         boolean added = joinVotes.addJoinVote(join);
         boolean prevElectionWon = electionWon;
-        // 每当接受到一个新的join 请求时 都要根据此时最新的joinVotes 检测是否完成选举   也就是极端情况可能会有多个node 同时通过预投票 并通过startJoin采集票数
+        // 每当接受到一个新的join 请求时 都要根据此时最新的joinVotes 检测是否完成选举   极端情况可能会有多个node 同时通过预投票 并通过startJoin采集票数
         electionWon = isElectionQuorum(joinVotes);
         assert !prevElectionWon || electionWon : // we cannot go from won to not won
             "locaNode= " + localNode + ", join=" + join + ", joinVotes=" + joinVotes;
@@ -597,25 +600,28 @@ public class CoordinationState {
 
     /**
      * A collection of votes, used to calculate quorums. Optionally records the Joins as well.
-     * 包含了所有参与选举的node
+     * 代表某次选举的投票箱 比如 预投票
      */
     public static class VoteCollection {
 
         /**
-         * 此时已经投票的所有节点
+         * 当前感知到的集群中所有masterNode
          */
         private final Map<String, DiscoveryNode> nodes;
         private final Set<Join> joins;
 
+        /**
+         * 增加一票
+         * @param sourceNode  支持者的节点
+         * @return
+         */
         public boolean addVote(DiscoveryNode sourceNode) {
-            // 确保此时参与的节点必须是master节点
-            // master是不是有2层含义  一层是针对所有node 只有role包含master的node 才能参与投票
-            // 还有一层就是针对 所有参与投票的节点(master就是leader)
+            // 要求支持者必须是参选节点 并且是首次加入
             return sourceNode.isMasterNode() && nodes.put(sourceNode.getId(), sourceNode) == null;
         }
 
         /**
-         * 获取某个节点发出的投票请求
+         * 本节点获得了一个支持者
          * @param join
          * @return
          */

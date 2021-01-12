@@ -34,7 +34,7 @@ public class JoinRequest extends TransportRequest {
 
     /**
      * The sending (i.e. joining) node.
-     * 当前哪个节点想要加入到集群
+     * 发起join请求的节点
      */
     private final DiscoveryNode sourceNode;
 
@@ -42,7 +42,7 @@ public class JoinRequest extends TransportRequest {
      * The minimum term for which the joining node will accept any cluster state publications. If the joining node is in a strictly greater
      * term than the master it wants to join then the master must enter a new term and hold another election. Doesn't necessarily match
      * {@link JoinRequest#optionalJoin}.
-     * 在处理startJoin前的任期   因为处理startJoin后任期可能就更新了
+     * 未同步 startJoin请求前的任期
      */
     private final long minimumTerm;
 
@@ -51,7 +51,7 @@ public class JoinRequest extends TransportRequest {
      * That's ok, the sender likely discovered that the master we voted for lost the election and now we're trying to join the winner. Once
      * the sender has successfully joined the master, the lack of a vote in its term causes another election (see
      * {@link Publication#onMissingJoin(DiscoveryNode)}).
-     * 描述具体的join信息
+     * 本次发起的join请求 内部包含了 任期信息等
      */
     private final Optional<Join> optionalJoin;
 

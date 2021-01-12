@@ -88,6 +88,10 @@ public class GatewayMetaState implements Closeable {
     // Set by calling start()
     private final SetOnce<PersistedState> persistedState = new SetOnce<>();
 
+    /**
+     * 存储选举对象此时的元数据信息
+     * @return
+     */
     public PersistedState getPersistedState() {
         final PersistedState persistedState = this.persistedState.get();
         assert persistedState != null : "not started";
@@ -99,11 +103,12 @@ public class GatewayMetaState implements Closeable {
     }
 
     /**
-     * 通过一组相关的组件进行初始化
+     * 本对象在启动时 需要加载磁盘中的数据  辅助之后的选举工作
      * @param settings
-     * @param transportService
-     * @param clusterService
+     * @param transportService    用于在集群节点中相互通信
+     * @param clusterService      可以将最新的clusterState发布到集群中  或者监听最新的clusterState
      * @param metaStateService
+     *        TODO 有关升级的逻辑先忽略
      * @param metadataIndexUpgradeService
      * @param metadataUpgrader
      * @param persistedClusterStateService
@@ -116,14 +121,14 @@ public class GatewayMetaState implements Closeable {
         // 只有本节点是数据节点 或者 选举节点时才有必要加载数据
         if (DiscoveryNode.isMasterNode(settings) || DiscoveryNode.isDataNode(settings)) {
             try {
-                // 从dataPath中读取最新的元数据信息    metadata/indexMetadata 数据都以lucene.doc的形式存储在_state目录下
+                // 从node级别的 _state 目录下 加载metadata 以及 indexMetadata  还有一些选举相关的属性
                 final PersistedClusterStateService.OnDiskState onDiskState = persistedClusterStateService.loadBestOnDiskState();
 
                 Metadata metadata = onDiskState.metadata;
                 long lastAcceptedVersion = onDiskState.lastAcceptedVersion;
                 long currentTerm = onDiskState.currentTerm;
 
-                // 代表此时磁盘中没有相关数据
+                // 代表该节点上之前没有任何集群相关的数据 可能就是一个新启动的节点
                 if (onDiskState.empty()) {
                     assert Version.CURRENT.major <= Version.V_7_0_0.major + 1 :
                         "legacy metadata loader is not needed anymore from v9 onwards";
@@ -143,14 +148,15 @@ public class GatewayMetaState implements Closeable {
                     final ClusterState clusterState = prepareInitialClusterState(transportService, clusterService,
                         ClusterState.builder(ClusterName.CLUSTER_NAME_SETTING.get(settings))
                             .version(lastAcceptedVersion)
-                            // 忽略metadata的升级逻辑
+                            // 当从磁盘上加载出来的metadata 包装成 clusterState
+                            // TODO 忽略metadata的升级逻辑
                             .metadata(upgradeMetadataForNode(metadata, metadataIndexUpgradeService, metadataUpgrader))
                             .build());
-                    // PersistedState 代表将某些状态信息持久化
+                    // 当本节点是参与选举的节点时  或者同时是masterNode/DataNode时  都生成lucenePersistedState对象
                     if (DiscoveryNode.isMasterNode(settings)) {
                         persistedState = new LucenePersistedState(persistedClusterStateService, currentTerm, clusterState);
                     } else {
-                        // 非MasterNode 生成一个异步持久化对象 一开始将CS存储在内存中 在合适的时机才会将数据持久化
+                        // 数据节点 持久化clusterState的方式不同
                         persistedState = new AsyncLucenePersistedState(settings, transportService.getThreadPool(),
                             new LucenePersistedState(persistedClusterStateService, currentTerm, clusterState));
                     }
@@ -183,14 +189,14 @@ public class GatewayMetaState implements Closeable {
             if (persistedClusterStateService.getDataPaths().length > 0) {
                 // write empty cluster state just so that we have a persistent node id. There is no need to write out global metadata with
                 // cluster uuid as coordinating-only nodes do not snap into a cluster as they carry no state
-                // 只写入了一个名字
+                // 将只包含了一个 clusterName的 clusterState 写入到磁盘中
                 try (PersistedClusterStateService.Writer persistenceWriter = persistedClusterStateService.createWriter()) {
                     persistenceWriter.writeFullStateAndCommit(currentTerm, clusterState);
                 } catch (IOException e) {
                     throw new ElasticsearchException("failed to load metadata", e);
                 }
                 try {
-                    // delete legacy cluster state files
+                    // delete legacy cluster state files  TODO 忽略兼容性代码
                     metaStateService.deleteAll();
                     // write legacy node metadata to prevent downgrades from spawning empty cluster state
                     NodeMetadata.FORMAT.writeAndCleanup(new NodeMetadata(persistedClusterStateService.getNodeId(), Version.CURRENT),
@@ -296,9 +302,7 @@ public class GatewayMetaState implements Closeable {
     }
 
     /**
-     * 异步持久化对象
-     * CS首先暂存在内存中 当CS发布成功后会通知其他节点进行持久化
-     * 也就是每个节点还是需要在本地存储CS数据 便于快速启动
+     * ClusterState 首先是存储在内存中的  在合适的时机会会进行持久化
      */
     static class AsyncLucenePersistedState extends InMemoryPersistedState {
 
@@ -309,7 +313,8 @@ public class GatewayMetaState implements Closeable {
         private final EsThreadPoolExecutor threadPoolExecutor;
 
         /**
-         * 该对象可以对CS做持久化
+         * 实际上就是  LucenePersistedState
+         * 真正进行持久化的对象
          */
         private final PersistedState persistedState;
 
@@ -466,7 +471,7 @@ public class GatewayMetaState implements Closeable {
          *
          * @param persistedClusterStateService  该服务负责将集群信息持久化
          * @param currentTerm   当前集群任期
-         * @param lastAcceptedState  最后认可的CS
+         * @param lastAcceptedState  根据磁盘中存储的数据还原的 metadata 生成的clusterState
          * @throws IOException
          */
         LucenePersistedState(PersistedClusterStateService persistedClusterStateService, long currentTerm, ClusterState lastAcceptedState)
@@ -506,13 +511,19 @@ public class GatewayMetaState implements Closeable {
             return lastAcceptedState;
         }
 
+        /**
+         * 当本节点感知到集群中更大的term时
+         * @param currentTerm
+         */
         @Override
         public void setCurrentTerm(long currentTerm) {
             try {
+                // 代表之前写入出现异常了  先忽略
                 if (writeNextStateFully) {
                     getWriterSafe().writeFullStateAndCommit(currentTerm, lastAcceptedState);
                     writeNextStateFully = false;
                 } else {
+                    // 正常处理的情况 将最新的 term更新到 coordinatorState中 并进行持久化
                     getWriterSafe().commit(currentTerm, lastAcceptedState.version());
                 }
             } catch (Exception e) {

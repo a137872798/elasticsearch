@@ -95,7 +95,7 @@ public class HandshakingTransportAddressConnector implements TransportAddressCon
 
                 logger.trace("[{}] opening probe connection", thisConnectionAttempt);
 
-                // 创建与该节点的连接   也就是在集群中 每个master节点都是与其他节点连接的
+                // 每个 masterNode 都是相互连接的
                 transportService.openConnection(targetNode,
                     // 生成channel的描述信息   因为一个connection包含多个channel 这里根据指令类型负载到不同的channel上
                     ConnectionProfile.buildSingleChannelProfile(Type.REG, probeConnectTimeout, probeHandshakeTimeout,

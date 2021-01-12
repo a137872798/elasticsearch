@@ -132,7 +132,7 @@ public class RoutingAllocation {
      * Creates a new {@link RoutingAllocation}
      *  @param deciders {@link AllocationDeciders} to used to make decisions for routing allocations
      *                                            分配策略
-     * @param routingNodes Routing nodes in the current cluster
+     * @param routingNodes Routing nodes in the current cluster   本对象是基于 clusterState.routingTable 还原的
      * @param clusterState cluster state before rerouting
      * @param currentNanoTime the nano time to use for all delay allocation calculation (typically {@link System#nanoTime()})
      */

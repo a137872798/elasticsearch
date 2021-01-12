@@ -274,6 +274,7 @@ public class MasterService extends AbstractLifecycleComponent {
     }
 
     /**
+     * 执行一组任务 更新clusterState 并发布到集群中
      * @param taskInputs 将一组UpdateTask 和一个 taskExecutor合并
      */
     private void runTasks(TaskInputs taskInputs) {
@@ -288,7 +289,7 @@ public class MasterService extends AbstractLifecycleComponent {
         // 在更新集群状态前 获取之前的集群信息
         final ClusterState previousClusterState = state();
 
-        // 本节点此时不是leader节点  且这组任务不支持在非leader节点执行
+        // 当本节点不是leader节点时 且该任务要求必须在leader上执行 触发noLongerMaster后返回
         if (!previousClusterState.nodes().isLocalNodeElectedMaster() && taskInputs.runOnlyWhenMaster()) {
             logger.debug("failing [{}]: local node is no longer master", summary);
             taskInputs.onNoLongerMaster();
@@ -368,11 +369,13 @@ public class MasterService extends AbstractLifecycleComponent {
             }
         };
 
-        // 当整个发布动作完成后会为future设置结果    param3是一个ack监听器   每当某个节点收到新CS后就会触发ack钩子 而当发布成功则会触发 stateProcessed钩子
+        // 当发布成功后会设置future的结果
+        // ack监听器要求请求发送到所有节点上 才会触发
         clusterStatePublisher.publish(clusterChangedEvent, fut, taskOutputs.createAckListener(threadPool, clusterChangedEvent.state()));
 
         // indefinitely wait for publication to complete
         try {
+            // 阻塞直到pub完成
             FutureUtils.get(fut);
             // 任务执行成功 触发监听器
             onPublicationSuccess(clusterChangedEvent, taskOutputs);
@@ -449,8 +452,9 @@ public class MasterService extends AbstractLifecycleComponent {
     private TaskOutputs calculateTaskOutputs(TaskInputs taskInputs, ClusterState previousClusterState) {
         // 这里主要是调用 executor处理批任务并返回结果
         ClusterTasksResult<Object> clusterTasksResult = executeTasks(taskInputs, previousClusterState);
-        // 每当集群状态发生变化时 需要更新版本号
+        // 当路由表 或者 metadata 发生变化时 增加版本号
         ClusterState newClusterState = patchVersions(previousClusterState, clusterTasksResult);
+        // 将本次执行任务的所有信息合并成一个 output对象
         return new TaskOutputs(taskInputs, previousClusterState, newClusterState, getNonFailedTasks(taskInputs, clusterTasksResult),
             clusterTasksResult.executionResults);
     }
@@ -584,12 +588,13 @@ public class MasterService extends AbstractLifecycleComponent {
         }
 
         /**
-         * 生成ack监听器
+         * ack监听器 要求本次请求通知到所有节点上
          * @param threadPool
          * @param newClusterState  此时最新的集群状态
          * @return
          */
         Discovery.AckListener createAckListener(ThreadPool threadPool, ClusterState newClusterState) {
+            // 排除掉提前失败的任务
             return new DelegatingAckListener(nonFailedTasks.stream()
                 .filter(task -> task.listener instanceof AckedClusterStateTaskListener)
                 // 看来要通知到所有的node 才能真正触发监听器
@@ -800,7 +805,7 @@ public class MasterService extends AbstractLifecycleComponent {
 
 
     /**
-     * 代表最新的CS必须发送到集群内所有节点
+     * 必须通知到 集群中所有 mustAck返回true的节点 才可以正常触发监听器
      */
     private static class AckCountDownListener implements Discovery.AckListener {
 
@@ -811,6 +816,9 @@ public class MasterService extends AbstractLifecycleComponent {
          */
         private final AckedClusterStateTaskListener ackedTaskListener;
 
+        /**
+         * 当通知到多少个节点后 可以正常触发监听器
+         */
         private final CountDown countDown;
         private final DiscoveryNode masterNode;
         private final ThreadPool threadPool;
@@ -820,7 +828,7 @@ public class MasterService extends AbstractLifecycleComponent {
 
         /**
          *
-         * @param ackedTaskListener  代表能触发ack操作的监听器 比如针对join请求的监听器
+         * @param ackedTaskListener
          * @param clusterStateVersion
          * @param nodes     当前clusterState下所有node
          * @param threadPool
@@ -835,6 +843,7 @@ public class MasterService extends AbstractLifecycleComponent {
             // 检查集群内所有节点 只有满足条件的才需要确认ack  默认情况下mustAck为true 也就是要求集群内所有节点都收到
             for (DiscoveryNode node : nodes) {
                 //we always wait for at least the master node
+                // leader节点 和 mustAck == true的节点必须确认
                 if (node.equals(masterNode) || ackedTaskListener.mustAck(node)) {
                     countDown++;
                 }
@@ -844,10 +853,7 @@ public class MasterService extends AbstractLifecycleComponent {
         }
 
 
-        // TODO ack监听器在publish中再看什么时候触发钩子
-
         /**
-         * 代表pub成功  也就是通知到达半数节点
          * @param commitTime the time it took to commit the cluster state
          */
         @Override
@@ -873,8 +879,14 @@ public class MasterService extends AbstractLifecycleComponent {
             }
         }
 
+        /**
+         * 每当某个节点进行确认时 减少一次计数值
+         * @param node the node
+         * @param e the optional exception
+         */
         @Override
         public void onNodeAck(DiscoveryNode node, @Nullable Exception e) {
+            // 不满足ack条件 忽略
             if (node.equals(masterNode) == false && ackedTaskListener.mustAck(node) == false) {
                 return;
             }
@@ -886,6 +898,7 @@ public class MasterService extends AbstractLifecycleComponent {
                         "ack received from node [{}], cluster_state update (version: {})", node, clusterStateVersion), e);
             }
 
+            // 减少计数值
             if (countDown.countDown()) {
                 finish();
             }

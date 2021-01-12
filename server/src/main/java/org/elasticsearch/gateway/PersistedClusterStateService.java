@@ -180,7 +180,7 @@ public class PersistedClusterStateService {
 
     /**
      * Creates a new disk-based writer for cluster states
-     * 这里创建一个负责持久化 CS的writer对象
+     * 该对象负责将clusterState 写入到磁盘中
      */
     public Writer createWriter() throws IOException {
         final List<MetadataIndexWriter> metadataIndexWriters = new ArrayList<>();
@@ -251,15 +251,21 @@ public class PersistedClusterStateService {
     }
 
     /**
-     * 描述从磁盘中某个地方读取到的 metadata
+     * 描述从磁盘中加载的元数据信息
      */
     public static class OnDiskState {
         private static final OnDiskState NO_ON_DISK_STATE = new OnDiskState(null, null, 0L, 0L, Metadata.EMPTY_METADATA);
 
+        /**
+         * 该数据属于哪个node
+         */
         private final String nodeId;
         private final Path dataPath;
         public final long currentTerm;
         public final long lastAcceptedVersion;
+        /**
+         * 加载的元数据
+         */
         public final Metadata metadata;
 
         private OnDiskState(String nodeId, Path dataPath, long currentTerm, long lastAcceptedVersion, Metadata metadata) {
@@ -347,7 +353,7 @@ public class PersistedClusterStateService {
 
     /**
      * Loads the best available on-disk cluster state. Returns {@link OnDiskState#NO_ON_DISK_STATE} if no such state was found.
-     * 从磁盘上加载最新的metadata
+     * 加载当前node级别的元数据信息
      */
     public OnDiskState loadBestOnDiskState() throws IOException {
         String committedClusterUuid = null;
@@ -359,10 +365,11 @@ public class PersistedClusterStateService {
         // sufficient to read _any_ copy. "Mostly" sufficient because the user can change the set of data paths when restarting, and may
         // add a data path containing a stale copy of the metadata. We deal with this by using the freshest copy we can find.
         for (final Path dataPath : dataPaths) {
-            // 这个是外层的 _state目录 每个index 还专门有一个_state目录
+            // node 级别存在一个 _state 目录  而在index级别也有自己的 _state 目录  这里是获取node级别的数据
             final Path indexPath = dataPath.resolve(METADATA_DIRECTORY_NAME);
             if (Files.exists(indexPath)) {
                 try (Directory directory = createDirectory(indexPath);
+                     // state信息也是通过lucene存储
                      DirectoryReader directoryReader = DirectoryReader.open(directory)) {
                     // 从目录加载数据
                     final OnDiskState onDiskState = loadOnDiskState(dataPath, directoryReader);
@@ -391,6 +398,7 @@ public class PersistedClusterStateService {
                         maxCurrentTermOnDiskState = onDiskState;
                     }
 
+                    // 获取选举相关的信息
                     long acceptedTerm = onDiskState.metadata.coordinationMetadata().term();
                     long maxAcceptedTerm = bestOnDiskState.metadata.coordinationMetadata().term();
                     // 这里就是尽可能获取最新的 OnDiskState  简化理解的话 可以当作只有一个dataPath
@@ -418,9 +426,9 @@ public class PersistedClusterStateService {
     }
 
     /**
-     *
-     * @param dataPath  外层的数据目录
-     * @param reader  已经定位到_state目录 并生成输入流
+     * 将lucene中存储的数据还原成 Metadata
+     * @param dataPath  节点级目录
+     * @param reader  用于读取lucene数据的对象   对应的目录为 dataPath._state
      * @return
      * @throws IOException
      */
@@ -429,7 +437,7 @@ public class PersistedClusterStateService {
         searcher.setQueryCache(null);
 
         final SetOnce<Metadata.Builder> builderReference = new SetOnce<>();
-        // 通过lucene查找type=global的所有doc 并获取data数据
+        // 通过lucene查找type=global的所有doc 并获取fieldName = data数据
         consumeFromType(searcher, GLOBAL_TYPE_NAME, bytes ->
         {
             // 反序列化成 metadata对象
@@ -452,7 +460,7 @@ public class PersistedClusterStateService {
         logger.trace("got global metadata, now reading index metadata");
 
         final Set<String> indexUUIDs = new HashSet<>();
-        // 这里读取type为index的data数据   这里有多个数据 每个index对应一个doc
+        // 之后读取 index级别的元数据信息
         consumeFromType(searcher, INDEX_TYPE_NAME, bytes ->
         {
             final IndexMetadata indexMetadata = IndexMetadata.fromXContent(XContentFactory.xContent(XContentType.SMILE)
@@ -464,7 +472,7 @@ public class PersistedClusterStateService {
             builder.put(indexMetadata, false);
         });
 
-        // 从 segment_N 的用户数据中读取相关属性
+        // 从 segment_N 的用户数据中读取相关属性 这个是node级别的数据 与shard级别的userData不同 那个存储的都是checkpoint相关的信息
         final Map<String, String> userData = reader.getIndexCommit().getUserData();
         logger.trace("loaded metadata [{}] from [{}]", userData, reader.directory());
         assert userData.size() == COMMIT_DATA_SIZE : userData;
@@ -477,7 +485,7 @@ public class PersistedClusterStateService {
     }
 
     /**
-     * 根据type查询数据
+     * lucene下可以存储各种数据 这里通过 type = global来查询doc
      * @param indexSearcher
      * @param type
      * @param bytesRefConsumer
@@ -490,11 +498,12 @@ public class PersistedClusterStateService {
         final Weight weight = indexSearcher.createWeight(query, ScoreMode.COMPLETE_NO_SCORES, 0.0f);
         logger.trace("running query [{}]", query);
 
-        // 查询所有type=global的doc
+        // 每个leaf 对应一个flush的结果 在没有执行merge前 多个segment的数据都是必要的 当发生merge后 最新的segment中就包含了全部的数据 但是使用者是判别不了的所以还是要挨个查询
         for (LeafReaderContext leafReaderContext : indexSearcher.getIndexReader().leaves()) {
             logger.trace("new leafReaderContext: {}", leafReaderContext);
             final Scorer scorer = weight.scorer(leafReaderContext);
             if (scorer != null) {
+                // 获取 doc位图 用于过滤已经被删除的doc
                 final Bits liveDocs = leafReaderContext.reader().getLiveDocs();
                 // 检测某个doc是否还存活
                 final IntPredicate isLiveDoc = liveDocs == null ? i -> true : liveDocs::get;
@@ -551,7 +560,13 @@ public class PersistedClusterStateService {
     private static class MetadataIndexWriter implements Closeable {
 
         private final Logger logger;
+        /**
+         * 本次存储数据的目录
+         */
         private final Directory directory;
+        /**
+         * 负责将lucene数据写入磁盘的对象
+         */
         private final IndexWriter indexWriter;
 
         /**
@@ -625,9 +640,12 @@ public class PersistedClusterStateService {
     public static class Writer implements Closeable {
 
         /**
-         * 每个对象对应一个 dataPath
+         * 每个对象对应一个 dataPath   并且具备将metadata写入lucene的能力
          */
         private final List<MetadataIndexWriter> metadataIndexWriters;
+        /**
+         * 当前节点的id
+         */
         private final String nodeId;
         private final BigArrays bigArrays;
         private final LongSupplier relativeTimeMillisSupplier;
@@ -668,7 +686,7 @@ public class PersistedClusterStateService {
 
         /**
          * Overrides and commits the given current term and cluster state
-         * 将此时最新的CS持久化到磁盘中
+         * 将此时最新的 clusterState 持久化到磁盘中
          */
         public void writeFullStateAndCommit(long currentTerm, ClusterState clusterState) throws IOException {
             ensureOpen();
@@ -676,7 +694,7 @@ public class PersistedClusterStateService {
                 final long startTimeMillis = relativeTimeMillisSupplier.getAsLong();
                 // 先清理旧数据 之后写入新数据  stats可以理解为结果对象   这里完成了flush 但是没有完成commit
                 final WriterStats stats = overwriteMetadata(clusterState.metadata());
-                // flush 好像只是做了数据的持久化 但是lucene只能读取到commit后的数据 也就是还需要执行一步commit 具体记不清了 需要复习下
+                // flush 只是做了数据的持久化 但是lucene只能读取到commit后的数据 也就是还需要执行一步commit 具体记不清了 需要复习下
                 commit(currentTerm, clusterState.version());
                 fullStateWritten = true;
 
@@ -792,24 +810,27 @@ public class PersistedClusterStateService {
          */
         private WriterStats overwriteMetadata(Metadata metadata) throws IOException {
             for (MetadataIndexWriter metadataIndexWriter : metadataIndexWriters) {
+                // 清空存储在buffer(内存)中的doc
                 metadataIndexWriter.deleteAll();
             }
+            // 重新构建内存中的数据
             return addMetadata(metadata);
         }
 
         /**
          * Add documents for the metadata of the given cluster state, assuming that there are currently no documents.
+         * 将metadata写入到lucene中 同时进行刷盘
          */
         private WriterStats addMetadata(Metadata metadata) throws IOException {
-            // metadata对应的doc.type是 global
+            // 将 metadata 转换成doc
             try (ReleasableDocument globalMetadataDocument = makeGlobalMetadataDocument(metadata)) {
-                // 在每个dataPath下 使用最新的metadata doc 去覆盖之前的数据
+                // 这个是更新 内存中的doc
                 for (MetadataIndexWriter metadataIndexWriter : metadataIndexWriters) {
                     metadataIndexWriter.updateGlobalMetadata(globalMetadataDocument.getDocument());
                 }
             }
 
-            // 每个indexMetadata对应的doc.type是 index   这里流程跟上面一样
+            // 上面是存储 全局数据 之后以index为单位 存储IndexMetadata 数据
             for (ObjectCursor<IndexMetadata> cursor : metadata.indices().values()) {
                 final IndexMetadata indexMetadata = cursor.value;
                 try (ReleasableDocument indexMetadataDocument = makeIndexMetadataDocument(indexMetadata)) {
@@ -822,7 +843,7 @@ public class PersistedClusterStateService {
 
             // Flush, to try and expose a failure (e.g. out of disk space) before committing, because we can handle a failure here more
             // gracefully than one that occurs during the commit process.
-            // 将之前写入的数据刷盘
+            // 将刷盘 和commit分开执行 有利于提前发现问题 以及处理
             for (MetadataIndexWriter metadataIndexWriter : metadataIndexWriters) {
                 metadataIndexWriter.flush();
             }
@@ -909,6 +930,7 @@ public class PersistedClusterStateService {
          * @throws IOException
          */
         private ReleasableDocument makeIndexMetadataDocument(IndexMetadata indexMetadata) throws IOException {
+            // 将数据体 转换成doc 同时还需要追加一个 type=index 的field
             final ReleasableDocument indexMetadataDocument = makeDocument(INDEX_TYPE_NAME, indexMetadata);
             boolean success = false;
             try {
@@ -936,7 +958,7 @@ public class PersistedClusterStateService {
         }
 
         /**
-         * 将数据转换成doc
+         * 将数据转换成doc 同时插入一个type field
          * @param typeName  doc.type对应的名称
          *
          * @param metadata

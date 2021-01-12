@@ -136,9 +136,9 @@ public class DiscoveryModule {
             });
         }
 
+        // 用于选举任务时 发现集群初始列表的对象  至少会追加基于配置文件的发现对象
         List<String> seedProviderNames = DISCOVERY_SEED_PROVIDERS_SETTING.get(settings);
         // for bwc purposes, add settings provider even if not explicitly specified
-        // 如果没有settings 追加
         if (seedProviderNames.contains("settings") == false) {
             List<String> extendedSeedProviderNames = new ArrayList<>();
             extendedSeedProviderNames.add("settings");

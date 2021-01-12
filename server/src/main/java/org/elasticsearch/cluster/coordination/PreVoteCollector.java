@@ -92,9 +92,9 @@ public class PreVoteCollector {
      * Start a new pre-voting round.
      *
      * @param clusterState   the last-accepted cluster state   最近一次集群快照中的所有节点
-     * @param broadcastNodes the nodes from whom to request pre-votes   需要发起预投票的所有节点
+     * @param broadcastNodes the nodes from whom to request pre-votes   本次接收预投票请求的所有节点  包括自身
      * @return the pre-voting round, which can be closed to end the round early.
-     * 对所有节点发出一个 preVote请求
+     * 执行预投票任务 通过向相关节点发送 preVote请求 探测各个节点此时的状况
      */
     public Releasable start(final ClusterState clusterState, final Iterable<DiscoveryNode> broadcastNodes) {
         // 将此时最新的任期信息发送到其他节点
@@ -127,6 +127,7 @@ public class PreVoteCollector {
 
     /**
      * 处理预投票请求
+     * 也许本节点此时有认定的leader节点
      * @param request
      * @return
      */
@@ -138,11 +139,11 @@ public class PreVoteCollector {
         Tuple<DiscoveryNode, PreVoteResponse> state = this.state;
         assert state != null : "received pre-vote request before fully initialised";
 
+        // TODO 当本节点就是leader节点 并且发现自己落后时 应该会更新state
         final DiscoveryNode leader = state.v1();
         final PreVoteResponse response = state.v2();
 
-        // 此时不知道集群中的leader节点  返回res 这里包含本节点的term和version  这时可能会比选举的节点高 也可能会比选举的节点低 它会怎么做呢???
-        // 在预投票阶段实际上对term是没有要求的
+        // 如果此时本节点没有观测到leader 直接返回res
         if (leader == null) {
             return response;
         }
@@ -174,7 +175,7 @@ public class PreVoteCollector {
     private class PreVotingRound implements Releasable {
 
         /**
-         * 在某一轮发起的预投票请求中  每个节点的res都会保存在这里   这些节点将会支持本节点发起startJoin请求
+         * 存储所有term/version 小于本节点的node  并且这些节点未感知到leader节点
          */
         private final Map<DiscoveryNode, PreVoteResponse> preVotesReceived = newConcurrentMap();
 
@@ -196,10 +197,7 @@ public class PreVoteCollector {
         }
 
         /**
-         * 往这组节点发送 preVote请求
-         * 因为本任务本身就是一个不断循环发起的任务 只要满足半数条件的node能被感知到 就可以开始预投票了 极端情况下 一开始的半数节点全部支持 那么直接可以开始startJoin
-         * 只要条件没有满足 会随着定时任务不断地重复检测 以及当新的节点被感知到时 他们会加入到preVote的目标节点内
-         * @param broadcastNodes
+         * @param broadcastNodes   指定本次要通知的所有节点 包含了自身    这些节点是通过finder对象找到的
          */
         void start(final Iterable<DiscoveryNode> broadcastNodes) {
             logger.debug("{} requesting pre-votes from {}", this, broadcastNodes);
@@ -210,15 +208,18 @@ public class PreVoteCollector {
                         return new PreVoteResponse(in);
                     }
 
+                    /**
+                     * 当其他节点没有确定leader节点时触发该方法  就是正常情况 因为在第一轮 finder阶段 有足够多的node感知不到leader才会进入预投票阶段
+                     * 这里主要的作用就是感知其他节点的term
+                     * @param response
+                     */
                     @Override
                     public void handleResponse(PreVoteResponse response) {
                         handlePreVoteResponse(response, n);
                     }
 
                     /**
-                     * 返回异常信息 代表对端是有leader的  本节点能做的就是2件事
-                     * 1.等待finder找到leader节点 并加入集群
-                     * 2.在等待一定时间后 继续发起preVote请求 直到通过预投票
+                     * 如果对端节点已经检测到某个leader节点 就会返回异常信息  并且在 finder对象中 探测对端节点时 会将已知的leader节点返回 并在coordinator中处理 所以这里可以不做处理
                      * @param exp
                      */
                     @Override
@@ -239,13 +240,12 @@ public class PreVoteCollector {
         }
 
         /**
-         * 处理预投票结果
+         * 处理预投票结果  代表此时对端未检测到启动的leader节点
          * @param response
          * @param sender
          */
         private void handlePreVoteResponse(final PreVoteResponse response, final DiscoveryNode sender) {
-            // 每次收到结果都是一次触发机制  当预投票由于候选人数不足被关闭时 自然就不会处理后面的res  而之前能够进行startJoin的前提也是至少到达半数了
-            // 还是有可能一开始满足预投票条件 之后不满足 那么允许在startJoin阶段 仅向不足半数的节点发送请求 反正这时startJoin也不会成功
+            // 本对象已经被关闭了 忽略res 比如已经选出leader 或者此时节点数又不满足 预投票要求
             if (isClosed.get()) {
                 logger.debug("{} is closed, ignoring {} from {}", this, response, sender);
                 return;
@@ -255,7 +255,7 @@ public class PreVoteCollector {
             // 预投票阶段 仅检查leader是否过期 并没有对新的任期进行持久化
             updateMaxTermSeen.accept(response.getCurrentTerm());
 
-            // 在预投票阶段要确保目标节点的集群配置是最新的
+            // 如果对端的请求比自身要大 必然不会认可本节点 所以不需要继续处理  但是只要满足 超半数的节点认可本对象即可
             if (response.getLastAcceptedTerm() > clusterState.term()
                 || (response.getLastAcceptedTerm() == clusterState.term()
                 && response.getLastAcceptedVersion() > clusterState.version())) {
@@ -263,23 +263,23 @@ public class PreVoteCollector {
                 return;
             }
 
-            // 在term。version 满足条件的情况下 加入到投票箱中
+            // 存在一个任期比当前节点小的节点  并且该节点未感知到leader
             preVotesReceived.put(sender, response);
 
             // create a fake VoteCollection based on the pre-votes and check if there is an election quorum
             final VoteCollection voteCollection = new VoteCollection();
             final DiscoveryNode localNode = clusterState.nodes().getLocalNode();
 
-            // 该对象包含了当前节点持久化的最新任期 当前尚未持久化的任期等信息   (当前任期可以理解为在还未选举出leader节点使用的临时任期
-            // 而当选出leader后 会在pub中将任期进行持久化)
+            // 该对象包含了本节点最新的任期信息
             final PreVoteResponse localPreVoteResponse = getPreVoteResponse();
 
-            // 将票数放入投票箱中 并检测此时是否满足半数节点要求
+            // 每收到一次请求时 都尝试将之前收到的所有请求加入到投票箱中
+            // 预投票的意义就是采集足够多的 支持者
             preVotesReceived.forEach((node, preVoteResponse) -> voteCollection.addJoinVote(
                 new Join(node, localNode, preVoteResponse.getCurrentTerm(),
                 preVoteResponse.getLastAcceptedTerm(), preVoteResponse.getLastAcceptedVersion())));
 
-            // 未满足条件 忽略本次处理
+            // 本次支持者数量未达到要求
             if (electionStrategy.isElectionQuorum(clusterState.nodes().getLocalNode(), localPreVoteResponse.getCurrentTerm(),
                 localPreVoteResponse.getLastAcceptedTerm(), localPreVoteResponse.getLastAcceptedVersion(),
                 clusterState.getLastCommittedConfiguration(), clusterState.getLastAcceptedConfiguration(), voteCollection) == false) {
@@ -287,7 +287,8 @@ public class PreVoteCollector {
                 return;
             }
 
-            // 代表并发收到2个res 只需要处理一次
+            // 每一轮预投票 只要有一次节点数满足要求就可以了  实际上并没有要求在这一轮明确直到哪些节点支持  只是需要这个数量而已
+            // 但是通过finder探测到的所有节点会借着这个时候检测双端的任期
             if (electionStarted.compareAndSet(false, true) == false) {
                 logger.debug("{} added {} from {} but election has already started", this, response, sender);
                 return;

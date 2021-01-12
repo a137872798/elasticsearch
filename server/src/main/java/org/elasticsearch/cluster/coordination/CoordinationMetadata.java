@@ -353,7 +353,7 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
 
     /**
      * A collection of persistent node ids, denoting the voting configuration for cluster state changes.
-     * 有关选举的配置信息
+     * 描述本次参选的所有节点
      */
     public static class VotingConfiguration implements Writeable, ToXContentFragment {
 
@@ -385,7 +385,8 @@ public class CoordinationMetadata implements Writeable, ToXContentFragment {
         }
 
         /**
-         * 也就是决定选择是否生效  (同意的节点数超过nodeIds的2分之1)   就是投票箱的意思
+         * 代表新的集群配置  与本对象对应的集群节点快照的 交集已经超过了本对象集群快照的 1/2
+         * 如果本节点是刚启动  nodeIds为0  该方法始终返回false
          * @param votes  已经投票的节点
          * @return
          */

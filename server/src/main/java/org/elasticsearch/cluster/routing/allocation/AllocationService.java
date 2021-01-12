@@ -319,7 +319,8 @@ public class AllocationService {
     /**
      * unassigned an shards that are associated with nodes that are no longer part of the cluster, potentially promoting replicas
      * if needed.
-     * 分离已死的节点
+     * @param clusterState 在一次新的选举过程中 当发现某些节点发生了改变 就会从原本的 clusterState中移除  在该对象中也要将相关数据移除
+     * @param reroute 是否需要发起重路由
      */
     public ClusterState disassociateDeadNodes(ClusterState clusterState, boolean reroute, String reason) {
         RoutingNodes routingNodes = getMutableRoutingNodes(clusterState);
@@ -329,11 +330,12 @@ public class AllocationService {
             clusterInfoService.getClusterInfo(), currentNanoTime());
 
         // first, clear from the shards any node id they used to belong to that is now dead
-        // 某些节点会发现已经不存在于 DiscoveryNodes的 dataNodes中   触发 shardFailed
+        // 过期的节点对应的分片需要重置 以便于重新分配
         disassociateDeadNodes(allocation);
 
         // 只要有分片发生了变化 那么就更新集群state对象
         if (allocation.routingNodesChanged()) {
+            // 通过之前记录在observation中的信息 更新clusterState
             clusterState = buildResult(clusterState, allocation);
         }
 
@@ -606,27 +608,30 @@ public class AllocationService {
     }
 
     /**
-     * 分离已死的节点
+     * 某些节点本次没有被leader感知到 需要进行移除
      * @param allocation
      */
     private void disassociateDeadNodes(RoutingAllocation allocation) {
+        // routingNodes 是通过 clusterState.routingTable 还原的
         for (Iterator<RoutingNode> it = allocation.routingNodes().mutableIterator(); it.hasNext(); ) {
             RoutingNode node = it.next();
-            // 当某个节点已经不存在于 dataNodes列表时  这个节点被认为是已死的节点
+            // allocation.nodes 是从 clusterState.nodes()中还原的
+            // 当nodes中不包含本节点了 就代表该节点的相关信息已经过期了 这些分片也应该进行重新分配
             if (allocation.nodes().getDataNodes().containsKey(node.nodeId())) {
                 // its a live node, continue
                 continue;
             }
             // now, go over all the shards routing on the node, and fail them
-            // 生成某个节点的所有分片
+            // 该节点下的分片需要被移除 这里是处理它下面所有的分片
             for (ShardRouting shardRouting : node.copyShards()) {
                 final IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shardRouting.index());
-                // 获取超时时间 如果存在 就生成一个延迟对象
+                // 如果存在延时属性 就设置标识到  unassigned中  默认为1分钟    当进行reroute时 会检测时间是否满足移除条件
+                // TODO 目前只在  ReplicaShardAllocator中看到过该标识的使用
                 boolean delayed = INDEX_DELAYED_NODE_LEFT_TIMEOUT_SETTING.get(indexMetadata.getSettings()).nanos() > 0;
                 UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.NODE_LEFT, "node_left [" + node.nodeId() + "]",
                     null, 0, allocation.getCurrentNanoTime(), System.currentTimeMillis(), delayed, AllocationStatus.NO_ATTEMPT,
                     Collections.emptySet());
-                // 将它的所有分片都标记成失败
+                // 修改分片当前的状态  比如 start->unassigned/init->unassigned   一般来说之后需要配合reroute进行重分配
                 allocation.routingNodes().failShard(logger, shardRouting, unassignedInfo, indexMetadata, allocation.changes());
             }
             // its a dead node, remove it, note, its important to remove it *after* we apply failed shard
@@ -668,9 +673,6 @@ public class AllocationService {
         return System.nanoTime();
     }
 
-    /**
-     * TODO  existingShardsAllocators 相关的先忽略
-     */
     public void cleanCaches() {
         assert assertInitialized();
         existingShardsAllocators.values().forEach(ExistingShardsAllocator::cleanCaches);

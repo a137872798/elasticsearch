@@ -58,6 +58,7 @@ import java.util.function.Consumer;
  * fairly lenient, possibly allowing multiple checks to fail before considering the leader to be faulty, to allow for the leader to
  * temporarily stand down on occasion, e.g. if it needs to move to a higher term. On deciding that the leader has failed a follower will
  * become a candidate and attempt to become a leader itself.
+ * 该节点是 follower 用于检测集群中的leader节点的  当发现某个节点不再是 leader节点时 就要重新发起选举
  */
 public class LeaderChecker {
 
@@ -114,7 +115,7 @@ public class LeaderChecker {
                 channel.sendResponse(Empty.INSTANCE);
             });
 
-        // 注册一个监控连接变化的监听器+
+        // 注册一个监控连接变化的监听器
         transportService.addConnectionListener(new TransportConnectionListener() {
             @Override
             public void onNodeDisconnected(DiscoveryNode node, Transport.Connection connection) {
@@ -132,7 +133,7 @@ public class LeaderChecker {
      * Starts and / or stops a leader checker for the given leader. Should only be called after successfully joining this leader.
      *
      * @param leader the node to be checked as leader, or null if checks should be disabled
-     *               将入参作为新的leader 节点
+     *               此时感知到了集群中新的leader节点
      */
     void updateLeader(@Nullable final DiscoveryNode leader) {
         assert transportService.getLocalNode().equals(leader) == false;
@@ -142,7 +143,7 @@ public class LeaderChecker {
         } else {
             checkScheduler = null;
         }
-        // 关闭前一个checker对象
+        // 关闭前一个checker对象  因为上一个对象检测的是旧的leader
         CheckScheduler previousChecker = currentChecker.getAndSet(checkScheduler);
         if (previousChecker != null) {
             previousChecker.close();
@@ -168,19 +169,19 @@ public class LeaderChecker {
     }
 
     /**
-     * 处理 检查leader的请求  只要没抛出异常 实际上就是检测成功了
+     * 作为leader节点 接收follower的探测请求
      * @param request
      */
     private void handleLeaderCheck(LeaderCheckRequest request) {
         final DiscoveryNodes discoveryNodes = this.discoveryNodes;
         assert discoveryNodes != null;
 
-        // 非master节点无法检查
+        // 当本节点已经不再是leader节点了  返回异常
         if (discoveryNodes.isLocalNodeElectedMaster() == false) {
             logger.debug("rejecting leader check on non-master {}", request);
             throw new CoordinationStateRejectedException(
                 "rejecting leader check from [" + request.getSender() + "] sent to a node that is no longer the master");
-            // 如果发送请求的节点不存在与当前集群中  返回异常
+            // 当探测节点本身已经从集群中被剔除了 也抛出异常 这种应该是特殊情况
         } else if (discoveryNodes.nodeExists(request.getSender()) == false) {
             logger.debug("rejecting leader check from removed node: {}", request);
             throw new CoordinationStateRejectedException(
@@ -205,7 +206,7 @@ public class LeaderChecker {
 
 
     /**
-     * 定时检查器
+     * 定期发起检测任务
      */
     private class CheckScheduler implements Releasable {
 
@@ -235,7 +236,7 @@ public class LeaderChecker {
         }
 
         /**
-         * 启动检测逻辑
+         * 开始检测leader节点
          */
         void handleWakeUp() {
             if (isClosed.get()) {
@@ -263,6 +264,7 @@ public class LeaderChecker {
                             return;
                         }
 
+                        // 正常探测 发起下次任务
                         failureCountSinceLastSuccess.set(0);
                         scheduleNextWakeUp(); // logs trace message indicating success
                     }
@@ -274,7 +276,7 @@ public class LeaderChecker {
                             return;
                         }
 
-                        // 由于连接导致的失败 代表leader节点下线了
+                        // 由于连接导致的失败 代表leader节点下线了  需要重新发起选举
                         if (exp instanceof ConnectTransportException || exp.getCause() instanceof ConnectTransportException) {
                             logger.debug(new ParameterizedMessage(
                                 "leader [{}] disconnected during check", leader), exp);

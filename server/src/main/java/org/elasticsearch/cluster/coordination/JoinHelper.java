@@ -103,7 +103,7 @@ public class JoinHelper {
     private final TimeValue joinTimeout;
 
     /**
-     * 命令池  等待响应结果
+     * 作为candidate  尝试加入到leader节点时 需要发送join请求
      */
     private final Set<Tuple<DiscoveryNode, JoinRequest>> pendingOutgoingJoins = Collections.synchronizedSet(new HashSet<>());
 
@@ -117,7 +117,7 @@ public class JoinHelper {
     /**
      *
      * @param settings
-     * @param allocationService
+     * @param allocationService  用于分配分片的服务
      * @param masterService
      * @param transportService
      * @param currentTermSupplier
@@ -293,11 +293,8 @@ public class JoinHelper {
     }
 
     /**
-     * 往目标节点发送一个 join的请求
-     * 流程是这样 首先某个通过预投票的节点 会向所有节点发送一个startJoin请求 之后 每个节点会返回一个join请求
-     * source节点通过了预投票阶段  那么此时就不需要做任何检测 无条件信任目标节点 并直接返回join请求
-     *
-     * 某个刚重启的节点在感知到leader后 会生成一个join请求
+     * 当收到 startJoin时 通过该方法进行处理      startJoin代表某个节点通过了预投票阶段  发现了足够多的比它旧(或term相等)的且没有确定leader的节点
+     * 这时要回复一个 join请求
      * @param destination  通过预投票的节点
      * @param term  本地任期
      * @param optionalJoin
@@ -306,11 +303,10 @@ public class JoinHelper {
         assert destination.isMasterNode() : "trying to join master-ineligible " + destination;
 
         // 代表当前节点尝试加入到目标节点所在的集群
+        // join 对象本身可能为空  比如之前有个follower节点在线 之后下线又上线 他已经对最新的term持久化了 当通过finder对象观测到leader时 如果term一样就不会生成join对象
         final JoinRequest joinRequest = new JoinRequest(transportService.getLocalNode(), term, optionalJoin);
         final Tuple<DiscoveryNode, JoinRequest> dedupKey = Tuple.tuple(destination, joinRequest);
 
-
-        // 避免在同一时间 加入到多个个leader  或者又加入leader 又开始为某个节点投票
         if (pendingOutgoingJoins.add(dedupKey)) {
             logger.debug("attempting to join {} with {}", destination, joinRequest);
             transportService.sendRequest(destination, JOIN_ACTION_NAME, joinRequest,
@@ -360,9 +356,9 @@ public class JoinHelper {
     }
 
     /**
-     * 某个候选者通过了预投票阶段后 会往此时集群中已知的所有节点发起startJoin请求
+     * 当通过了预投票的某个节点 会尝试邀请其他节点加入到本节点中
      * @param startJoinRequest
-     * @param destination
+     * @param destination  此时通过finder对象发现的所有 masterNode
      */
     void sendStartJoinRequest(final StartJoinRequest startJoinRequest, final DiscoveryNode destination) {
         assert startJoinRequest.getSourceNode().isMasterNode()
@@ -382,7 +378,7 @@ public class JoinHelper {
                 }
 
                 /**
-                 * 当某个节点本轮已经选择了一个node后 继续往该节点发送就会触发该方法
+                 * 对端节点拒绝处理 startJoin请求 比如对端的term 更新  那么静默处理 认为尝试拉拢该节点失败
                  * @param exp
                  */
                 @Override
@@ -529,7 +525,8 @@ public class JoinHelper {
         boolean closed;
 
         /**
-         * 当某个参与选举的节点
+         * 当本节点还是candidate时  此时投票箱中还没有足够的票数   开始处理join请求   这里只是先暂存到一个容器中 如果本节点在本轮term中会晋升成leader节点
+         * 本对象会转换成 leaderJoinAccumulator对象 并且会处理之前囤积的数据
          * @param sender
          * @param joinCallback
          */
@@ -543,7 +540,7 @@ public class JoinHelper {
         }
 
         /**
-         * 可以通过 callback对象将结果返回给发送 join请求的节点了
+         * 当本节点晋升成leader节点后 要执行之前存储的任务
          * @param newMode  本次参与选举的节点最后决定的角色
          */
         @Override
@@ -568,11 +565,12 @@ public class JoinHelper {
                 });
                 pendingAsTasks.put(JoinTaskExecutor.newFinishElectionTask(), (source, e) -> {
                 });
-                // 在处理过程中 未通过校验的node 会发送失败信息回给join节点 通过校验的节点会正常返回ack信息 并且如果集群状态发生了变化 会触发钩子
+
+                // 将集群状态变化的任务发布到集群中
                 masterService.submitStateUpdateTasks(stateUpdateSource, pendingAsTasks, ClusterStateTaskConfig.build(Priority.URGENT),
                     joinTaskExecutor);
             } else {
-                // 该节点变成了follower时 返回异常信息
+                // 当本节点转变成follower时 相当于支持者都失败了
                 assert newMode == Mode.FOLLOWER : newMode;
                 joinRequestAccumulator.values().forEach(joinCallback -> joinCallback.onFailure(
                     new CoordinationStateRejectedException("became follower")));

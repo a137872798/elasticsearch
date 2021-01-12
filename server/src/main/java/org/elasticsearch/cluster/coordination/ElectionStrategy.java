@@ -44,7 +44,7 @@ public abstract class ElectionStrategy {
 
     /**
      * Whether there is an election quorum from the point of view of the given local node under the provided voting configurations
-     * @param joinVotes 要求此时连接上的节点数超过半数 可是该配置本身是过时的
+     * @param joinVotes 本节点当前感知到的集群中的所有masterNode
      */
     public final boolean isElectionQuorum(DiscoveryNode localNode, long localCurrentTerm, long localAcceptedTerm, long localAcceptedVersion,
                                           VotingConfiguration lastCommittedConfiguration, VotingConfiguration lastAcceptedConfiguration,

@@ -60,7 +60,9 @@ import static org.elasticsearch.common.util.concurrent.ConcurrentCollections.new
  * follower has failed the leader will remove it from the cluster. We are fairly lenient, possibly allowing multiple checks to fail before
  * considering a follower to be faulty, to allow for a brief network partition or a long GC cycle to occur without triggering the removal of
  * a node and the consequent shard reallocation.
- * 该对象与  LeaderChecker 相对 检测节点是否还是follower
+ * 作为leader节点 检测它的所有跟随者是否正常  (只有作为leader节点时才能正常工作)
+ * 比如某个节点的离线也可以感知到  并且更新clusterState
+ *
  */
 public class FollowersChecker {
 
@@ -118,7 +120,7 @@ public class FollowersChecker {
      * @param settings
      * @param transportService
      * @param handleRequestAndUpdateState
-     * @param onNodeFailure 长期失联的节点会从集群中移除
+     * @param onNodeFailure
      */
     public FollowersChecker(Settings settings, TransportService transportService,
                             Consumer<FollowerCheckRequest> handleRequestAndUpdateState,
@@ -132,7 +134,7 @@ public class FollowersChecker {
         followerCheckTimeout = FOLLOWER_CHECK_TIMEOUT_SETTING.get(settings);
         followerCheckRetryCount = FOLLOWER_CHECK_RETRY_COUNT_SETTING.get(settings);
 
-        // 该对象在初始阶段时 使用一个默认的响应结果
+        // 该对象在初始阶段时 使用一个默认的响应结果  每当探测其他节点 或者自身的角色发生变化时 会将最新的状态信息更新到该属性上
         updateFastResponseState(0, Mode.CANDIDATE);
         transportService.registerRequestHandler(FOLLOWER_CHECK_ACTION_NAME, Names.SAME, false, false, FollowerCheckRequest::new,
             (request, transportChannel, task) -> handleFollowerCheck(request, transportChannel));
@@ -146,19 +148,20 @@ public class FollowersChecker {
 
     /**
      * Update the set of known nodes, starting to check any new ones and stopping checking any previously-known-but-now-unknown ones.
-     * 更新此时要检测的所有节点  这里包含了 leader节点
+     * 当触发了该方法时 本对象才开始工作
      */
     public void setCurrentNodes(DiscoveryNodes discoveryNodes) {
         synchronized (mutex) {
             final Predicate<DiscoveryNode> isUnknownNode = n -> discoveryNodes.nodeExists(n) == false;
 
-            // 当某些节点已经不再属于最新的 DiscoveryNodes 时 将他们移除
+            // 某些节点此时已经不属于这个集群了  需要移除
             followerCheckers.keySet().removeIf(isUnknownNode);
             faultyNodes.removeIf(isUnknownNode);
 
-            // 将discoveryNodes 中master节点排在第一个后 触发forEach  这里的目标是所有节点  也就是包含非参选的节点 普通节点可以变成follower从leader处接收新数据
+            // 这些节点中可能包含 非masterNode  将它们排序后 使得masterNode排在前面 并挨个进行探测
+            // 可以看到 非masterNode节点 也会收到 follower请求 并转换成follower节点   不直接参与选举
             discoveryNodes.mastersFirstStream().forEach(discoveryNode -> {
-                // 检测除了本节点外的其他节点是否为 follower
+                // 跳过本节点  以及已经在处理中的节点  以及失败的节点
                 if (discoveryNode.equals(discoveryNodes.getLocalNode()) == false
                     && followerCheckers.containsKey(discoveryNode) == false
                     && faultyNodes.contains(discoveryNode) == false) {
@@ -190,7 +193,6 @@ public class FollowersChecker {
 
     /**
      * 当集群中产生了新的leader时 会发起请求将其他节点降级成follower
-     * 某个时刻是有可能出现2个leader的  因为候选节点数量本身是可变的
      * @param request
      * @param transportChannel
      * @throws IOException
@@ -200,14 +202,14 @@ public class FollowersChecker {
         // 该对象中包含了此时该节点的任期 以及当前角色
         FastResponseState responder = this.fastResponseState;
 
-        // 当前节点此时确实是 follower时 直接返回ack信息
+        // 当前节点此时确实是 follower时 且term匹配时 直接返回ack信息
         if (responder.mode == Mode.FOLLOWER && responder.term == request.term) {
             logger.trace("responding to {} on fast path", request);
             transportChannel.sendResponse(Empty.INSTANCE);
             return;
         }
 
-        // 忽略旧的 leader的请求 应该有某种方法 使得新的leader会告知到旧的leader
+        // 忽略旧的 leader的请求
         if (request.term < responder.term) {
             throw new CoordinationStateRejectedException("rejecting " + request + " since local state is " + this);
         }
@@ -217,7 +219,7 @@ public class FollowersChecker {
             protected void doRun() throws IOException {
                 logger.trace("responding to {} on slow path", request);
                 try {
-                    // 这里就是多了一步处理 因为此时在IO线程中 所以会将处理逻辑转发到业务线程
+                    // 根据请求中的信息 更新当前节点的状态
                     handleRequestAndUpdateState.accept(request);
                 } catch (Exception e) {
                     transportChannel.sendResponse(e);
@@ -307,9 +309,13 @@ public class FollowersChecker {
 
     /**
      * A checker for an individual follower.
-     * 当本节点成为leader后 需要通过该对象通知他们更改成follower
+     * 当本节点变成leader节点后 需要通知其他节点变成follower 节点
      */
     private class FollowerChecker {
+
+        /**
+         * 需要探测的节点
+         */
         private final DiscoveryNode discoveryNode;
         private int failureCountSinceLastSuccess;
 
@@ -330,6 +336,9 @@ public class FollowersChecker {
             handleWakeUp();
         }
 
+        /**
+         * 尝试与目标节点建立联系  通知其转换成follower节点   以及之后要定期检测 这样本节点能够快速感知到自己已经落后 并自动降级成candidate
+         */
         private void handleWakeUp() {
             if (running() == false) {
                 logger.trace("handleWakeUp: not running");
@@ -355,12 +364,17 @@ public class FollowersChecker {
                             return;
                         }
 
+                        // 当对端正常处理完请求后 重置失败次数
                         failureCountSinceLastSuccess = 0;
                         logger.trace("{} check successful", FollowerChecker.this);
                         // 递归执行检测任务
                         scheduleNextWakeUp();
                     }
 
+                    /**
+                     * 当收到失败信息时 在一定容错次数内 不做处理   当超过限制时 加入到失败容器中
+                     * @param exp
+                     */
                     @Override
                     public void handleException(TransportException exp) {
                         if (running() == false) {
@@ -396,7 +410,7 @@ public class FollowersChecker {
         }
 
         /**
-         * 认为这个节点已经脱离了集群 不再进行无意义的检测
+         * 认为这个节点已经脱离了集群 不再进行无意义的检测  同时会尝试将该节点从clusterState中移除
          * @param reason
          */
         void failNode(String reason) {

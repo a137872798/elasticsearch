@@ -225,7 +225,7 @@ public final class PersistentTasksCustomMetadata extends AbstractNamedDiffable<M
      * @param clusterState The clusterstate
      * @return If no changes the argument {@code clusterState} is returned else
      *          a copy with the modified tasks
-     *          当某些节点从集群中被移除时 就不再需要维护他们的持久化了
+     *          PersistentTasksCustomMetadata 是某种增强功能需要的元数据 先忽略
      */
     public static ClusterState disassociateDeadNodes(ClusterState clusterState) {
         PersistentTasksCustomMetadata tasks = getPersistentTasksCustomMetadata(clusterState);
@@ -235,7 +235,6 @@ public final class PersistentTasksCustomMetadata extends AbstractNamedDiffable<M
 
         PersistentTasksCustomMetadata.Builder taskBuilder = PersistentTasksCustomMetadata.builder(tasks);
         for (PersistentTask<?> task : tasks.tasks()) {
-            // 如果该任务对应的node 不存在于 clusterState.nodes     更新allocationId后重新设置到tasks中
             if (task.getAssignment().getExecutorNode() != null &&
                     clusterState.nodes().nodeExists(task.getAssignment().getExecutorNode()) == false) {
                 taskBuilder.reassignTask(task.getId(), LOST_NODE_ASSIGNMENT);
@@ -246,7 +245,6 @@ public final class PersistentTasksCustomMetadata extends AbstractNamedDiffable<M
             return clusterState;
         }
 
-        // 将最新的PersistentTasksCustomMetadata存储到 clusterState中
         Metadata.Builder metadataBuilder = Metadata.builder(clusterState.metadata());
         metadataBuilder.putCustom(TYPE, taskBuilder.build());
         return ClusterState.builder(clusterState).metadata(metadataBuilder).build();

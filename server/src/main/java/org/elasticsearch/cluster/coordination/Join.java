@@ -33,6 +33,7 @@ import java.io.IOException;
  * information about the current state of the node that provided the vote, so that
  * the receiver of the vote can determine if it has a more up-to-date state than the
  * source node.
+ * 代表一个加入到 尝试晋升leader的候选节点的请求
  */
 public class Join implements Writeable {
     private final DiscoveryNode sourceNode;
@@ -43,8 +44,8 @@ public class Join implements Writeable {
 
     /**
      *
-     * @param sourceNode
-     * @param targetNode
+     * @param sourceNode  本节点
+     * @param targetNode  要加入的节点
      * @param term  在于targetNode同步任期后 此时sourceNode 的任期
      * @param lastAcceptedTerm   获取上一次的持久化的clusteState对应的任期信息
      * @param lastAcceptedVersion 获取上一次的持久化的clusteState对应的version  就是对应同一任期中clusterState变化的不同版本

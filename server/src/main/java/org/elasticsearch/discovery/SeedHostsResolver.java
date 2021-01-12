@@ -53,7 +53,8 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
- * 将一组 格式化字符串转换成 TransportAddress
+ * 当集群中所有节点都还无法察觉其他节点时 需要一个获取初始服务器地址的对象  这些服务器被称为seed
+ * 它跟 jraft/zk 不同  这两种一开始都是已知集群中存在哪些参选节点的   而该对象将管理集群服务器列表的能力转移到了 seed对象中
  */
 public class SeedHostsResolver extends AbstractLifecycleComponent implements ConfiguredHostsResolver, SeedHostsProvider.HostsResolver {
     public static final Setting<Integer> DISCOVERY_SEED_RESOLVER_MAX_CONCURRENT_RESOLVERS_SETTING =
@@ -70,6 +71,10 @@ public class SeedHostsResolver extends AbstractLifecycleComponent implements Con
      */
     private final AtomicBoolean resolveInProgress = new AtomicBoolean();
     private final TransportService transportService;
+
+    /**
+     * 实际上种子服务器默认为空
+     */
     private final SeedHostsProvider hostsProvider;
 
     /**

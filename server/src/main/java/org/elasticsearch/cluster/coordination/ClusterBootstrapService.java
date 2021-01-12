@@ -54,16 +54,10 @@ import static java.util.Collections.unmodifiableSet;
 import static org.elasticsearch.discovery.DiscoveryModule.DISCOVERY_SEED_PROVIDERS_SETTING;
 import static org.elasticsearch.discovery.SettingsBasedSeedHostsProvider.DISCOVERY_SEED_HOSTS_SETTING;
 
-/**
- * 集群引导服务
- * 这个对象本身是不可靠的 一般都是通过 seed配置 或者 initial_master_nodes 获取最初的 masterNodes列表
- * 而该对象则是尝试通过自主发现的方式找到参与选举的node  可以先不看
- */
 public class ClusterBootstrapService {
 
     /**
-     * 每个集群中的节点首次启动时 需要通过该配置知道集群中有哪些 masternode 虽然之后可能会变化 但是在启动阶段 必须通过该配置直到初始信息
-     * 当集群已经形成时 就不应该通过这个配置获取masterNodes信息 而应该从此时leader节点获取信息
+     * 除了通过配置seed地址外 也可以选择通过配置文件设置初始的masterNode
      */
     public static final Setting<List<String>> INITIAL_MASTER_NODES_SETTING =
         Setting.listSetting("cluster.initial_master_nodes", emptyList(), Function.identity(), Property.NodeScope);
@@ -77,7 +71,7 @@ public class ClusterBootstrapService {
     private static final Logger logger = LogManager.getLogger(ClusterBootstrapService.class);
 
     /**
-     * 集群中所有role 包含master的节点
+     * 要求哪些节点必须存在
      */
     private final Set<String> bootstrapRequirements;
     @Nullable // null if discoveryIsConfigured()
@@ -96,14 +90,14 @@ public class ClusterBootstrapService {
      *
      * @param settings
      * @param transportService
-     * @param discoveredNodesSupplier 对应 Coordinator::getFoundPeers
+     * @param discoveredNodesSupplier 对应 Coordinator::getFoundPeers   可以获取到 finder对象此时连接到的所有masterNode
      * @param isBootstrappedSupplier
-     * @param votingConfigurationConsumer
+     * @param votingConfigurationConsumer  在一定延时后 会将观测到的集群内节点设置到 coordinator上
      */
     public ClusterBootstrapService(Settings settings, TransportService transportService,
                                    Supplier<Iterable<DiscoveryNode>> discoveredNodesSupplier, BooleanSupplier isBootstrappedSupplier,
                                    Consumer<VotingConfiguration> votingConfigurationConsumer) {
-        // 如果当前集群仅包含一个node
+        // TODO 如果当前集群仅包含一个node
         if (DiscoveryModule.isSingleNodeDiscovery(settings)) {
             if (INITIAL_MASTER_NODES_SETTING.exists(settings)) {
                 throw new IllegalArgumentException("setting [" + INITIAL_MASTER_NODES_SETTING.getKey() +
@@ -117,14 +111,13 @@ public class ClusterBootstrapService {
             bootstrapRequirements = Collections.singleton(Node.NODE_NAME_SETTING.get(settings));
             unconfiguredBootstrapTimeout = null;
         } else {
-            // 找到所有 role包含 Master的节点   也就是参与选举的节点一开始就是确定的
             final List<String> initialMasterNodes = INITIAL_MASTER_NODES_SETTING.get(settings);
             bootstrapRequirements = unmodifiableSet(new LinkedHashSet<>(initialMasterNodes));
             if (bootstrapRequirements.size() != initialMasterNodes.size()) {
                 throw new IllegalArgumentException(
                     "setting [" + INITIAL_MASTER_NODES_SETTING.getKey() + "] contains duplicates: " + initialMasterNodes);
             }
-            // 如果已经配置了就不需要基于finder寻找其他master节点了
+            // 代表此时配置中没有设置任何一种 发现集群节点的方式
             unconfiguredBootstrapTimeout = discoveryIsConfigured(settings) ? null : UNCONFIGURED_BOOTSTRAP_TIMEOUT_SETTING.get(settings);
         }
 
@@ -141,7 +134,6 @@ public class ClusterBootstrapService {
 
     /**
      * 每当集群中能感知到的节点发生变化时触发  在启动探测和关闭探测时也会触发
-     * 照理说该方法的触发时机在 scheduleUnconfiguredBootstrap之前
      */
     void onFoundPeersUpdated() {
         // 就是本地节点 + 通过finder感应到的所有节点
@@ -178,18 +170,20 @@ public class ClusterBootstrapService {
         }
     }
 
+    /**
+     * 在调用 coordinator.startInitialJoin 后会触发该方法 检测在一定延时后是否发现了集群中的节点 如果始终无法发现节点 那么本次启动算是失败的
+     */
     void scheduleUnconfiguredBootstrap() {
-        // 如果没有配置 启动集群的超时时间 代表初始化配置中包含了选举信息
+        // 代表配置了某些发现集群节点的方式 就不需要开启定时检测了
         if (unconfiguredBootstrapTimeout == null) {
             return;
         }
 
-        // node 必须携带 master的role
+        // 如果本节点本身不参与选举 也不需要处理
         if (transportService.getLocalNode().isMasterNode() == false) {
             return;
         }
 
-        // 如果集群配置中一开始没有配置好所有参与选举的节点  那么只能寄托于finder对象尽可能多的找到节点了
         logger.info("no discovery configuration found, will perform best-effort cluster bootstrapping after [{}] " +
             "unless existing master is discovered", unconfiguredBootstrapTimeout);
 
@@ -197,7 +191,7 @@ public class ClusterBootstrapService {
         transportService.getThreadPool().scheduleUnlessShuttingDown(unconfiguredBootstrapTimeout, Names.GENERIC, new Runnable() {
             @Override
             public void run() {
-                // 对应 peerFinder.getFoundPeers()
+                // 对应 peerFinder.getFoundPeers()  也就是要求在一定延时后必须通过finder对象连接到某个节点上
                 final Set<DiscoveryNode> discoveredNodes = getDiscoveredNodes();
                 logger.debug("performing best-effort cluster bootstrapping with {}", discoveredNodes);
                 startBootstrap(discoveredNodes, emptyList());
@@ -217,7 +211,6 @@ public class ClusterBootstrapService {
 
 
     /**
-     * 在一定延时后触发该方法
      * @param discoveryNodes  通过finder感知到的所有节点
      * @param unsatisfiedRequirements
      */
@@ -237,7 +230,6 @@ public class ClusterBootstrapService {
 
 
     /**
-     * 进行引导工作
      * @param votingConfiguration
      */
     private void doBootstrap(VotingConfiguration votingConfiguration) {

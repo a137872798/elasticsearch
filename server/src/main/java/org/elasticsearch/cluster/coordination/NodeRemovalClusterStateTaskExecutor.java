@@ -32,12 +32,13 @@ import java.util.List;
 
 /**
  * 该对象用于处理 从集群中移除节点的task
+ * 体现了 elastic
  */
 public class NodeRemovalClusterStateTaskExecutor implements ClusterStateTaskExecutor<NodeRemovalClusterStateTaskExecutor.Task>,
     ClusterStateTaskListener {
 
     /**
-     * 分配服务 主要是为分片 决定分配的node
+     * 如果该节点下线了 自然要将分配到该节点的分片重新分配到其他节点
      */
     private final AllocationService allocationService;
     private final Logger logger;
@@ -77,7 +78,7 @@ public class NodeRemovalClusterStateTaskExecutor implements ClusterStateTaskExec
     }
 
     /**
-     * 将在集群中感应到的滞后的节点从集群中移除  这种滞后的节点可以类比为 eureka中不再续约的服务
+     * 将在集群中感应到的滞后的节点从集群中移除
      * @param currentState
      * @param tasks
      * @return
@@ -111,7 +112,7 @@ public class NodeRemovalClusterStateTaskExecutor implements ClusterStateTaskExec
 
     protected ClusterTasksResult<Task> getTaskClusterTasksResult(ClusterState currentState, List<Task> tasks,
                                                                  ClusterState remainingNodesClusterState) {
-        // 随着某些node的移除 不再需要维护他们的持久化任务  TODO 这些待理解 但是与选举流程本身没有太大关系
+        // 该对象属于拓展组件 先忽略
         ClusterState ptasksDisassociatedState = PersistentTasksCustomMetadata.disassociateDeadNodes(remainingNodesClusterState);
         final ClusterTasksResult.Builder<Task> resultBuilder = ClusterTasksResult.<Task>builder().successes(tasks);
         // 因为这些节点下线了 要灵活的将分片转移到其他节点上
