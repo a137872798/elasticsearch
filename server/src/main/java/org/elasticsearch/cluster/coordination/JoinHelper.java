@@ -104,6 +104,7 @@ public class JoinHelper {
 
     /**
      * 作为candidate  尝试加入到leader节点时 需要发送join请求
+     * 这个容器的去重是针对 处理收到相同node在不同term发起的startJoin请求
      */
     private final Set<Tuple<DiscoveryNode, JoinRequest>> pendingOutgoingJoins = Collections.synchronizedSet(new HashSet<>());
 
@@ -569,7 +570,7 @@ public class JoinHelper {
                 masterService.submitStateUpdateTasks(stateUpdateSource, pendingAsTasks, ClusterStateTaskConfig.build(Priority.URGENT),
                     joinTaskExecutor);
             } else {
-                // 当本节点转变成follower时 相当于支持者都失败了
+                // 当本节点转变成follower时 相当于支持者都失败了   在join回调中实际上不会有什么补偿措施 而是通过finder 探测leader
                 assert newMode == Mode.FOLLOWER : newMode;
                 joinRequestAccumulator.values().forEach(joinCallback -> joinCallback.onFailure(
                     new CoordinationStateRejectedException("became follower")));

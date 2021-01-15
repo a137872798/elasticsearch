@@ -54,6 +54,9 @@ import static java.util.Collections.unmodifiableSet;
 import static org.elasticsearch.discovery.DiscoveryModule.DISCOVERY_SEED_PROVIDERS_SETTING;
 import static org.elasticsearch.discovery.SettingsBasedSeedHostsProvider.DISCOVERY_SEED_HOSTS_SETTING;
 
+/**
+ * 某些刚启动的节点可能没有设置voteConfiguration  这样是无法正常进行选举的 所以需要确保在一定延时后必须初始化选举配置 否则抛出异常
+ */
 public class ClusterBootstrapService {
 
     /**
@@ -111,6 +114,7 @@ public class ClusterBootstrapService {
             bootstrapRequirements = Collections.singleton(Node.NODE_NAME_SETTING.get(settings));
             unconfiguredBootstrapTimeout = null;
         } else {
+            // 打个比方说 一开始配置了3个节点 那么初始化该节点后 必须要通过finder对象感知到这3个节点
             final List<String> initialMasterNodes = INITIAL_MASTER_NODES_SETTING.get(settings);
             bootstrapRequirements = unmodifiableSet(new LinkedHashSet<>(initialMasterNodes));
             if (bootstrapRequirements.size() != initialMasterNodes.size()) {
@@ -138,8 +142,8 @@ public class ClusterBootstrapService {
     void onFoundPeersUpdated() {
         // 就是本地节点 + 通过finder感应到的所有节点
         final Set<DiscoveryNode> nodes = getDiscoveredNodes();
-        // bootstrappingPermitted == false 代表过了初始化时间 直接忽略更新请求
-        // bootstrapRequirements 不为空代表已经具备引导需要的参数了 不需要处理
+
+        // 当初始的voteConfiguration 未配置时 无法进行正常的选举  这里尝试进行初始化
         if (bootstrappingPermitted.get() && transportService.getLocalNode().isMasterNode() && bootstrapRequirements.isEmpty() == false
             && isBootstrappedSupplier.getAsBoolean() == false) {
 
@@ -152,11 +156,13 @@ public class ClusterBootstrapService {
                 return;
             }
 
+            // v1 代表此时匹配上的node v2 代表暂时未匹配上的node
             final Set<DiscoveryNode> nodesMatchingRequirements = requirementMatchingResult.v1();
             final List<String> unsatisfiedRequirements = requirementMatchingResult.v2();
             logger.trace("nodesMatchingRequirements={}, unsatisfiedRequirements={}, bootstrapRequirements={}",
                 nodesMatchingRequirements, unsatisfiedRequirements, bootstrapRequirements);
 
+            // TODO 必然会包含自己 先忽略
             if (nodesMatchingRequirements.contains(transportService.getLocalNode()) == false) {
                 logger.info("skipping cluster bootstrapping as local node does not match bootstrap requirements: {}",
                     bootstrapRequirements);
@@ -164,6 +170,7 @@ public class ClusterBootstrapService {
                 return;
             }
 
+            // 至少在集群中要明确发现 1/2 以上的node 才能初始化投票箱
             if (nodesMatchingRequirements.size() * 2 > bootstrapRequirements.size()) {
                 startBootstrap(nodesMatchingRequirements, unsatisfiedRequirements);
             }
@@ -239,6 +246,7 @@ public class ClusterBootstrapService {
             votingConfigurationConsumer.accept(votingConfiguration);
         } catch (Exception e) {
             logger.warn(new ParameterizedMessage("exception when bootstrapping with {}, rescheduling", votingConfiguration), e);
+            // 因为finder会不断探测节点 直到满足生成voteConfig的最小条件时即可
             transportService.getThreadPool().scheduleUnlessShuttingDown(TimeValue.timeValueSeconds(10), Names.GENERIC,
                 new Runnable() {
                     @Override
@@ -261,9 +269,17 @@ public class ClusterBootstrapService {
             || discoveryNode.getAddress().getAddress().equals(requirement);
     }
 
+    /**
+     * @param nodes  此时感知到的所有节点
+     * @return
+     */
     private Tuple<Set<DiscoveryNode>,List<String>> checkRequirements(Set<DiscoveryNode> nodes) {
+
+        // 匹配的节点会设置到这个容器中
         final Set<DiscoveryNode> selectedNodes = new HashSet<>();
+        // 此时某些要求的节点还未被发现
         final List<String> unmatchedRequirements = new ArrayList<>();
+        // 这些节点必须存在
         for (final String bootstrapRequirement : bootstrapRequirements) {
             final Set<DiscoveryNode> matchingNodes
                 = nodes.stream().filter(n -> matchesRequirement(n, bootstrapRequirement)).collect(Collectors.toSet());

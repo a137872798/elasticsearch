@@ -25,7 +25,7 @@ import java.util.Objects;
 /**
  * Request which is used by the master node to publish cluster state changes.
  * Actual serialization of this request is done by {@link PublicationTransportHandler}
- * 代表一个发布请求
+ * 当成功选举出leader后 可能会有很多节点尝试加入到集群中  (通过join请求)  每当更新clusterState时 就需要将最新信息发布到集群中
  */
 public class PublishRequest {
 

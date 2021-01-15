@@ -173,7 +173,7 @@ public class PublicationTransportHandler {
     }
 
     /**
-     * 发布动作分为2步 第一步是将新的clusterState发布到其他节点上   第二步是进行提交
+     * 发布动作分为2步 第一步是让其他节点确认发布请求 第二步才进行提交
      */
     public interface PublicationContext {
 
@@ -213,10 +213,10 @@ public class PublicationTransportHandler {
         return new PublicationContext() {
 
             /**
-             * 将发布请求发往某个node  这里的节点没有角色限制
-             * @param destination
-             * @param publishRequest
-             * @param originalListener
+             * 执行 pub的第一步  将 pubReq 发往某个节点
+             * @param destination  本次接收请求的节点
+             * @param publishRequest   请求信息
+             * @param originalListener   处理响应结果    实际上在同一轮term中 可能会产生2个leader 那么这里要如何处理
              */
             @Override
             public void sendPublishRequest(DiscoveryNode destination, PublishRequest publishRequest,
@@ -225,7 +225,7 @@ public class PublicationTransportHandler {
                 assert transportService.getThreadPool().getThreadContext().isSystemContext();
                 final ActionListener<PublishWithJoinResponse> responseActionListener;
 
-                // 既然当前节点能成为master 也就是集群状态是最新的 只要能写入超过半数节点就代表本次发布任务完成
+                // 当本次请求发送到了本节点
                 if (destination.equals(nodes.getLocalNode())) {
                     // if publishing to self, use original request instead (see currentPublishRequestToSelf for explanation)
                     // 直接将数据存储在本地 这样在处理时就不用解析数据包了

@@ -71,8 +71,8 @@ public abstract class Publication {
 
     /**
      *
-     * @param publishRequest
-     * @param ackListener
+     * @param publishRequest   本次要发布的数据 内部包含了最新的 clusterState
+     * @param ackListener      当每个节点接收到请求时 要触发ack函数
      * @param currentTimeSupplier  提供当前时间的函数
      */
     public Publication(PublishRequest publishRequest, AckListener ackListener, LongSupplier currentTimeSupplier) {
@@ -81,24 +81,26 @@ public abstract class Publication {
         this.currentTimeSupplier = currentTimeSupplier;
         startTime = currentTimeSupplier.getAsLong();
         applyCommitRequest = Optional.empty();
+        // 在选举阶段  只要收到超半数的masterNode 就可以晋升成功  这个全数指的是 voteConfiguration
+        // 而在发布阶段 除了通知 masterNode  普通的node 也需要通知 所以就将请求发往之前clusterState中记录的所有node
+        // 应该是要发布到 其中 masterNode的一半以上才算成功  至于普通节点 成功再多也不作数
         publicationTargets = new ArrayList<>(publishRequest.getAcceptedState().getNodes().getNodes().size());
-        // 注意这里发布的节点包含非master节点
+        // 注意这里发布的节点包含非master节点    将每个节点包装成 target 对象
         publishRequest.getAcceptedState().getNodes().mastersFirstStream().forEach(n -> publicationTargets.add(new PublicationTarget(n)));
     }
 
     /**
-     * 针对这组失败的节点 触发  PublicationTarget.onFaultyNode 钩子
-     * 并且针对所有 target对象发送 publishRequest
-     * @param faultyNodes  这组节点 有可能记录了followerChecker 长期连接不上的节点
+     * 开始执行发布任务
+     * @param faultyNodes  这组node 代表follower长期连接不上 自动被踢出cluster的节点
      */
     public void start(Set<DiscoveryNode> faultyNodes) {
         logger.trace("publishing {} to {}", publishRequest, publicationTargets);
 
         for (final DiscoveryNode faultyNode : faultyNodes) {
-            // 如果有半数节点连接不上 那么本次发布不可能成功 提前结束
+            // 未长时间无法连接上的节点设置 失败
             onFaultyNode(faultyNode);
         }
-        // 在faultyNodes为空的时候 就有检测这个的必要了  如果一开始票数就是达不到要求的就可以直接结束pub任务 而不浪费时间
+        // 检测此时是否已经有超1/2节点失败 是的话 提前结束任务
         onPossibleCommitFailure();
         publicationTargets.forEach(PublicationTarget::sendPublishRequest);
     }
@@ -128,6 +130,10 @@ public abstract class Publication {
         onPossibleCompletion();
     }
 
+    /**
+     * 本节点已经脱离集群了 本次请求必然失败
+     * @param faultyNode
+     */
     public void onFaultyNode(DiscoveryNode faultyNode) {
         // 这会触发ackListener
         publicationTargets.forEach(t -> t.onFaultyNode(faultyNode));
@@ -147,14 +153,14 @@ public abstract class Publication {
     }
 
     /**
-     * 代表本次发布任务完成 可能以成功形式完成 也可能是被关闭
+     * 检测本次任务是否已经完成
      */
     private void onPossibleCompletion() {
         if (isCompleted) {
             return;
         }
 
-        // 在被手动关闭的情况下 只要还有一个target 处于活跃状态 就无法执行 completion
+        // 只要还有某个节点未收到结果 就认为任务未结束
         if (cancelled == false) {
             for (final PublicationTarget target : publicationTargets) {
                 if (target.isActive()) {
@@ -163,7 +169,7 @@ public abstract class Publication {
             }
         }
 
-        // 此时还没有满足commit条件
+        // 当所有节点都收到结果时   如果没有生成commitReq对象 代表不满足commit条件
         if (applyCommitRequest.isPresent() == false) {
             logger.debug("onPossibleCompletion: [{}] commit failed", this);
             assert isCompleted == false;
@@ -199,18 +205,18 @@ public abstract class Publication {
     }
 
     /**
-     * 这里是在检测失败的节点是否已经达到1/2了 如果达到了就没有必要继续发送pub请求了 可以提前结束
+     * 发送流程分为2步 第一步要求确认的节点数要超过 1/2 成功后 代表发布成功 之后将 commit请求发往集群
      */
     private void onPossibleCommitFailure() {
-        // 如果已经生成了commit 对象 可以检测是否完成任务
         if (applyCommitRequest.isPresent()) {
+            // 必须要确保请求发往 所有target  并根据是否设置commitReq 触发不同的 onCompletion
             onPossibleCompletion();
             return;
         }
 
         final CoordinationState.VoteCollection possiblySuccessfulNodes = new CoordinationState.VoteCollection();
         for (PublicationTarget publicationTarget : publicationTargets) {
-            // 这里将还未发送publish请求的节点 或者说还不能明确会失败的节点先加入到 投票箱中
+            // 这里检测失败数量是否已经超过了 1/2 这样可以提前失败
             if (publicationTarget.mayCommitInFuture()) {
                 possiblySuccessfulNodes.addVote(publicationTarget.discoveryNode);
             } else {
@@ -218,7 +224,7 @@ public abstract class Publication {
             }
         }
 
-        // 如果此时票数不够 会将所有活跃节点以失败状态结束 并触发本对象的onComplete
+        // 本次pub 必然失败
         if (isPublishQuorum(possiblySuccessfulNodes) == false) {
             logger.debug("onPossibleCommitFailure: non-failed nodes {} do not form a quorum, so {} cannot succeed",
                 possiblySuccessfulNodes, this);
@@ -261,7 +267,7 @@ public abstract class Publication {
     }
 
     /**
-     * 代表一个发布过程此时正处的阶段
+     * 描述 pubReq 发往某个节点进行处理的整个流程的某个状态
      */
     enum PublicationTargetState {
         NOT_STARTED,
@@ -281,8 +287,7 @@ public abstract class Publication {
     }
 
     /**
-     * 代表一个发布请求的目标节点
-     * 为什么不排除掉非master节点啊     也就是同步数据是全范围 而选举仅master节点范围???  那么发送join请求的节点也应该是全节点???
+     * 最新的clusterState 需要发布到所有类型的node 上
      */
     class PublicationTarget {
         private final DiscoveryNode discoveryNode;
@@ -314,10 +319,10 @@ public abstract class Publication {
         }
 
         /**
-         * 当发布任务启动时 会往集群中所有节点发送pub请求
+         * 整个publish 流程分为2步  这里是第一步 发送pub请求
          */
         void sendPublishRequest() {
-            // 如果在执行任务前已经判断pub无法成功了 也就是无法满足半数节点 那么会提前将任务设置成失败 也就不需要发送数据了
+            // 比如该节点已经下线就不需要处理了
             if (isFailed()) {
                 return;
             }
@@ -331,13 +336,14 @@ public abstract class Publication {
         }
 
         /**
-         * 在检测完 join对象后 开始处理发布结果   该方法在同步环境下执行
+         * 处理发往某个节点后得到的 pubResp
          * @param publishResponse
          */
         void handlePublishResponse(PublishResponse publishResponse) {
             assert isWaitingForQuorum() : this;
             logger.trace("handlePublishResponse: handling [{}] from [{}])", publishResponse, discoveryNode);
-            // 之后成功的publish 当发现 commit标识已经被设置时 直接发送commit 请求就好
+
+            // 之后每收到一个 pubRes后 立即发送commit请求
             if (applyCommitRequest.isPresent()) {
                 sendApplyCommit();
             } else {
@@ -350,7 +356,7 @@ public abstract class Publication {
                         assert applyCommitRequest.isPresent() == false;
                         applyCommitRequest = Optional.of(applyCommit);
 
-                        // 代表从发起publish 任务 到超过半数节点认同 总计花费多少时间  该ack内部维护了一组空list 先忽略
+                        // 代表从发起publish 任务 到超过半数节点认同 总计花费多少时间    然而ack请求还是要求必须发布到所有节点才算成功
                         ackListener.onCommit(TimeValue.timeValueMillis(currentTimeSupplier.getAsLong() - startTime));
                         // 找到所有刚确认pub的节点  发送 applyCommit请求
                         publicationTargets.stream().filter(PublicationTarget::isWaitingForQuorum)
@@ -382,8 +388,7 @@ public abstract class Publication {
         }
 
         /**
-         * 本次发布任务因为某个异常而停止
-         * 可能被关闭 甚至可能通过了pub投票  但是在commit请求时失败
+         * 标记本次针对该node的发布任务失败
          * @param e
          */
         void setFailed(Exception e) {
@@ -421,6 +426,10 @@ public abstract class Publication {
             }
         }
 
+        /**
+         * 代表已经产生了结果 比如失败 或者已提交
+         * @return
+         */
         boolean isActive() {
             return state != PublicationTargetState.FAILED
                 && state != PublicationTargetState.APPLIED_COMMIT;
@@ -455,7 +464,7 @@ public abstract class Publication {
              */
             @Override
             public void onResponse(PublishWithJoinResponse response) {
-                // 因为当前发布已经不可能成功了所以任务被提前关闭 这里是在关闭前发出的请求 res会被忽略
+                // 比如前一个leader 收到了后一个leader的发布请求 前一个leader关闭发布任务 之后又收到了发布结果 这时候拒绝处理
                 if (isFailed()) {
                     logger.debug("PublishResponseHandler.handleResponse: already failed, ignoring response from [{}]", discoveryNode);
                     assert publicationCompletedIffAllTargetsInactiveOrCancelled();
@@ -475,12 +484,18 @@ public abstract class Publication {
                 }
 
                 assert state == PublicationTargetState.SENT_PUBLISH_REQUEST : state + " -> " + PublicationTargetState.WAITING_FOR_QUORUM;
+
+                // 完成该target的发布阶段 进入等待判决阶段
                 state = PublicationTargetState.WAITING_FOR_QUORUM;
                 handlePublishResponse(response.getPublishResponse());
 
                 assert publicationCompletedIffAllTargetsInactiveOrCancelled();
             }
 
+            /**
+             * 当尝试将最新的 clusterState 发布到某个节点上失败时
+             * @param e
+             */
             @Override
             public void onFailure(Exception e) {
                 assert e instanceof TransportException;
@@ -495,11 +510,7 @@ public abstract class Publication {
         }
 
         /**
-         * 该对象负责处理 commit的响应结果
-         * commit最核心的作用就是将最新的集群状态 暴露到应用
-         *
-         * 首先至少超过半数的请求pub成功 这时最优情况就是这些节点全部commit成功
-         * 当然如果所有节点的pub都成功的话 那么对应发出的commit请求数量也会更多 就有更多的机会达到半数以上
+         * 处理commit的结果
          */
         private class ApplyCommitResponseHandler implements ActionListener<TransportResponse.Empty> {
 

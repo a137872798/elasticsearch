@@ -532,6 +532,10 @@ public class GatewayMetaState implements Closeable {
             this.currentTerm = currentTerm;
         }
 
+        /**
+         * 如果是 masterNode  接收到pub请求 会将clusterState 持久化
+         * @param clusterState
+         */
         @Override
         public void setLastAcceptedState(ClusterState clusterState) {
             try {

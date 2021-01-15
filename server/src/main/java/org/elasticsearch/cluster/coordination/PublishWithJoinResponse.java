@@ -30,6 +30,10 @@ import java.util.Optional;
  * and an optional {@link Join}.
  */
 public class PublishWithJoinResponse extends TransportResponse {
+
+    /**
+     * 本次pub请求对应的 clusterState.term/version
+     */
     private final PublishResponse publishResponse;
 
     /**

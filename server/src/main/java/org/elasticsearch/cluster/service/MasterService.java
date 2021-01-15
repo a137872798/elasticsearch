@@ -855,6 +855,7 @@ public class MasterService extends AbstractLifecycleComponent {
 
 
         /**
+         * 代表此时 pub达到1/2以上的masterNode
          * @param commitTime the time it took to commit the cluster state
          */
         @Override

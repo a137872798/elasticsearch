@@ -329,7 +329,7 @@ public class CoordinationState {
      * @param clusterState The cluster state to publish.  这个对象是在当前节点作为leader后接收各种join请求 生成的
      * @return A PublishRequest to publish the given cluster state
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
-     * 基于当前的集群状态 生成一个发布状态的请求对象
+     * 基于当前的集群状态 生成一个发布clusterState的请求对象
      */
     public PublishRequest handleClientValue(ClusterState clusterState) {
         // 选举失败的节点不具备发布的资格
@@ -337,13 +337,13 @@ public class CoordinationState {
             logger.debug("handleClientValue: ignored request as election not won");
             throw new CoordinationStateRejectedException("election not won");
         }
-        // 这里只是看到 当本节点变成leader节点时这2个值肯定是一致的
+        // 当本节点变成 leader时   lastPublishedVersion 会与getLastAcceptedVersion 相同
         if (lastPublishedVersion != getLastAcceptedVersion()) {
             logger.debug("handleClientValue: cannot start publishing next value before accepting previous one");
             throw new CoordinationStateRejectedException("cannot start publishing next value before accepting previous one");
         }
 
-        // 当任期不匹配时 不能发布数据
+        // 当任期不匹配时 不能发布数据  在coordinator 发布clusterState前 会将当前的term设置进去 所以该条件也应该满足
         if (clusterState.term() != getCurrentTerm()) {
             logger.debug("handleClientValue: ignored request due to term mismatch " +
                     "(expected: [term {} version >{}], actual: [term {} version {}])",
@@ -351,6 +351,8 @@ public class CoordinationState {
             throw new CoordinationStateRejectedException("incoming term " + clusterState.term() + " does not match current term " +
                 getCurrentTerm());
         }
+
+        // 版本的更新 是在masterService中做的   只要前后发现clusterState发生变化 就会增加version
         if (clusterState.version() <= lastPublishedVersion) {
             logger.debug("handleClientValue: ignored request due to version mismatch " +
                     "(expected: [term {} version >{}], actual: [term {} version {}])",
@@ -359,12 +361,14 @@ public class CoordinationState {
                 " lower or equal to last published version " + lastPublishedVersion);
         }
 
+        // 可能不等就代表已经发起 reconfiguration了吧  不能重复发起
         if (clusterState.getLastAcceptedConfiguration().equals(getLastAcceptedConfiguration()) == false
             && getLastCommittedConfiguration().equals(getLastAcceptedConfiguration()) == false) {
             logger.debug("handleClientValue: only allow reconfiguration while not already reconfiguring");
             throw new CoordinationStateRejectedException("only allow reconfiguration while not already reconfiguring");
         }
-        // TODO
+
+        // 要求此时获取到的票数至少是之前配置项内节点的 1/2以上   实际上在晋升成leader节点时应当已经满足该条件了
         if (joinVotesHaveQuorumFor(clusterState.getLastAcceptedConfiguration()) == false) {
             logger.debug("handleClientValue: only allow reconfiguration if joinVotes have quorum for new config");
             throw new CoordinationStateRejectedException("only allow reconfiguration if joinVotes have quorum for new config");
@@ -373,10 +377,11 @@ public class CoordinationState {
         assert clusterState.getLastCommittedConfiguration().equals(getLastCommittedConfiguration()) :
             "last committed configuration should not change";
 
-        // 将当前集群的数据标记成最近一次发布的属性
+        // 更新最近一次发布的clusterState的版本号  这样在上一个pub完成前 也无法执行下一个发布任务了  实际上在外层 coordinator中已经做了拦截了
         lastPublishedVersion = clusterState.version();
+        // 更新最后一次触发发布任务时  集群中参选的所有节点
         lastPublishedConfiguration = clusterState.getLastAcceptedConfiguration();
-        // 在发布过程中 会设置 publishVotes
+        // 在发布过程中 也要满足一定数量的接收者 才算成功
         publishVotes = new VoteCollection();
 
         logger.trace("handleClientValue: processing request for version [{}] and term [{}]", lastPublishedVersion, getCurrentTerm());
@@ -402,7 +407,7 @@ public class CoordinationState {
                 getCurrentTerm());
         }
 
-        // 代表在同一任期中 触发了不止一次的pub 每次version都会更新 收到的新的version 必须比之前的新
+        // 在同一个任期中 可能会产生2个leader 但是只应该处理一个pub请求 他们发起的pub在version上会冲突
         if (clusterState.term() == getLastAcceptedTerm() && clusterState.version() <= getLastAcceptedVersion()) {
             logger.debug("handlePublishRequest: ignored publish request due to version mismatch (expected: >[{}], actual: [{}])",
                 getLastAcceptedVersion(), clusterState.version());
@@ -423,12 +428,12 @@ public class CoordinationState {
     /**
      * May be called on receipt of a PublishResponse from the given sourceNode.
      *
-     * @param sourceNode      The sender of the PublishResponse received.     该res是由哪个节点发出的
-     * @param publishResponse The PublishResponse received.
+     * @param sourceNode      The sender of the PublishResponse received.            代表哪个节点返回的结果
+     * @param publishResponse The PublishResponse received.                          实际上内部的 term/version 就是本次发布任务的clusterState的term/version
      * @return An optional ApplyCommitRequest which, if present, may be broadcast to all peers, indicating that this publication
      * has been accepted at a quorum of peers and is therefore committed.
      * @throws CoordinationStateRejectedException if the arguments were incompatible with the current state of this object.
-     * 当leader节点收到某个节点返回的publishRes时 触发该方法
+     *
      */
     public Optional<ApplyCommitRequest> handlePublishResponse(DiscoveryNode sourceNode, PublishResponse publishResponse) {
 
@@ -457,7 +462,8 @@ public class CoordinationState {
         logger.trace("handlePublishResponse: accepted publish response for version [{}] and term [{}] from [{}]",
             publishResponse.getVersion(), publishResponse.getTerm(), sourceNode);
 
-        // 代表发布成功 将结果加入到投票箱中   注意这里加入投票箱的前提是必须是参与选举的节点  也就是pub虽然针对的是所有节点 但是只有写入超过半数的参选节点 才算pub成功
+        // 代表发布成功 将结果加入到投票箱中   注意这里加入投票箱的前提是必须是参与选举的节点
+        // 也就是pub虽然针对的是所有节点 但是只有写入超过半数的参选节点 才算pub成功
         publishVotes.addVote(sourceNode);
 
         // 代表此时已经有超过半数的节点 更新了集群最新的信息
@@ -563,9 +569,7 @@ public class CoordinationState {
          * After a successful call to this method, {@link #getLastAcceptedState()} should return the last cluster state that was set,
          * with the last committed configuration now corresponding to the last accepted configuration, and the cluster uuid, if set,
          * marked as committed.
-         * 主要就是为之前持久化的集群状态 设置一个 accepted的标识位    只有确保接收到commit请求  之前的clusterState才能生效
-         * 这种情况就是为了避免 在每个节点收到 pub的过程中 leader节点失效  所以在超过半数节点确认ack 并且此时leader能够正常处理的这个状态下 需要一个通知 就是commit
-         * 那么如果 节点没有收到commit 会怎么样呢
+         * 当pub第一阶段完成 进入第二阶段时 就会覆盖 lastCommittedConfiguration
          */
         default void markLastAcceptedStateAsCommitted() {
             final ClusterState lastAcceptedState = getLastAcceptedState();
