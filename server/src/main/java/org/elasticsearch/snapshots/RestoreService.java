@@ -116,7 +116,8 @@ import static org.elasticsearch.snapshots.SnapshotUtils.filterIndices;
  * which removes {@link RestoreInProgress} when all shards are completed. In case of
  * restore failure a normal recovery fail-over process kicks in.
  *
- * 恢复服务会监听集群状态的变化
+ * 恢复服务是基于快照进行数据恢复
+ * 不是有   lucene.segment + translog 的数据恢复方式了么  为什么还需要快照恢复
  */
 public class RestoreService implements ClusterStateApplier {
 
@@ -133,7 +134,7 @@ public class RestoreService implements ClusterStateApplier {
             IndexSettings.INDEX_SOFT_DELETES_SETTING.getKey()));
 
     // It's OK to change some settings, but we shouldn't allow simply removing them
-    // 有些配置是允许被移除的 因为在处理restoreReq中 用户可以指定移除掉一些配置
+    // 这里存储了无法删除的配置项
     private static final Set<String> UNREMOVABLE_SETTINGS;
 
     static {
@@ -1090,6 +1091,10 @@ public class RestoreService implements ClusterStateApplier {
         return indices;
     }
 
+    /**
+     * 当该服务感知到集群状态发生变化时 触发监听器
+     * @param event
+     */
     @Override
     public void applyClusterState(ClusterChangedEvent event) {
         try {

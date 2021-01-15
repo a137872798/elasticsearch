@@ -47,6 +47,11 @@ import org.elasticsearch.threadpool.ThreadPool;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
+/**
+ * 在启动node时 会开启网关服务
+ * 在进行分片重路由时 会经过 GatewayAllocator  在真正的 分片分配器处理前 会先检测某些分片是否合适   如果不合适的话会执行一些拦截操作
+ * TODO 暂时看不懂
+ */
 public class GatewayService extends AbstractLifecycleComponent implements ClusterStateListener {
     private static final Logger logger = LogManager.getLogger(GatewayService.class);
 
@@ -72,6 +77,9 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
 
     private final ThreadPool threadPool;
 
+    /**
+     * 该对象负责对一些未分配的分片决定合适的节点  以及对一些已分配的分片进行平衡 (找到更合适的节点)
+     */
     private final AllocationService allocationService;
 
     private final ClusterService clusterService;
@@ -96,10 +104,14 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
         this.clusterService = clusterService;
         this.threadPool = threadPool;
         // allow to control a delay of when indices will get created
+        // 一开始 预期的节点数/dataNode节点数/masterNode节点数  都没有特定要求
         this.expectedNodes = EXPECTED_NODES_SETTING.get(settings);
         this.expectedDataNodes = EXPECTED_DATA_NODES_SETTING.get(settings);
         this.expectedMasterNodes = EXPECTED_MASTER_NODES_SETTING.get(settings);
 
+        // 1.当指定配置项时 从配置项中获取
+        // 2.当指定预期节点数时 使用默认值
+        // 3.其余情况为null
         if (RECOVER_AFTER_TIME_SETTING.exists(settings)) {
             recoverAfterTime = RECOVER_AFTER_TIME_SETTING.get(settings);
         } else if (expectedNodes >= 0 || expectedDataNodes >= 0 || expectedMasterNodes >= 0) {
@@ -107,6 +119,8 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
         } else {
             recoverAfterTime = null;
         }
+
+
         this.recoverAfterNodes = RECOVER_AFTER_NODES_SETTING.get(settings);
         this.recoverAfterDataNodes = RECOVER_AFTER_DATA_NODES_SETTING.get(settings);
         // default the recover after master nodes to the minimum master nodes in the discovery

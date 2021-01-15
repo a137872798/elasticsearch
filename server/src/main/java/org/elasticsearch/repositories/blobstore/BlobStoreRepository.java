@@ -291,9 +291,9 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     /**
      * Constructs new BlobStoreRepository
-     * @param metadata   The metadata for this repository including name and settings  在初始化存储对象时还会传入相关的元数据
+     * @param metadata   The metadata for this repository including name and settings  描述该存储层的元数据信息
      * @param clusterService ClusterService
-     * @param basePath 定义store的基础目录
+     * @param basePath 描述数据的存储路径
      */
     protected BlobStoreRepository(
         final RepositoryMetadata metadata,
@@ -305,7 +305,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         this.clusterService = clusterService;
         // 是否采用压缩方式存储数据流
         this.compress = COMPRESS_SETTING.get(metadata.settings());
-        // 每秒仅允许写入 40MB    文件系统的限流有什么意义么
+        // 针对生成快照 以及恢复操作 生成2个限流器
         snapshotRateLimiter = getRateLimiter(metadata.settings(), "max_snapshot_bytes_per_sec", new ByteSizeValue(40, ByteSizeUnit.MB));
         restoreRateLimiter = getRateLimiter(metadata.settings(), "max_restore_bytes_per_sec", new ByteSizeValue(40, ByteSizeUnit.MB));
 
@@ -334,7 +334,8 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
      */
     @Override
     protected void doStart() {
-        // 推测每次写入前 先设置pendingGen  当写入完成时 将 gen 同于到 pendingGen中
+
+        // 代表之前可能还有未完成的任务
         uncleanStart = metadata.pendingGeneration() > RepositoryData.EMPTY_REPO_GEN &&
             metadata.generation() != metadata.pendingGeneration();
 
@@ -458,17 +459,18 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     // Inspects all cluster state elements that contain a hint about what the current repository generation is and updates
     // #latestKnownRepoGen if a newer than currently known generation is found
-    // 当集群状态发生变化时 会用该函数进行处理 更新本地的 latestKnownRepoGen
+    // 当集群状态发生变化时 会触发该函数
     @Override
     public void updateState(ClusterState state) {
-        // 从当前集群状态中获取该存储实现相关的元数据  该元数据是以custom 的形式存储在clusterState中的
+        // 从当前clusterState中 获取有关存储的元数据信息
         metadata = getRepoMetadata(state);
         // 代表上次的存储工作未完成
+        // TODO  先忽略该标识为true的场景
         uncleanStart = uncleanStart && metadata.generation() != metadata.pendingGeneration();
-        // 在上次的存储工作没有正常完成的情况下 尽可能从  Store中获取最准确的数据
-        // metadata.generation() == RepositoryData.UNKNOWN_REPO_GEN 应该是代表在这种场景下没法使用缓存吧
+
+        // 在上次数据未正常写入的情况下无法确定当前最新的数据  所以总是尽最大努力实现一致性 就体现在每次从数据源获取数据 而不是走缓存层
         bestEffortConsistency = uncleanStart || isReadOnly() || metadata.generation() == RepositoryData.UNKNOWN_REPO_GEN;
-        // 只读场景下 不应该执行写入操作
+        // isReadOnly 默认为false
         if (isReadOnly()) {
             // No need to waste cycles, no operations can run against a read-only repository
             return;
@@ -477,17 +479,18 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         // 在追求强一致的情况下 会获取各个正在执行中的快照相关的任务 并尝试获取最新的gen
         if (bestEffortConsistency) {
 
-            // 以下几个 progress对象都实现了相同的api 也就是获取 repositoryStateId 的 该返回值会作为bestGen使用  挨个往下会覆盖之前获取到的gen
-            // TODO 待理解
+            // 每次仓库的变化 应该都会更新gen
 
+            // 在追求强一致数据的场景下  不要设置明确的gen
             long bestGenerationFromCS = RepositoryData.EMPTY_REPO_GEN;
-            // 这个快照状态应该也是按照不同的存储层实现划分的
+            // 该对象描述了 所有正在执行的快照任务
             final SnapshotsInProgress snapshotsInProgress = state.custom(SnapshotsInProgress.TYPE);
             if (snapshotsInProgress != null) {
+                // 从所有正在执行的快照任务中 挑选最新的任务对应的gen
                 bestGenerationFromCS = bestGeneration(snapshotsInProgress.entries());
             }
 
-            // 快照删除的进度
+            // 当快照任务不存在时  尝试从删除快照的任务中查询 gen
             final SnapshotDeletionsInProgress deletionsInProgress = state.custom(SnapshotDeletionsInProgress.TYPE);
             // Don't use generation from the delete task if we already found a generation for an in progress snapshot.
             // In this case, the generation points at the generation the repo will be in after the snapshot finishes so it may not yet
@@ -495,11 +498,15 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             if (bestGenerationFromCS == RepositoryData.EMPTY_REPO_GEN && deletionsInProgress != null) {
                 bestGenerationFromCS = bestGeneration(deletionsInProgress.getEntries());
             }
+
+            // 快照不应该长期存储在仓库中 当已经没有使用价值时 可以通过 repositoryCleanup 任务 将旧数据清理
             final RepositoryCleanupInProgress cleanupInProgress = state.custom(RepositoryCleanupInProgress.TYPE);
             if (bestGenerationFromCS == RepositoryData.EMPTY_REPO_GEN && cleanupInProgress != null) {
                 bestGenerationFromCS = bestGeneration(cleanupInProgress.entries());
             }
+
             final long finalBestGen = Math.max(bestGenerationFromCS, metadata.generation());
+            // 更新当前感知到的最大的gen
             latestKnownRepoGen.updateAndGet(known -> Math.max(known, finalBestGen));
             // 这里只是更新 lastestKnownGen  并没有做实际的写入操作
         } else {
@@ -514,11 +521,13 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
     }
 
     /**
-     * 寻找一个最合适的gen
+     * 从一组正在执行的 operation中找到最合适的gen
+     * RepositoryOperation 抽象出了一种针对仓库的操作 比如生成快照
      * @param operations
      * @return
      */
     private long bestGeneration(Collection<? extends RepositoryOperation> operations) {
+        // 获取当前存储实例的名称
         final String repoName = metadata.name();
         assert operations.size() <= 1 : "Assumed one or no operations but received " + operations;
         return operations.stream().filter(e -> e.repository().equals(repoName)).mapToLong(RepositoryOperation::repositoryStateId)
@@ -1388,7 +1397,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
     }
 
     /**
-     * 实际是在做准备工作  在repositoriesService中可以看到先调用该方法后 通过 verifyAction 发起一个认证动作 并在认证完成后触发 endVerification
+     * 发起一个验证请求 实际上就是随便生成一个字符串并尝试是否能够存储
      * @return
      */
     @Override
@@ -1427,6 +1436,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     // Tracks the latest known repository generation in a best-effort way to detect inconsistent listing of root level index-N blobs
     // and concurrent modifications.
+    // 当前感知到的最大的gen可能是从repositoryMetadata中直接获取  也可能是从当前正在执行的快照/删除快照/清理仓库 的任务中获取的
     private final AtomicLong latestKnownRepoGen = new AtomicLong(RepositoryData.UNKNOWN_REPO_GEN);
 
     // Best effort cache of the latest known repository data and its generation, cached serialized as compressed json
@@ -1481,12 +1491,13 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                 final RepositoryData loaded;
                 // Caching is not used with #bestEffortConsistency see docs on #cacheRepositoryData for details
                 // 没有要求强一致性的场景下 存在缓存 且 gen一致  直接返回缓存的数据就可以
+                // 也就是 同一gen的数据可能后面还会有修改
                 if (bestEffortConsistency == false && cached != null && cached.v1() == genToLoad) {
                     loaded = repositoryDataFromCachedEntry(cached);
                 } else {
                     // 使用最新的gen 加载数据 并反序列化
                     loaded = getRepositoryData(genToLoad);
-                    // 将最新的数据设置到缓存中
+                    // 顺便更新缓存
                     cacheRepositoryData(loaded);
                 }
                 // 当成功读取到数据后 触发监听器
@@ -1648,7 +1659,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             return RepositoryData.EMPTY;
         }
         try {
-            // 还原 index-n 文件
+            // 通过gen 找到 index-gen 文件 并将内部的数据解析成 RepositoryData 对象
             final String snapshotsIndexBlobName = INDEX_FILE_PREFIX + Long.toString(indexGen);
 
             // EMPTY is safe here because RepositoryData#fromXContent calls namedObject

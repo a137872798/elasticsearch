@@ -101,7 +101,8 @@ import java.util.stream.StreamSupport;
 /**
  * Service responsible for creating snapshots. See package level documentation of {@link org.elasticsearch.snapshots}
  * for details.
- * 快照服务
+ * 快照服务  内部需要基于存储服务来实现  并且某些shard 就可以基于快照进行数据恢复
+ * 本对象也需要监听 clusterState 的变化
  */
 public class SnapshotsService extends AbstractLifecycleComponent implements ClusterStateApplier {
 
@@ -124,7 +125,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     private final IndexNameExpressionResolver indexNameExpressionResolver;
 
     /**
-     * 存储服务
+     * 存储服务 通过该对象可以获取仓库实例
      */
     private final RepositoriesService repositoriesService;
 

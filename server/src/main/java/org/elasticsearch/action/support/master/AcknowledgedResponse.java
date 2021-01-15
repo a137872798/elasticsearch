@@ -35,7 +35,6 @@ import static org.elasticsearch.common.xcontent.ConstructingObjectParser.constru
 
 /**
  * A response that indicates that a request has been acknowledged
- * 当前响应结果是否被确认
  */
 public class AcknowledgedResponse extends ActionResponse implements ToXContentObject {
 
@@ -46,6 +45,9 @@ public class AcknowledgedResponse extends ActionResponse implements ToXContentOb
             ObjectParser.ValueType.BOOLEAN);
     }
 
+    /**
+     * 本次请求是否在所有节点上都发布成功
+     */
     protected final boolean acknowledged;
 
     public AcknowledgedResponse(StreamInput in) throws IOException {

@@ -2012,6 +2012,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
 
                 /**
                  * 实际上无论本次发布是否成功 关键是 在pub阶段 本节点的数据没有被其他leader修改 那么它的数据会作为之后完成最终一致的clusterState的标准
+                 * 只要ack 能够以成功形式收到 必然已经进入了 commit阶段  不然在pub阶段就会以失败方式触发
                  * @param ignore
                  */
                 @Override
@@ -2115,7 +2116,7 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                                 }
                                 cancelTimeoutHandlers();
                                 ackListener.onNodeAck(getLocalNode(), null);
-                                // 针对 join请求 只有触发回调后 对端才能接收下一轮选择同一节点的请求
+                                // 相当于 本leader节点pub第一阶段成功 并且排挤掉其他leader 此时触发 clusterStateProcessed
                                 publishListener.onResponse(null);
                             }
                         });
@@ -2132,8 +2133,8 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
                 public void onFailure(Exception e) {
                     assert Thread.holdsLock(mutex) : "Coordinator mutex not held";
 
-                    // 比如2个leader节点 a 发送到了b上  b的数据就会被a覆盖 这时b应该已经成为follower了 这步是保险吗  但是不影响目的 就是为了在pub阶段将其他冲突的leader降级
-                    // 但是在选举阶段允许出现多个leader
+                    // 比如2个leader节点 a 发送到了b上  b的数据就会被a覆盖 这时b应该已经成为follower了
+                    // 这里应该只是单纯没办法访问到半数节点 可能产生了脑裂 所以重新选举
                     removePublicationAndPossiblyBecomeCandidate("Publication.onCompletion(false)");
                     // 关闭2个定时器
                     cancelTimeoutHandlers();

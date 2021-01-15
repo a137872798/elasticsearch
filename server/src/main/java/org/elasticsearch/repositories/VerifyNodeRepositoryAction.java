@@ -135,7 +135,7 @@ public class VerifyNodeRepositoryAction {
     }
 
     /**
-     * 当所有节点都处理完毕时触发该方法 当然某些节点可能会处理失败 比如节点掉线引发的超时
+     * 当所有节点都完成验证时触发该方法
      * @param repositoryName
      * @param listener
      * @param nodes
@@ -148,6 +148,7 @@ public class VerifyNodeRepositoryAction {
             for (VerificationFailure error : errors) {
                 e.addSuppressed(error.getCause());
             }
+            // 有某些节点的仓库无法写入数据
             listener.onFailure(e);
         } else {
             listener.onResponse(nodes);
@@ -161,8 +162,6 @@ public class VerifyNodeRepositoryAction {
      * @param localNode
      */
     private void doVerify(String repositoryName, String verificationToken, DiscoveryNode localNode) {
-        // 难道说是针对 google云这种吗 某些存储实例在使用前需要做认证操作  但是需要让集群中的节点同一发起认证   实际上比如基于FS系统的存储实例 是不需要认证的
-        // TODO 这个先不用深究吧 毕竟跟ES本身的功能关联性不大
         Repository repository = repositoriesService.repository(repositoryName);
         repository.verify(verificationToken, localNode);
     }

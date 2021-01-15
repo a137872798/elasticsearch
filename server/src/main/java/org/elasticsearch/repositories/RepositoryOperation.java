@@ -20,6 +20,7 @@ package org.elasticsearch.repositories;
 
 /**
  * Coordinates of an operation that modifies a repository, assuming that repository at a specific generation.
+ * 代表一个会写入仓库的操作    通过 仓库名 + id 生成唯一坐标
  */
 public interface RepositoryOperation {
 
@@ -30,6 +31,7 @@ public interface RepositoryOperation {
 
     /**
      * The repository state id at the time the operation began.
+     * 每次生成一个快照任务 对应的id是自增的
      */
     long repositoryStateId();
 }

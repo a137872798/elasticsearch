@@ -42,7 +42,7 @@ public class RepositoryMetadata {
 
     /**
      * Safe repository generation.
-     * 可能每次存储都会增加该值吧
+     * 默认情况下 gen/pendGen 都是未设置的
      */
     private final long generation;
 

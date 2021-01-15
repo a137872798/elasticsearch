@@ -38,8 +38,7 @@ import java.io.IOException;
 
 /**
  * Transport action for create snapshot operation
- * 创建快照的操作  这个也要求必须在leader节点上执行吗
- * 快照本身是存储在 Repository内部的
+ * 发起一个创建快照的操作
  */
 public class TransportCreateSnapshotAction extends TransportMasterNodeAction<CreateSnapshotRequest, CreateSnapshotResponse> {
     private final SnapshotsService snapshotsService;

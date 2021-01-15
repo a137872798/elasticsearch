@@ -811,6 +811,7 @@ public class Node implements Closeable {
         injector.getInstance(IndicesService.class).start();
         // 监听CS中 index/shard的分配情况
         injector.getInstance(IndicesClusterStateService.class).start();
+        // 将基于快照恢复的一组组件 全部启动
         injector.getInstance(SnapshotsService.class).start();
         injector.getInstance(SnapshotShardsService.class).start();
         injector.getInstance(RepositoriesService.class).start();

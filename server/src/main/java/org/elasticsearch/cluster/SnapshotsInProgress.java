@@ -60,6 +60,34 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
 
     public static final String TYPE = "snapshots";
 
+    /**
+     * 每个实体描述一个正在执行的快照任务
+     * 这些任务可能来自与不同的 repository实例
+     */
+    private final List<Entry> entries;
+
+    public SnapshotsInProgress(List<Entry> entries) {
+        this.entries = entries;
+    }
+
+    public SnapshotsInProgress(Entry... entries) {
+        this.entries = Arrays.asList(entries);
+    }
+
+    public List<Entry> entries() {
+        return this.entries;
+    }
+
+    public Entry snapshot(final Snapshot snapshot) {
+        for (Entry entry : entries) {
+            final Snapshot curr = entry.snapshot();
+            if (curr.equals(snapshot)) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -84,6 +112,10 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
         return builder.append("]").toString();
     }
 
+    /**
+     * 每个快照任务会被包装成该对象
+     * 该对象也代表着 针对仓库的某种操作
+     */
     public static class Entry implements ToXContent, RepositoryOperation {
 
         /**
@@ -92,6 +124,7 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
         private final State state;
         /**
          * 快照对象本身没有数据属性 仅包含一个路径和一个id
+         * 用于从仓库中定位数据  发起快照任务后会在所有节点对应的仓储层实例下  id对应的目录创建数据文件么
          */
         private final Snapshot snapshot;
         private final boolean includeGlobalState;
@@ -107,8 +140,10 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
          */
         private final ImmutableOpenMap<String, List<ShardId>> waitingIndices;
         private final long startTime;
+
         /**
-         * 这个好像等同于 gen 怎么得出来的???
+         * 每次仓库变化 应该都会对应唯一一个id
+         * 这里记录该快照是在哪次仓库下生成的
          */
         private final long repositoryStateId;
         // see #useShardGenerations
@@ -533,29 +568,7 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
         }
     }
 
-    private final List<Entry> entries;
 
-    public SnapshotsInProgress(List<Entry> entries) {
-        this.entries = entries;
-    }
-
-    public SnapshotsInProgress(Entry... entries) {
-        this.entries = Arrays.asList(entries);
-    }
-
-    public List<Entry> entries() {
-        return this.entries;
-    }
-
-    public Entry snapshot(final Snapshot snapshot) {
-        for (Entry entry : entries) {
-            final Snapshot curr = entry.snapshot();
-            if (curr.equals(snapshot)) {
-                return entry;
-            }
-        }
-        return null;
-    }
 
     @Override
     public String getWriteableName() {

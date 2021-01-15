@@ -60,6 +60,7 @@ import java.util.Map;
 /**
  * Service responsible for maintaining and providing access to snapshot repositories on nodes.
  * 该对象负责存储相关的功能  同时可以监听集群的变化事件
+ * 一个RepositoriesService 中包含了多个 Repository 实例   默认情况下ES 内置了基于FS系统的存储实例
  */
 public class RepositoriesService extends AbstractLifecycleComponent implements ClusterStateApplier {
 
@@ -95,8 +96,9 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
      * @param settings
      * @param clusterService
      * @param transportService
-     * @param typesRegistry    生成每个存储对象的工厂     默认实现中只要关注基于Fs的工厂就可以 并且基于文件的实现不需要 internalTypeRegistry
-     * @param internalTypesRegistry   每个存储插件还可能包含了内部工厂
+     * @param typesRegistry
+     * @param internalTypesRegistry    在Node初始化时 会加载存储插件 插件内部对应着Repository.Factory ES会内置一个基于FS的存储仓库  在初始化时就会携带进来了
+     *                                 虽然ES本身对外开放了增加存储层实例的接口 但是一般用不上
      * @param threadPool
      */
     public RepositoriesService(Settings settings, ClusterService clusterService, TransportService transportService,
@@ -125,7 +127,10 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
      * @param request  register repository request
      * @param listener register repository listener    该监听器包含了处理本次通知的结果
      *
-     *                 注册一个新的存储层实现  该方法只有 master节点可以调用 当创建成功时该存储实例会暴露到集群中
+     *                 用户可以向集群提交一个插入仓库的请求 这里会生成仓库元数据对象，并设置到clusterState中 之后发布到集群中
+     *                 然而ES选举本身存在一个弊端 就是在一轮中可能会选出2个leader 如果本次接收请求的是之后会降级的leader
+     *                 那么如何确保本次生成仓库请求是发布成功的呢  是否成功发布到集群中所有节点 会设置一个 acknowledged 为false的情况 可以由用户继续发起请求
+     *                 本身clusterState 被覆盖的概率也比较低  可能会配合一些续约机制吧 但是选举配置本身合理的情况下 实际上没有这么复杂 也不会产生多个leader
      */
     public void registerRepository(final PutRepositoryRequest request, final ActionListener<ClusterStateUpdateResponse> listener) {
         assert lifecycle.started() : "Trying to register new repository but service is in state [" + lifecycle.state() + "]";
@@ -144,12 +149,11 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                 // 代表本次通知到了所有的节点
                 if (clusterStateUpdateResponse.isAcknowledged()) {
                     // The response was acknowledged - all nodes should know about the new repository, let's verify them
-                    // 这里执行一个认证工作 当认证完成时触发监听器
+                    // 当创建仓库成功时 需要验证能否正常工作  当验证失败时会通知用户
                     verifyRepository(request.name(), ActionListener.delegateFailure(delegatedListener,
                         // 当成功时 触发以下方法  也就是将处理逻辑桥接到 listener上
                         (innerDelegatedListener, discoveryNodes) -> innerDelegatedListener.onResponse(clusterStateUpdateResponse)));
                 } else {
-                    // 当 ack = false时 直接触发监听器
                     delegatedListener.onResponse(clusterStateUpdateResponse);
                 }
             });
@@ -159,7 +163,7 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
 
         // Trying to create the new repository on master to make sure it works
         try {
-            // 创建失败提前结束处理   这里只是确认是否可以工作 所以在使用完后立即就close了
+            // 检测仓库能否正常创建  无法创建直接返回失败信息
             closeRepository(createRepository(newRepositoryMetadata, typesRegistry));
         } catch (Exception e) {
             registrationListener.onFailure(e);
@@ -168,8 +172,15 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
 
         // 到了这里才开始处理  也就是将添加了 repositoryMetadata 的 ClusterState 发布到集群中
         clusterService.submitStateUpdateTask("put_repository [" + request.name() + "]",
-            // 这里的ack监听器 可以先放一下
+            // 如果是基于 clusterStateProcessed的监听器 实际上clusterState更新成功后还是有被覆盖的可能 所以需要配合类似eureka的续约机制
+            // 至少每次都要将 核心数据与集群新下发的 clusterState做比较 并为核心数据进行续约
+            // 而基于ACK的监听器 可以要求pub必须在所有节点上执行成功 这样就确保存储层数据不会丢失
             new AckedClusterStateUpdateTask<>(request, registrationListener) {
+
+                /**
+                 * @param acknowledged 代表在某个节点上执行失败了
+                 * @return
+                 */
                 @Override
                 protected ClusterStateUpdateResponse newResponse(boolean acknowledged) {
                     // 返回一个代表通知结果的 res   内部的ack为true 代表通知到所有节点 如果出现了异常情况 内部ack=false
@@ -183,7 +194,7 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                  */
                 @Override
                 public ClusterState execute(ClusterState currentState) {
-                    // 确保此时该repository 还没有被使用
+                    // 当前仓库对象正在使用中  不宜进行注册  这会引发更新操作
                     ensureRepositoryNotInUse(currentState, request.name());
                     Metadata metadata = currentState.metadata();
                     Metadata.Builder mdBuilder = Metadata.builder(currentState.metadata());
@@ -229,12 +240,22 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                     return ClusterState.builder(currentState).metadata(mdBuilder).build();
                 }
 
+                /**
+                 * 当发布失败时 会在外层进行重试 因为一般抛出的都是这个异常 FailedToCommitClusterStateException
+                 * @param source
+                 * @param e
+                 */
                 @Override
                 public void onFailure(String source, Exception e) {
                     logger.warn(() -> new ParameterizedMessage("failed to create repository [{}]", request.name()), e);
                     super.onFailure(source, e);
                 }
 
+                /**
+                 * 只需要确认 masterNode/dataNode
+                 * @param discoveryNode a node
+                 * @return
+                 */
                 @Override
                 public boolean mustAck(DiscoveryNode discoveryNode) {
                     // repository is created on both master and data nodes
@@ -312,13 +333,15 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
     }
 
     /**
-     * 当putRepository 对应的res.ack 为true时 触发该方法
+     * 校验仓库能否正常运行   必须要求本次创建仓库的请求在所有节点上都成功后才触发
      * @param repositoryName
      * @param listener
      */
     public void verifyRepository(final String repositoryName, final ActionListener<List<DiscoveryNode>> listener) {
-        // 找到此时存储在容器中的实例对象  也就是实例要提前设置到容器中么???   注意该对象api的使用顺序
+        // 在注册仓库实例的过程中 本节点会先触发  applyClusterState 会生成存储层实例
         final Repository repository = repository(repositoryName);
+
+        // 当获取到存储层实例后 开始校验
         threadPool.executor(ThreadPool.Names.SNAPSHOT).execute(new ActionRunnable<>(listener) {
             @Override
             protected void doRun() {
@@ -326,7 +349,7 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                 final String verificationToken = repository.startVerification();
                 if (verificationToken != null) {
                     try {
-                        // TODO 忽略认证
+                        // 在集群范围内 统一向所有节点发送认证数据
                         verifyAction.verify(repositoryName, verificationToken, ActionListener.delegateFailure(listener,
                             (delegatedListener, verifyResponse) -> threadPool.executor(ThreadPool.Names.SNAPSHOT).execute(() -> {
                                 try {
@@ -365,17 +388,19 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
      * repositories accordingly.
      *
      * @param event cluster changed event
-     *              当集群状态发生变化时触发   实际上registerRepository/unRegisterRepository 就是依靠该方法起作用
+     *              存储服务感知到集群状态变化时 触发该方法
      */
     @Override
     public void applyClusterState(ClusterChangedEvent event) {
         try {
+
+            // 检测有关存储层的元数据信息前后是否发生了变化
             final ClusterState state = event.state();
             RepositoriesMetadata oldMetadata = event.previousState().getMetadata().custom(RepositoriesMetadata.TYPE);
             RepositoriesMetadata newMetadata = state.getMetadata().custom(RepositoriesMetadata.TYPE);
 
             // Check if repositories got changed
-            // 代表集群状态中有关存储层元数据的部分发生了变化  各个存储实例根据自己的需要进行更新
+            // 代表元数据前后没有发生变化  只需要处理state的变化就可以  这里主要是更新repository观察到的最大的 gen
             if ((oldMetadata == null && newMetadata == null) || (oldMetadata != null && oldMetadata.equalsIgnoreGenerations(newMetadata))) {
                 for (Repository repo : repositories.values()) {
                     repo.updateState(state);
@@ -385,24 +410,28 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
 
             logger.trace("processing new index repositories for state version [{}]", event.state().version());
 
+            // 代表仓库元数据本身发生了变化 需要更新仓库 以及更新gen
+            // 该容器保留未被删除的实例
             Map<String, Repository> survivors = new HashMap<>();
             // First, remove repositories that are no longer there
             for (Map.Entry<String, Repository> entry : repositories.entrySet()) {
                 // 元数据中已经找不到某个存储服务了 关闭他们
                 if (newMetadata == null || newMetadata.repository(entry.getKey()) == null) {
                     logger.debug("unregistering repository [{}]", entry.getKey());
+                    // 针对ES内置的 默认实现   close是 noop
                     closeRepository(entry.getValue());
                 } else {
                     survivors.put(entry.getKey(), entry.getValue());
                 }
             }
 
-            // 从元数据中找到新增的 存储实例
+            // 用户传入新的存储层元数据 配合该对象初始化时存储的 Factory 创建/更新存储层实例
             Map<String, Repository> builder = new HashMap<>();
             if (newMetadata != null) {
                 // Now go through all repositories and update existing or create missing
                 for (RepositoryMetadata repositoryMetadata : newMetadata.repositories()) {
                     Repository repository = survivors.get(repositoryMetadata.name());
+                    // 代表是更新操作
                     if (repository != null) {
                         // Found previous version of this repository
                         // 检测元数据是否发生了变化
@@ -411,6 +440,8 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
                             || previousMetadata.settings().equals(repositoryMetadata.settings()) == false) {
                             // Previous version is different from the version in settings
                             logger.debug("updating repository [{}]", repositoryMetadata.name());
+
+                            // 关闭旧仓库 并创建新仓库  默认的FS仓库是NOOP
                             closeRepository(repository);
                             repository = null;
                             try {
@@ -525,7 +556,7 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
 
     /**
      * Creates repository holder. This method starts the repository
-     * 通过描述的待初始化的存储实例 以及之前在初始化阶段加载的插件中包含的工厂 创建存储实例
+     * 通过初始化时设置的 factory 配合某个仓库的元数据信息 生成新的仓库对象
      */
     private Repository createRepository(RepositoryMetadata repositoryMetadata, Map<String, Repository.Factory> factories) {
         logger.debug("creating repository [{}][{}]", repositoryMetadata.type(), repositoryMetadata.name());
@@ -579,7 +610,7 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
      * @param clusterState cluster state
      * @param repository   repository id
      * @return true if repository is currently in use by one of the running snapshots
-     * 检测某个存储实例此时是否已经被快照使用了
+     * 检测某个仓库此时是否在使用中
      */
     private static boolean isRepositoryInUse(ClusterState clusterState, String repository) {
         // 快照进程维护当前节点下所有快照行为  每个快照行为的状态可能不同 以及他们使用的存储类也可能不同

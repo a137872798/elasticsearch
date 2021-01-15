@@ -41,14 +41,14 @@ import java.util.Objects;
 
 /**
  * A class that represents the snapshot deletions that are in progress in the cluster.
- * 该对象描述了当前集群下快照删除的进度
+ * 该对象管理所有正在执行中的快照删除任务
  */
 public class SnapshotDeletionsInProgress extends AbstractNamedDiffable<Custom> implements Custom {
 
     public static final String TYPE = "snapshot_deletions";
 
     // the list of snapshot deletion request entries
-    // 每当有一个正在执行的快照删除任务 就会包装成一个entry 并设置到容器中
+    // 每个entry 对应一个快照删除任务 同样需要 repository 进行定位   ids 则指定要删除哪些快照
     private final List<Entry> entries;
 
     public SnapshotDeletionsInProgress(List<Entry> entries) {
@@ -174,19 +174,22 @@ public class SnapshotDeletionsInProgress extends AbstractNamedDiffable<Custom> i
 
     /**
      * A class representing a snapshot deletion request entry in the cluster state.
-     * 描述单次删除操作包含的所有快照数据
+     * 每个删除任务被包装成一个entry
      */
     public static final class Entry implements Writeable, RepositoryOperation {
 
         /**
-         * 本次涉及到的所有快照
+         * 本次要删除的所有快照
          */
         private final List<SnapshotId> snapshots;
         /**
-         * 这些快照属于哪个 repository 也就是每次删除操作都是针对某个仓库
+         * 每次快照操作都只针对某个repository
          */
         private final String repoName;
         private final long startTime;
+        /**
+         * 推测同一个仓库 可能每次启动都会更新id  这里就是记录了该快照是在哪次仓库中执行的
+         */
         private final long repositoryStateId;
 
         public Entry(List<SnapshotId> snapshots, String repoName, long startTime, long repositoryStateId) {
