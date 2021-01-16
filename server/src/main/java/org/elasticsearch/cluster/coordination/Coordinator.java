@@ -1557,6 +1557,9 @@ public class Coordinator extends AbstractLifecycleComponent implements Discovery
         try {
             synchronized (mutex) {
                 // 如果当前节点不是leader节点 或者当前节点的任期 不一致 是没有发布的权力的
+                // 这里的逻辑实际上是 本节点在发布更新leader的请求后 某些节点确认自己是leader可能又发起其他更新clusterState的任务
+                // 但是发布更新leader的请求只要没有让全节点认可(确定唯一leader) 本节点会自动降级成candidate 并重新发起选举
+                // 这时 自动拒绝之后其他更新clusterState的请求   确保集群中不会出现不一致的情况
                 if (mode != Mode.LEADER || getCurrentTerm() != clusterChangedEvent.state().term()) {
                     logger.debug(() -> new ParameterizedMessage("[{}] failed publication as node is no longer master for term {}",
                         clusterChangedEvent.source(), clusterChangedEvent.state().term()));

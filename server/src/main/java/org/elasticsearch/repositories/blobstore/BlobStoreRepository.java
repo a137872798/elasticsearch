@@ -481,7 +481,6 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
             // 每次仓库的变化 应该都会更新gen
 
-            // 在追求强一致数据的场景下  不要设置明确的gen
             long bestGenerationFromCS = RepositoryData.EMPTY_REPO_GEN;
             // 该对象描述了 所有正在执行的快照任务
             final SnapshotsInProgress snapshotsInProgress = state.custom(SnapshotsInProgress.TYPE);
@@ -1191,7 +1190,6 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
     }
 
     /**
-     * 结束某个快照进程
      * @param snapshotId            snapshot id
      * @param shardGenerations      updated shard generations
      * @param startTime             start time of the snapshot
@@ -1207,20 +1205,21 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
      *                              is used to remove any state tracked for the in-progress snapshot from the cluster state
      * @param listener              listener to be invoked with the new {@link RepositoryData} and the snapshot's {@link SnapshotInfo}
      *                              completion of the snapshot
+     *                              当某次快照任务结束后触发
      */
     @Override
     public void finalizeSnapshot(final SnapshotId snapshotId,   // 本次要关闭的快照
-                                 final ShardGenerations shardGenerations,  // 每个索引下每个分片对应的 gen
+                                 final ShardGenerations shardGenerations,  // 描述本次快照任务涉及的所有索引 以及下面每个分片的gen信息
                                  final long startTime,    // 开始生成快照的时间
                                  final String failure,
                                  final int totalShards,  // 本次总计涉及到多少分片
                                  final List<SnapshotShardFailure> shardFailures,   // 本次写入中 总计有多少分片失败了
-                                 final long repositoryStateId,
+                                 final long repositoryStateId,   // 在创建快照任务时 仓库的gen
                                  final boolean includeGlobalState,
                                  final Metadata clusterMetadata,
                                  final Map<String, Object> userMetadata,
-                                 Version repositoryMetaVersion,  // 通过该版本号检测是否要将 分片的gen写入到存储层
-                                 Function<ClusterState, ClusterState> stateTransformer,
+                                 Version repositoryMetaVersion,  // 描述使用的lucene版本
+                                 Function<ClusterState, ClusterState> stateTransformer,   // 该函数就是将快照任务从当前clusterState中移除 代表本次快照完成
                                  final ActionListener<Tuple<RepositoryData, SnapshotInfo>> listener) {
         assert repositoryStateId > RepositoryData.UNKNOWN_REPO_GEN :
             "Must finalize based on a valid repository generation but received [" + repositoryStateId + "]";
@@ -1231,17 +1230,26 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         // directory if all nodes are at least at version SnapshotsService#SHARD_GEN_IN_REPO_DATA_VERSION
         // If there are older version nodes in the cluster, we don't need to run this cleanup as it will have already happened
         // when writing the index-${N} to each shard directory.
-        // 在7.6版本之后会将 shardgen 写入到存储层中
+        // 在7.6版本之后会将 shard.gen 写入到存储层中
         final boolean writeShardGens = SnapshotsService.useShardGenerations(repositoryMetaVersion);
+
         final Consumer<Exception> onUpdateFailure =
             e -> listener.onFailure(new SnapshotException(metadata.name(), snapshotId, "failed to update snapshot in repository", e));
+
+        // 该监听器要监听到3个任务完成后 才能触发最终的逻辑
         final ActionListener<SnapshotInfo> allMetaListener = new GroupedActionListener<>(
             ActionListener.wrap(snapshotInfos -> {
                 assert snapshotInfos.size() == 1 : "Should have only received a single SnapshotInfo but received " + snapshotInfos;
                 final SnapshotInfo snapshotInfo = snapshotInfos.iterator().next();
+
+                // 开始处理这个生成的快照描述信息
                 getRepositoryData(ActionListener.wrap(existingRepositoryData -> {
+
+                    // 先获取之前的仓库描述信息 追加一个快照信息
                     final RepositoryData updatedRepositoryData =
                         existingRepositoryData.addSnapshot(snapshotId, snapshotInfo.state(), Version.CURRENT, shardGenerations);
+
+                    // 在集群描述信息发生变化后 需要写入
                     writeIndexGen(updatedRepositoryData, repositoryStateId, writeShardGens, stateTransformer,
                             ActionListener.wrap(writtenRepoData -> {
                                 if (writeShardGens) {
@@ -1250,7 +1258,8 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                                 listener.onResponse(new Tuple<>(writtenRepoData, snapshotInfo));
                             }, onUpdateFailure));
                 }, onUpdateFailure));
-            }, onUpdateFailure), 2 + indices.size());  // 这里分配的监听器数量是 索引数量 + 2
+            }, onUpdateFailure), 2 + indices.size());
+
         final Executor executor = threadPool.executor(ThreadPool.Names.SNAPSHOT);
 
         // We ignore all FileAlreadyExistsException when writing metadata since otherwise a master failover while in this method will
@@ -1259,16 +1268,22 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         // Failing on an already existing index-${repoGeneration} below ensures that the index.latest blob is not updated in a way
         // that decrements the generation it points at
 
+
+        // 分别将此时的 Metadata/indexMetadata/snapshotInfo信息写入到仓库中
+
         // Write Global Metadata
+        // 将生成该快照时的集群元数据信息写入到 仓库中
         executor.execute(ActionRunnable.run(allMetaListener,
             () -> globalMetadataFormat.write(clusterMetadata, blobContainer(), snapshotId.getUUID(), false)));
 
         // write the index metadata for each index in the snapshot
+        // 将索引级别的元数据信息写入到仓库中
         for (IndexId index : indices) {
             executor.execute(ActionRunnable.run(allMetaListener, () ->
                 indexMetadataFormat.write(clusterMetadata.index(index.getName()), indexContainer(index), snapshotId.getUUID(), false)));
         }
 
+        // 将本次快照任务的信息写入到仓库后 触发监听器
         executor.execute(ActionRunnable.supply(allMetaListener, () -> {
             final SnapshotInfo snapshotInfo = new SnapshotInfo(snapshotId,
                 indices.stream().map(IndexId::getName).collect(Collectors.toList()),
@@ -1655,6 +1670,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
      * @return
      */
     private RepositoryData getRepositoryData(long indexGen) {
+        // 当仓库首次启动时  不存在index-gen文件  此时gen为-1 并且查询的repositoryData为empty
         if (indexGen == RepositoryData.EMPTY_REPO_GEN) {
             return RepositoryData.EMPTY;
         }
@@ -1698,19 +1714,21 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
      * Lastly, the {@link RepositoryMetadata} entry for this repository is updated to the new generation {@code P + 1} and thus
      * pending and safe generation are set to the same value marking the end of the update of the repository data.
      *
-     * @param repositoryData RepositoryData to write  当前repository下最新的元数据  比如在leader节点发起了对某些snapshot的删除操作  之后会引发 repositoryData的更新
-     * @param expectedGen    expected repository generation at the start of the operation     本次预期的gen
-     * @param writeShardGens whether to write {@link ShardGenerations} to the new {@link RepositoryData} blob   是否要写入分片的gen 新版本为true 7.6之前不用
-     * @param stateFilter    filter for the last cluster state update executed by this method   更新集群状态
-     * @param listener       completion listener   当任务完成时触发监听器
-     *
-     *                       更新repositoryMetadata 并发布到集群中
+     * @param repositoryData RepositoryData to write
+     * @param expectedGen    expected repository generation at the start of the operation
+     * @param writeShardGens whether to write {@link ShardGenerations} to the new {@link RepositoryData} blob
+     * @param stateFilter    filter for the last cluster state update executed by this method
+     * @param listener       completion listener
+     *                      当某个快照任务完成后 会将信息追加到repositoryData中 之后触发该方法
+     *                      应该是要将最新的仓库数据同步到整个集群中
      */
     protected void writeIndexGen(RepositoryData repositoryData, long expectedGen, boolean writeShardGens,
                                  Function<ClusterState, ClusterState> stateFilter, ActionListener<RepositoryData> listener) {
         assert isReadOnly() == false; // can not write to a read only repository
+
+        // 每次大改动应该会修改 仓库数据的gen
         final long currentGen = repositoryData.getGenId();
-        // 本次处理的gen 与预期值不同 以失败形式触发
+        // 当快照任务完成时 发现与当初创建快照任务时相比  仓库gen已经发生了变化  通知用户本次快照处理失败
         if (currentGen != expectedGen) {
             // the index file was updated by a concurrent operation, so we were operating on stale
             // repository data
@@ -1722,7 +1740,8 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
         // Step 1: Set repository generation state to the next possible pending generation
         final StepListener<Long> setPendingStep = new StepListener<>();
-        // 提交一个更新集群的任务 该任务必须在leader节点触发 同时必须写入至少 1/2 参选节点才算成功  这里只是更新pendingGen 代表即将开始写入任务
+
+        // 第一步 更新集群中其他节点的 gen
         clusterService.submitStateUpdateTask("set pending repository generation [" + metadata.name() + "][" + expectedGen + "]",
             new ClusterStateUpdateTask() {
 
@@ -1730,11 +1749,11 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
                 @Override
                 public ClusterState execute(ClusterState currentState) {
-                    // 从clusterState 中获取存储层元数据
+                    // 获取此时仓库的gen
                     final RepositoryMetadata meta = getRepoMetadata(currentState);
                     final String repoName = metadata.name();
                     final long genInState = meta.generation();
-                    // 如果要求强一致性场景 或者不知道当前的gen   会重新读取一次gen
+                    // 如果要求强一致性场景 或者不知道当前的gen
                     final boolean uninitializedMeta = meta.generation() == RepositoryData.UNKNOWN_REPO_GEN || bestEffortConsistency;
                     if (uninitializedMeta == false && meta.pendingGeneration() != genInState) {
                         logger.info("Trying to write new repository data over unfinished write, repo [{}] is at " +

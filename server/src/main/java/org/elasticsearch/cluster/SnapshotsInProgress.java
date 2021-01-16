@@ -179,7 +179,7 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
                 this.waitingIndices = ImmutableOpenMap.of();
             } else {
                 this.shards = shards;
-                // 找到状态是 waiting的  这些分片此刻正处于 init/relocation 状态 所以此时还不能生成快照
+                // 根据当前分片信息 找到无法立即处理的索引
                 this.waitingIndices = findWaitingIndices(shards);
                 assert assertShardsConsistent(state, indices, shards);
             }
@@ -208,10 +208,10 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
          * @param includeGlobalState
          * @param partial
          * @param state
-         * @param indices
+         * @param indices  在 createSnapshot阶段 会传入空列表
          * @param startTime
          * @param repositoryStateId
-         * @param shards
+         * @param shards   createSnashot阶段 传入null
          * @param userMetadata
          * @param version
          */
@@ -392,7 +392,7 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
         }
 
         /**
-         * 从传入的所有快照状态中找到waiting的 并存储到列表中
+         * 当尝试为某些分片创建快照时 可能该分片处于 重定向或者init状态 他们的数据还未recovery
          * @param shards
          * @return
          */
@@ -431,7 +431,8 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
     }
 
     /**
-     * 对应某个shard的快照信息
+     * 一个快照任务本身有一个状态  而快照任务对应多个分片 在每个分片上执行快照任务 又有一个对应的状态
+     *
      */
     public static class ShardSnapshotStatus {
         private final ShardState state;
@@ -529,6 +530,9 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
     public enum State {
         INIT((byte) 0, false),
         STARTED((byte) 1, false),
+        /**
+         * 快照任务成功只能代表 下面所有的分片级快照执行完成  不能确保他们都成功
+         */
         SUCCESS((byte) 2, true),
         FAILED((byte) 3, true),
         ABORTED((byte) 4, false);
@@ -689,6 +693,10 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
     public enum ShardState {
         INIT((byte) 0, false, false),
         SUCCESS((byte) 2, true, false),
+
+        /**
+         * 代表本次在分片上执行快照任务失败了  一种可能的情况是 本分片对应的节点下线了
+         */
         FAILED((byte) 3, true, true),
         /**
          * 代表对应的快照任务被强制关闭了

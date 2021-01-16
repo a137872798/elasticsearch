@@ -216,6 +216,7 @@ public final class RepositoryData {
      * @param snapshotState    State of the new snapshot
      * @param shardGenerations Updated shard generations in the new snapshot. For each index contained in the snapshot an array of new
      *                         generations indexed by the shard id they correspond to must be supplied.
+     *                         该对象本身是描述仓库的元数据信息  每当完成一次快照任务时 会追加一个快照描述信息
      */
     public RepositoryData addSnapshot(final SnapshotId snapshotId,
                                       final SnapshotState snapshotState,

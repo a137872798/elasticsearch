@@ -75,9 +75,6 @@ public class CreateSnapshotRequest extends MasterNodeRequest<CreateSnapshotReque
 
     private IndicesOptions indicesOptions = IndicesOptions.strictExpand();
 
-    /**
-     * 是否是部分的???
-     */
     private boolean partial = false;
 
     private Settings settings = EMPTY_SETTINGS;

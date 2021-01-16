@@ -128,9 +128,8 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
      * @param listener register repository listener    该监听器包含了处理本次通知的结果
      *
      *                 用户可以向集群提交一个插入仓库的请求 这里会生成仓库元数据对象，并设置到clusterState中 之后发布到集群中
-     *                 然而ES选举本身存在一个弊端 就是在一轮中可能会选出2个leader 如果本次接收请求的是之后会降级的leader
-     *                 那么如何确保本次生成仓库请求是发布成功的呢  是否成功发布到集群中所有节点 会设置一个 acknowledged 为false的情况 可以由用户继续发起请求
-     *                 本身clusterState 被覆盖的概率也比较低  可能会配合一些续约机制吧 但是选举配置本身合理的情况下 实际上没有这么复杂 也不会产生多个leader
+     *                 ES在选举过程中 可能会产生2个leader 但是在更新leader的clusterState发布到集群中时 要求必须所有节点都认同 否则会重新发起选举
+     *                 也就是首次发布最终会确保集群中只存在一个leader 所有节点都认同它  那么之后关于其他操作导致的clusterState的更新就不会丢失或者覆盖了 只是还是存在失败的情况 比如脑裂
      */
     public void registerRepository(final PutRepositoryRequest request, final ActionListener<ClusterStateUpdateResponse> listener) {
         assert lifecycle.started() : "Trying to register new repository but service is in state [" + lifecycle.state() + "]";

@@ -52,7 +52,7 @@ public final class ShardGenerations {
     public static final String DELETED_SHARD_GEN = "_deleted";
 
     /**
-     * key 代表每个索引的id   value 代表该索引下所有分片的gen  分片id 就是list的下标
+     * key 代表每个索引的id   value 代表该索引下所有分片的gen  shardId就是list的下标
      */
     private final Map<IndexId, List<String>> shardGenerations;
 

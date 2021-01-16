@@ -38,7 +38,7 @@ public final class Snapshot implements Writeable {
      */
     private final String repository;
     /**
-     * 记录快照id 便于去仓库中寻找快照
+     * 每个快照任务 会对应一个snapshotId  内部包含了一个 uuid 也包含了快照任务的name
      */
     private final SnapshotId snapshotId;
     private final int hashCode;

@@ -142,7 +142,7 @@ public interface Repository extends LifecycleComponent {
      *                              is used to remove any state tracked for the in-progress snapshot from the cluster state
      * @param listener              listener to be invoked with the new {@link RepositoryData} and the snapshot's {@link SnapshotInfo}
      *                              completion of the snapshot
-     *                              结束一个快照进程   有leader节点调用 当所有分片都生成快照后触发
+     *
      */
     void finalizeSnapshot(SnapshotId snapshotId, ShardGenerations shardGenerations, long startTime, String failure,
                           int totalShards, List<SnapshotShardFailure> shardFailures, long repositoryStateId,
