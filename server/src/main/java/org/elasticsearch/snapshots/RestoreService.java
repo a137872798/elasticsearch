@@ -115,7 +115,7 @@ import static org.elasticsearch.snapshots.SnapshotUtils.filterIndices;
  * At the end of the successful restore process {@code RestoreService} calls {@link #cleanupRestoreState(ClusterChangedEvent)},
  * which removes {@link RestoreInProgress} when all shards are completed. In case of
  * restore failure a normal recovery fail-over process kicks in.
- *
+ * <p>
  * 基于快照进行数据恢复
  */
 public class RestoreService implements ClusterStateApplier {
@@ -126,11 +126,11 @@ public class RestoreService implements ClusterStateApplier {
      * 有关无法修改的配置
      */
     private static final Set<String> UNMODIFIABLE_SETTINGS = unmodifiableSet(newHashSet(
-            SETTING_NUMBER_OF_SHARDS,
-            SETTING_VERSION_CREATED,
-            SETTING_INDEX_UUID,
-            SETTING_CREATION_DATE,
-            IndexSettings.INDEX_SOFT_DELETES_SETTING.getKey()));
+        SETTING_NUMBER_OF_SHARDS,
+        SETTING_VERSION_CREATED,
+        SETTING_INDEX_UUID,
+        SETTING_CREATION_DATE,
+        IndexSettings.INDEX_SOFT_DELETES_SETTING.getKey()));
 
     // It's OK to change some settings, but we shouldn't allow simply removing them
     // 这里存储了无法删除的配置项
@@ -225,7 +225,7 @@ public class RestoreService implements ClusterStateApplier {
                 final List<String> indicesInSnapshot = filterIndices(snapshotInfo.indices(), request.indices(), request.indicesOptions());
 
                 final Metadata.Builder metadataBuilder;
-                // 在数据恢复阶段 使用的 metadata中是否要包含生成快照时的 整个metadata  一般来说只需要几个相关索引的 indexMetadata 就可以了
+                // 代表本次恢复操作 要连同metadata一起复原
                 if (request.includeGlobalState()) {
                     metadataBuilder = Metadata.builder(repository.getSnapshotGlobalMetadata(snapshotId));
                 } else {
@@ -244,6 +244,7 @@ public class RestoreService implements ClusterStateApplier {
                 // Apply renaming on index names, returning a map of names where
                 // the key is the renamed index and the value is the original name
                 // req中可以携带替换符 可以将index 重命名
+                // v1 代表rename后的indexName  v2 代表原indexName
                 final Map<String, String> indices = renamedIndices(request, indicesInSnapshot);
 
                 // Now we can start the actual restore process by adding shards to be recovered in the cluster state
@@ -288,28 +289,26 @@ public class RestoreService implements ClusterStateApplier {
                             final Version minIndexCompatibilityVersion = currentState.getNodes().getMaxNodeVersion()
                                 .minimumIndexCompatibilityVersion();
                             for (Map.Entry<String, String> indexEntry : indices.entrySet()) {
-                                // 索引的原名
+                                // 对应索引的原名
                                 String index = indexEntry.getValue();
 
-                                // 因为在生成快照的过程中 如果 partial为false 那么只要有部分数据生成失败 整个任务都会失败 也就是 restore为false无法恢复数据
-                                // 如果可以恢复数据 但是有部分处理是失败的 一定是因为生成快照的时候允许partial为true
+                                // true代表该index的分片数据是不完整的(上次生成快照有部分数据失败)  false代表快照数据完整
                                 boolean partial = checkPartial(index);
 
-                                // recoverySource 代表数据恢复的多种途径    SnapshotRecoverySource 就代表通过快照来恢复数据
-                                // SnapshotRecoverySource 可以指定index
+                                // 将相关信息包装成 快照恢复源
                                 SnapshotRecoverySource recoverySource = new SnapshotRecoverySource(restoreUUID, snapshot,
                                     snapshotInfo.version(), repositoryData.resolveIndexId(index));
                                 // rename后的索引名
                                 String renamedIndexName = indexEntry.getKey();
 
-                                // 获取索引相关的元数据
+                                // 获取在生成该快照时该索引此时的元数据信息
                                 IndexMetadata snapshotIndexMetadata = metadata.index(index);
 
-                                // 请求体中可能包含某些所有相关的配置 可以用来更新索引
+                                // TODO 先忽略indexMetadata的更新
                                 snapshotIndexMetadata = updateIndexSettings(snapshotIndexMetadata,
                                     request.indexSettings(), request.ignoreIndexSettings());
                                 try {
-                                    // 这里还要进行升级 应该是处理兼容性问题的  先忽略
+                                    // TODO 忽略兼容性处理
                                     snapshotIndexMetadata = metadataIndexUpgradeService.upgradeIndexMetadata(snapshotIndexMetadata,
                                         minIndexCompatibilityVersion);
                                 } catch (Exception ex) {
@@ -317,62 +316,61 @@ public class RestoreService implements ClusterStateApplier {
                                         "] because it cannot be upgraded", ex);
                                 }
                                 // Check that the index is closed or doesn't exist
-                                // 如果重命名后的索引元数据已经存在 会发生冲突 所以要抛出异常
+                                // 这个就是利用快照恢复index的意思啊  以index-A 的快照作为原始数据 通过req.rename参数 将index-A 转换成 index-B 并开始恢复数据
                                 IndexMetadata currentIndexMetadata = currentState.metadata().index(renamedIndexName);
                                 IntSet ignoreShards = new IntHashSet();
                                 final Index renamedIndex;
                                 if (currentIndexMetadata == null) {
                                     // Index doesn't exist - create it and start recovery
                                     // Make sure that the index we are about to create has a validate name
-                                    // 是否包含 hidden属性
                                     boolean isHidden = IndexMetadata.INDEX_HIDDEN_SETTING.get(snapshotIndexMetadata.getSettings());
-                                    // TODO 校验性代表先忽略
+                                    // TODO 先忽略校验代码
                                     createIndexService.validateIndexName(renamedIndexName, currentState);
                                     createIndexService.validateDotIndex(renamedIndexName, currentState, isHidden);
                                     createIndexService.validateIndexSettings(renamedIndexName, snapshotIndexMetadata.getSettings(), false);
 
-                                    // 为新的index构建一个metadata 对象  并将索引标记成打开状态
+                                    // 这里以 index-A 作为模板创建 index-B
                                     IndexMetadata.Builder indexMdBuilder = IndexMetadata.builder(snapshotIndexMetadata)
                                         .state(IndexMetadata.State.OPEN)
                                         .index(renamedIndexName);
-                                    // 在设置settings时 在原有的基础上增加了一个 index-uuid
                                     indexMdBuilder.settings(Settings.builder()
                                         .put(snapshotIndexMetadata.getSettings())
                                         .put(IndexMetadata.SETTING_INDEX_UUID, UUIDs.randomBase64UUID()));
 
-                                    // 因为即将要创建一个新的index了 会根据此时的情况判断创建多少分片  根据当前集群此时承载的分片数量 与最大承载能力判断 是否超过分片数量限制
+                                    // 检查此时集群是否有承载新index的能力   不满足则抛出异常
                                     MetadataCreateIndexService.checkShardLimit(snapshotIndexMetadata.getSettings(), currentState);
-                                    // 重命名后的 index 清除了之前索引关联的所有别名
+
+                                    // 如果恢复操作不要求包含别名信息  而此时的index-B 中有别名信息 那么移除别名信息
                                     if (!request.includeAliases() && !snapshotIndexMetadata.getAliases().isEmpty()) {
                                         // Remove all aliases - they shouldn't be restored
                                         indexMdBuilder.removeAllAliases();
                                     } else {
-
-                                        // 否则将当前元数据中的所有别名取一份出来存到 aliases容器中
+                                        // 否则将该index的所有相关别名取出来
                                         for (ObjectCursor<String> alias : snapshotIndexMetadata.getAliases().keys()) {
                                             aliases.add(alias.value);
                                         }
                                     }
                                     IndexMetadata updatedIndexMetadata = indexMdBuilder.build();
-                                    // 代表本次快照是不完全的
+                                    // 代表本次index中可能会有部分shard的数据无法恢复
                                     if (partial) {
-                                        // 将所有失败的信息中 与本index有关的加入到 ignoreShards中 代表这些分片的数据无法恢复
+                                        // 将无法通过快照恢复数据的shard 加入到特殊容器中
                                         populateIgnoredShards(index, ignoreShards);
                                     }
-                                    // 路由表中也需要追加新的信息
+                                    // 在路由表中添加一个新的index 并且指定recovery为快照恢复
                                     rtBuilder.addAsNewRestore(updatedIndexMetadata, recoverySource, ignoreShards);
                                     // 加入block后 针对该index的相关请求都会被暂停
                                     blocks.addBlocks(updatedIndexMetadata);
-                                    // 更新当前索引元数据
+                                    // 在当前metadata基础上增加新索引对应的元数据信息
                                     mdBuilder.put(updatedIndexMetadata, true);
                                     renamedIndex = updatedIndexMetadata.getIndex();
                                 } else {
+                                    // 2种情况 第一种 renamed后的快照还是它自身
+                                    // 第二种 renamed后的快照之前已经存在
 
-                                    // 代表 renamed后的索引数据 一开始就存在于集群中
                                     validateExistingIndex(currentIndexMetadata, snapshotIndexMetadata, renamedIndexName, partial);
 
                                     // Index exists and it's closed - open it in metadata and start recovery
-                                    // 为这个最新的索引元数据增加版本号 并标记成打开状态 (因为之前必然是关闭状态)
+                                    // 尽可能用快照索引的元数据信息 去覆盖已存在的索引元数据信息
                                     IndexMetadata.Builder indexMdBuilder =
                                         IndexMetadata.builder(snapshotIndexMetadata).state(IndexMetadata.State.OPEN);
                                     indexMdBuilder.version(
@@ -391,8 +389,7 @@ public class RestoreService implements ClusterStateApplier {
                                             Math.max(snapshotIndexMetadata.primaryTerm(shard), currentIndexMetadata.primaryTerm(shard)));
                                     }
 
-                                    // 别名是这样的  如果要移除  就不使用snapshotIndexMetadata的别名 但是使用之前的别名
-                                    // 如果需要设置别名 就使用snapshotIndexMetadata的别名 作为新的别名 抛弃之前的旧别名
+                                    // 如果本次不需要操作别名的副本 那么保留原indexMetadata的别名
                                     if (!request.includeAliases()) {
                                         // Remove all snapshot aliases
                                         if (!snapshotIndexMetadata.getAliases().isEmpty()) {
@@ -403,31 +400,37 @@ public class RestoreService implements ClusterStateApplier {
                                             indexMdBuilder.putAlias(alias.value);
                                         }
                                     } else {
+                                        // 操作包含别名 所以就把快照的别名存进去
                                         for (ObjectCursor<String> alias : snapshotIndexMetadata.getAliases().keys()) {
                                             aliases.add(alias.value);
                                         }
                                     }
 
 
-                                    // 沿用currentIndexMetadata的uuid 其余数据采用之前的
+                                    // 沿用currentIndexMetadata的uuid 其余数据尽量使用 snapshotIndexMetadata的
                                     indexMdBuilder.settings(Settings.builder()
                                         .put(snapshotIndexMetadata.getSettings())
                                         .put(IndexMetadata.SETTING_INDEX_UUID,
                                             currentIndexMetadata.getIndexUUID()));
                                     IndexMetadata updatedIndexMetadata = indexMdBuilder.index(renamedIndexName).build();
+
+                                    // 将indexMetadata的恢复源更新后 插入到路由表中
                                     rtBuilder.addAsRestore(updatedIndexMetadata, recoverySource);
                                     blocks.updateBlocks(updatedIndexMetadata);
                                     mdBuilder.put(updatedIndexMetadata, true);
                                     renamedIndex = updatedIndexMetadata.getIndex();
                                 }
 
+                                // 上面是处理index级别 这里要处理shard级别
                                 for (int shard = 0; shard < snapshotIndexMetadata.getNumberOfShards(); shard++) {
-                                    // 代表可以通过快照恢复该shard的数据  插入一个state为init的 shardId
+
+                                    // 该分片可以正常进行数据恢复
                                     if (!ignoreShards.contains(shard)) {
                                         shardsBuilder.put(new ShardId(renamedIndex, shard),
+                                            // 这里status设置了nodeId(为当前节点)  restore任务只能在leader节点发起吧
                                             new RestoreInProgress.ShardRestoreStatus(clusterService.state().nodes().getLocalNodeId()));
                                     } else {
-                                        // 该分片无法从快照中恢复数据 设置failure
+                                        // 该分片之前创建快照就已经失败了 所以本次该分片restore操作已经完成了 并且结果是failure
                                         shardsBuilder.put(new ShardId(renamedIndex, shard),
                                             new RestoreInProgress.ShardRestoreStatus(clusterService.state().nodes().getLocalNodeId(),
                                                 RestoreInProgress.State.FAILURE));
@@ -435,8 +438,9 @@ public class RestoreService implements ClusterStateApplier {
                                 }
                             }
 
-                            // 当所有索引级的元数据都得到更新后
+                            // 到此为止 已经为所有本次需要恢复的所有索引 更新/创建了 indexMetadata 并且设置了每个分片的 restoreStatus
                             shards = shardsBuilder.build();
+                            // 生成restore.Entry
                             RestoreInProgress.Entry restoreEntry = new RestoreInProgress.Entry(
                                 restoreUUID, snapshot, overallState(RestoreInProgress.State.INIT, shards),
                                 List.copyOf(indices.keySet()),
@@ -458,7 +462,7 @@ public class RestoreService implements ClusterStateApplier {
                         checkAliasNameConflicts(indices, aliases);
 
                         // Restore global state if needed
-                        // 将全局配置有关的信息转移到 mdBuilder 上  (经过上面的处理 mdBuilder中已经设置了各个index的相关信息了)
+                        // 这里是尝试将 metadata 也恢复到生成快照的那个时刻   在执行快照任务时 可以不指定index 通知指定存储metadata 这样就可以只针对metadata 进行还原
                         if (request.includeGlobalState()) {
                             if (metadata.persistentSettings() != null) {
                                 Settings settings = metadata.persistentSettings();
@@ -483,7 +487,7 @@ public class RestoreService implements ClusterStateApplier {
                             }
                         }
 
-                        // 如果此时所有分片都已经处理完成了  (实际上就是所有shard在之前的快照生成阶段都失败了)
+                        // 如果所有分片在生成快照时都失败了 实际上本次restore任务就可以提前退出了
                         if (completed(shards)) {
                             // We don't have any indices to restore - we are done
                             restoreInfo = new RestoreInfo(snapshotId.getName(),
@@ -492,12 +496,17 @@ public class RestoreService implements ClusterStateApplier {
                                 shards.size() - failedShards(shards));
                         }
 
-                        // 因为路由表发生了变化 所以要进行重路由  这些indexShard要重新决定分配在哪些节点上
                         RoutingTable rt = rtBuilder.build();
                         ClusterState updatedState = builder.metadata(mdBuilder).blocks(blocks).routingTable(rt).build();
+                        // 因为产生了新的分片 所以要进行重路由 而在 gatewayAllocation中 一旦发现某些分片的recoverySource是 restore 就会做特殊处理
                         return allocationService.reroute(updatedState, "restored snapshot [" + snapshot + "]");
                     }
 
+                    /**
+                     * 检查别名是否与 索引名重复了
+                     * @param renamedIndices
+                     * @param aliases
+                     */
                     private void checkAliasNameConflicts(Map<String, String> renamedIndices, Set<String> aliases) {
                         for (Map.Entry<String, String> renamedIndex : renamedIndices.entrySet()) {
                             if (aliases.contains(renamedIndex.getKey())) {
@@ -509,7 +518,7 @@ public class RestoreService implements ClusterStateApplier {
                     }
 
                     /**
-                     * 获取此时快照所有的失败信息 当某条index匹配成功时 将分片id 设置到容器中
+                     * 将该index 下所有生成快照失败的shard 加入到容器中
                      * @param index
                      * @param ignoreShards
                      */
@@ -527,7 +536,9 @@ public class RestoreService implements ClusterStateApplier {
                      */
                     private boolean checkPartial(String index) {
                         // Make sure that index was fully snapshotted
+                        // 判断该index在生成快照时 是否失败了
                         if (failed(snapshotInfo, index)) {
+                            // 允许只恢复部分数据
                             if (request.partial()) {
                                 return true;
                             } else {
@@ -535,21 +546,25 @@ public class RestoreService implements ClusterStateApplier {
                                     "restore");
                             }
                         } else {
+                            // 快照数据是完整的
                             return false;
                         }
                     }
 
                     /**
-                     *
-                     * @param currentIndexMetadata  重命名的index 对应的元数据
-                     * @param snapshotIndexMetadata   重命名前的index 对应的元数据
-                     * @param renamedIndex   重命名后的名字
-                     * @param partial    未重命名前的index  是否是部分数据
+                     * 当尝试用快照作为恢复源去恢复某个分片时 发现renamed后的索引已经存在
+                     * @param currentIndexMetadata
+                     * @param snapshotIndexMetadata
+                     * @param renamedIndex
+                     * @param partial
                      */
-                    private void validateExistingIndex(IndexMetadata currentIndexMetadata, IndexMetadata snapshotIndexMetadata,
-                        String renamedIndex, boolean partial) {
+                    private void validateExistingIndex(IndexMetadata currentIndexMetadata, // 此时该索引最新的元数据信息
+                                                       IndexMetadata snapshotIndexMetadata, // 在生成快照时该索引的快照信息
+                                                       String renamedIndex, // 重命名后的索引名
+                                                       boolean partial // 是否有部分分片快照创建失败了
+                    ) {
                         // Index exist - checking that it's closed
-                        // 如果重命名后的索引此时存在于集群中 那么必须确保此时处于关闭状态 否则无法正常恢复该索引的数据
+                        // 此时该索引已经被关闭了 那么就无法进行数据恢复了
                         if (currentIndexMetadata.getState() != IndexMetadata.State.CLOSE) {
                             // TODO: Enable restore for open indices
                             throw new SnapshotRestoreException(snapshot, "cannot restore index [" + renamedIndex
@@ -557,13 +572,17 @@ public class RestoreService implements ClusterStateApplier {
                                 "with same name already exists in the cluster. Either close or delete the existing index or restore the " +
                                 "index under a different name by providing a rename pattern and replacement name");
                         }
+
+                        // 如果想要以快照作为恢复源 且被恢复的index之前已经存在 那么必须完全的覆盖  shard数量必须一致 且所有分片的快照必须都创建成功
+
                         // Index exist - checking if it's partial restore
-                        // 当索引已经存在时 不允许只恢复部分shard   应该是必须全量覆盖吧
+                        // TODO 这里还不清楚这样设计的理由  如果index是存在的 且部分快照之前创建失败了  那么就不该继续下去了
                         if (partial) {
                             throw new SnapshotRestoreException(snapshot, "cannot restore partial index [" + renamedIndex
                                 + "] because such index already exists");
                         }
                         // Make sure that the number of shards is the same. That's the only thing that we cannot change
+                        // 要求分片数量必须一致
                         if (currentIndexMetadata.getNumberOfShards() != snapshotIndexMetadata.getNumberOfShards()) {
                             throw new SnapshotRestoreException(snapshot,
                                 "cannot restore index [" + renamedIndex + "] with [" + currentIndexMetadata.getNumberOfShards()
@@ -579,7 +598,6 @@ public class RestoreService implements ClusterStateApplier {
                      */
                     private IndexMetadata updateIndexSettings(IndexMetadata indexMetadata, Settings changeSettings,
                                                               String[] ignoreSettings) {
-                        // 仅找到 index为前缀的配置
                         Settings normalizedChangeSettings = Settings.builder()
                             .put(changeSettings)
                             .normalizePrefix(IndexMetadata.INDEX_SETTING_PREFIX)
@@ -666,6 +684,7 @@ public class RestoreService implements ClusterStateApplier {
 
     /**
      * 删除某些index
+     *
      * @param oldRestore
      * @param deletedIndices
      * @return
@@ -750,6 +769,7 @@ public class RestoreService implements ClusterStateApplier {
 
         /**
          * 当某个分片从 init->start
+         *
          * @param initializingShard
          * @param startedShard
          */
@@ -770,6 +790,7 @@ public class RestoreService implements ClusterStateApplier {
 
         /**
          * 如果某个分片分配失败了
+         *
          * @param failedShard
          * @param unassignedInfo
          */
@@ -807,6 +828,7 @@ public class RestoreService implements ClusterStateApplier {
 
         /**
          * 一个分片进行分配需要经过很多流程   在其中 unassignedInfo 也会发生变化
+         *
          * @param unassignedShard
          * @param newUnassignedInfo
          */
@@ -836,7 +858,8 @@ public class RestoreService implements ClusterStateApplier {
 
         /**
          * 处理之前监听到的变化   Restore只针对恢复方式为 SNAPSHOT 的
-         * @param oldRestore  针对恢复状态进行更新
+         *
+         * @param oldRestore 针对恢复状态进行更新
          * @return
          */
         public RestoreInProgress applyChanges(final RestoreInProgress oldRestore) {
@@ -944,6 +967,7 @@ public class RestoreService implements ClusterStateApplier {
     /**
      * 每当检测到集群状态发生变化 都要触发该方法
      * 实际上就是将 restoreEntry 从 clusterState中移除
+     *
      * @param event
      */
     private void cleanupRestoreState(ClusterChangedEvent event) {
@@ -967,16 +991,16 @@ public class RestoreService implements ClusterStateApplier {
     }
 
     /**
-     * 根据当前所有恢复状态 返回一个总结果  比如所有都成功完成就返回SUCCESS 有一个是FAILURE 就返回 FAILURE 有一个是未完成状态就返回nonCompletedState
-     * @param nonCompletedState   当某些状态处于未完成时 返回 nonCompletedState
+     *
+     * @param nonCompletedState 根据此时每个shard级别的恢复状态 判读当前恢复任务是否已经结束
      * @param shards
      * @return
      */
     private static RestoreInProgress.State overallState(RestoreInProgress.State nonCompletedState,
                                                         ImmutableOpenMap<ShardId, RestoreInProgress.ShardRestoreStatus> shards) {
         boolean hasFailed = false;
-        // 只要有某个状态处于未完成 则返回 nonCompletedState
         for (ObjectCursor<RestoreInProgress.ShardRestoreStatus> status : shards.values()) {
+            // 只要有某个分片任务未完成 代表整个restore未完成
             if (!status.value.state().completed()) {
                 return nonCompletedState;
             }
@@ -985,6 +1009,7 @@ public class RestoreService implements ClusterStateApplier {
                 hasFailed = true;
             }
         }
+        // 当所有分片都已经处理完毕后  只要有某个分片恢复失败了 就认为整个快照流程失败了
         if (hasFailed) {
             return RestoreInProgress.State.FAILURE;
         } else {
@@ -1013,6 +1038,7 @@ public class RestoreService implements ClusterStateApplier {
 
     /**
      * 将内部的索引进行重命名
+     *
      * @param request
      * @param filteredIndices
      * @return
@@ -1025,10 +1051,11 @@ public class RestoreService implements ClusterStateApplier {
             if (request.renameReplacement() != null && request.renamePattern() != null) {
                 renamedIndex = index.replaceAll(request.renamePattern(), request.renameReplacement());
             }
+            // 当没有发生替换时 v1与v2是相同的
             String previousIndex = renamedIndices.put(renamedIndex, index);
             if (previousIndex != null) {
                 throw new SnapshotRestoreException(request.repository(), request.snapshot(),
-                        "indices [" + index + "] and [" + previousIndex + "] are renamed into the same index [" + renamedIndex + "]");
+                    "indices [" + index + "] and [" + previousIndex + "] are renamed into the same index [" + renamedIndex + "]");
             }
         }
         return Collections.unmodifiableMap(renamedIndices);
@@ -1037,24 +1064,25 @@ public class RestoreService implements ClusterStateApplier {
     /**
      * Checks that snapshots can be restored and have compatible version
      *
-     * @param repository      repository name
-     * @param snapshotInfo    snapshot metadata
+     * @param repository   repository name
+     * @param snapshotInfo snapshot metadata
      */
     private static void validateSnapshotRestorable(final String repository, final SnapshotInfo snapshotInfo) {
         if (!snapshotInfo.state().restorable()) {
             throw new SnapshotRestoreException(new Snapshot(repository, snapshotInfo.snapshotId()),
-                                               "unsupported snapshot state [" + snapshotInfo.state() + "]");
+                "unsupported snapshot state [" + snapshotInfo.state() + "]");
         }
         // 版本不兼容无法恢复数据
         if (Version.CURRENT.before(snapshotInfo.version())) {
             throw new SnapshotRestoreException(new Snapshot(repository, snapshotInfo.snapshotId()),
-                                               "the snapshot was created with Elasticsearch version [" + snapshotInfo.version() +
-                                                   "] which is higher than the version of this node [" + Version.CURRENT + "]");
+                "the snapshot was created with Elasticsearch version [" + snapshotInfo.version() +
+                    "] which is higher than the version of this node [" + Version.CURRENT + "]");
         }
     }
 
     /**
-     * 检测在生成快照时 哪些索引处理失败了    好像某些快照 partial为true 就会产生几个failure
+     * 在生成快照的过程中 某些分片可能会处理失败
+     *
      * @param snapshot
      * @param index
      * @return
@@ -1070,7 +1098,8 @@ public class RestoreService implements ClusterStateApplier {
 
     /**
      * Returns the indices that are currently being restored and that are contained in the indices-to-check set.
-     * @param currentState 当前集群状态
+     *
+     * @param currentState   当前集群状态
      * @param indicesToCheck 本次需要检测的索引
      */
     public static Set<Index> restoringIndices(final ClusterState currentState, final Set<Index> indicesToCheck) {
@@ -1097,6 +1126,7 @@ public class RestoreService implements ClusterStateApplier {
 
     /**
      * 当该服务感知到集群状态发生变化时 触发监听器
+     *
      * @param event
      */
     @Override

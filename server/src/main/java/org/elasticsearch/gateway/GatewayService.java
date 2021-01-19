@@ -48,9 +48,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
- * 在启动node时 会开启网关服务
- * 在进行分片重路由时 会经过 GatewayAllocator  在真正的 分片分配器处理前 会先检测某些分片是否合适   如果不合适的话会执行一些拦截操作
- * TODO 暂时看不懂
+ * ES 是自带网关的 起到限流作用
  */
 public class GatewayService extends AbstractLifecycleComponent implements ClusterStateListener {
     private static final Logger logger = LogManager.getLogger(GatewayService.class);

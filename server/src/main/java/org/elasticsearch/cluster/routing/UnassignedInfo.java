@@ -84,11 +84,12 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
         DANGLING_INDEX_IMPORTED,
         /**
          * Unassigned as a result of restoring into a new index.
-         * 在restore过程中生成的新的index  (比如为某个旧的index进行重命名)
+         * 新建的某个index 需要通过原有的快照数据进行恢复
          */
         NEW_INDEX_RESTORED,
         /**
          * Unassigned as a result of restoring into a closed index.
+         * 之前已经存在的某个index 需要借助另一个index 的快照数据进行恢复
          */
         EXISTING_INDEX_RESTORED,
         /**

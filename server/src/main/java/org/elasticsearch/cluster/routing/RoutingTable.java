@@ -590,6 +590,12 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
             return add(indexRoutingBuilder);
         }
 
+        /**
+         * 更新该indexMetadata的恢复源后 插入到路由表中
+         * @param indexMetadata
+         * @param recoverySource
+         * @return
+         */
         public Builder addAsRestore(IndexMetadata indexMetadata, SnapshotRecoverySource recoverySource) {
             IndexRoutingTable.Builder indexRoutingBuilder = new IndexRoutingTable.Builder(indexMetadata.getIndex())
                     .initializeAsRestore(indexMetadata, recoverySource);
@@ -607,6 +613,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
         public Builder addAsNewRestore(IndexMetadata indexMetadata, SnapshotRecoverySource recoverySource, IntSet ignoreShards) {
             IndexRoutingTable.Builder indexRoutingBuilder = new IndexRoutingTable.Builder(indexMetadata.getIndex())
                     .initializeAsNewRestore(indexMetadata, recoverySource, ignoreShards);
+            // 将新创建的索引的路由表加入到总路由表中
             add(indexRoutingBuilder);
             return this;
         }

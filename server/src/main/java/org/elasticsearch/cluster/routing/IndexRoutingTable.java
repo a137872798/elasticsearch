@@ -86,9 +86,8 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
     private final List<ShardRouting> allActiveShards;
 
     /**
-     *
      * @param index  该对象管理的是哪个index下所有的分片数据
-     * @param shards   每个对象的shardId不同
+     * @param shards 每个对象的shardId不同
      */
     IndexRoutingTable(Index index, ImmutableOpenIntMap<IndexShardRoutingTable> shards) {
         this.index = index;
@@ -116,6 +115,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
     /**
      * 校验元数据是否正确
+     *
      * @param metadata
      * @return
      */
@@ -150,14 +150,14 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
             int routingNumberOfReplicas = indexShardRoutingTable.size() - 1;
             if (routingNumberOfReplicas != indexMetadata.getNumberOfReplicas()) {
                 throw new IllegalStateException("Shard [" + indexShardRoutingTable.shardId().id() +
-                                 "] routing table has wrong number of replicas, expected [" + indexMetadata.getNumberOfReplicas() +
-                                 "], got [" + routingNumberOfReplicas + "]");
+                    "] routing table has wrong number of replicas, expected [" + indexMetadata.getNumberOfReplicas() +
+                    "], got [" + routingNumberOfReplicas + "]");
             }
             // 确保最小单位的shardRouting 的index都是一样的
             for (ShardRouting shardRouting : indexShardRoutingTable) {
                 if (!shardRouting.index().equals(index)) {
                     throw new IllegalStateException("shard routing has an index [" + shardRouting.index() + "] that is different " +
-                                                    "from the routing table");
+                        "from the routing table");
                 }
                 // 获取分片对应的 分配id
                 final Set<String> inSyncAllocationIds = indexMetadata.inSyncAllocationIds(shardRouting.id());
@@ -237,6 +237,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
     /**
      * 通过指定 shardId 获取对应的 IndexShardRoutingTable
+     *
      * @param shardId
      * @return
      */
@@ -296,7 +297,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
      *
      * @param state {@link ShardRoutingState} to retrieve 0  描述分片的状态
      * @return a {@link List} of shards that match one of the given {@link ShardRoutingState states}
-     *
+     * <p>
      * 将所有与传入的state匹配的分片返回
      */
     public List<ShardRouting> shardsWithState(ShardRoutingState state) {
@@ -348,6 +349,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
     /**
      * 将对象包装成 Diff对象  内部有一个apply方法 可以获取解析后的对象  用户需要在 readDiffFrom() 的第一个参数中定义读取的逻辑
+     *
      * @param in
      * @return
      * @throws IOException
@@ -422,55 +424,60 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         /**
          * Initializes a new empty index, to be restored from a snapshot
-         * 生成有关某个index 的路由信息 并标明数据恢复方式
+         *
          * @param ignoreShards 本次是基于快照恢复的 但是该快照可能有某些分片的数据生成失败了
          */
         public Builder initializeAsNewRestore(IndexMetadata indexMetadata, SnapshotRecoverySource recoverySource, IntSet ignoreShards) {
             // 这里创建了一个未分配的新分片  并标明是从 restore中生成的
             final UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.NEW_INDEX_RESTORED,
                 "restore_source[" + recoverySource.snapshot().getRepository() + "/" +
-                 recoverySource.snapshot().getSnapshotId().getName() + "]");
+                    recoverySource.snapshot().getSnapshotId().getName() + "]");
             return initializeAsRestore(indexMetadata, recoverySource, ignoreShards, true, unassignedInfo);
         }
 
         /**
          * Initializes an existing index, to be restored from a snapshot
-         * @param indexMetadata 使用这个新的索引元数据去更新之前的元数据
+         *
+         * @param indexMetadata 代表该indexMetadata 之前就存在 这里只是修改恢复源信息
          */
         public Builder initializeAsRestore(IndexMetadata indexMetadata, SnapshotRecoverySource recoverySource) {
             final UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.EXISTING_INDEX_RESTORED,
-                 "restore_source[" + recoverySource.snapshot().getRepository() + "/" +
-                 recoverySource.snapshot().getSnapshotId().getName() + "]");
+                "restore_source[" + recoverySource.snapshot().getRepository() + "/" +
+                    recoverySource.snapshot().getSnapshotId().getName() + "]");
             return initializeAsRestore(indexMetadata, recoverySource, null, false, unassignedInfo);
         }
 
         /**
          * Initializes an index, to be restored from snapshot
-         * @param asNew  本次索引是新生成的 还是原本就存在的
-         * 代表在通过快照restore时 产生了一个新的索引
+         *
+         * @param indexMetadata 本次通过快照进行数据恢复的索引的元数据信息
+         * @param recoverySource 快照恢复源的描述信息 比如这个快照是由哪个 repository生成的 snapshotName 又是什么
+         * @param ignoreShards 在执行快照任务时 某些分片可能会处理失败 那么这部分数据就无法正常恢复了
+         * @param asNew 本次索引是新建的还是之前就存在的
+         * @param unassignedInfo 用于描述该index.shard 的分配信息
          */
         private Builder initializeAsRestore(IndexMetadata indexMetadata, SnapshotRecoverySource recoverySource, IntSet ignoreShards,
                                             boolean asNew, UnassignedInfo unassignedInfo) {
             assert indexMetadata.getIndex().equals(index);
-            // 代表已经执行过初始化了
+            // 此时分片应当还未生成    如果index是之前就存在的 那么这次快照恢复就要求必须所有分片的快照操作都是成功的 会进行完全的数据复制
             if (!shards.isEmpty()) {
                 throw new IllegalStateException("trying to initialize an index with fresh shards, but already has shards created");
             }
 
-            // 插入 shard级别的数据
+            // 生成分片的路由信息
             for (int shardNumber = 0; shardNumber < indexMetadata.getNumberOfShards(); shardNumber++) {
                 ShardId shardId = new ShardId(index, shardNumber);
                 IndexShardRoutingTable.Builder indexShardRoutingBuilder = new IndexShardRoutingTable.Builder(shardId);
                 for (int i = 0; i <= indexMetadata.getNumberOfReplicas(); i++) {
                     boolean primary = i == 0;
-                    // 代表本次如果是新建的索引   但是这个分片可能无法从快照中恢复数据 比如创建快照时失败了 那么就要指定别的 RecoverySource
+                    // 如果本次是新建的index 并且该分片无快照数据可用
                     if (asNew && ignoreShards.contains(shardNumber)) {
                         // This shards wasn't completely snapshotted - restore it as new shard
                         indexShardRoutingBuilder.addShard(ShardRouting.newUnassigned(shardId, primary,
-                            // 如果当前遍历到的是主分片 那么恢复源为空   副本分片指定从其他节点恢复数据    TODO 主分片都无法正常工作了 副本怎么恢复数据还有意义吗
+                            // 如果是主分片 此时只能使用 emptyStoreRecovery 也就是尝试从本地索引文件进行数据恢复 当然首次创建的索引实际上无数据可用
                             primary ? EmptyStoreRecoverySource.INSTANCE : PeerRecoverySource.INSTANCE, unassignedInfo));
                     } else {
-                        // 主分片使用 快照进行恢复  其他分片采用PeerRecoverySource.INSTANCE
+                        // 主分片采用快照恢复 而副本始终都是通过 peer 从主分片拉取数据的方式进行恢复
                         indexShardRoutingBuilder.addShard(ShardRouting.newUnassigned(shardId, primary,
                             primary ? recoverySource : PeerRecoverySource.INSTANCE, unassignedInfo));
                     }
@@ -482,9 +489,9 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         /**
          * Initializes a new empty index, with an option to control if its from an API or not.
+         *
          * @param indexMetadata
-         * @param unassignedInfo
-         *                       初始化一个空的 indexRoutingTable  在内部还按照 shardId为单位进一步划分(IndexShardRoutingTable)
+         * @param unassignedInfo 初始化一个空的 indexRoutingTable  在内部还按照 shardId为单位进一步划分(IndexShardRoutingTable)
          */
         private Builder initializeEmpty(IndexMetadata indexMetadata, UnassignedInfo unassignedInfo) {
             assert indexMetadata.getIndex().equals(index);
@@ -526,6 +533,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         /**
          * 所有 shardId都会统一增加副本
+         *
          * @return
          */
         public Builder addReplica() {
@@ -539,7 +547,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
                 // 在额外增加一个副本后覆盖之前的 IndexShardRoutingTable信息
                 shards.put(shardNumber,
-                        new IndexShardRoutingTable.Builder(shards.get(shard.id())).addShard(shard).build()
+                    new IndexShardRoutingTable.Builder(shards.get(shard.id())).addShard(shard).build()
                 );
             }
             return this;
@@ -548,6 +556,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
         /**
          * 当副本数量超过限制时 进行移除   这里会统一操作所有的shardId
          * TODO 当创建index时 怎么确定要创建多少shardId
+         *
          * @return
          */
         public Builder removeReplica() {
@@ -626,10 +635,10 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         CollectionUtil.timSort(ordered, (o1, o2) -> {
             int v = o1.shardId().getIndex().getName().compareTo(
-                    o2.shardId().getIndex().getName());
+                o2.shardId().getIndex().getName());
             if (v == 0) {
                 v = Integer.compare(o1.shardId().id(),
-                                    o2.shardId().id());
+                    o2.shardId().id());
             }
             return v;
         });

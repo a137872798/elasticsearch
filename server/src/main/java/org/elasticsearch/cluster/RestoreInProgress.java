@@ -227,7 +227,7 @@ public class RestoreInProgress extends AbstractNamedDiffable<Custom> implements 
 
     /**
      * Represents status of a restored shard、
-     * 记录某个分片在某个节点上的恢复状态
+     * 描述某个分片的数据恢复状态
      */
     public static class ShardRestoreStatus {
         private State state;

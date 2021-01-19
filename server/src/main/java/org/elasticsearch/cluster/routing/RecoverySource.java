@@ -242,7 +242,6 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
 
     /**
      * recovery from a snapshot
-     * 从快照中恢复数据  看来他跟redis这种类似  也是定期生成快照的
      */
     public static class SnapshotRecoverySource extends RecoverySource {
 
