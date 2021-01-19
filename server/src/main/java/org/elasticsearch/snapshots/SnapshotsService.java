@@ -445,6 +445,9 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
 
                     // 正常的处理流程在这里
                     // 第一步先是将追加了快照信息的 clusterState发布到集群 并成功后 才触发第二步
+                    // 第二步将合适的shard级快照任务 发布到其他节点上 如果某节点包含该shard信息 就会开始创建快照
+                    // 快照实际上就是先将lucene数据刷盘 并根据最新的索引文件生成一份副本文件 并存储在repository上
+                    // 当每个节点的快照任务完成后 会上报给leader节点
                     clusterService.submitStateUpdateTask("update_snapshot [" + snapshot.snapshot() + "]", new ClusterStateUpdateTask() {
 
 
@@ -464,7 +467,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                     continue;
                                 }
 
-                                // 如果当前任务已经被标记成禁止   比如在createSnapshot 与 beginSnapshot的时间差内 快照任务被关闭了
+                                // 如果当前任务已经被标记成禁止   比如在createSnapshot 与 beginSnapshot的时间差内 执行了快照删除任务
                                 if (entry.state() == State.ABORTED) {
                                     entries.add(entry);
                                     assert entry.shards().isEmpty();
@@ -472,23 +475,25 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                 } else {
 
                                     // 将快照任务拆解到index级别
-                                    // 将 indexName 转换成 indexId
+                                    // 将 indexName 转换成 indexId   如果之前的repositoryData中没有索引信息 就需要创建新的索引对象
                                     final List<IndexId> indexIds = repositoryData.resolveNewIndices(indices);
                                     // Replace the snapshot that was just initialized
                                     // 以分片为单位提取快照信息  ShardSnapshotStatus 是根据对应主分片的状态来生成的
                                     ImmutableOpenMap<ShardId, ShardSnapshotStatus> shards =
                                         shards(currentState, indexIds, useShardGenerations(version), repositoryData);
 
-                                    // 如果要求非部分模式 就是指该索引下的所有分片.primary 都应该至少处于assigned的状态  并且每个索引对应的indexMetadata都应该是已知的
-                                    // 如果是部分模式 仅会按照此时有效的分片生成快照数据
+                                    // 因为某些分片此时可能无法正常生成快照 比如处于未恢复 或者未分配的状态 那么通过是否 允许针对部分数据生成快照 走不同逻辑
+
+                                    // 当并非所有shard都可以生成快照的情况下
                                     if (!partial) {
-                                        // v1 代表分片对应的索引没有在metadata中找到对应的indexMetadata
-                                        // v2 代表indexMetadata 已经标记该index被关闭
+                                        // v1 对应未找到分片信息
+                                        // v2 代表分片对应的索引已经被关闭
                                         Tuple<Set<String>, Set<String>> indicesWithMissingShards = indicesWithMissingShards(shards,
                                             currentState.metadata());
                                         Set<String> missing = indicesWithMissingShards.v1();
                                         Set<String> closed = indicesWithMissingShards.v2();
-                                        // 无法满足 !partial的条件
+
+                                        // 因为本次快照任务要求包含所有分片 所以任务失败
                                         if (missing.isEmpty() == false || closed.isEmpty() == false) {
                                             final StringBuilder failureMessage = new StringBuilder();
                                             if (missing.isEmpty() == false) {
@@ -502,13 +507,13 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                                 failureMessage.append("Indices are closed ");
                                                 failureMessage.append(closed);
                                             }
-                                            // 代表本次生成快照失败了
+                                            // 将本次快照任务标记成失败
                                             entries.add(new SnapshotsInProgress.Entry(entry, State.FAILED, indexIds,
                                                 repositoryData.getGenId(), shards, version, failureMessage.toString()));
                                             continue;
                                         }
                                     }
-                                    // 允许部分模式 或者indices下的所有分片都处于 assigned状态 那么将快照修改成started状态
+                                    // 如果本次快照设置了 部分模式 那么允许忽略部分未确定的分片
                                     entries.add(new SnapshotsInProgress.Entry(entry, State.STARTED, indexIds, repositoryData.getGenId(),
                                         shards, version, null));
                                 }
@@ -519,6 +524,11 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                 .build();
                         }
 
+                        /**
+                         * 更新快照任务失败时 从clusterState中移除
+                         * @param source
+                         * @param e
+                         */
                         @Override
                         public void onFailure(String source, Exception e) {
                             logger.warn(() -> new ParameterizedMessage("[{}] failed to create snapshot",
@@ -538,13 +548,13 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                         }
 
                         /**
-                         * 当entry的状态修改为started后 为什么不在这里直接处理所有shardId 是因为某些分片此时可能处于waiting状态
-                         * 必须要等到所有shardId对应的state 都处于init状态后 才可以处理
-                         * 所以处理的逻辑放在了  clusterStateApplier中执行 监听集群状态的变化 并在满足条件时真正开始生成快照
+                         * 快照第一阶段 将一个init状态的快照任务发布到集群中
+                         * 第二阶段 找到本次快照任务相关的所有shard 并生成status 之后 将快照任务更改成start后发布到集群中
+                         * 如果本次快照任务已经失败了 也要发布到集群中
                          */
 
                         /**
-                         * 当将快照任务启动的 clusterState 发布到集群中并成功后
+                         * 发布成功后 触发该方法
                          * @param source
                          * @param oldState
                          * @param newState
@@ -555,10 +565,11 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                             // for processing. If client wants to wait for the snapshot completion, it can register snapshot
                             // completion listener in this method. For the snapshot completion to work properly, the snapshot
                             // should still exist when listener is registered.
-                            // 这里实际上是将任务存储到 complete队列中
+                            // 如果用户在生成快照时 是等待快照完成 那么这一步 就是将监听器存储到一个list中
+                            // 如果用户仅仅是发起创建快照的请求 那么这一步已经完成创建了
                             userCreateSnapshotListener.onResponse(snapshot.snapshot());
 
-                            // 代表本次任务被终止了 触发endSnapshot 将快照从clusterState中移除
+                            // 代表本次任务被终止了 触发endSnapshot 将本次快照任务的相关信息 持久化到repositoryData中
                             if (hadAbortedInitializations) {
                                 final SnapshotsInProgress snapshotsInProgress = newState.custom(SnapshotsInProgress.TYPE);
                                 assert snapshotsInProgress != null;
@@ -720,28 +731,24 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      * 当集群状态发生变化时触发
      * 只有当集群中的leader收到其他所有节点的支持(join) 时 才能开始接收别的clusterState更新请求
      *
+     * 该函数中应该包含了处理快照任务完成的逻辑
      * @param event
      */
     @Override
     public void applyClusterState(ClusterChangedEvent event) {
         try {
-            // leader节点才可以处理
+            // 整个快照流程都是由 leader来统筹的
             if (event.localNodeMaster()) {
                 // We don't remove old master when master flips anymore. So, we need to check for change in master
                 // 获取描述当前运行的快照信息的对象
                 final SnapshotsInProgress snapshotsInProgress = event.state().custom(SnapshotsInProgress.TYPE);
 
-                // 正常操作下 更新leader的任务不会修改快照元数据 这2个任务是彼此隔离的
-                // 又因为在确定集群唯一的leader前无法提交其他执行其他更新clusterState的任务 所以所有节点的元数据信息肯定是相同的
-                // leader节点在处理快照时 会将entry存储在initializingSnapshots中 而当leader发生变化 新leader对应的这个容器肯定是空的
-                // 但是本次本节点选举成功不代表唯一确定了 可能本次有2个节点选举成功 还需要之后确认唯一的那个
-                // 而被淘汰的那个leader无法执行其他更新clusterState的任务 所以实际上只有唯一的leader可以正常处理请求
+                // es选举可能会发生clusterState的更新被覆盖  只要leader更换了就有覆盖的可能
+                // 但是如果快照任务同步到了新的leader 那么每个执行shard快照任务的节点会将结果信息发送到新的leader上
                 final boolean newMaster = event.previousState().nodes().isLocalNodeElectedMaster() == false;
 
                 if (snapshotsInProgress != null) {
-                    // 当检测到leader变化 或者某些参与生成快照的节点被移除了 就要将最新的集群状态发布到所有节点上
-                    // 针对已启动的快照任务就是尝试将 下线节点对应的分片快照任务关闭
-                    // 如果是init的快照任务 因为leader发生变化 在initializingSnapshots 中快照任务不存在 则关闭任务
+                    // 当leader节点变化必然伴随着节点的下线   或者检测到其他节点下线 都要触发该方法
                     if (newMaster || removedNodesCleanupNeeded(snapshotsInProgress, event.nodesDelta().removedNodes())) {
                         processSnapshotsOnRemovedNodes();
                     }
@@ -749,23 +756,26 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     // 更新路由表的任务与更新leader的任务本身是无法同时执行的
                     // 路由表发生变化即是某些分片发生了重路由 找到了更合适的节点
                     if (event.routingTableChanged() && waitingShardsStartedOrUnassigned(snapshotsInProgress, event)) {
-                        // 如果之前是waiting状态的某些shard 此时路由信息发生了变化 那么修改成 init状态
+                        // 启动init的分片快照任务 或者标记为失败
                         processStartedShards();
                     }
                     // Cleanup all snapshots that have no more work left:
                     // 1. Completed snapshots
                     // 2. Snapshots in state INIT that the previous master failed to start
                     // 3. Snapshots in any other state that have all their shard tasks completed
-                    // 将某些满足条件的快照状态清除
+
+                    // 检测哪些快照已经完成 需要触发 endSnapshot
                     snapshotsInProgress.entries().stream().filter(
                         entry ->
-                            // 1.首先如果这个分片已经完成
-                            // 2.其次如果快照已经从init容器中被移除  并且entry处于 init 或者已经完成的状态
-                            entry.state().completed() || initializingSnapshots.contains(entry.snapshot()) == false && (entry.state() == State.INIT || completed(entry.shards().values()))
-                        // 处理这些完成的快照操作
+                            // 代表该快照任务已经完成
+                            entry.state().completed()
+                                ||
+                                // 或者本次快照任务还处于init状态/已完成 并且更换了leader
+                                (initializingSnapshots.contains(entry.snapshot()) == false && (entry.state() == State.INIT || completed(entry.shards().values())))
                     ).forEach(entry -> endSnapshot(entry, event.state().metadata()));
                 }
-                // 如果是本次刚晋升的leader节点  且集群中设置了删除快照的任务  那么要执行删除任务
+
+                // 可能本节点刚晋升 而之前刚提交一个快照删除任务 这里要继续执行删除任务
                 if (newMaster) {
                     finalizeSnapshotDeletionFromPreviousMaster(event.state());
                 }
@@ -798,10 +808,9 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      * that has already been deleted by the current master.  This is acceptable however, since
      * the old master's snapshot deletion will just respond with an error but in actuality, the
      * snapshot was deleted and a call to GET snapshots would reveal that the snapshot no longer exists.
-     * 当本节点刚晋升成leader节点时触发
+     * 当leader发生更替时 发现之前存在一个快照删除任务 那么继续执行
      */
     private void finalizeSnapshotDeletionFromPreviousMaster(ClusterState state) {
-        // 如果此时 clusterState 中包含了 清理快照的相关信息 继续执行删除操作
         SnapshotDeletionsInProgress deletionsInProgress = state.custom(SnapshotDeletionsInProgress.TYPE);
         if (deletionsInProgress != null && deletionsInProgress.hasDeletionsInProgress()) {
             assert deletionsInProgress.getEntries().size() == 1 : "only one in-progress deletion allowed per cluster";
@@ -841,7 +850,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                 for (final SnapshotsInProgress.Entry snapshot : snapshots.entries()) {
                     SnapshotsInProgress.Entry updatedSnapshot = snapshot;
 
-                    // 针对已经启动的快照任务 或者被禁止的快照任务 需要找到本次移除的node
+                    // init状态的快照任务 还没有设置shard 所以不需要处理   started/aborted 代表快照任务还未完成
                     if (snapshot.state() == State.STARTED || snapshot.state() == State.ABORTED) {
                         ImmutableOpenMap.Builder<ShardId, ShardSnapshotStatus> shards = ImmutableOpenMap.builder();
                         boolean snapshotChanged = false;
@@ -860,6 +869,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                     // TODO: Restart snapshot on another node?
                                     // 这个意思就是  在执行快照任务的过程中 在某些分片上执行的任务由于node下线了 从集群中被自动移除 导致针对该分片的快照任务也失败了
                                     // 但是其他已经完成了的分片快照任务 即使此时节点下线了也不会有影响
+
+                                    // 目标节点都已经下线了 快照任务就自然终止了
                                     snapshotChanged = true;
                                     logger.warn("failing snapshot of shard [{}] on closed node [{}]",
                                         shardId, shardStatus.nodeId());
@@ -880,8 +891,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                         if (snapshotChanged) {
                             changed = true;
                             ImmutableOpenMap<ShardId, ShardSnapshotStatus> shardsMap = shards.build();
-                            // 快照任务由 原本的副本未完成  因为node 的下线导致一些分片快照任务强制失败后  整个快照任务完成 此时标记成success
-                            // TODO 那么什么情况下 快照任务会标记成失败
+                            // 此时所有分片快照任务都已经产生了结果 所以将快照任务修改成 success
                             if (!snapshot.state().completed() && completed(shardsMap.values())) {
                                 updatedSnapshot = new SnapshotsInProgress.Entry(snapshot, State.SUCCESS, shardsMap);
                             } else {
@@ -891,8 +901,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                         }
                         entries.add(updatedSnapshot);
 
-                        // 当leader发生变化时 新leader的initializingSnapshots上并没有 原本存储的init的snapshot对象
-                        // 这种情况下去除掉一开始提交的快照任务
+                        // 代表leader发生变化 并且快照任务同步过去了 这个时候就忽略这次快照任务
+                        // 实际上如果某个新选举成功的leader没有同步到快照任务 那么在发布clusterState时 snapshotShardsService 就会自动关闭这些分片快照任务
                     } else if (snapshot.state() == State.INIT && initializingSnapshots.contains(snapshot.snapshot()) == false) {
                         changed = true;
                         // A snapshot in INIT state hasn't yet written anything to the repository so we simply remove it
@@ -916,7 +926,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     }
 
     /**
-     * 更新处于started状态的分片
+     * 根据路由表信息 更新某些分片此时的状态
      */
     private void processStartedShards() {
         clusterService.submitStateUpdateTask("update snapshot state after shards started", new ClusterStateUpdateTask() {
@@ -929,7 +939,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     ArrayList<SnapshotsInProgress.Entry> entries = new ArrayList<>();
                     for (final SnapshotsInProgress.Entry snapshot : snapshots.entries()) {
                         SnapshotsInProgress.Entry updatedSnapshot = snapshot;
-                        // 只要要处于 started状态的才有处理的必要  代表通过了第一层校验
+
+                        // 当快照任务被标记成 started后 才设置index/shard 信息
                         if (snapshot.state() == State.STARTED) {
                             // 找到之前处于等待状态的分片 通过路由表检测分片是否解除了 init/relocation状态 并修改它们的state(这样就可以开始生成快照了)
                             ImmutableOpenMap<ShardId, ShardSnapshotStatus> shards = processWaitingShards(snapshot.shards(),
@@ -965,7 +976,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     }
 
     /**
-     * 找到内部处于waiting状态的分片 并进行处理
+     * 根据最新的路由表信息 更新分片的状态
      *
      * @param snapshotShards
      * @param routingTable
@@ -987,9 +998,9 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                 if (indexShardRoutingTable != null) {
                     // 通过索引和分片定位到这个 IndexShardRoutingTable
                     IndexShardRoutingTable shardRouting = indexShardRoutingTable.shard(shardId.id());
-                    // 上面都是在查找 state == waiting 的分片
+                    // 快照只针对主分片
                     if (shardRouting != null && shardRouting.primaryShard() != null) {
-                        // 代表可以结束等待状态
+                        // 主分片已经完成了数据恢复  可以开始生成快照了
                         if (shardRouting.primaryShard().started()) {
                             // Shard that we were waiting for has started on a node, let's process it
                             snapshotChanged = true;
@@ -997,6 +1008,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                             shards.put(shardId,
                                 new ShardSnapshotStatus(shardRouting.primaryShard().currentNodeId(), shardStatus.generation()));
                             continue;
+                            // 保持原样
                         } else if (shardRouting.primaryShard().initializing() || shardRouting.primaryShard().relocating()) {
                             // Shard that we were waiting for hasn't started yet or still relocating - will continue to wait
                             shards.put(shardId, shardStatus);
@@ -1004,7 +1016,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                         }
                     }
                 }
-                // 进入到这里代表已经失败了
+                // 代表分片又重新回到 unassigned状态 那么该分片的快照任务就失败了
                 // Shard that we were waiting for went into unassigned state or disappeared - giving up
                 snapshotChanged = true;
                 logger.warn("failing snapshot of shard [{}] on unassigned shard [{}]", shardId, shardStatus.nodeId());
@@ -1022,7 +1034,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     }
 
     /**
-     * 由于某些分片的路由信息发生了变化
+     * 在创建快照任务时 某些分片可能处于init/relocation状态  此时无法执行任务 当这些分片完成数据恢复后 就可以重新开始快照任务了
      *
      * @param snapshotsInProgress
      * @param event
@@ -1042,7 +1054,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                         for (ShardId shardId : entry.waitingIndices().get(index.value)) {
                             // 找到该 shardId 对应所有分片 包含主副本
                             ShardRouting shardRouting = indexShardRoutingTable.shard(shardId.id()).primaryShard();
-                            // 代表从waiting状态解除
+                            // 代表从waiting状态解除   如果处于started就可以开始任务了 如果处于 unassigned 就要将本次分片快照任务标记成失败
                             if (shardRouting != null && (shardRouting.started() || shardRouting.unassigned())) {
                                 return true;
                             }
@@ -1076,17 +1088,17 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      *
      * @param shards list of shard statuses
      * @return list of failed and closed indices
-     * 返回没有分片的索引 以及被关闭的索引
+     * 找到所有失效的分片
      */
     private static Tuple<Set<String>, Set<String>> indicesWithMissingShards(
         ImmutableOpenMap<ShardId, SnapshotsInProgress.ShardSnapshotStatus> shards, Metadata metadata) {
         Set<String> missing = new HashSet<>();
         Set<String> closed = new HashSet<>();
         for (ObjectObjectCursor<ShardId, SnapshotsInProgress.ShardSnapshotStatus> entry : shards) {
-            // 找到status是miss的
+            // miss的情况有很多  比如没有该索引的元数据  或者索引路由表不存在  或者分片本身处于unassigned状态
             if (entry.value.state() == ShardState.MISSING) {
                 if (metadata.hasIndex(entry.key.getIndex().getName()) &&
-                    // 如果发现元数据是关闭的 加入到close的容器中
+                    // 关闭索引会怎样
                     metadata.getIndexSafe(entry.key.getIndex()).getState() == IndexMetadata.State.CLOSE) {
                     closed.add(entry.key.getIndex().getName());
                 } else {
@@ -1140,9 +1152,10 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     }
                 }
 
-                // 该对象描述了本次快照相关的所有索引的 分片信息
+                // 每个分片的快照任务执行完后 都会生成一个 shardGen 分片目录下对应本次快照的数据  然后在repositoryData中就要保存本次快照所有的shardGen信息
+                // 如果本次任务被打断 那么gen对应的还是上次的记录
                 final ShardGenerations shardGenerations = buildGenerations(entry, metadata);
-                // 快照完成后 触发仓库的 finalize方法
+                // 快照完成后 触发仓库的 finalize方法  将最新的repositoryData 同步到集群的其他节点
                 repository.finalizeSnapshot(
                     snapshot.getSnapshotId(),
                     shardGenerations,
@@ -1150,6 +1163,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     failure,
                     entry.partial() ? shardGenerations.totalShards() : entry.shards().size(),
                     unmodifiableList(shardFailures),
+                    // 每当执行一次 finalizeSnapshot repositoryData 就会更新一次 同时 repositoryStateId 也会发生变化
                     entry.repositoryStateId(),
                     entry.includeGlobalState(),
                     metadataForSnapshot(entry, metadata),
@@ -1185,7 +1199,9 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     logger.debug(() -> new ParameterizedMessage(
                         "[{}] failed to update cluster state during snapshot finalization", snapshot), e);
 
-                    // 通知用户本次快照任务执行失败了
+                    // 通知用户本次快照任务执行失败了  因为这里返回的异常被包装了 action 不会进行重试
+                    // 一旦新的leader节点初始化后 该对象还是会监听快照任务 并且只要快照任务完成还是会走更新repositoryData的逻辑
+                    // TODO 问题是 其他节点repositoryData.gen 与之前leader的不一样啊 数据对不上没办法正常结束快照任务
                     failSnapshotCompletionListeners(snapshot,
                         new SnapshotException(snapshot, "Failed to update cluster state during snapshot finalization", e));
                 } else {
@@ -1306,7 +1322,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
 
         // 本次要删除的所有快照
         final String[] snapshotNames = request.snapshots();
-        // 从哪个repository下查找快照
+        // 这个快照是创建在哪个仓库下的
         final String repositoryName = request.repository();
         logger.info(() -> new ParameterizedMessage("deleting snapshots [{}] from repository [{}]",
             Strings.arrayToCommaDelimitedString(snapshotNames), repositoryName));
@@ -1314,17 +1330,17 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         clusterService.submitStateUpdateTask("delete snapshot", new ClusterStateUpdateTask(Priority.NORMAL) {
 
             /**
-             * 包含 repository/snapshotId  方便定位哪个快照
+             * 当前正在执行的快照任务
              */
             Snapshot runningSnapshot;
 
             /**
-             * 本次终止的快照任务是在 init阶段 还是started阶段
+             * 对应的快照任务在init阶段就被关闭
              */
             boolean abortedDuringInit = false;
 
             /**
-             * 更新集群状态
+             * 创建一个删除快照的任务
              * @param currentState
              * @return
              */
@@ -1337,9 +1353,11 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                 }
                 final SnapshotsInProgress snapshots = currentState.custom(SnapshotsInProgress.TYPE);
                 final SnapshotsInProgress.Entry snapshotEntry;
+
+                // 如果是针对多个快照的删除 就不更改快照状态了
+                // 如果传入的快照名包含通配符 代表可能会匹配到多个快照 那么也不更改快照状态了
                 if (snapshotNames.length == 1) {
                     final String snapshotName = snapshotNames[0];
-                    // 如果包含通配符 不允许删除
                     if (Regex.isSimpleMatchPattern(snapshotName)) {
                         snapshotEntry = null;
                     } else {
@@ -1348,6 +1366,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                 } else {
                     snapshotEntry = null;
                 }
+                // 不修改clusterState 但是还是会触发监听器
                 if (snapshotEntry == null) {
                     return currentState;
                 }
@@ -1358,7 +1377,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
 
                 final State state = snapshotEntry.state();
                 final String failure;
-                // 代表此时快照任务还没有开始  并且还没有为每个shard生成对应的state(这个阶段会修改成started)
+                // 如果要删除的快照任务还未启动  因为clusterState的更新是串行的 所以这里确定是否是在init后立即被标记成中断是有意义的
                 if (state == State.INIT) {
                     // snapshot is still initializing, mark it as aborted
                     shards = snapshotEntry.shards();
@@ -1366,7 +1385,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     failure = "Snapshot was aborted during initialization";
                     abortedDuringInit = true;
 
-                    // 当外层的 Entry处于started状态时  是可以进行强制关闭的
+                    // 如果任务已经启动就修改成 aborted snapshotShardsService 会感知到状态的变化 并终止快照任务
                 } else if (state == State.STARTED) {
                     // snapshot is started - mark every non completed shard as aborted
                     final ImmutableOpenMap.Builder<ShardId, ShardSnapshotStatus> shardsBuilder = ImmutableOpenMap.builder();
@@ -1381,20 +1400,18 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     }
                     shards = shardsBuilder.build();
                     failure = "Snapshot was aborted by deletion";
-                    // 此时应该已经产生结果了  (非init/started阶段)
                 } else {
                     boolean hasUncompletedShards = false;
                     // Cleanup in case a node gone missing and snapshot wasn't updated for some reason
                     for (ObjectCursor<ShardSnapshotStatus> shardStatus : snapshotEntry.shards().values()) {
                         // Check if we still have shard running on existing nodes
-                        // 照理说 如果entry产生了结果 那么每个state都应该是 completed 但是这里是false 就代表正在被终止
                         if (shardStatus.value.state().completed() == false && shardStatus.value.nodeId() != null
                             && currentState.nodes().get(shardStatus.value.nodeId()) != null) {
                             hasUncompletedShards = true;
                             break;
                         }
                     }
-                    // 如果此时检测到存在 未完成的分片 那么很可能当前已经处于关闭中的状态了 比如已经接受到了一个aborted请求  那么不应该重复处理 只要等待结果即可
+                    // 代表此时快照任务处于aborted状态 并且某些分片也处于aborted状态 还没有修改成failure 只需要等待即可
                     if (hasUncompletedShards) {
                         // snapshot is being finalized - wait for shards to complete finalization process
                         logger.debug("trying to delete completed snapshot - should wait for shards to finalize on all nodes");
@@ -1407,7 +1424,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     }
                     failure = snapshotEntry.failure();
                 }
-                // 将终止状态发布到集群中    被终止的具体分片可以通过检测 对应的shardState来识别
+                // 将某些分片快照任务修改成 aborted后 发布到集群中
                 return ClusterState.builder(currentState).putCustom(SnapshotsInProgress.TYPE,
                     new SnapshotsInProgress(snapshots.entries().stream().map(existing -> {
                         if (existing.equals(snapshotEntry)) {
@@ -1423,19 +1440,22 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
             }
 
             /**
-             * 当集群发布状态完成后触发  TODO  在集群范围内通知到其他节点会怎样呢 其他节点会配合着进行一些处理吗
+             * 删除快照首先尝试关闭已经启动的快照任务  即修改成aborted状态
+             * 如果快照任务已经完成 就尝试从repository中删除对应快照数据
              * @param source
              * @param oldState
              * @param newState
              */
             @Override
             public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
+                // 代表快照任务已经结束 repositoryData已经同步到集群
+                // 或者本次针对的是多个快照
                 if (runningSnapshot == null) {
                     try {
                         repositoriesService.repository(repositoryName).executeConsistentStateUpdate(
-                            // 当执行executeConsistentStateUpdate时 会从最新的index-n 文件中还原 repositoryData 相当于是一个元数据
+                            // 发布一个快照删除任务 并从本地仓库删除相关数据 当数据删除完毕后 更新repositoryData 并发布到集群中
+                            // 如果快照未完成 这里发布快照删除任务就会失败
                             repositoryData ->
-                                // 创建updateTask
                                 createDeleteStateUpdate(matchingSnapshotIds(repositoryData, snapshotNames, repositoryName), repositoryName,
                                     repositoryData.getGenId(), request.masterNodeTimeout(), Priority.NORMAL, listener),
                             "delete completed snapshots", listener::onFailure);
@@ -1445,9 +1465,12 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     return;
                 }
                 logger.trace("adding snapshot completion listener to wait for deleted snapshot to finish");
+
+                // 因为本次快照任务还未完成 无法立即执行快照删除任务 这里要监听快照任务
                 addListener(runningSnapshot, ActionListener.wrap(
                     result -> {
                         logger.debug("deleted snapshot completed - deleting files");
+                        // 创建一个 快照删除任务 并在发布完成后执行删除操作
                         clusterService.submitStateUpdateTask("delete snapshot",
                             createDeleteStateUpdate(Collections.singletonList(result.v2().snapshotId()), repositoryName,
                                 result.v1().getGenId(), null, Priority.IMMEDIATE, listener));
@@ -1539,7 +1562,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     }
 
     /**
-     * 创建一个 clusterStateUpdateTask
+     * 创建一个 会删除某些快照的更新任务
      * @param snapshotIds  本次会波及到的快照
      * @param repoName    关联的repository
      * @param repositoryStateId   repository对应的最新gen
@@ -1551,7 +1574,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     private ClusterStateUpdateTask createDeleteStateUpdate(List<SnapshotId> snapshotIds, String repoName, long repositoryStateId,
                                                            @Nullable TimeValue timeout, Priority priority, ActionListener<Void> listener) {
         // Short circuit to noop state update if there isn't anything to delete
-        // 当没有快照受到影响 返回空对象
+        // 本次没有命中快照   不会修改clusterState
         if (snapshotIds.isEmpty()) {
             return new ClusterStateUpdateTask() {
                 @Override
@@ -1580,22 +1603,22 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
             @Override
             public ClusterState execute(ClusterState currentState) {
 
-                // 当发起 deleteSnapshot的请求时   会创建SnapshotDeletionsInProgress对象
                 SnapshotDeletionsInProgress deletionsInProgress = currentState.custom(SnapshotDeletionsInProgress.TYPE);
-                // 同一时间只允许存在一个 DeletionsInProgress.Entry 这个跟创建索引不一样   创建索引允许同时存在多个entry 但是要求状态必须是INIT
+
+                // 删除快照任务也是串行执行
                 if (deletionsInProgress != null && deletionsInProgress.hasDeletionsInProgress()) {
                     throw new ConcurrentSnapshotExecutionException(new Snapshot(repoName, snapshotIds.get(0)),
                         "cannot delete - another snapshot is currently being deleted in [" + deletionsInProgress + "]");
                 }
 
-                // 该任务也不能与 RepositoryCleanupInProgress 同时存在   TODO 这个entry是什么时候生成的  在 DeleteRepository任务中 只是更新了clusterState 并没有修改该对象
+                // 该任务不能与清理仓库同时进行
                 final RepositoryCleanupInProgress repositoryCleanupInProgress = currentState.custom(RepositoryCleanupInProgress.TYPE);
                 if (repositoryCleanupInProgress != null && repositoryCleanupInProgress.hasCleanupInProgress()) {
                     throw new ConcurrentSnapshotExecutionException(new Snapshot(repoName, snapshotIds.get(0)),
                         "cannot delete snapshots while a repository cleanup is in-progress in [" + repositoryCleanupInProgress + "]");
                 }
 
-                // 存储的进程不能与删除冲突
+                // 也不能与数据恢复同时进行
                 RestoreInProgress restoreInProgress = currentState.custom(RestoreInProgress.TYPE);
                 if (restoreInProgress != null) {
                     // don't allow snapshot deletions while a restore is taking place,
@@ -1616,7 +1639,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     throw new ConcurrentSnapshotExecutionException(
                         repoName, snapshotIds.toString(), "another snapshot is currently running cannot delete");
                 }
-                // 创建 deletionsInProgress 插入到clusterState中 并发布到集群中
+
+                // 因为更新clusterState 是串行执行的 所以每个变化都可以察觉到之前的变化 就不会导致状态不一致 同时出现多个inProgress等情况了
 
                 // add the snapshot deletion to the cluster state
                 SnapshotDeletionsInProgress.Entry entry = new SnapshotDeletionsInProgress.Entry(
@@ -1625,6 +1649,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     threadPool.absoluteTimeInMillis(),
                     repositoryStateId
                 );
+
+                // 生成 InProgress并插入到 clusterState中
                 if (deletionsInProgress != null) {
                     deletionsInProgress = deletionsInProgress.withAddedEntry(entry);
                 } else {
@@ -1638,6 +1664,12 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                 listener.onFailure(e);
             }
 
+            /**
+             * 当删除进程成功发布到集群后 从仓库中删除对应的快照数据
+             * @param source
+             * @param oldState
+             * @param newState
+             */
             @Override
             public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
                 deleteSnapshotsFromRepository(repoName, snapshotIds, listener, repositoryStateId, newState.nodes().getMinNodeVersion());
@@ -1698,7 +1730,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      *
      * @param repositoryMetaVersion version to check
      * @return true if version supports {@link ShardGenerations}
-     * 检测是否需要将版本号写入到存储层中
+     * 通过版本号来判断是否需要将 shardGen 写入
      */
     public static boolean useShardGenerations(Version repositoryMetaVersion) {
         return repositoryMetaVersion.onOrAfter(SHARD_GEN_IN_REPO_DATA_VERSION);
@@ -1712,7 +1744,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      * @param listener          listener
      * @param repositoryStateId the unique id representing the state of the repository at the time the deletion began
      * @param minNodeVersion    minimum node version in the cluster
-     *                          执行删除快照的操作
+     *                          从仓库中删除之前的快照数据
      */
     private void deleteSnapshotsFromRepository(String repoName, Collection<SnapshotId> snapshotIds, @Nullable ActionListener<Void> listener,
                                                long repositoryStateId, Version minNodeVersion) {
@@ -1724,6 +1756,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     repositoryStateId,
                     // 兼容性相关的先忽略
                     minCompatibleVersion(minNodeVersion, repoName, repositoryData, snapshotIds),
+                    // 实际上无论成功与否 关键是要将本次删除进程从CS中移除 避免其他操作被阻塞 无法正常执行
                     ActionListener.wrap(v -> {
                             logger.info("snapshots {} deleted", snapshotIds);
                             removeSnapshotDeletionFromClusterState(snapshotIds, null, l);
@@ -1784,9 +1817,9 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      * @param clusterState        cluster state   当前集群状态
      * @param indices             Indices to snapshot          本次快照相关的所有索引
      * @param useShardGenerations whether to write {@link ShardGenerations} during the snapshot   是否需要将分片的gen写入快照 新版本都是true
-     * @param repositoryData      当前repository的元数据信息
+     * @param repositoryData      当前repository的元数据信息  如果本次快照中的某些index不存在 此时还不会添加到 repositoryData中
      * @return list of shard to be included into current snapshot
-     * ShardSnapshotStatus 对应索引下每个shardId对应的主分片状态  比如当前是否处于运行状态 只有处于运行状态时 才应该生成快照
+     * 每次生成快照是有作用范围的  一般是指定对某些index生成快照  这里进一步细化到shard级别
      */
     private static ImmutableOpenMap<ShardId, SnapshotsInProgress.ShardSnapshotStatus> shards(ClusterState clusterState,
                                                                                              List<IndexId> indices,
@@ -1794,7 +1827,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                                                                                              RepositoryData repositoryData) {
         ImmutableOpenMap.Builder<ShardId, SnapshotsInProgress.ShardSnapshotStatus> builder = ImmutableOpenMap.builder();
         Metadata metadata = clusterState.metadata();
-        // 这里存储了此时所有分片的gen
+        // 这是之前的shardGen 信息
         final ShardGenerations shardGenerations = repositoryData.shardGenerations();
 
         // 遍历每个索引
@@ -1805,35 +1838,37 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
             IndexMetadata indexMetadata = metadata.index(indexName);
             if (indexMetadata == null) {
                 // The index was deleted before we managed to start the snapshot - mark it as missing.
-                // TODO 这是一个哨兵对象吧  因为没有indexMetadata 实际上是异常情况
+                // 这里插入了一个特殊的分片对象  分片id为0 且index元数据为  na_value  代表这个分片本身是不存在的
                 builder.put(new ShardId(indexName, IndexMetadata.INDEX_UUID_NA_VALUE, 0),
                     new SnapshotsInProgress.ShardSnapshotStatus(null, ShardState.MISSING, "missing index", null));
             } else {
                 IndexRoutingTable indexRoutingTable = clusterState.getRoutingTable().index(indexName);
-                // 这里代表该index下有多少个分片 (不考虑副本)
+                // 这里代表该index下有多少个shardId  实际上快照应该就是针对主分片来做
                 for (int i = 0; i < indexMetadata.getNumberOfShards(); i++) {
                     ShardId shardId = new ShardId(indexMetadata.getIndex(), i);
-                    // 有关分片的gen
+                    // shardGen 应该是代表某次快照对应的分片的状态id吧 便于在反查快照信息时快速定位
                     final String shardRepoGeneration;
+
+                    // 如果本次索引是新建的 那么shardGen 都是一个统一值 _new_
                     if (useShardGenerations) {
                         if (isNewIndex) {
                             assert shardGenerations.getShardGen(index, shardId.getId()) == null
                                 : "Found shard generation for new index [" + index + "]";
-                            // 某个本次新建的shard 使用的generation为 new_shard
                             shardRepoGeneration = ShardGenerations.NEW_SHARD_GEN;
                         } else {
-                            // 从 repositoryData 中查找该shard之前的 shardGen
+                            // 这里获取的shardGen信息是之前存储在 repositoryData中的
                             shardRepoGeneration = shardGenerations.getShardGen(index, shardId.getId());
                         }
                     } else {
                         shardRepoGeneration = null;
                     }
 
-                    // 以上只是为index的每个shard 生成 shardGen
+                    // 快照本身就应该只针对主分片 这里是检测主分片是否可用
 
                     if (indexRoutingTable != null) {
                         // 每个分片 还有主副关系 这里是只获取主分片
                         ShardRouting primary = indexRoutingTable.shard(i).primaryShard();
+                        // 如果本次快照对应的某个index.shard 此时还未分配到某个节点上 添加一个失败的状态
                         if (primary == null || !primary.assignedToNode()) {
                             builder.put(shardId,
                                 new SnapshotsInProgress.ShardSnapshotStatus(null, ShardState.MISSING, "primary shard is not allocated",
@@ -1842,15 +1877,17 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                         } else if (primary.relocating() || primary.initializing()) {
                             builder.put(shardId, new SnapshotsInProgress.ShardSnapshotStatus(
                                 primary.currentNodeId(), ShardState.WAITING, shardRepoGeneration));
-                            // 处于未分配状态
+                            // 除了 init/unassigned/relocation/start外应该没有其他情况了啊  其余情况都当作missing
                         } else if (!primary.started()) {
                             builder.put(shardId,
                                 new SnapshotsInProgress.ShardSnapshotStatus(primary.currentNodeId(), ShardState.MISSING,
                                     "primary shard hasn't been started yet", shardRepoGeneration));
                         } else {
+                            // 当主分片处于start状态时  可以针对该shard开启一个init的快照任务
                             builder.put(shardId,
                                 new SnapshotsInProgress.ShardSnapshotStatus(primary.currentNodeId(), shardRepoGeneration));
                         }
+                        // 当路由表不存在时 每个分片都标记成missing
                     } else {
                         builder.put(shardId, new SnapshotsInProgress.ShardSnapshotStatus(null, ShardState.MISSING,
                             "missing routing table", shardRepoGeneration));

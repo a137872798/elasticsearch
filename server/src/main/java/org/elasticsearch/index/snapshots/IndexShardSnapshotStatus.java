@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Represent shard snapshot status
- * 某个分片索引的快照状态信息
+ * 描述某个分片执行快照任务的信息
  */
 public class IndexShardSnapshotStatus {
 
@@ -93,7 +93,7 @@ public class IndexShardSnapshotStatus {
 
     /**
      * 将此时的快照状态机 切换到start状态
-     * 当shardStateIdentifier 匹配的情况 这几个值都是0
+     * 如果本次执行快照前 lucene.commit 生成的数据 与 快照仓库中原数据完全一致 那么实际上本次不需要执行快照任务 有关文件数/文件大小的参数都是0
      * @param startTime
      * @param incrementalFileCount  本次增加了多少新的文件
      * @param totalFileCount
@@ -117,7 +117,7 @@ public class IndexShardSnapshotStatus {
     }
 
     /**
-     * 代表某个 indexCommit.gen  生成了快照
+     * 快照任务已经结束  之后会进入到写元数据的阶段
      * @param indexVersion
      * @return
      */
@@ -132,9 +132,10 @@ public class IndexShardSnapshotStatus {
     }
 
     /**
-     * finalize 代表快照文件写入完成  done 代表最新的快照信息已经同步到  BlobStoreIndexShardSnapshots 上   该对象管理所有生成的快照信息 也就是触发了几次快照 每个快照生成多少文件等等
+     * finalize 代表快照文件写入完成  done 代表最新的快照信息已经同步到  BlobStoreIndexShardSnapshots 上
+     * 该对象管理所有生成的快照信息 也就是触发了几次快照 每个快照生成多少文件等等
      * @param endTime
-     * @param newGeneration
+     * @param newGeneration  本次生成快照的shard 对应的gen   每执行一次快照任务 对应一个gen
      */
     public synchronized void moveToDone(final long endTime, final String newGeneration) {
         assert newGeneration != null;
@@ -147,12 +148,23 @@ public class IndexShardSnapshotStatus {
         }
     }
 
+    /**
+     * 将该index级别的快照任务 设置成 aborted
+     * 因为ES的选举算法可能会导致某次clusterState的更新被覆盖  只要在整个快照流程中 某个leader发生变化 到了一个之前没有收到快照任务的节点上  就要终止之前的快照任务
+     * 也就是只要更新可能会被覆盖的情况 就要借助本地的续约机制
+     * @param failure
+     */
     public synchronized void abortIfNotCompleted(final String failure) {
         if (stage.compareAndSet(Stage.INIT, Stage.ABORTED) || stage.compareAndSet(Stage.STARTED, Stage.ABORTED)) {
             this.failure = failure;
         }
     }
 
+    /**
+     * 快照任务在执行过程中失败了
+     * @param endTime
+     * @param failure
+     */
     public synchronized void moveToFailed(final long endTime, final String failure) {
         if (stage.getAndSet(Stage.FAILURE) != Stage.FAILURE) {
             this.totalTime = Math.max(0L, endTime - startTime);
@@ -190,6 +202,11 @@ public class IndexShardSnapshotStatus {
             indexVersion, failure);
     }
 
+    /**
+     * 描述本地快照任务执行状态的对象   对应的还有 shardSnapshotStatus 描述快照任务的分片级信息
+     * @param generation
+     * @return
+     */
     public static IndexShardSnapshotStatus newInitializing(String generation) {
         return new IndexShardSnapshotStatus(Stage.INIT, 0L, 0L, 0, 0, 0, 0, 0, 0, null, generation);
     }

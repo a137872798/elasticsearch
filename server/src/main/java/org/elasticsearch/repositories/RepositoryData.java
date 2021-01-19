@@ -187,14 +187,13 @@ public final class RepositoryData {
      *
      * @param snapshotIds SnapshotId to remove
      * @return List of indices that are changed but not removed
-     * 只要该索引下有这个快照id 就会返回
+     * 返回包含这组快照的所有索引
      */
     public List<IndexId> indicesToUpdateAfterRemovingSnapshot(Collection<SnapshotId> snapshotIds) {
         return indexSnapshots.entrySet().stream()
             .filter(entry -> {
                 final Collection<SnapshotId> existingIds = entry.getValue();
-                // 代表这个索引下所有的分片都要被删除
-                // TODO ???
+                // 该索引下的所有快照都需要被删除
                 if (snapshotIds.containsAll(existingIds)) {
                     return existingIds.size() > snapshotIds.size();
                 }
@@ -266,15 +265,15 @@ public final class RepositoryData {
     /**
      * Remove snapshots and remove any indices that no longer exist in the repository due to the deletion of the snapshots.
      *
-     * @param snapshots               Snapshot ids to remove    本次被删除的快照
+     * @param snapshots               Snapshot ids to remove
      * @param updatedShardGenerations Shard generations that changed as a result of removing the snapshot.
      *                                The {@code String[]} passed for each {@link IndexId} contains the new shard generation id for each
-     *                                changed shard indexed by its shardId     每次相关的所有分片 并且因为删除快照而生成的新的gen
-     *
+     *                                changed shard indexed by its shardId
+     *                                从当前的repositoryData中移除 snapshots的快照数据  并将shardGenerations更新成传入的参数
      */
     public RepositoryData removeSnapshots(final Collection<SnapshotId> snapshots, final ShardGenerations updatedShardGenerations) {
 
-        // 将本次删除的快照id移除
+        // 这些是需要保留的快照数据
         Map<String, SnapshotId> newSnapshotIds = snapshotIds.values().stream().filter(Predicate.not(snapshots::contains))
             .collect(Collectors.toMap(SnapshotId::getUUID, Function.identity()));
         if (newSnapshotIds.size() != snapshotIds.size() - snapshots.size()) {

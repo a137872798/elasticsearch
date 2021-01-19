@@ -534,6 +534,9 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
          * 快照任务成功只能代表 下面所有的分片级快照执行完成  不能确保他们都成功
          */
         SUCCESS((byte) 2, true),
+        /**
+         * 代表本次快照任务失败了   比如本次要求为所有分片生成快照信息 而部分分片此时不可用 比如数据未恢复完成
+         */
         FAILED((byte) 3, true),
         ABORTED((byte) 4, false);
 
@@ -702,7 +705,14 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
          * 代表对应的快照任务被强制关闭了
          */
         ABORTED((byte) 4, false, true),
+        /**
+         * 该分片还未分配到某个节点上 所以该分片本次快照任务是失败了
+         * 当路由表信息还不存在时 每个相关分片都设置成missing
+         */
         MISSING((byte) 5, true, true),
+        /**
+         * 当分片还未完成 recovery 或者处于 relocation  那么会等待数据恢复完成 completed为 false
+         */
         WAITING((byte) 6, false, false);
 
         private final byte value;

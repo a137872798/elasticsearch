@@ -312,6 +312,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             return new MetadataSnapshot(commit, directory, logger);
         } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
             // 当产生异常时 将异常信息写入到一个文件中  这样其他线程一旦检测到异常文件 就不再继续读取了
+            // 这也类似一种缓存 代表检测结果的缓存 不需要做同步机制 只要发现就代表校验失败 如果未发现就执行一次校验
             markStoreCorrupted(ex);
             throw ex;
         } finally {

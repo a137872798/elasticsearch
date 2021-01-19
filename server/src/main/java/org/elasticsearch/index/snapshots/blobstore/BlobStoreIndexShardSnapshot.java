@@ -63,8 +63,9 @@ public class BlobStoreIndexShardSnapshot implements ToXContentFragment {
          * Constructs a new instance of file info
          *
          * @param name         file name as stored in the blob store
-         * @param metadata  the files meta data    该文件关联的元数据对象
+         * @param metadata  the files meta data     本次要生成的快照文件对应的索引文件元数据
          * @param partSize     size of the single chunk
+         *                     构建一个新的快照文件
          */
         public FileInfo(String name, StoreFileMetadata metadata, ByteSizeValue partSize) {
             this.name = name;
@@ -76,6 +77,7 @@ public class BlobStoreIndexShardSnapshot implements ToXContentFragment {
             }
 
             long totalLength = metadata.length();
+            // 预计要写入多少个chunk
             long numberOfParts = totalLength / partBytes;
             if (totalLength % partBytes > 0) {
                 numberOfParts++;
@@ -364,10 +366,11 @@ public class BlobStoreIndexShardSnapshot implements ToXContentFragment {
 
     /**
      * Constructs new shard snapshot metadata from snapshot metadata
+     * 描述某次快照任务的相关文件信息
      *
      * @param snapshot              snapshot name
      * @param indexVersion          index version
-     * @param indexFiles            list of files in the shard
+     * @param indexFiles            list of files in the shard    本次生成的所有快照文件
      * @param startTime             snapshot start time
      * @param time                  snapshot running time
      * @param incrementalFileCount  incremental of files that were snapshotted

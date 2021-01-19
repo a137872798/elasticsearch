@@ -2713,7 +2713,7 @@ public class InternalEngine extends Engine {
         }
         // 这里要获取的是最后一个commit
         final IndexCommit lastCommit = combinedDeletionPolicy.acquireIndexCommit(false);
-        // 当indexCommit信息使用完毕后 会从快照容器中移除
+        // 当indexCommit信息使用完毕后 会从combinedDeletionPolicy中移除
         return new Engine.IndexCommitRef(lastCommit, () -> releaseIndexCommit(lastCommit));
     }
 

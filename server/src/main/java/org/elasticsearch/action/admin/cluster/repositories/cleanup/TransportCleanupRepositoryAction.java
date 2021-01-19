@@ -66,7 +66,8 @@ import java.io.IOException;
  * {@link BlobStoreRepository#cleanup} ensures that the repository state id has not changed between creation of the cluster state entry
  * and any delete/write operations. TODO: This will not work if we also want to clean up at the shard level as those will involve writes
  * as well as deletes.
- * 清理仓库的任务只能在leader节点执行,为什么??? 还有在Engine中并没有看到 有关仓库的存储动作
+ *
+ * 发起清理仓库的请求
  */
 public final class TransportCleanupRepositoryAction extends TransportMasterNodeAction<CleanupRepositoryRequest,
     CleanupRepositoryResponse> {
@@ -94,15 +95,12 @@ public final class TransportCleanupRepositoryAction extends TransportMasterNodeA
         // We add a state applier that will remove any dangling repository cleanup actions on master failover.
         // This is safe to do since cleanups will increment the repository state id before executing any operations to prevent concurrent
         // operations from corrupting the repository. This is the same safety mechanism used by snapshot deletes.
-        // 当集群状态发生变化时 要进行处理
+
+        // 当leader发生变化时  要将本次清理任务关闭
         clusterService.addStateApplier(event -> {
-            // 因为本对象在所有节点上都会创建   当某个节点升级/降级 都会对执行任务造成影响
-            // 当本节点晋升成leader后触发相关逻辑
             if (event.localNodeMaster() && event.previousState().nodes().isLocalNodeElectedMaster() == false) {
-                // 存储属于额外的模块 它的相关信息是存储在 state.custom 内的
                 final RepositoryCleanupInProgress repositoryCleanupInProgress = event.state().custom(RepositoryCleanupInProgress.TYPE);
-                // 当这个节点变成leader节点时 检测是否有正在执行的清理工作 如果没有 那么就不需要特殊处理了
-                // 否则节点角色的变换会影响到之前已经在执行的清理任务
+
                 if (repositoryCleanupInProgress == null || repositoryCleanupInProgress.hasCleanupInProgress() == false) {
                     return;
                 }
@@ -135,7 +133,7 @@ public final class TransportCleanupRepositoryAction extends TransportMasterNodeA
     }
 
     /**
-     * 当集群中leader节点发生变化的时候
+     * 当leader发生变化时 尝试关闭之前的清理任务
      * @param currentState
      * @return
      */
@@ -143,7 +141,6 @@ public final class TransportCleanupRepositoryAction extends TransportMasterNodeA
         RepositoryCleanupInProgress cleanupInProgress = currentState.custom(RepositoryCleanupInProgress.TYPE);
         if (cleanupInProgress != null) {
             boolean changed = false;
-            // 如果不存在描述cleanup的对象 不做处理 否则将内部信息重置
             if (cleanupInProgress.hasCleanupInProgress()) {
                 cleanupInProgress = new RepositoryCleanupInProgress();
                 changed = true;
@@ -203,7 +200,7 @@ public final class TransportCleanupRepositoryAction extends TransportMasterNodeA
         }
         final BlobStoreRepository blobStoreRepository = (BlobStoreRepository) repository;
         final StepListener<RepositoryData> repositoryDataListener = new StepListener<>();
-        // 获取此时最新的数据 并触发监听器   在repository中也有多个文件 也有gen的概念 这里是取出最后一个index-gen文件对应的数据 并转换成实体对象
+        // 获取此时最新的描述仓库的数据
         repository.getRepositoryData(repositoryDataListener);
         repositoryDataListener.whenComplete(repositoryData -> {
             final long repositoryStateId = repositoryData.getGenId();
@@ -219,7 +216,7 @@ public final class TransportCleanupRepositoryAction extends TransportMasterNodeA
                     public ClusterState execute(ClusterState currentState) {
                         final RepositoryCleanupInProgress repositoryCleanupInProgress =
                             currentState.custom(RepositoryCleanupInProgress.TYPE);
-                        // 禁止重复执行清理工作
+                        // 同一时间只允许执行一个 清理仓库的操作 同时与 快照任务/删除快照任务 都是互斥的
                         if (repositoryCleanupInProgress != null && repositoryCleanupInProgress.hasCleanupInProgress()) {
                             throw new IllegalStateException(
                                 "Cannot cleanup [" + repositoryName + "] - a repository cleanup is already in-progress in ["
@@ -238,7 +235,6 @@ public final class TransportCleanupRepositoryAction extends TransportMasterNodeA
                             throw new IllegalStateException(
                                 "Cannot cleanup [" + repositoryName + "] - a snapshot is currently running in [" + snapshots + "]");
                         }
-                        // 此时在 clusterState上开启了一个新的 repositoryCleanup进程
                         return ClusterState.builder(currentState).putCustom(RepositoryCleanupInProgress.TYPE,
                             new RepositoryCleanupInProgress(
                                 RepositoryCleanupInProgress.startedEntry(repositoryName, repositoryStateId))).build();
@@ -250,7 +246,6 @@ public final class TransportCleanupRepositoryAction extends TransportMasterNodeA
                     }
 
                     /**
-                     * 应该是代表本次更新成功提交到超过半数的节点
                      * @param source
                      * @param oldState
                      * @param newState
@@ -260,7 +255,7 @@ public final class TransportCleanupRepositoryAction extends TransportMasterNodeA
                         startedCleanup = true;
                         logger.debug("Initialized repository cleanup in cluster state for [{}][{}]", repositoryName, repositoryStateId);
                         threadPool.executor(ThreadPool.Names.SNAPSHOT).execute(ActionRunnable.wrap(listener,
-                            // cleanup() 在这里会更新存储数据 写入index-n 文件  已经将最新的数据通知到集群其他节点  并且已经删除了不再被引用的数据
+                            // 开始执行清理任务
                             l -> blobStoreRepository.cleanup(
                                 repositoryStateId,
                                 snapshotsService.minCompatibleVersion(
@@ -270,7 +265,7 @@ public final class TransportCleanupRepositoryAction extends TransportMasterNodeA
                     }
 
                     /**
-                     * 当处理结束后触发该方法
+                     * 当清理了残留数据后 触发该方法
                      * @param failure
                      * @param result
                      */
@@ -282,14 +277,14 @@ public final class TransportCleanupRepositoryAction extends TransportMasterNodeA
                                 "Failed to finish repository cleanup operations on [{}][{}]", repositoryName, repositoryStateId), failure);
                         }
                         assert failure != null || result != null;
-                        // 代表清理失败了
+                        // 代表发布清理任务失败了
                         if (startedCleanup == false) {
                             logger.debug("No cleanup task to remove from cluster state because we failed to start one", failure);
                             listener.onFailure(failure);
                             return;
                         }
 
-                        // 清理成功后还要通知集群其他节点   从清理状态解除    清理状态会产生block吗 ???
+                        // 移除清理任务
                         clusterService.submitStateUpdateTask(
                             "remove repository cleanup task [" + repositoryName + "][" + repositoryStateId + ']',
                             new ClusterStateUpdateTask() {

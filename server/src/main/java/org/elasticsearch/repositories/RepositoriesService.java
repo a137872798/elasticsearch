@@ -387,7 +387,7 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
      * repositories accordingly.
      *
      * @param event cluster changed event
-     *              存储服务感知到集群状态变化时 触发该方法
+     *              在执行快照任务时  当整个快照流程结束后 会更新repositoryData.gen 并发布到集群中  该对象会监听仓库数据的变化
      */
     @Override
     public void applyClusterState(ClusterChangedEvent event) {

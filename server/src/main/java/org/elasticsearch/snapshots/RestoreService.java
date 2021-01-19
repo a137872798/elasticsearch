@@ -116,8 +116,7 @@ import static org.elasticsearch.snapshots.SnapshotUtils.filterIndices;
  * which removes {@link RestoreInProgress} when all shards are completed. In case of
  * restore failure a normal recovery fail-over process kicks in.
  *
- * 恢复服务是基于快照进行数据恢复
- * 不是有   lucene.segment + translog 的数据恢复方式了么  为什么还需要快照恢复
+ * 基于快照进行数据恢复
  */
 public class RestoreService implements ClusterStateApplier {
 
@@ -159,14 +158,10 @@ public class RestoreService implements ClusterStateApplier {
      */
     private final AllocationService allocationService;
 
-    /**
-     * 创建索引的服务
-     * 在进行恢复时 可以将之前的某个index 进行rename 这时就要创建新索引
-     */
     private final MetadataCreateIndexService createIndexService;
 
     /**
-     * 更新索引的服务
+     * index 的升级先不看了
      */
     private final MetadataIndexUpgradeService metadataIndexUpgradeService;
 
@@ -193,21 +188,22 @@ public class RestoreService implements ClusterStateApplier {
      *
      * @param request  restore request
      * @param listener restore listener
-     *                 从快照中恢复数据   TODO 在这里也没有看到恢复的具体逻辑 卧槽了 到底在哪里做的
+     *                 代表需要从某个快照中恢复数据
      */
     public void restoreSnapshot(final RestoreSnapshotRequest request, final ActionListener<RestoreCompletionResponse> listener) {
         try {
             // Read snapshot info and metadata from the repository
-            // 获取存储实例
+            // 第一步 从仓库中加载此时最新的 repositoryData
             final String repositoryName = request.repository();
             Repository repository = repositoriesService.repository(repositoryName);
             final StepListener<RepositoryData> repositoryDataListener = new StepListener<>();
-            // RepositoryData 类似于仓库的一个元数据 当快照动作完成后 最终都会写入到 repositoryData中
             repository.getRepositoryData(repositoryDataListener);
-            repositoryDataListener.whenComplete(repositoryData -> {
 
+
+            // 当加载完仓库元数据后触发监听器
+            repositoryDataListener.whenComplete(repositoryData -> {
                 final String snapshotName = request.snapshot();
-                // 从repositoryData中寻找对应的快照
+                // 检测快照是否存在  并且应该只存在一个同名快照  在执行快照任务时会做检测 如存在重名的快照 那么新的快照任务将无法执行
                 final Optional<SnapshotId> matchingSnapshotId = repositoryData.getSnapshotIds().stream()
                     .filter(s -> snapshotName.equals(s.getName())).findFirst();
                 if (matchingSnapshotId.isPresent() == false) {
@@ -215,27 +211,28 @@ public class RestoreService implements ClusterStateApplier {
                 }
 
                 final SnapshotId snapshotId = matchingSnapshotId.get();
-                // 获取该快照的详细信息
+                // 获取本次快照任务的详细信息
                 final SnapshotInfo snapshotInfo = repository.getSnapshotInfo(snapshotId);
                 final Snapshot snapshot = new Snapshot(repositoryName, snapshotId);
 
                 // Make sure that we can restore from this snapshot
-                // 检验能否从该快照中还原数据  因为某些快照可能是失败的  就无法恢复数据
+                // 如果快照版本不兼容  无法恢复数据  如果分片任务执行失败 比如任务被标记成 aborted  无法进行恢复
+                // 但是如果有部分shard生成了快照 认为是可恢复的
                 validateSnapshotRestorable(repositoryName, snapshotInfo);
 
                 // Resolve the indices from the snapshot that need to be restored
-                // 从快照中找到本次期望恢复的几个索引
+                // 找到本次请求恢复的index与 快照任务包含的index  的交集
                 final List<String> indicesInSnapshot = filterIndices(snapshotInfo.indices(), request.indices(), request.indicesOptions());
 
                 final Metadata.Builder metadataBuilder;
-                // 如果本次请求包含全局状态  以globalState作为起始模板
+                // 在数据恢复阶段 使用的 metadata中是否要包含生成快照时的 整个metadata  一般来说只需要几个相关索引的 indexMetadata 就可以了
                 if (request.includeGlobalState()) {
                     metadataBuilder = Metadata.builder(repository.getSnapshotGlobalMetadata(snapshotId));
                 } else {
                     metadataBuilder = Metadata.builder();
                 }
 
-                // 每个快照名都对应一个 indexId对象
+                // 通过index的基本信息 兑换到 indexMetadata
                 final List<IndexId> indexIdsInSnapshot = repositoryData.resolveIndices(indicesInSnapshot);
                 for (IndexId indexId : indexIdsInSnapshot) {
                     // 将相关的索引元数据设置到 metadata中
@@ -246,7 +243,7 @@ public class RestoreService implements ClusterStateApplier {
 
                 // Apply renaming on index names, returning a map of names where
                 // the key is the renamed index and the value is the original name
-                // 将这组索引进行重命名  key 对应renamed 后的索引 value对应原名字
+                // req中可以携带替换符 可以将index 重命名
                 final Map<String, String> indices = renamedIndices(request, indicesInSnapshot);
 
                 // Now we can start the actual restore process by adding shards to be recovered in the cluster state
@@ -254,14 +251,14 @@ public class RestoreService implements ClusterStateApplier {
                 clusterService.submitStateUpdateTask("restore_snapshot[" + snapshotName + ']', new ClusterStateUpdateTask() {
 
                     /**
-                     * 每次执行restore时 会分配一个随机id
+                     * 每次执行restore 会分配一个唯一id
                      */
                     final String restoreUUID = UUIDs.randomBase64UUID();
                     RestoreInfo restoreInfo = null;
 
                     @Override
                     public ClusterState execute(ClusterState currentState) {
-                        // 获取此时的 恢复进度对象 每次恢复应该都会被封装成一个entry对象 并填充到 RestoreInProgress 中
+                        // 恢复任务 与 其他几个 XXXInProgress 是互斥的
                         RestoreInProgress restoreInProgress = currentState.custom(RestoreInProgress.TYPE);
                         // Check if the snapshot to restore is currently being deleted
                         SnapshotDeletionsInProgress deletionsInProgress = currentState.custom(SnapshotDeletionsInProgress.TYPE);
@@ -453,6 +450,7 @@ public class RestoreService implements ClusterStateApplier {
                             }
                             builder.putCustom(RestoreInProgress.TYPE, restoreInProgressBuilder.add(restoreEntry).build());
                         } else {
+                            // 代表本次没有可恢复数据的索引
                             shards = ImmutableOpenMap.of();
                         }
 
@@ -887,8 +885,7 @@ public class RestoreService implements ClusterStateApplier {
     }
 
     /**
-     * 清理恢复状态的任务
-     * 会在更新集群状态的时候使用
+     * 每当leader节点发生变化时  检测恢复任务是否完成 并从clusterState中清理
      */
     static class CleanRestoreStateTaskExecutor implements ClusterStateTaskExecutor<CleanRestoreStateTaskExecutor.Task>,
         ClusterStateTaskListener {
@@ -916,6 +913,7 @@ public class RestoreService implements ClusterStateApplier {
             if (restoreInProgress != null) {
                 for (RestoreInProgress.Entry entry : restoreInProgress) {
                     if (completedRestores.contains(entry.uuid())) {
+                        // 可以看到已完成的任务没有加入到 builder对象中
                         changed = true;
                     } else {
                         restoreInProgressBuilder.add(entry);
@@ -943,12 +941,18 @@ public class RestoreService implements ClusterStateApplier {
 
     }
 
+    /**
+     * 每当检测到集群状态发生变化 都要触发该方法
+     * 实际上就是将 restoreEntry 从 clusterState中移除
+     * @param event
+     */
     private void cleanupRestoreState(ClusterChangedEvent event) {
         ClusterState state = event.state();
 
         RestoreInProgress restoreInProgress = state.custom(RestoreInProgress.TYPE);
         if (restoreInProgress != null) {
             for (RestoreInProgress.Entry entry : restoreInProgress) {
+                // 实际上就是检测 恢复任务是否已经完成 如果完成则从clusterState中移除
                 if (entry.state().completed()) {
                     assert completed(entry.shards()) : "state says completed but restore entries are not";
                     clusterService.submitStateUpdateTask(

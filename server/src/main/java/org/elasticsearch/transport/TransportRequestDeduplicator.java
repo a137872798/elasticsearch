@@ -47,10 +47,10 @@ public final class TransportRequestDeduplicator<T extends TransportRequest> {
      * track of the given listener and invoke it when the listener passed to the callback on first invocation is completed.
      * @param request Request to deduplicate
      * @param listener Listener to invoke on request completion
-     * @param callback Callback to be invoked with request and completion listener the first time the request is added to the deduplicator   如果是首次插入监听器会触发这个回调
-     *                 本次针对哪个副本所在的节点发起请求  在requests中设置结果监听器
+     * @param callback Callback to be invoked with request and completion listener the first time the request is added to the deduplicator
      */
     public void executeOnce(T request, ActionListener<Void> listener, BiConsumer<T, ActionListener<Void>> callback) {
+        // 首次插入是新值  之后都是返回旧值
         ActionListener<Void> completionListener = requests.computeIfAbsent(request, CompositeListener::new).addListener(listener);
         if (completionListener != null) {
             callback.accept(request, completionListener);

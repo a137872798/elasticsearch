@@ -713,6 +713,12 @@ public final class SnapshotInfo implements Comparable<SnapshotInfo>, ToXContent,
         out.writeMap(userMetadata);
     }
 
+    /**
+     * 根据本次快照结果 映射成对应的状态
+     * @param reason
+     * @param shardFailures
+     * @return
+     */
     private static SnapshotState snapshotState(final String reason, final List<SnapshotShardFailure> shardFailures) {
         if (reason == null) {
             if (shardFailures.isEmpty()) {

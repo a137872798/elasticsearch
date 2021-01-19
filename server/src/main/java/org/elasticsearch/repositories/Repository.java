@@ -100,7 +100,6 @@ public interface Repository extends LifecycleComponent {
      *
      * @param snapshotId the snapshot id to load the global metadata from
      * @return the global metadata about the snapshot
-     * 获取该快照关联的元数据信息  这个元数据跟选举也有关系
      */
     Metadata getSnapshotGlobalMetadata(SnapshotId snapshotId);
 

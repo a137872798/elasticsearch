@@ -39,6 +39,7 @@ import java.io.IOException;
 
 /**
  * Transport action for delete snapshot operation
+ * 发起一个删除快照的请求
  */
 public class TransportDeleteSnapshotAction extends TransportMasterNodeAction<DeleteSnapshotRequest, AcknowledgedResponse> {
     private final SnapshotsService snapshotsService;

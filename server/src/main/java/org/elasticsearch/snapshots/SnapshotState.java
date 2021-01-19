@@ -30,6 +30,7 @@ public enum SnapshotState {
     IN_PROGRESS((byte) 0, false, false),
     /**
      * Snapshot process completed successfully
+     * 代表所有分片级快照任务都成功了
      */
     SUCCESS((byte) 1, true, true),
     /**
@@ -38,6 +39,7 @@ public enum SnapshotState {
     FAILED((byte) 2, true, false),
     /**
      * Snapshot was partial successful
+     * 有部分成功 部分任务失败
      */
     PARTIAL((byte) 3, true, true),
     /**

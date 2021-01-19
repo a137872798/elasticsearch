@@ -38,7 +38,7 @@ import java.io.IOException;
 
 /**
  * Transport action for restore snapshot operation
- * 恢复快照数据
+ * 基于快照恢复数据
  */
 public class TransportRestoreSnapshotAction extends TransportMasterNodeAction<RestoreSnapshotRequest, RestoreSnapshotResponse> {
     private final RestoreService restoreService;

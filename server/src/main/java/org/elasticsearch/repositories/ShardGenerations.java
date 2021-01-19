@@ -183,7 +183,7 @@ public final class ShardGenerations {
                 while (iterator.hasNext()) {
                     Map.Entry<Integer, String> entry = iterator.next();
                     final String generation = entry.getValue();
-                    // TODO _deleted 这个gen是什么意思
+                    // 当某个shard所有的快照数据都被删除时 传入的gen为 _deleted 代表该数据不需要保留
                     if (generation.equals(DELETED_SHARD_GEN)) {
                         iterator.remove();
                     }
