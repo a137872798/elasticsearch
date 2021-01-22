@@ -49,6 +49,7 @@ import java.util.Set;
 
 /**
  * Deletes indices.
+ * 有关删除索引的功能被单独抽取出来 生成一个服务
  */
 public class MetadataDeleteIndexService {
 
@@ -135,7 +136,7 @@ public class MetadataDeleteIndexService {
         Metadata.Builder metadataBuilder = Metadata.builder(meta);
         ClusterBlocks.Builder clusterBlocksBuilder = ClusterBlocks.builder().blocks(currentState.blocks());
 
-        // 找到metadata下描述 索引墓地的对象
+        // 找到metadata下描述 索引墓地的对象   该对象主要是为了避免某些摇摆索引自动创建
         final IndexGraveyard.Builder graveyardBuilder = IndexGraveyard.builder(metadataBuilder.indexGraveyard());
 
         // 此时已经存放了有关多少个index 的墓碑信息

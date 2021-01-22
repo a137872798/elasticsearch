@@ -1719,8 +1719,6 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
      * while the local checkpoint of c2 is 2.
      * @param translogPath 存储事务日志的路径
      * 去除一些不安全的commit数据
-     *                     安全的提交点即是指已经同步到集群其他节点 并完成持久化的segment信息
-     *                     这里使用的deletionPolicy是lucene的默认策略 而在engine中创建的indexWriter会使用ES封装的删除策略
      */
     public void trimUnsafeCommits(final Path translogPath) throws IOException {
         metadataLock.writeLock().lock();
@@ -1732,11 +1730,12 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             final IndexCommit lastIndexCommit = existingCommits.get(existingCommits.size() - 1);
             // 每个 segmentInfos内的用户数据中有一个translogUUID 可以找到一个事务文件
             final String translogUUID = lastIndexCommit.getUserData().get(Translog.TRANSLOG_UUID_KEY);
-            // 除了事务文件外 一起的还有checkPoint文件   这里获取文件中记录的全局检查点
+            // 获取索引文件记录的最新的事务文件 刷盘时的全局检查点
             final long lastSyncedGlobalCheckpoint = Translog.readGlobalCheckpoint(translogPath, translogUUID);
             // 这里只会保留一个segment_N 文件   检查点之前的数据太旧可以丢弃 之后的数据还没有同步到其他节点上也要丢弃
             final IndexCommit startingIndexCommit = CombinedDeletionPolicy.findSafeCommitPoint(existingCommits, lastSyncedGlobalCheckpoint);
-            // 在初始化时 会自动删除后面的数据
+            // 将之前的某个indexCommit 中的信息 进行commit 会生成一个最新的 segment_N 文件  (数据对应的是startingIndexCommit 这样相当于替换掉了原来的 lastIndexCommit)
+            // startingIndexCommit 对应的索引文件是不删除的 会直接关联到最新的segmentN上
             if (startingIndexCommit.equals(lastIndexCommit) == false) {
                 try (IndexWriter writer = newAppendingIndexWriter(directory, startingIndexCommit)) {
                     // this achieves two things:

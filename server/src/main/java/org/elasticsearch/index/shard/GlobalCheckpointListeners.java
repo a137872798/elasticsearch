@@ -211,8 +211,7 @@ public class GlobalCheckpointListeners implements Closeable {
      * Invoke to notify all registered listeners of an updated global checkpoint.
      *
      * @param globalCheckpoint the updated global checkpoint
-     *                         当在 ReplicationTracker中 更新了globalCheckpoint时   就会触发该方法
-     *                         这时代表着该shardId相关的所有副本都已经将全局检查点至少持久化到这个位置 (持久化指的是写入到事务文件中)
+     *                         该对象负责监控全局检查点的变化
      */
     synchronized void globalCheckpointUpdated(final long globalCheckpoint) {
         assert globalCheckpoint >= NO_OPS_PERFORMED;
@@ -226,7 +225,7 @@ public class GlobalCheckpointListeners implements Closeable {
     }
 
     /**
-     * 当检查点推进到某个位置时 触发监听器
+     * 每当全局检查点更新时 判断是否需要触发监听器
      *
      * @param globalCheckpoint
      * @param e                可能是由于异常情况关闭的  这时就会传入exception

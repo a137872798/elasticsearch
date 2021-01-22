@@ -531,7 +531,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             aId,
             indexSettings,
             primaryTerm,
-            UNASSIGNED_SEQ_NO,
+            UNASSIGNED_SEQ_NO,  // 初始化时全局检查点未设置
             globalCheckpointListeners::globalCheckpointUpdated,
             threadPool::absoluteTimeInMillis,
             // 处理续约信息的函数对象
@@ -2126,9 +2126,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final String translogUUID = store.readLastCommittedSegmentsInfo().getUserData().get(Translog.TRANSLOG_UUID_KEY);
         // 每次生成事务文件时 伴随的还有checkPoint  然后内部有一个globalCheckpoint属性 描述了副本组数据的同步状态
         final long globalCheckpoint = Translog.readGlobalCheckpoint(translogConfig.getTranslogPath(), translogUUID);
-        // 将从持久化数据中取出的全局检查点 回填到 副本tracker对象
-        // 同时会触发挂载在 GlobalCheckpointListeners内的监听器
-        // 在副本的数据恢复阶段  副本应该会感知到主分片传输的 globalCheckpoint 因为在创建续约对象时 会将globalCheckpoint 传输到所有副本
+        // 在启动阶段会从索引文件中找到最新的事务日志文件 并从中还原全局检查点
+        // 如果是由于某种恢复 使得之前的事务日志文件都为空 那么会将本地检查点作为全局检查点
         replicationTracker.updateGlobalCheckpointOnReplica(globalCheckpoint, "read from translog checkpoint");
     }
 
@@ -2154,11 +2153,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             return runTranslogRecovery(engine, snapshot, Engine.Operation.Origin.LOCAL_TRANSLOG_RECOVERY,
                 translogRecoveryStats::incrementRecoveredOperations);
         };
-        // 加载全局检查点
+        // 从事务日志中加载全局检查点 并更新到 replicationTracker中
         loadGlobalCheckpointToReplicationTracker();
         // 打开引擎
         innerOpenEngineAndTranslog(replicationTracker);
-        // 从事务日志中恢复数据
+        // 从事务日志中恢复数据   比如如果是通过快照进行数据恢复  那么在bootstrap时会清空之前的事务日志 这里就无数据可以恢复了
         getEngine().recoverFromTranslog(translogRecoveryRunner, Long.MAX_VALUE);
     }
 
@@ -2195,7 +2194,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
         // we disable deletes since we allow for operations to be executed against the shard while recovering
         // but we need to make sure we don't loose deletes until we are done recovering
-        // 标记成不可删除
+        // 标记成不可删除  这个是描述是否要删除缓存对象的   通过versionMap 记录已经被删除的doc 能够避免一些无意义的索引查询
         config.setEnableGcDeletes(false);
         // 从磁盘中读取最新的续约信息 并设置到replicationTracker中  某几种数据恢复方式都会写入一个空的续约信息到文件中
         updateRetentionLeasesOnReplica(loadRetentionLeases());
@@ -2532,7 +2531,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             assert recoveryState.getRecoverySource().getType() == RecoverySource.Type.SNAPSHOT : "invalid recovery type: " +
                 recoveryState.getRecoverySource();
             StoreRecovery storeRecovery = new StoreRecovery(shardId, logger);
-            // TODO 这里使用到了 repository 但是还不知道是什么时候写入仓库的所以先不细看
             storeRecovery.recoverFromRepository(this, repository, listener);
         } catch (Exception e) {
             listener.onFailure(e);
@@ -3292,12 +3290,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         new RecoveryFailedException(recoveryState, null, e), true);
                 }
                 break;
-            // 从repository中恢复数据 暂时还不理解
+                // 基于快照进行数据恢复   快照就是索引文件的副本 并且存储在repository中
             case SNAPSHOT:
                 final String repo = ((SnapshotRecoverySource) recoveryState.getRecoverySource()).snapshot().getRepository();
                 executeRecovery("from snapshot",
                     recoveryState, recoveryListener, l -> restoreFromRepository(repositoriesService.repository(repo), l));
                 break;
+                // TODO 忽略该恢复方式 目前没看到使用
             case LOCAL_SHARDS:
                 final IndexMetadata indexMetadata = indexSettings().getIndexMetadata();
                 final Index resizeSourceIndex = indexMetadata.getResizeSourceIndex();

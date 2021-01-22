@@ -1082,7 +1082,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param newGlobalCheckpoint the new global checkpoint
      * @param reason              the reason the global checkpoint was updated
-     *                            当主分片数据恢复完成后 会将最新的全局检查点告知分片
+     *                            在数据恢复阶段 会从索引文件的translogUUID 中找到索引文件 并尝试加载全局检查点
      */
     public synchronized void updateGlobalCheckpointOnReplica(final long newGlobalCheckpoint, final String reason) {
         assert invariant();

@@ -50,6 +50,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * The actual removal of the delay marker happens in
  * {@link AllocationService#removeDelayMarkers(RoutingAllocation)}, triggering yet
  * another cluster change event.
+ * 某些分片在分配失败时 会设置一个延时标记 而当经过了足够的时间是 会自动触发一次reroute (在reroute中会移除延时标记 并在之后就可以正常为这些分片分配节点)
  */
 public class DelayedAllocationService extends AbstractLifecycleComponent implements ClusterStateListener {
     private static final Logger logger = LogManager.getLogger(DelayedAllocationService.class);
@@ -80,6 +81,9 @@ public class DelayedAllocationService extends AbstractLifecycleComponent impleme
             return baseTimestampNanos + nextDelay.nanos();
         }
 
+        /**
+         * 关闭定时任务
+         */
         public void cancelScheduling() {
             cancelScheduling.set(true);
             if (cancellable != null) {
@@ -88,10 +92,14 @@ public class DelayedAllocationService extends AbstractLifecycleComponent impleme
             removeIfSameTask(this);
         }
 
+        /**
+         * 某些分片之前分配失败了 所以设置了一个延时标记 在这里相当于是一个计数器 一旦发现时间条件允许后 就重新执行reroute 便于分配之前无法分配的分片
+         */
         public void schedule() {
             cancellable = threadPool.schedule(new AbstractRunnable() {
                 @Override
                 protected void doRun() throws Exception {
+                    // 如果任务已经被关闭就不需要处理了
                     if (cancelScheduling.get()) {
                         return;
                     }
@@ -106,6 +114,12 @@ public class DelayedAllocationService extends AbstractLifecycleComponent impleme
             }, nextDelay, ThreadPool.Names.SAME);
         }
 
+        /**
+         *
+         * @param currentState
+         * @return
+         * @throws Exception
+         */
         @Override
         public ClusterState execute(ClusterState currentState) throws Exception {
             removeIfSameTask(this);
@@ -179,6 +193,7 @@ public class DelayedAllocationService extends AbstractLifecycleComponent impleme
 
     /**
      * Figure out if an existing scheduled reroute is good enough or whether we need to cancel and reschedule.
+     * 获取最新的某个unassigned 即将到时的时间差
      */
     private synchronized void scheduleIfNeeded(long currentNanoTime, ClusterState state) {
         assertClusterOrMasterStateThread();
@@ -187,12 +202,14 @@ public class DelayedAllocationService extends AbstractLifecycleComponent impleme
             logger.trace("no need to schedule reroute - no delayed unassigned shards");
             removeTaskAndCancel();
         } else {
+            // 开启一个定时任务  在一定延时后移除标记
             TimeValue nextDelay = TimeValue.timeValueNanos(nextDelayNanos);
             final boolean earlierRerouteNeeded;
             DelayedRerouteTask existingTask = delayedRerouteTask.get();
             DelayedRerouteTask newTask = new DelayedRerouteTask(nextDelay, currentNanoTime);
             if (existingTask == null) {
                 earlierRerouteNeeded = true;
+                // 如果这个任务触发时间更短 就将慢的任务先关闭
             } else if (newTask.scheduledTimeToRunInNanos() < existingTask.scheduledTimeToRunInNanos()) {
                 // we need an earlier delayed reroute
                 logger.trace("cancelling existing delayed reroute task as delayed reroute has to happen [{}] earlier",
@@ -203,6 +220,7 @@ public class DelayedAllocationService extends AbstractLifecycleComponent impleme
                 earlierRerouteNeeded = false;
             }
 
+            // 开启新的定时任务
             if (earlierRerouteNeeded) {
                 logger.info("scheduling reroute for delayed shards in [{}] ({} delayed shards)", nextDelay,
                     UnassignedInfo.getNumberOfDelayedUnassigned(state));

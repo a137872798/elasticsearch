@@ -195,7 +195,7 @@ public class InternalEngine extends Engine {
 
     /**
      * 在初始化时 会将该标识修改成true  代表此时还未从事务文件中恢复数据
-     * 在这个阶段应该是拒绝处理其他请求的   TODO 那么是怎么做处理的
+     * 在这个阶段应该是拒绝处理其他请求的
      */
     private final AtomicBoolean pendingTranslogRecovery = new AtomicBoolean(false);
     private final AtomicLong maxUnsafeAutoIdTimestamp = new AtomicLong(-1);
@@ -281,7 +281,7 @@ public class InternalEngine extends Engine {
             mergeScheduler = scheduler = new EngineMergeScheduler(engineConfig.getShardId(), engineConfig.getIndexSettings());
             throttle = new IndexThrottle();
             try {
-                // 某些commit信息可能没有同步到其他节点 需要丢弃这些数据  旧的commit数据还会保留
+                // 只认可全局检查点之前的数据 之后的数据因为没有同步到其他节点 是不安全的
                 store.trimUnsafeCommits(config().getTranslogConfig().getTranslogPath());
                 // engineConfig.getGlobalCheckpointSupplier() 实际上就是借助replicationTracker 获取最新的全局检查点
                 translog = openTranslog(engineConfig, translogDeletionPolicy, engineConfig.getGlobalCheckpointSupplier(),
@@ -337,7 +337,7 @@ public class InternalEngine extends Engine {
             internalReaderManager.addListener(versionMap);
             assert pendingTranslogRecovery.get() == false : "translog recovery can't be pending before we set it";
             // don't allow commits until we are done with recovering
-            // 标记此时还未从事务日志中恢复数据
+            // 标记此时还未从事务日志中恢复数据  无法执行任何写入操作
             pendingTranslogRecovery.set(true);
             // 从配置中获取相应的监听器对象并进行设置  对应 RefreshListeners,RefreshPendingLocationListener
             for (ReferenceManager.RefreshListener listener : engineConfig.getExternalRefreshListener()) {
@@ -353,12 +353,12 @@ public class InternalEngine extends Engine {
             this.lastRefreshedCheckpointListener = new LastRefreshedCheckpointListener(localCheckpointTracker.getProcessedCheckpoint());
             this.internalReaderManager.addListener(lastRefreshedCheckpointListener);
 
-            // 获取 userData中的 maxSeq 或者事务日志中的checkPoint.maxSeq
+            // 认为存储的maxSeq 就是最近更新或删除的seq
             maxSeqNoOfUpdatesOrDeletes = new AtomicLong(SequenceNumbers.max(localCheckpointTracker.getMaxSeqNo(), translog.getMaxSeqNo()));
-            // 在初始阶段 localCheckpointTracker.getPersistedCheckpoint() 就是userData._local_check_point
-            // TODO 什么时候会出现这种情况
+
+            // persistedCheckpoint 就是已经写入到事务日志中的检查点  maxSeqNo 就是之前lucene中最新操作对应的seq 每次发起一次操作seq都会+1
+            // 这种情况无法确保真正的 persistedCheckpoint 所以要查询索引文件来确定
             if (localCheckpointTracker.getPersistedCheckpoint() < localCheckpointTracker.getMaxSeqNo()) {
-                // 通过 InternalReaderManager 生成searcher   在InternalReaderManager中包含一个IndexReader  searcher就是包装了IndexReader
                 try (Searcher searcher =
                          acquireSearcher("restore_version_map_and_checkpoint_tracker", SearcherScope.INTERNAL)) {
                     // 从之前通过lucene存储的doc中还原出 version checkpoint信息
@@ -1004,7 +1004,7 @@ public class InternalEngine extends Engine {
     }
 
     /**
-     * 检测  前3个参数与第4个参数的新旧关系
+     * 检测某id的数据对应的版本是否比之前更新
      *
      * @param id
      * @param seqNo
@@ -3625,12 +3625,14 @@ public class InternalEngine extends Engine {
      * Restores the live version map and local checkpoint of this engine using documents (including soft-deleted)
      * after the local checkpoint in the safe commit. This step ensures the live version map and checkpoint tracker
      * are in sync with the Lucene commit.
-     * 通过reader读取doc  并从中还原 version/checkpoint 信息
+     *
+     * 这种情况是 可能写入在lucene中的数据 比事务日志中的还要多 此时需要读取lucene的数据来确定实际上处理到了多少seq
+     * 并且因为数据已经固化在lucene索引文件中了 所以可以直接更新 persistedCheckpoint
      */
     private void restoreVersionMapAndCheckpointTracker(DirectoryReader directoryReader) throws IOException {
         final IndexSearcher searcher = new IndexSearcher(directoryReader);
         searcher.setQueryCache(null);
-        // BooleanQuery 是多个查询条件累加的结果  这里是获取 本次已经持久化后的checkpoint对应的doc
+        // 这里就是查询 persistedLocalCheckpoint 之后的所有数据
         final Query query = new BooleanQuery.Builder()
             .add(LongPoint.newRangeQuery(
                 SeqNoFieldMapper.NAME, getPersistedLocalCheckpoint() + 1, Long.MAX_VALUE), BooleanClause.Occur.MUST)
@@ -3652,15 +3654,12 @@ public class InternalEngine extends Engine {
             final IdOnlyFieldVisitor idFieldVisitor = new IdOnlyFieldVisitor();
             final DocIdSetIterator iterator = scorer.iterator();
             int docId;
-            // 只要能读取到doc 就不断遍历
             while ((docId = iterator.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
                 // 获取这个doc 下 primary field 对应的值
                 final long primaryTerm = dv.docPrimaryTerm(docId);
                 final long seqNo = dv.docSeqNo(docId);
 
-                // 之前是用 userData.maxSeq 来还原 processedSeq/persistedSeq的
-                // 现在通过 segmentInfos打开索引文件 并读取内部的docValue 获取记录的最新的seq 更新localCheckpointTracker内的数据
-                // 当seq 超过了checkPoint时 会将2者同步
+                // 该方法的主要作用就是同步了 2个seq
                 localCheckpointTracker.markSeqNoAsProcessed(seqNo);
                 localCheckpointTracker.markSeqNoAsPersisted(seqNo);
                 idFieldVisitor.reset();
@@ -3672,22 +3671,23 @@ public class InternalEngine extends Engine {
                     continue;
                 }
                 final BytesRef uid = new Term(IdFieldMapper.NAME, Uid.encodeId(idFieldVisitor.getId())).bytes();
-                // 在KeyedLock中 为每个id 维护一个锁对象 在获取的同时会对锁进行lock操作   也就是以id为单位进行操作是线程安全的
-                // 在使用完后会自动释放锁
+                // 将这些数据放入缓存中 versionMap 相当于就是一个缓存 以id作为key 存储该id最新的数据
                 try (Releasable ignored = versionMap.acquireLock(uid)) {
                     // 从容器中找到该id的版本信息
                     final VersionValue curr = versionMap.getUnderLock(uid);
 
-                    // 当前版本为空 或者本次从 versionValue中获取的seq 比doc解析出来的小    一开始 versionMap中还没有存储任何数据
+                    // 首次插入该id 对应的记录的 seq 或者 获取了更新的数据 刷新缓存
                     if (curr == null ||
                         compareOpToVersionMapOnSeqNo(idFieldVisitor.getId(), seqNo, primaryTerm, curr) == OpVsLuceneDocStatus.OP_NEWER) {
-                        // 如果当前doc携带了 tombstone field 先忽略这种情况
+
+                        // 代表该id在此时被删除了
                         if (dv.isTombstone(docId)) {
                             // use 0L for the start time so we can prune this delete tombstone quickly
                             // when the local checkpoint advances (i.e., after a recovery completed).
                             // 传入0的话 就是都可以裁剪
                             final long startTime = 0L;
-                            // putDeleteUnderLock 将数据存储到 tombstone 中 并从 maps移除
+                            // putDeleteUnderLock 将数据存储到 tombstone 中 并从 maps移除   这样当尝试获取该id对应的数据时
+                            // 发现已经被删除就可以立即返回结果 而不是走searcher 并且通过锁来实现单分片的线程安全
                             versionMap.putDeleteUnderLock(uid, new DeleteVersionValue(dv.docVersion(docId), seqNo, primaryTerm, startTime));
                         } else {
                             // 为 id 插入一个version信息   内部包含了 doc下 _version 字段的值   还有 _seq_no 的值
@@ -3698,7 +3698,7 @@ public class InternalEngine extends Engine {
             }
         }
         // remove live entries in the version map
-        // 在通过之前segment_N 文件关联的所有索引文件恢复了 seq 以及生成id对应的版本信息后 进行刷新工作
+        // 此时lucene本身的数据应该是没有变化的  这里只是想触发监听器  versionMap 本身就是一个监听器  可以看到监听器中的逻辑会清楚 versionMap
         refresh("restore_version_map_and_checkpoint_tracker", SearcherScope.INTERNAL, true);
     }
 

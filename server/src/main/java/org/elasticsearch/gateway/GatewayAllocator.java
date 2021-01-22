@@ -177,7 +177,7 @@ public class GatewayAllocator implements ExistingShardsAllocator {
     @Override
     public void afterPrimariesBeforeReplicas(RoutingAllocation allocation) {
         assert replicaShardAllocator != null;
-        // inactiveShards 对应处于init 的分片数量  只要此时主分片处于start状态 那么处于init状态的副本就会开始恢复数据
+        // inactiveShards 对应处于init 的分片数量 (正在恢复数据) 这里是检测分片是否分配到了一个合适的节点上
         if (allocation.routingNodes().hasInactiveShards()) {
             // cancel existing recoveries if we have a better match
             replicaShardAllocator.processExistingRecoveries(allocation);
@@ -356,7 +356,8 @@ public class GatewayAllocator implements ExistingShardsAllocator {
         }
 
         /**
-         * 定义了 拉取探测数据的逻辑
+         * 作为主分片 想要基于 快照或者 existing_store 恢复数据  那么肯定要对对端的数据做检测 确保目标节点确实有数据
+         *
          * @param shardId   本次查询的分片
          * @param customDataPath  对端节点应该是通过这个目录来定位数据文件的
          * @param nodes     需要发送fetch请求的所有节点

@@ -51,7 +51,7 @@ import static java.util.Collections.emptyMap;
  * The dangling indices state is responsible for finding new dangling indices (indices that have
  * their state written on disk, but don't exists in the metadata of the cluster), and importing
  * them into the cluster.
- * 什么叫悬摇摆索引的状态
+ * 检测集群中是否存在摇摆索引 并进行处理
  */
 public class DanglingIndicesState implements ClusterStateListener {
 
@@ -112,18 +112,16 @@ public class DanglingIndicesState implements ClusterStateListener {
     /**
      * Process dangling indices based on the provided meta data, handling cleanup, finding
      * new dangling indices, and allocating outstanding ones.
-     * 处理摇摆的索引
+     * 处理摇摆索引
      */
     public void processDanglingIndices(final Metadata metadata) {
         // 如果没有指定数据路径 直接返回
         if (nodeEnv.hasNodeFile() == false) {
             return;
         }
-        // 当接收到一个新的元数据时 首先检测某些摇摆索引是否已经在里面设置了元数据 如果已经设置了  就将该索引从待处理的容器中移除
+        // 第一步清理之前残留的摇摆索引
         cleanupAllocatedDangledIndices(metadata);
-        // 检测是否增加了新的摇摆索引
         findNewAndAddDanglingIndices(metadata);
-        // 处理此时找到的所有摇摆索引
         allocateDanglingIndices();
     }
 
@@ -137,14 +135,13 @@ public class DanglingIndicesState implements ClusterStateListener {
 
     /**
      * Cleans dangling indices if they are already allocated on the provided meta data.
-     * 如果这些摇摆索引已经指定了分配的位置 那么就从 danglingIndices中移除
-     * TODO 什么是摇摆索引  又是为什么放在gateway这个版块里
+     * 检测之前发现的摇摆索引 是否已经在集群中创建了对应的元数据信息
      */
     void cleanupAllocatedDangledIndices(Metadata metadata) {
         for (Index index : danglingIndices.keySet()) {
             // 获取该索引相关的元数据
             final IndexMetadata indexMetadata = metadata.index(index);
-            // 只要metadata中已经有了这个索引的元数据 就认为该索引已经完成分配了
+            // 已经处理完毕就从集群中移除
             if (indexMetadata != null && indexMetadata.getIndex().getName().equals(index.getName())) {
                 if (indexMetadata.getIndex().getUUID().equals(index.getUUID()) == false) {
                     logger.warn("[{}] can not be imported as a dangling index, as there is already another index " +
@@ -160,9 +157,9 @@ public class DanglingIndicesState implements ClusterStateListener {
     /**
      * Finds (@{link #findNewAndAddDanglingIndices}) and adds the new dangling indices
      * to the currently tracked dangling indices.
+     * 从元数据中找到新的摇摆索引 并保存
      */
     void findNewAndAddDanglingIndices(final Metadata metadata) {
-        // 将从node 一开始指定的数据文件夹下所有 index文件夹下最新的数据解析出来 并存储到列表中返回
         danglingIndices.putAll(findNewDanglingIndices(metadata));
     }
 
@@ -170,7 +167,8 @@ public class DanglingIndicesState implements ClusterStateListener {
      * Finds new dangling indices by iterating over the indices and trying to find indices
      * that have state on disk, but are not part of the provided meta data, or not detected
      * as dangled already.
-     * 从当前元数据中找到所有新增的摇摆索引
+     * 从当前元数据中找到所有摇摆索引
+     * 摇摆索引就是从当前数据目录还原之前可能存在的index 如果明确指定该index已经被删除了 那么就不会恢复
      */
     Map<Index, IndexMetadata> findNewDanglingIndices(final Metadata metadata) {
         final Set<String> excludeIndexPathIds = new HashSet<>(metadata.indices().size() + danglingIndices.size());
@@ -181,17 +179,17 @@ public class DanglingIndicesState implements ClusterStateListener {
         }
         excludeIndexPathIds.addAll(danglingIndices.keySet().stream().map(Index::getUUID).collect(Collectors.toList()));
         try {
-            // 这里将数据目录下所有索引数据抽取出来 (针对同一索引的描述信息 只解析gen最大的)
+            // 将当前node目录下所有index 最新的元数据加载出来
             final List<IndexMetadata> indexMetadataList = metaStateService.loadIndicesStates(excludeIndexPathIds::contains);
             Map<Index, IndexMetadata> newIndices = new HashMap<>(indexMetadataList.size());
-            // 索引墓地是啥玩意
+
+            // 这里存储了所有应当被删除的index
             final IndexGraveyard graveyard = metadata.indexGraveyard();
             for (IndexMetadata indexMetadata : indexMetadataList) {
-                // 什么东西啊 上面不是排除了么
                 if (metadata.hasIndex(indexMetadata.getIndex().getName())) {
                     logger.warn("[{}] can not be imported as a dangling index, as index with same name already exists in cluster metadata",
                         indexMetadata.getIndex());
-                // 代表这个索引已经进墓地了 不应该被处理
+
                 } else if (graveyard.containsIndex(indexMetadata.getIndex())) {
                     logger.warn("[{}] can not be imported as a dangling index, as an index with the same name and UUID exist in the " +
                                 "index tombstones.  This situation is likely caused by copying over the data directory for an index " +
@@ -258,7 +256,6 @@ public class DanglingIndicesState implements ClusterStateListener {
      */
     @Override
     public void clusterChanged(ClusterChangedEvent event) {
-        // 只要有一个block 无法被持久化 就进行处理   blocks 是做什么的???
         if (event.state().blocks().disableStatePersistence() == false) {
             processDanglingIndices(event.state().metadata());
         }

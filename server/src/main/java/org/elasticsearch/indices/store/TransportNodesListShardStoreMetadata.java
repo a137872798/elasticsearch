@@ -64,7 +64,7 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 拉取lucene数据
+ * 在 GatewayAllocator 的副本分配器上  会发起该action 获取数据
  */
 public class TransportNodesListShardStoreMetadata extends TransportNodesAction<TransportNodesListShardStoreMetadata.Request,
     TransportNodesListShardStoreMetadata.NodesStoreFilesMetadata,
@@ -156,7 +156,7 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
                 }
             }
 
-            // 获取已经持久化的lucene数据的描述信息   针对该shardId之前分配在该节点的情况
+            // 此时内存中没有 indexShard信息 尝试从数据目录查找
             final String customDataPath;
             if (request.getCustomDataPath() != null) {
                 customDataPath = request.getCustomDataPath();
@@ -278,7 +278,6 @@ public class TransportNodesListShardStoreMetadata extends TransportNodesAction<T
 
         /**
          * Returns the retaining sequence number of the peer recovery retention lease for a given node if exists; otherwise, returns -1.
-         * 从使用场景看 好像只有primary分片对应的store会被访问  内部记录了该shard下所有副本在节点上的偏移量信息
          */
         public long getPeerRecoveryRetentionLeaseRetainingSeqNo(DiscoveryNode node) {
             assert node != null;

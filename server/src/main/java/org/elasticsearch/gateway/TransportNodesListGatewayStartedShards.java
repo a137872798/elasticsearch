@@ -126,7 +126,7 @@ public class TransportNodesListGatewayStartedShards extends
             // 尝试读取该节点上有关该分片的元数据  比如该节点上之前存储的是 shardId.primary
             // 那么为主分片进行分配时 就可以继续选择该节点作为主分片节点  因为主分片的数据一定是最齐全的
             ShardStateMetadata shardStateMetadata = ShardStateMetadata.FORMAT.loadLatestState(logger, namedXContentRegistry,
-                // 从env中找到该分片所在的目录
+                // 从env中找到该分片所在的目录  通常情况下只应该存在一个目录
                 nodeEnv.availableShardPaths(request.shardId));
             if (shardStateMetadata != null) {
 

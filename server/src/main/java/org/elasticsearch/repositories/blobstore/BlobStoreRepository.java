@@ -2348,42 +2348,51 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
     }
 
     /**
-     * 从快照中还原 数据分片
      * @param store           the store to restore the index into
      * @param snapshotId      snapshot id
      * @param indexId         id of the index in the repository from which the restore is occurring
      * @param snapshotShardId shard id (in the snapshot)
-     * @param recoveryState   recovery state   在该对象内部还包含了Index  每次恢复是以index为单位的么
+     * @param recoveryState   recovery state
      *
      * @param listener        listener to invoke once done
+     *                        基于快照进行分片数据恢复
      */
     @Override
-    public void restoreShard(Store store, SnapshotId snapshotId, IndexId indexId, ShardId snapshotShardId,
-                             RecoveryState recoveryState, ActionListener<Void> listener) {
+    public void restoreShard(Store store,
+                             SnapshotId snapshotId, // 每次生成快照都有一个id属性 用于定位快照数据
+                             IndexId indexId,
+                             ShardId snapshotShardId,
+                             RecoveryState recoveryState,
+                             ActionListener<Void> listener) {
         final ShardId shardId = store.shardId();
         // 生成一个桥接的监听器
         final ActionListener<Void> restoreListener = ActionListener.delegateResponse(listener,
             (l, e) -> l.onFailure(new IndexShardRestoreFailedException(shardId, "failed to restore snapshot [" + snapshotId + "]", e)));
         final Executor executor = threadPool.executor(ThreadPool.Names.SNAPSHOT);
 
-        // 先通过索引分片id  定位到container
+        // 仓库应该是所有节点共享的  不需要数据同步 然后这里借助之前的快照分片 查找存储该分片快照数据的目录
         final BlobContainer container = shardContainer(indexId, snapshotShardId);
+
+
         executor.execute(ActionRunnable.wrap(restoreListener, l -> {
-            // 在指定快照id 后获取描述本次快照的对象 比如本次快照涉及到多少文件
+            // 因为该目录下存储了很多数据 通过快照id 定位到具体数据目录
             final BlobStoreIndexShardSnapshot snapshot = loadShardSnapshot(container, snapshotId);
-            // 将涉及到的所有文件包装成 SnapshotFiles 对象
+            // 快照数据对应一组索引文件的副本
             final SnapshotFiles snapshotFiles = new SnapshotFiles(snapshot.snapshot(), snapshot.indexFiles(), null);
+
+            // 创建一个利用快照文件进行数据恢复的上下文对象
             new FileRestoreContext(metadata.name(), shardId, snapshotId, recoveryState) {
 
                 /**
                  * 具体的恢复逻辑由子类定义
-                 * @param filesToRecover List of files to restore  本次恢复需要使用到的所有快照文件
+                 * @param filesToRecover List of files to restore  真正需要用到的文件 因为部分文件可能之前已经存在于store中了
                  * @param store          Store to restore into
                  * @param listener
                  */
                 @Override
                 protected void restoreFiles(List<BlobStoreIndexShardSnapshot.FileInfo> filesToRecover, Store store,
                                             ActionListener<Void> listener) {
+                    // 没有需要恢复的文件 直接触发监听器
                     if (filesToRecover.isEmpty()) {
                         listener.onResponse(null);
                     } else {
@@ -2400,6 +2409,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                                 try {
                                     BlobStoreIndexShardSnapshot.FileInfo fileToRecover;
                                     while ((fileToRecover = files.poll(0L, TimeUnit.MILLISECONDS)) != null) {
+                                        // 实际上就是将文件从仓库搬运到 store中
                                         restoreFile(fileToRecover, store);
                                     }
                                 } finally {
@@ -2411,7 +2421,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                 }
 
                 /**
-                 * 实际的恢复操作
+                 * 将快照文件拷贝到 store
                  * @param fileInfo
                  * @param store
                  * @throws IOException
@@ -2421,7 +2431,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                     try (IndexOutput indexOutput =
                              store.createVerifyingOutput(fileInfo.physicalName(), fileInfo.metadata(), IOContext.DEFAULT)) {
 
-                        // 如果当前文件是虚拟文件
+                        // TODO 如果当前文件是虚拟文件 跟 lucene的 .si 索引文件有关 不影响主流程 先忽略
                         if (fileInfo.name().startsWith(VIRTUAL_DATA_BLOB_PREFIX)) {
                             // 获取文件的hash信息 并写入到目标文件中
                             final BytesRef hash = fileInfo.metadata().hash();

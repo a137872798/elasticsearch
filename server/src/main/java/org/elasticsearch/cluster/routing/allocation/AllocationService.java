@@ -319,7 +319,7 @@ public class AllocationService {
     /**
      * unassigned an shards that are associated with nodes that are no longer part of the cluster, potentially promoting replicas
      * if needed.
-     * @param clusterState 在一次新的选举过程中 当发现某些节点发生了改变 就会从原本的 clusterState中移除  在该对象中也要将相关数据移除
+     * @param clusterState coordinator中 leader节点会监控集群中的其他节点  一旦感知到某节点下线就会触发该方法 将分片转移到新的node上
      * @param reroute 是否需要发起重路由
      */
     public ClusterState disassociateDeadNodes(ClusterState clusterState, boolean reroute, String reason) {
@@ -556,7 +556,7 @@ public class AllocationService {
             "auto-expand replicas out of sync with number of nodes in the cluster";
         assert assertInitialized();
 
-        // 某些处于 unassigned的分片 可以设置延时标识 未超时的分片在本轮中将不会被分配
+        // 某些分片可能由于某些原因被设置了 delay标识 这样会无法正常分配 而这一步就是检测是否已经满足时间条件 并移除标识
         removeDelayMarkers(allocation);
 
         // 这里可以自定义前置分配器  默认使用 gatewayAllocator进行分配 而在本轮无法处理的分片就会交由  shardsAllocator进行兜底处理
@@ -625,8 +625,8 @@ public class AllocationService {
             // 该节点下的分片需要被移除 这里是处理它下面所有的分片
             for (ShardRouting shardRouting : node.copyShards()) {
                 final IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shardRouting.index());
-                // 如果存在延时属性 就设置标识到  unassigned中  默认为1分钟    当进行reroute时 会检测时间是否满足移除条件
-                // TODO 目前只在  ReplicaShardAllocator中看到过该标识的使用
+                // 如果存在延时属性 就设置标识到  unassigned中  默认为1分钟
+                // 针对存在延时标记的分片 必须等待足够的时间 才会进行分配
                 boolean delayed = INDEX_DELAYED_NODE_LEFT_TIMEOUT_SETTING.get(indexMetadata.getSettings()).nanos() > 0;
                 UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.NODE_LEFT, "node_left [" + node.nodeId() + "]",
                     null, 0, allocation.getCurrentNanoTime(), System.currentTimeMillis(), delayed, AllocationStatus.NO_ATTEMPT,

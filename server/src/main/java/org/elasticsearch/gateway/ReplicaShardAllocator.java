@@ -86,12 +86,14 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
                 }
 
                 // if we are allocating a replica because of index creation, no need to go and find a copy, there isn't one...
-                // 当通过indexCreate 请求创建索引时 会根据配置项中的 主副本数量创建副本  同时reason就是 INDEX_CREATED  如果是自适应创建的副本就是 REPLICA_ADDED
+                // 当通过indexCreate 请求创建索引时 会根据配置项中的 主副本数量创建副本  同时reason就是 INDEX_CREATED
+                // 如果是自适应创建的副本就是 REPLICA_ADDED
+                // TODO 这里新创建索引时生成的分片 就不需要重分配了
                 if (shard.unassignedInfo() != null && shard.unassignedInfo().getReason() == UnassignedInfo.Reason.INDEX_CREATED) {
                     continue;
                 }
 
-                // 只要有副本处于恢复阶段  就检测所有分片与主分片数据的同步率  太低的就尝试切换到更合适的节点
+                // 实际上 peer的恢复方式 就是直接从primary 传输索引文件数据 并使用事务日志进行数据恢复  那么之前的数据同步率应该是没有意义的啊
                 AsyncShardFetch.FetchResult<NodeStoreFilesMetadata> shardStores = fetchData(shard, allocation);
                 // 针对所有shardId 都发起请求后 退出for循环
                 if (shardStores.hasData() == false) {
@@ -99,14 +101,16 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
                     continue; // still fetching
                 }
 
+                // 能够进入到这里 代表上次的数据已经拉取完毕
                 ShardRouting primaryShard = allocation.routingNodes().activePrimary(shard.shardId());
                 assert primaryShard != null : "the replica shard can be allocated on at least one node, so there must be an active primary";
                 assert primaryShard.currentNodeId() != null;
                 // 找到主分片所在的节点
                 final DiscoveryNode primaryNode = allocation.nodes().get(primaryShard.currentNodeId());
-                // 找到对应节点的索引文件元数据
+                // 找到主节点上该分片此时的索引文件元数据  比如文件大小/校验和等
                 final TransportNodesListShardStoreMetadata.StoreFilesMetadata primaryStore = findStore(primaryNode, shardStores);
-                // 没有找到主分片相关的store信息
+                // 如果此时没有找到主分片数据 那么此时主分片 应该已经出现问题了 等待它自己通知leader 失败
+                // 此时如果存在可用副本 那么副本会升级成主分片 如果不存在可用副本 副本会重新变成 unassigned 主分片也会变成unassigned
                 if (primaryStore == null) {
                     // if we can't find the primary data, it is probably because the primary shard is corrupted (and listing failed)
                     // just let the recovery find it out, no need to do anything about it for the initializing shard
@@ -114,32 +118,33 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
                     continue;
                 }
 
-                // TODO
-                // 找到这个副本合适的一系列node  其中还有一个最接近primary的node
+                // 通过该分片在所有节点上的索引文件信息 找到一个恢复最快 (所需要恢复的数据最少的节点)
                 MatchingNodes matchingNodes = findMatchingNodes(shard, allocation, true, primaryNode, primaryStore, shardStores, false);
+
+                // 至少有某个匹配部分数据的节点
                 if (matchingNodes.getNodeWithHighestMatch() != null) {
                     DiscoveryNode currentNode = allocation.nodes().get(shard.currentNodeId());
                     DiscoveryNode nodeWithHighestMatch = matchingNodes.getNodeWithHighestMatch();
                     // current node will not be in matchingNodes as it is filtered away by SameShardAllocationDecider
-                    // 当前分片不是同步率最高的replica
+                    // 代表当前副本所在的节点 不是匹配度最高的那个节点
                     if (currentNode.equals(nodeWithHighestMatch) == false
-                        // 且最高同步率的节点不需要恢复数据(也就是与primary完全同步)
+                        // 且最高同步率的节点不需要恢复数据(也就是与primary完全同步)  TODO 但是事务日志还是要继续恢复的吧
                         && matchingNodes.canPerformNoopRecovery(nodeWithHighestMatch)
-                        // 且当前节点之前没有同步过任何数据
+                        // 且当前节点之前没有同步过任何数据  也就是索引文件还没有生成 且还没有上传任何续约信息
                         && canPerformOperationBasedRecovery(primaryStore, shardStores, currentNode) == false) {
                         // we found a better match that can perform noop recovery, cancel the existing allocation.
                         logger.debug("cancelling allocation of replica on [{}], can perform a noop recovery on node [{}]",
                             currentNode, nodeWithHighestMatch);
                         final Set<String> failedNodeIds =
                             shard.unassignedInfo() == null ? Collections.emptySet() : shard.unassignedInfo().getFailedNodeIds();
-                        // 这种情况选择将副本重新定位  这样就可以减少无意义的数据拷贝了
+                        // 这种情况选择将副本重新定位  这样就可以减少无意义的数据拷贝了   看来使用网关副本分配器时 能够确保分配到一个匹配度最高的节点
                         UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.REALLOCATED_REPLICA,
                             "existing allocation of replica to [" + currentNode + "] cancelled, can perform a noop recovery on [" +
                                 nodeWithHighestMatch + "]",
                             null, 0, allocation.getCurrentNanoTime(), System.currentTimeMillis(), false,
                             UnassignedInfo.AllocationStatus.NO_ATTEMPT, failedNodeIds);
                         // don't cancel shard in the loop as it will cause a ConcurrentModificationException
-                        // 这里是关闭某个节点下的某个分片  TODO
+                        // routingNodes.failShard 会将分片重置为 unassigned
                         shardCancellationActions.add(() -> routingNodes.failShard(logger, shard, unassignedInfo,
                             metadata.getIndexSafe(shard.index()), allocation.changes()));
                     }
@@ -158,7 +163,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
     private static boolean isResponsibleFor(final ShardRouting shard) {
         return shard.primary() == false // must be a replica
             && shard.unassigned() // must be unassigned
-            // if we are allocating a replica because of index creation, no need to go and find a copy, there isn't one...
+            // if we are allocating a replica because of index creation, no need to go and find a copy, there isn't one...  如果索引是首次创建 副本自然找不到什么更合适的节点
             && shard.unassignedInfo().getReason() != UnassignedInfo.Reason.INDEX_CREATED;
     }
 
@@ -183,11 +188,13 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
         final RoutingNodes routingNodes = allocation.routingNodes();
         final boolean explain = allocation.debugDecision();
         // pre-check if it can be allocated to any node that currently exists, so we won't list the store for it for nothing
-        // 确保该分片至少能分配到某个node上  如果某个节点上已经存在该shardId的分片了 就不允许分配
+        // 确保该分片至少能分配到某个node上
         Tuple<Decision, Map<String, NodeAllocationResult>> result = canBeAllocatedToAtLeastOneNode(unassignedShard, allocation);
         Decision allocateDecision = result.v1();
 
-        // 当前分片没有合适的节点分配   直接返回失败结果   如果已经针对某个shardId 拉取到节点的数据 那么先进入下一步判断 情况可能会发生改变
+        // 当前分片没有合适的节点分配   直接返回失败结果
+        // 如果 explain为true 那么走下一步 获取更多的描述信息
+        // 如果已经针对某个shardId 拉取到节点的数据 那么先进入下一步判断 情况可能会发生改变
         if (allocateDecision.type() != Decision.Type.YES
             && (explain == false || hasInitiatedFetching(unassignedShard) == false)) {
             // only return early if we are not in explain mode, or we are in explain mode but we have not
@@ -212,7 +219,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
             return AllocateUnassignedDecision.no(AllocationStatus.FETCHING_SHARD_DATA, nodeDecisions);
         }
 
-        // 如果此时没有活跃状态的主分片是无法对副本进行分配的   TODO 可是主分片如果不是snapshot作为恢复源  并且in-sync为空 也无法完成分配
+        // 如果此时没有活跃状态的主分片是无法对副本进行分配的
         ShardRouting primaryShard = routingNodes.activePrimary(unassignedShard.shardId());
         if (primaryShard == null) {
             assert explain : "primary should only be null here if we are in explain mode, so we didn't " +
@@ -224,6 +231,8 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
         final DiscoveryNode primaryNode = allocation.nodes().get(primaryShard.currentNodeId());
         // 获取主分片所在节点关联的元数据信息
         final TransportNodesListShardStoreMetadata.StoreFilesMetadata primaryStore = findStore(primaryNode, shardStores);
+
+        // 当主分片还没有产生数据时 使用兜底的分配策略 因为此时肯定不会有什么索引文件相匹配的情况 无法优化恢复流程
         if (primaryStore == null) {
             // if we can't find the primary data, it is probably because the primary shard is corrupted (and listing failed)
             // we want to let the replica be allocated in order to expose the actual problem with the primary that the replica
@@ -233,27 +242,27 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
             return AllocateUnassignedDecision.NOT_TAKEN;
         }
 
-        // 找到当前未分配的这个shard 匹配的一组node
+        // 根据该分片在每个节点上残留的索引文件数据 选择最优的节点
         MatchingNodes matchingNodes = findMatchingNodes(
             unassignedShard, allocation, false, primaryNode, primaryStore, shardStores, explain);
         assert explain == false || matchingNodes.nodeDecisions != null : "in explain mode, we must have individual node decisions";
 
-        // 将 NodeAllocationResult 整合
+        // 追加描述信息 先忽略
         List<NodeAllocationResult> nodeDecisions = augmentExplanationsWithStoreInfo(result.v2(), matchingNodes.nodeDecisions);
 
         // 代表此时在集群中找不到该shard可以使用的node了
         if (allocateDecision.type() != Decision.Type.YES) {
             return AllocateUnassignedDecision.no(UnassignedInfo.AllocationStatus.fromDecision(allocateDecision.type()), nodeDecisions);
 
-        // 此时已经通过decides判断出一个可以分配的node了   但是还需要检测当存在匹配度最高的node时
+            // 本轮找到了匹配度高的节点
         } else if (matchingNodes.getNodeWithHighestMatch() != null) {
             RoutingNode nodeWithHighestMatch = allocation.routingNodes().node(matchingNodes.getNodeWithHighestMatch().getId());
             // we only check on THROTTLE since we checked before before on NO
 
-            // 检测能否将分片分配到这个同步率最高的节点上  也就是在节点上有分片的数据 却不代表此时有分片分配在节点上???  有数据只能代表着之前可能已经同步过部分数据 这样需要恢复的数据量会小些
+            // 检测此时该分片是否可用
             Decision decision = allocation.deciders().canAllocate(unassignedShard, nodeWithHighestMatch, allocation);
 
-            // 如果最优的节点此时处于限制状态 就不允许分配
+            // 本次最合适的节点此时处于限流状态 等待下次合适的时机进行reroute
             if (decision.type() == Decision.Type.THROTTLE) {
                 logger.debug("[{}][{}]: throttling allocation [{}] to [{}] in order to reuse its unallocated persistent store",
                     unassignedShard.index(), unassignedShard.id(), unassignedShard, nodeWithHighestMatch.node());
@@ -261,16 +270,14 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
                 return AllocateUnassignedDecision.throttle(nodeDecisions);
             } else {
 
-                // TODO 这里不会出现NO吗???
+                // 在findMatchingNodes 中已经过滤掉了 NO 的节点了
                 logger.debug("[{}][{}]: allocating [{}] to [{}] in order to reuse its unallocated persistent store",
                     unassignedShard.index(), unassignedShard.id(), unassignedShard, nodeWithHighestMatch.node());
                 // we found a match
                 return AllocateUnassignedDecision.yes(nodeWithHighestMatch.node(), null, nodeDecisions, true);
             }
 
-            // 首先allocateDecision.type()是YES 其次没有最匹配的节点 才会进入这个分支
-            // TODO 此时没有任何可分配的节点  那首先allocateDecision.type() == YES 是怎么满足的???
-            // 此时采用了延迟模式
+            // 虽然此时无可复用节点  但是没有要求在此刻立即分配的话 可以不交给兜底分配策略
         } else if (matchingNodes.hasAnyData() == false && unassignedShard.unassignedInfo().isDelayed()) {
             // if we didn't manage to find *any* data (regardless of matching sizes), and the replica is
             // unassigned due to a node leaving, so we delay allocation of this replica to see if the
@@ -290,6 +297,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
             return AllocateUnassignedDecision.delayed(remainingDelayMillis, totalDelayMillis, nodeDecisions);
         }
 
+        // 因为找不到已经存在过数据的节点 无法快速定位 所以交由兜底的分配策略进行分配
         return AllocateUnassignedDecision.NOT_TAKEN;
     }
 
@@ -372,39 +380,44 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
     }
 
     /**
-     * 找到与条件匹配的node组
      *
-     * @param shard              本次待处理的分片  此时是副本分片
-     * @param allocation         该对象内部包含了集群中所有shard的分配状态
-     * @param noMatchFailedNodes 代表还需要与 unassigned内部的 failedNodeIds信息做匹配
-     * @param primaryNode        主分片所在的节点
-     * @param primaryStore       主分片对应的store信息
-     * @param data               该shard在所有节点上的store信息
+     * @param shard
+     * @param allocation
+     * @param noMatchFailedNodes
+     * @param primaryNode
+     * @param primaryStore
+     * @param data
      * @param explain
      * @return
+     * 针对 处于init状态的副本 尝试找到一个更合适的节点  不过副本都是使用peer 并且数据都是全量拷贝 这一步的意义是什么 ???
      */
-    private MatchingNodes findMatchingNodes(ShardRouting shard, RoutingAllocation allocation, boolean noMatchFailedNodes,
-                                            DiscoveryNode primaryNode, TransportNodesListShardStoreMetadata.StoreFilesMetadata primaryStore,
-                                            AsyncShardFetch.FetchResult<NodeStoreFilesMetadata> data,
+    private MatchingNodes findMatchingNodes(ShardRouting shard, // 本次要分配的分片
+                                            RoutingAllocation allocation,  // 描述本次分配的相关信息
+                                            boolean noMatchFailedNodes,  // 是否要匹配失败的node
+                                            DiscoveryNode primaryNode,
+                                            TransportNodesListShardStoreMetadata.StoreFilesMetadata primaryStore,  // 主分片此时的数据
+                                            AsyncShardFetch.FetchResult<NodeStoreFilesMetadata> data,  // 每个节点上有关该分片的数据
                                             boolean explain) {
         Map<DiscoveryNode, MatchingNode> matchingNodes = new HashMap<>();
         // 先忽略debug信息
         Map<String, NodeAllocationResult> nodeDecisions = explain ? new HashMap<>() : null;
         for (Map.Entry<DiscoveryNode, NodeStoreFilesMetadata> nodeStoreEntry : data.getData().entrySet()) {
             DiscoveryNode discoNode = nodeStoreEntry.getKey();
-            // 如果需要匹配failedNodes 并且匹配成功了 那么跳过这个节点
+
+            // 代表不匹配失败的节点  并且该分片曾经在该节点上分配失败过
             if (noMatchFailedNodes && shard.unassignedInfo() != null &&
                 shard.unassignedInfo().getFailedNodeIds().contains(discoNode.getId())) {
                 continue;
             }
 
-            // 如果在这个节点上没有元数据信息 那么跳过
+            // 代表该节点之前都没有该分片的有关信息
             TransportNodesListShardStoreMetadata.StoreFilesMetadata storeFilesMetadata = nodeStoreEntry.getValue().storeFilesMetadata();
             // we don't have any files at all, it is an empty index
             if (storeFilesMetadata.isEmpty()) {
                 continue;
             }
 
+            // 如果当前节点已经从集群中移除 也忽略
             RoutingNode node = allocation.routingNodes().node(discoNode.getId());
             if (node == null) {
                 continue;
@@ -413,10 +426,9 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
             // check if we can allocate on that node...
             // we only check for NO, since if this node is THROTTLING and it has enough "same data"
             // then we will try and assign it next time
-            // 判断分片能否分配到该节点上      会在这里过滤掉 primary 所在的节点么  因为replica应该是不能出现在primary的节点上的
+            // 这里已经排除掉primary 所在的节点了
             Decision decision = allocation.deciders().canAllocate(shard, node, allocation);
             MatchingNode matchingNode = null;
-            // TODO
             if (explain) {
                 matchingNode = computeMatchingNode(primaryNode, primaryStore, discoNode, storeFilesMetadata);
                 ShardStoreInfo shardStoreInfo = new ShardStoreInfo(matchingNode.matchingBytes);
@@ -446,7 +458,7 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
             }
         }
 
-        // 将所有允许该副本分配的node 合并成一个 MatchingNodes对象  内部还会判断哪个node的匹配度是最高的
+        // 检测此分片在所有节点上 索引文件的匹配度 一样的文件越多 数据恢复就越快 同时做的无用功也就越少
         return new MatchingNodes(matchingNodes, nodeDecisions);
     }
 
@@ -484,26 +496,29 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
     }
 
     /**
-     * 将相关信息包装成 MatchingNode
+     * 通过某个分片之前在某个节点上的索引数据信息  以及主分片的索引数据信息的对比 计算匹配度
      *
-     * @param primaryNode  主分片所在的node
-     * @param primaryStore 主分片对应的store内元数据
-     * @param replicaNode  本次考虑的一个目标节点   它在decides检测中判断副本允许设置在该node上
-     * @param replicaStore replicateNode对应的store
+     * @param primaryNode
+     * @param primaryStore
+     * @param replicaNode
+     * @param replicaStore
      * @return
      */
     private static MatchingNode computeMatchingNode(
-        DiscoveryNode primaryNode, TransportNodesListShardStoreMetadata.StoreFilesMetadata primaryStore,
-        DiscoveryNode replicaNode, TransportNodesListShardStoreMetadata.StoreFilesMetadata replicaStore) {
-        // 主分片所在仓库 内部有一个 replicaTracker 负责进行追踪每个副本的数据恢复情况  内部记录了相关的seqNo
+        DiscoveryNode primaryNode, // 此时正在运行状态的主分片所在的节点
+        TransportNodesListShardStoreMetadata.StoreFilesMetadata primaryStore,
+        DiscoveryNode replicaNode, // 假设副本此时分配在该节点
+        TransportNodesListShardStoreMetadata.StoreFilesMetadata replicaStore) {
+
+        // 找到该节点的续约信息
         final long retainingSeqNoForPrimary = primaryStore.getPeerRecoveryRetentionLeaseRetainingSeqNo(primaryNode);
         final long retainingSeqNoForReplica = primaryStore.getPeerRecoveryRetentionLeaseRetainingSeqNo(replicaNode);
 
-        // 判断此时是否需要恢复数据 如果副本与 primary的偏移量是一样的 就不需要恢复
+        // 如果续约的seq是一样的  或者 2个lucene.userData.syncId 完全一致 代表该分片在某节点上已经与主分片数据完全同步
         final boolean isNoopRecovery = (retainingSeqNoForReplica >= retainingSeqNoForPrimary && retainingSeqNoForPrimary >= 0)
             || hasMatchingSyncId(primaryStore, replicaStore);
 
-        // 检测匹配的索引文件总计有多少bytes  TODO 同步过程中 还可以往primary中写入数据么???
+        // 检测此时有多少索引文件与主分片的完全一致 这些文件都不需要恢复了
         final long matchingBytes = computeMatchingBytes(primaryStore, replicaStore);
         return new MatchingNode(matchingBytes, retainingSeqNoForReplica, isNoopRecovery);
     }
@@ -539,9 +554,6 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
     protected abstract boolean hasInitiatedFetching(ShardRouting shard);
 
 
-    /**
-     * 当某个shard 找到了一个可以分配的node时 会包装一个该对象
-     */
     private static class MatchingNode {
         static final Comparator<MatchingNode> COMPARATOR = Comparator.<MatchingNode, Boolean>comparing(m -> m.isNoopRecovery)
             .thenComparing(m -> m.retainingSeqNo).thenComparing(m -> m.matchingBytes);
@@ -565,17 +577,18 @@ public abstract class ReplicaShardAllocator extends BaseGatewayShardAllocator {
         }
 
         /**
-         * 至少有某个东西匹配成功了
-         *
+         * 代表某分片数据在该节点至少有某些数据与主分片匹配了
          * @return
          */
         boolean anyMatch() {
-            return isNoopRecovery || retainingSeqNo >= 0 || matchingBytes > 0;
+            return isNoopRecovery // 代表数据完全匹配
+                || retainingSeqNo >= 0   // 只要该节点已经开始恢复数据 并上报续约信息
+                || matchingBytes > 0;  // 代表至少有一个索引文件完全匹配
         }
     }
 
     /**
-     * 一组 MatchingNode 对象
+     * 该分片在所有节点上的索引数据 与主分片索引数据的匹配度
      */
     static class MatchingNodes {
 

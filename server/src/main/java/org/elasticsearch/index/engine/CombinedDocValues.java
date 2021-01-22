@@ -80,6 +80,12 @@ final class CombinedDocValues {
         return primaryTermDV.longValue();
     }
 
+    /**
+     * 如果某个id对应的数据被删除了 会设置 tombstone field
+     * @param segmentDocId
+     * @return
+     * @throws IOException
+     */
     boolean isTombstone(int segmentDocId) throws IOException {
         if (tombstoneDV == null) {
             return false;

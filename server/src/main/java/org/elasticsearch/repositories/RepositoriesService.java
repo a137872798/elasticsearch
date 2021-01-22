@@ -505,6 +505,10 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
      * @param repositoryName repository name
      * @return registered repository
      * @throws RepositoryMissingException if repository with such name isn't registered
+     * 推测仓库应该是多个节点连接到同一个地方 这样就不需要额外的数据同步机制了
+     * 因为从ES的实现上来看 每个节点在将数据写入到repository时 并不会对其他节点的仓库做数据同步 所以拉取仓库数据时应该是节点无关的
+     *
+     * 比如某个新的分片此时分配的节点与写入快照数据的节点不一致 如果repository不是互通的 那么无法恢复数据
      */
     public Repository repository(String repositoryName) {
         Repository repository = repositories.get(repositoryName);

@@ -46,7 +46,7 @@ import java.util.Objects;
 
 /**
  * Component that runs only on the master node and is responsible for assigning running tasks to nodes
- * 持久化集群服务  会监听集群状态的变化
+ * ES 目前没有内置的持久化任务 先不看了
  */
 public class PersistentTasksClusterService implements ClusterStateListener, Closeable {
 
@@ -57,14 +57,9 @@ public class PersistentTasksClusterService implements ClusterStateListener, Clos
     private static final Logger logger = LogManager.getLogger(PersistentTasksClusterService.class);
 
     private final ClusterService clusterService;
-    /**
-     * 存储了此时正在执行的持久化任务 以及对应的executor
-     */
+
     private final PersistentTasksExecutorRegistry registry;
 
-    /**
-     * 决策此时是否允许为persistentTask 分配任务节点
-     */
     private final EnableAssignmentDecider decider;
     private final ThreadPool threadPool;
     /**
@@ -108,7 +103,7 @@ public class PersistentTasksClusterService implements ClusterStateListener, Clos
      * @param taskName   the task's name
      * @param taskParams the task's parameters
      * @param listener   the listener that will be called when task is started
-     *                   根据相关参数创建一个新的persistentTask
+     *                   ES 对外暴露一个 创建持久化任务的rest接口
      */
     public <Params extends PersistentTaskParams> void createPersistentTask(String taskId, String taskName, Params taskParams,
                                                                            ActionListener<PersistentTask<?>> listener) {
@@ -315,12 +310,11 @@ public class PersistentTasksClusterService implements ClusterStateListener, Clos
      * @param currentState the current {@link ClusterState}
 
      * @return a new {@link Assignment}
-     * 根据一些task的相关参数 确定该task应该分配的节点
+     * 为某个持久化任务选择一个合适的节点执行
      */
     private <Params extends PersistentTaskParams> Assignment createAssignment(final String taskName,
                                                                               final Params taskParams,
                                                                               final ClusterState currentState) {
-        // 从注册器中找到任务对应的executor
         PersistentTasksExecutor<Params> persistentTasksExecutor = registry.getPersistentTaskExecutorSafe(taskName);
 
         // 如果此时无法为持久化任务进行分配 返回一个unassigned对象
@@ -333,9 +327,14 @@ public class PersistentTasksClusterService implements ClusterStateListener, Clos
         return persistentTasksExecutor.getAssignment(taskParams, currentState);
     }
 
+    /**
+     * 该服务的入口
+     * @param event
+     */
     @Override
     public void clusterChanged(ClusterChangedEvent event) {
         if (event.localNodeMaster()) {
+            // 根据当前 clusterState 来判断是否需要重新分配 持久化任务
             if (shouldReassignPersistentTasks(event)) {
                 // We want to avoid a periodic check duplicating this work
                 periodicRechecker.cancel();
@@ -379,6 +378,7 @@ public class PersistentTasksClusterService implements ClusterStateListener, Clos
      * Returns true if the cluster state change(s) require to reassign some persistent tasks. It can happen in the following
      * situations: a node left or is added, the routing table changed, the master node changed, the metadata changed or the
      * persistent tasks changed.
+     * 检测是否需要重新分配持久化任务
      */
     boolean shouldReassignPersistentTasks(final ClusterChangedEvent event) {
         final PersistentTasksCustomMetadata tasks = event.state().getMetadata().custom(PersistentTasksCustomMetadata.TYPE);
@@ -388,6 +388,7 @@ public class PersistentTasksClusterService implements ClusterStateListener, Clos
 
         boolean masterChanged = event.previousState().nodes().isLocalNodeElectedMaster() == false;
 
+        // 当相关数据发生变化时 检测是否需要重新分配  persistentTask
         if (persistentTasksChanged(event)
             || event.nodesChanged()
             || event.routingTableChanged()
@@ -395,6 +396,7 @@ public class PersistentTasksClusterService implements ClusterStateListener, Clos
             || masterChanged) {
 
             for (PersistentTask<?> task : tasks.tasks()) {
+                // 当任务未分配 或者分配的节点不存在时 需要重新分配
                 if (needsReassignment(task.getAssignment(), event.state().nodes())) {
                     Assignment assignment = createAssignment(task.getTaskName(), task.getParams(), event.state());
                     if (Objects.equals(assignment, task.getAssignment()) == false) {
@@ -457,9 +459,7 @@ public class PersistentTasksClusterService implements ClusterStateListener, Clos
 
     /**
      * Returns true if the task is not assigned or is assigned to a non-existing node
-     * @param assignment 描述某个任务此时的分配状况
-     *
-     *                  如果当前任务还未明确要分配到哪个node  或者这个node已经不存在于集群中  需要重新分配
+     * @param assignment
      * */
     public static boolean needsReassignment(final Assignment assignment, final DiscoveryNodes nodes) {
         return (assignment.isAssigned() == false || nodes.nodeExists(assignment.getExecutorNode()) == false);

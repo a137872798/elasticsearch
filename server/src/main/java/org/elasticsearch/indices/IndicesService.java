@@ -917,7 +917,6 @@ public class IndicesService extends AbstractLifecycleComponent
     }
 
     /**
-     * 根据路由信息等 创建一个新的 indexShard
      * @param shardRouting           the shard routing    该分片的路由信息
      * @param recoveryState          the recovery state   描述回复流程的状态对象
      * @param recoveryTargetService  recovery service for the target
@@ -930,6 +929,7 @@ public class IndicesService extends AbstractLifecycleComponent
      * @param retentionLeaseSyncer   a callback when this shard syncs retention leases   处理有关同步续约信息的逻辑
      * @return
      * @throws IOException
+     * 当某个分片在创建后 通过 allocator找到某个节点 并转换成init状态后 会在对应的节点上生成indexShard对象
      */
     @Override
     public IndexShard createShard(

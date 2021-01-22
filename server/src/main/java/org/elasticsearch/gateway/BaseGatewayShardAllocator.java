@@ -66,8 +66,8 @@ public abstract class BaseGatewayShardAllocator {
             return;
         }
 
+        // 本次通过网关层 为该分片选择了合适的节点  通过handler 将该分片从 unassigned 转换成 init 状态
         if (allocateUnassignedDecision.getAllocationDecision() == AllocationDecision.YES) {
-            // TODO 这里获取到的node 应该是还未分配该shard的节点  那么已经分配过的节点又是在什么时候排除的呢 推测是利用 ignoreNode机制
             unassignedAllocationHandler.initialize(allocateUnassignedDecision.getTargetNode().getId(),
                 allocateUnassignedDecision.getAllocationId(),
                 shardRouting.primary() ? ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE :
@@ -75,7 +75,7 @@ public abstract class BaseGatewayShardAllocator {
                 // 这个对象会观测某个分片的状态变化 比如某个新的unassigned 转换成init状态
                 allocation.changes());
         } else {
-            // 无法在本轮为目标分片选择节点  从 nodeRoutings中将分片转移到ignore容器中 这样后续操作就可以跳过对该分片的处理了  比如进行 rebalance时
+            // 该分片应该由本对象进行分配 加入到ignore中 避免兜底的allocator对该分片进行分配
             unassignedAllocationHandler.removeAndIgnore(allocateUnassignedDecision.getAllocationStatus(), allocation.changes());
         }
     }

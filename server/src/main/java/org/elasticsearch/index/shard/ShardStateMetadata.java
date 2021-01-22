@@ -33,7 +33,7 @@ import java.io.OutputStream;
 import java.util.Objects;
 
 /**
- * 当前某个分片此时的元数据信息  包含了所属的index 是否是主分片 以及 allocationId信息
+ * 描述了某节点上 某个分片此时的信息
  */
 public final class ShardStateMetadata {
 

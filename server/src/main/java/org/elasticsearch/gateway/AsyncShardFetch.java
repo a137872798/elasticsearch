@@ -440,7 +440,7 @@ public abstract class AsyncShardFetch<T extends BaseNodeResponse> implements Rel
          * Process any changes needed to the allocation based on this fetch result.
          * 因为这里是第二次发起的 reroute了  需要将之前的  ignoreNode回填进去
          * 第一次reroute发起拉取任务
-         * 第二次根据上次拉取的结果进行分配   这里相当于是尽量恢复之前的状态
+         * 第二次根据上次拉取的结果进行分配   这里相当于是尽量还原之前的状态
          */
         public void processAllocation(RoutingAllocation allocation) {
             for (String ignoreNode : ignoreNodes) {

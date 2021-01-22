@@ -53,6 +53,9 @@ import java.util.Collection;
 
 import static org.elasticsearch.cluster.metadata.MetadataIndexStateService.isIndexVerifiedBeforeClosed;
 
+/**
+ * 该对象负责分配摇摆索引
+ */
 public class LocalAllocateDangledIndices {
 
     private static final Logger logger = LogManager.getLogger(LocalAllocateDangledIndices.class);
@@ -78,9 +81,15 @@ public class LocalAllocateDangledIndices {
             new AllocateDangledRequestHandler());
     }
 
+    /**
+     * 当通过 danglingIndicesState 发现了摇摆索引后 触发该方法
+     * @param indices
+     * @param listener
+     */
     public void allocateDangled(Collection<IndexMetadata> indices, ActionListener<AllocateDangledResponse> listener) {
         ClusterState clusterState = clusterService.state();
         DiscoveryNode masterNode = clusterState.nodes().getMasterNode();
+        // 此时未发现leader节点 以失败方式触发监听器 而到了下一轮会继续尝试处理
         if (masterNode == null) {
             listener.onFailure(new MasterNotDiscoveredException());
             return;
@@ -91,6 +100,9 @@ public class LocalAllocateDangledIndices {
             new ActionListenerResponseHandler<>(listener, AllocateDangledResponse::new, ThreadPool.Names.SAME));
     }
 
+    /**
+     * 在leader节点上处理 摇摆索引
+     */
     class AllocateDangledRequestHandler implements TransportRequestHandler<AllocateDangledRequest> {
         @Override
         public void messageReceived(final AllocateDangledRequest request, final TransportChannel channel, Task task) throws Exception {

@@ -107,9 +107,7 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
         this.expectedDataNodes = EXPECTED_DATA_NODES_SETTING.get(settings);
         this.expectedMasterNodes = EXPECTED_MASTER_NODES_SETTING.get(settings);
 
-        // 1.当指定配置项时 从配置项中获取
-        // 2.当指定预期节点数时 使用默认值
-        // 3.其余情况为null
+        // 当设置了预期的节点数时 要设置 recoverAfterTime
         if (RECOVER_AFTER_TIME_SETTING.exists(settings)) {
             recoverAfterTime = RECOVER_AFTER_TIME_SETTING.get(settings);
         } else if (expectedNodes >= 0 || expectedDataNodes >= 0 || expectedMasterNodes >= 0) {
@@ -128,6 +126,7 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
             recoverAfterMasterNodes = -1;
         }
 
+        // 默认情况下 注册中心就是 coordinator
         if (discovery instanceof Coordinator) {
             recoveryRunnable = () ->
                     clusterService.submitStateUpdateTask("local-gateway-elected-state", new RecoverStateUpdateTask());
@@ -153,6 +152,10 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
     protected void doClose() {
     }
 
+    /**
+     * 当本对象监听到 clusterState发生变化时 触发
+     * @param event
+     */
     @Override
     public void clusterChanged(final ClusterChangedEvent event) {
         if (lifecycle.stoppedOrClosed()) {
@@ -161,16 +164,21 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
 
         final ClusterState state = event.state();
 
+        // 非leader节点就不需要处理了
         if (state.nodes().isLocalNodeElectedMaster() == false) {
             // not our job to recover
             return;
         }
+        // 当所有分片都已经完成数据恢复 就不需要处理了
         if (state.blocks().hasGlobalBlock(STATE_NOT_RECOVERED_BLOCK) == false) {
             // already recovered
             return;
         }
 
+
+        // 这里尝试移除 recoveryBlock
         final DiscoveryNodes nodes = state.nodes();
+        // 如果有强制要求节点数 那么无法自动恢复
         if (state.nodes().getMasterNodeId() == null) {
             logger.debug("not recovering from gateway, no master elected yet");
         } else if (recoverAfterNodes != -1 && (nodes.getMasterAndDataNodes().size()) < recoverAfterNodes) {
@@ -183,6 +191,8 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
             logger.debug("not recovering from gateway, nodes_size (master) [{}] < recover_after_master_nodes [{}]",
                 nodes.getMasterNodes().size(), recoverAfterMasterNodes);
         } else {
+            // 如果设置的是 expectedXXX 那么配合 recoverAfterTime 可以自动移除 recoveryBlock
+
             boolean enforceRecoverAfterTime;
             String reason;
             if (expectedNodes == -1 && expectedMasterNodes == -1 && expectedDataNodes == -1) {
@@ -209,6 +219,11 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
         }
     }
 
+    /**
+     * @param enforceRecoverAfterTime  如果此时已经达到预期的节点数了 不需要强制恢复 直接移除recoverBlock 即可
+     *                                 如果未达到节点数 且设置了超时时间 那么在等待一定时间后移除 recoverBlock
+     * @param reason
+     */
     private void performStateRecovery(final boolean enforceRecoverAfterTime, final String reason) {
         if (enforceRecoverAfterTime && recoverAfterTime != null) {
             if (scheduledRecovery.compareAndSet(false, true)) {
@@ -248,20 +263,28 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
         }
     }
 
+    /**
+     * 当移除 recoveryBlock的clusterState发布到集群后触发
+     */
     private void resetRecoveredFlags() {
         recoveryInProgress.set(false);
         scheduledRecovery.set(false);
     }
 
+    /**
+     * 该任务会在合适的时机被触发
+     */
     class RecoverStateUpdateTask extends ClusterStateUpdateTask {
 
         @Override
         public ClusterState execute(final ClusterState currentState) {
+            // 已经移除了 notRecover标记 就不需要重复处理了
             if (currentState.blocks().hasGlobalBlock(STATE_NOT_RECOVERED_BLOCK) == false) {
                 logger.debug("cluster is already recovered");
                 return currentState;
             }
 
+            // 移除 处于恢复中的block标记
             final ClusterState newState = Function.<ClusterState>identity()
                     .andThen(ClusterStateUpdaters::updateRoutingTable)
                     .andThen(ClusterStateUpdaters::removeStateNotRecoveredBlock)
@@ -291,6 +314,9 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
         }
     }
 
+    /**
+     * TODO 当使用的是 ES内置的注册中心时 不需要使用该对象
+     */
     class GatewayRecoveryListener implements Gateway.GatewayStateRecoveredListener {
 
         @Override

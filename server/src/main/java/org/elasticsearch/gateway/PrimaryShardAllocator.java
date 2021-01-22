@@ -70,7 +70,8 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
         return shard.primary() // must be primary
                 && shard.unassigned() // must be unassigned
                 // only handle either an existing store or a snapshot recovery
-                && (shard.recoverySource().getType() == RecoverySource.Type.EXISTING_STORE     // 对应从本地事务日志进行恢复
+                // 该网关对象 仅支持处理恢复源为快照 或者 EXISTING_STORE的  新建的index对应的恢复源为 empty
+                && (shard.recoverySource().getType() == RecoverySource.Type.EXISTING_STORE
                     || shard.recoverySource().getType() == RecoverySource.Type.SNAPSHOT);
     }
 
@@ -86,7 +87,7 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
     public AllocateUnassignedDecision makeAllocationDecision(final ShardRouting unassignedShard,
                                                              final RoutingAllocation allocation,
                                                              final Logger logger) {
-        // 首先判断该分片是否允许进行分配
+        // 该分片是否需要支持被本对象分配
         if (isResponsibleFor(unassignedShard) == false) {
             // this allocator is not responsible for allocating this shard
             // 该分片不需要分配时 返回该标识
@@ -114,47 +115,52 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
         // on cluster restart if we allocate a boat load of shards
         final IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(unassignedShard.index());
 
-        // 获取此时元数据中维护的所有启动的 start分片    这些分片下发到主分片会生成 ReplicationTracker
+        // 获取此时元数据中维护的所有启动的start分片    其中主分片分配到的节点会生成 ReplicationTracker
         // 也就是在IndexMetadata中的 in-sync 与 数据传输中的 in-sync 的概念是不一样的
         final Set<String> inSyncAllocationIds = indexMetadata.inSyncAllocationIds(unassignedShard.id());
-        // TODO 先忽略通过快照恢复数据的情况   从目前来看 副本必然是通过PEER进行数据恢复的   在createIndex处理中 可以看到 主分片默认恢复源是Empty 如果此时in-sync队列中有元素 就选择基于本地事务日志进行恢复
+        // 该对象本身就是针对 以快照作为恢复源的分片进行处理的  在生成新的indexMetadata时 恢复源对应的indexMetadata的insync容器也会传递过来
+        // 这样新的索引 就可以从原index上对应的shardId 获取数据了
+        // 如果目标索引本身就存在 那么就是强制为这些分片重写数据  通过fetchData 可以快速得知这些分片现在分配在哪些node上
+        // 只要就不需要为这些分片指定新的node了 直接在当前node进行数据恢复即可
         final boolean snapshotRestore = unassignedShard.recoverySource().getType() == RecoverySource.Type.SNAPSHOT;
 
         assert inSyncAllocationIds.isEmpty() == false;
         // use in-sync allocation ids to select nodes
 
-        // 为当前主分片选择合适的节点  如果此时没有分片处于 in-sync 那么该result为空
+        // 如果restore的索引 之前就存在与集群中 那么这时就可以直接在当前节点上进行数据恢复
+        // 如果创建了一个新的索引 那么之前肯定没有分配到存在的节点上 这个应该就是empty
         final NodeShardsResult nodeShardsResult = buildNodeShardsResult(unassignedShard, snapshotRestore,
             allocation.getIgnoreNodes(unassignedShard.shardId()), inSyncAllocationIds, shardState, logger);
 
-        // 如果in-sync 为空  那么该标识为false
+        // 代表有相同 indexName/shardId  的分片已经存在于集群的某个节点上了
         final boolean enoughAllocationsFound = nodeShardsResult.orderedAllocationCandidates.size() > 0;
         logger.debug("[{}][{}]: found {} allocation candidates of {} based on allocation ids: [{}]", unassignedShard.index(),
             unassignedShard.id(), nodeShardsResult.orderedAllocationCandidates.size(), unassignedShard, inSyncAllocationIds);
 
-        // 由于in-sync中没有分片 无法进行分配
+        // 代表本次是一个新建的索引 所有分片都需要重新分配
         if (enoughAllocationsFound == false) {
-            // TODO 先忽略快照恢复
+            // 无法利用特性进行快速分配  (网关其实起的就是拦截作用 发现是基于快照恢复的 就尝试快速找到合适的节点)
+            // 那么交由兜底的分配器进行分配 balanceAllocator
             if (snapshotRestore) {
                 // let BalancedShardsAllocator take care of allocating this shard
                 logger.debug("[{}][{}]: missing local data, will restore from [{}]",
                              unassignedShard.index(), unassignedShard.id(), unassignedShard.recoverySource());
                 return AllocateUnassignedDecision.NOT_TAKEN;
             } else {
+                // TODO
+
                 // We have a shard that was previously allocated, but we could not find a valid shard copy to allocate the primary.
                 // We could just be waiting for the node that holds the primary to start back up, in which case the allocation for
                 // this shard will be picked up when the node joins and we do another allocation reroute
                 logger.debug("[{}][{}]: not allocating, number_of_allocated_shards_found [{}]",
                              unassignedShard.index(), unassignedShard.id(), nodeShardsResult.allocationsFound);
-                // 注意这里返回的结果是  无分片数据可拷贝
+                // 注意这里返回的结果是  无分片数据可拷贝 本次reroute会放弃对该分片的分配  兜底的分配器也不会处理
                 return AllocateUnassignedDecision.no(AllocationStatus.NO_VALID_SHARD_COPY,
                     explain ? buildNodeDecisions(null, shardState, inSyncAllocationIds) : null);
             }
         }
 
-        // 以上无法找到分片此时在集群下的分配信息 只能返回空结果
-
-        // 此时通过决策对象 检测了当前最适合存储该shard数据的node 以及不合适的node 不合适的node可能就会替换  所以才需要一开始访问所有节点啊 就是为了纵观全局
+        // 因为此时有一组合适的节点 这里还要进行筛选  只要该分片曾经分配到某个节点上(成功过) 那么之后失败的概率就会小些
         NodesToAllocate nodesToAllocate = buildNodesToAllocate(
             allocation, nodeShardsResult.orderedAllocationCandidates, unassignedShard, false
         );
@@ -162,7 +168,7 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
         String allocationId = null;
         boolean throttled = false;
 
-        // 某些node适合继续存储该shard的数据
+        // 存在一些负载比较小的节点  直接使用就好
         if (nodesToAllocate.yesNodeShards.isEmpty() == false) {
             DecidedNode decidedNode = nodesToAllocate.yesNodeShards.get(0);
             logger.debug("[{}][{}]: allocating [{}] to [{}] on primary allocation",
@@ -170,8 +176,7 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
             node = decidedNode.nodeShardState.getNode();
             allocationId = decidedNode.nodeShardState.allocationId();
 
-
-            // 限制级的node为空 且  某些node不再合适存储该shard的数据 (隐含条件 yes.isEmpty)
+            // 此时没有可用的节点
         } else if (nodesToAllocate.throttleNodeShards.isEmpty() && !nodesToAllocate.noNodeShards.isEmpty()) {
             // The deciders returned a NO decision for all nodes with shard copies, so we check if primary shard
             // can be force-allocated to one of the nodes.
@@ -211,10 +216,10 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
             nodeResults = buildNodeDecisions(nodesToAllocate, shardState, inSyncAllocationIds);
         }
 
-        // 这种情况代表首先是异步调用 打上异步的标记 之后在回调中 递归调用reroute 又进入了这里 发现了之前的异步标记  还是返回空结果
+        // 在本次处理前 可能又发现了新的节点 那么等待本次数据拉取结束后 再执行分配是最合适的
         if (allocation.hasPendingAsyncFetch()) {
             return AllocateUnassignedDecision.no(AllocationStatus.FETCHING_SHARD_DATA, nodeResults);
-            // 当node不为空时 代表这个就是本次的结果了
+            // 本次产生了结果
         } else if (node != null) {
             return AllocateUnassignedDecision.yes(node, allocationId, nodeResults, false);
         } else if (throttled) {
@@ -273,24 +278,27 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
      * Builds a list of nodes. If matchAnyShard is set to false, only nodes that have an allocation id matching
      * inSyncAllocationIds are added to the list. Otherwise, any node that has a shard is added to the list, but
      * entries with matching allocation id are always at the front of the list.
-     * @param shard       本次需要分配的主分片
-     * @param matchAnyShard     当恢复源为 Snapshot时 该标识为true
-     * @param ignoreNodes     本次分配不会选择这些节点
-     * @param inSyncAllocationIds      TODO 如果有些分片已经启动了 还有分配主分片的必要吗  这些分片是副本还是???
-     * @param shardState    用于决策分片分配节点的相关数据
+     * @param shard
+     * @param matchAnyShard
+     * @param ignoreNodes
+     * @param inSyncAllocationIds
+     * @param shardState
      */
-    protected static NodeShardsResult buildNodeShardsResult(ShardRouting shard, boolean matchAnyShard,
-                                                            Set<String> ignoreNodes, Set<String> inSyncAllocationIds,
-                                                            FetchResult<NodeGatewayStartedShards> shardState,
+    protected static NodeShardsResult buildNodeShardsResult(ShardRouting shard,
+                                                            boolean matchAnyShard, // 代表本分片的recoverySource 是否是快照
+                                                            Set<String> ignoreNodes, // 之前在某节点上尝试恢复该分片数据失败了 所以该节点被认为不适合存储该分片数据
+                                                            Set<String> inSyncAllocationIds, // 作为快照源的index此时所有启动的shardId
+                                                            FetchResult<NodeGatewayStartedShards> shardState, // 该分片在所有节点上的分配状况 比如在a节点上是否存在该shardId 是否是主分片等
                                                             Logger logger) {
         List<NodeGatewayStartedShards> nodeShardStates = new ArrayList<>();
         int numberOfAllocationsFound = 0;
 
+        // 遍历在每个节点上的处理结果   这个探测结果是针对 recover 并renamed后的index
         for (NodeGatewayStartedShards nodeShardState : shardState.getData().values()) {
             DiscoveryNode node = nodeShardState.getNode();
             String allocationId = nodeShardState.allocationId();
 
-            // 因为每次拉取元数据是都是针对所有数据  如果有已经被排除的节点 就跳过
+            // 这种情况 代表该节点之前启动该分片已经失败了  因为节点上报了 failure信息 而触发的reroute
             if (ignoreNodes.contains(node.getId())) {
                 continue;
             }
@@ -310,6 +318,8 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
                         "opened as it's locked, treating as valid shard", shard, nodeShardState.getNode(), finalAllocationId),
                         nodeShardState.storeException());
                 } else {
+
+                    // 代表索引目录无法正常使用  将allocationId置空 这样下面就不会选择该节点了
                     logger.trace(() -> new ParameterizedMessage("[{}] on node [{}] has allocation id [{}] but the store can not be " +
                         "opened, treating as no allocation id", shard, nodeShardState.getNode(), finalAllocationId),
                         nodeShardState.storeException());
@@ -317,15 +327,16 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
                 }
             }
 
+            // 代表该分片曾经分配到该节点上过  针对 recover#renamed后的index 与之前的某个index同名的情况 这样直接修改原index上的分片数据就可以了
             if (allocationId != null) {
                 assert nodeShardState.storeException() == null ||
                     nodeShardState.storeException() instanceof ShardLockObtainFailedException :
                     "only allow store that can be opened or that throws a ShardLockObtainFailedException while being opened but got a " +
                         "store throwing " + nodeShardState.storeException();
-                // 代表找到了一个允许分配的候选节点
+                // 代表找到了一个曾经分配过的信息
                 numberOfAllocationsFound++;
 
-                // TODO 先忽略通过快照进行数据恢复   什么时候in-sync 内有分片
+                // 如果本次是快照恢复
                 if (matchAnyShard || inSyncAllocationIds.contains(nodeShardState.allocationId())) {
                     nodeShardStates.add(nodeShardState);
                 }
@@ -333,10 +344,16 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
         }
 
         final Comparator<NodeGatewayStartedShards> comparator; // allocation preference
-        // TODO
+
+        // 处理快照恢复的情况
         if (matchAnyShard) {
             // prefer shards with matching allocation ids
+            // restore 有3种使用方式
+            // 第一种 创建一个新的索引 并以 生成快照时的 indexMetadata作为参照 尝试恢复数据
+            // 第二种 将生成快照时的 indexMetadata  映射到一个已经存在的index上 这时 快照index.inSyncAllocationIds 与新的index的 allocationId是不会出现相同的情况的
+            // 第三种 将某个之前生成过快照的index还原到之前的状态 这时 原index.inSyncAllocationIds 与 新的index的 allocationId 是有可能相同的 也有可能不同
             Comparator<NodeGatewayStartedShards> matchingAllocationsFirst = Comparator.comparing(
+                // 可以看到这里将 allocationId相同的 排在了最前面
                 (NodeGatewayStartedShards state) -> inSyncAllocationIds.contains(state.allocationId())).reversed();
             comparator = matchingAllocationsFirst.thenComparing(NO_STORE_EXCEPTION_FIRST_COMPARATOR)
                 .thenComparing(PRIMARY_FIRST_COMPARATOR);
@@ -357,11 +374,11 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
 
     /**
      * Split the list of node shard states into groups yes/no/throttle based on allocation deciders
-     * @param allocation 记录了此时集群内所有分片的分配情况
-     * @param nodeShardStates  本次访问集群后获取到的所有有效的结果  (此时shard.primary replicate 都已经存在于哪些节点上了) 这些节点不应该在被选为分配的目标
-     * @param shardRouting 本次待分配的分片
-     * @param forceAllocate 是否采用强制分配
-     * 根据当前的参数信息 为shardRouting 生成分配结果
+     * @param allocation
+     * @param nodeShardStates
+     * @param shardRouting
+     * @param forceAllocate
+     * 根据该分片之前在集群其他节点上分配的情况 对节点进行分级 以便选出一个最合适的节点
      */
     private static NodesToAllocate buildNodesToAllocate(RoutingAllocation allocation,
                                                         List<NodeGatewayStartedShards> nodeShardStates,
@@ -372,7 +389,7 @@ public abstract class PrimaryShardAllocator extends BaseGatewayShardAllocator {
         List<DecidedNode> noNodeShards = new ArrayList<>();
         for (NodeGatewayStartedShards nodeShardState : nodeShardStates) {
 
-            // 找到该node上所有分片此时的分配情况
+            // 如果当前节点已经下线 忽略处理 因为第一次的 fetch 和第二次的处理存在时间差 可能该节点下线了
             RoutingNode node = allocation.routingNodes().node(nodeShardState.getNode().getId());
             if (node == null) {
                 continue;

@@ -683,7 +683,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         DiscoveryNodes nodes = state.nodes();
         RoutingTable routingTable = state.routingTable();
 
-        // 这里需要找到在整个集群中 只分配到本节点上的所有路由信息   该shardRouting 可能是primary 也可能是replica
+        // 这里需要找到在整个集群中 只分配到本节点上的所有路由信息 (也就是已经进入init阶段)  该shardRouting 可能是primary 也可能是replica
         for (final ShardRouting shardRouting : localRoutingNode) {
             ShardId shardId = shardRouting.shardId();
             if (failedShardsCache.containsKey(shardId) == false) {

@@ -36,7 +36,7 @@ import java.util.Arrays;
 import java.util.function.Function;
 
 /**
- * 定义网关是为了什么
+ * 如果使用的是 ES内置的注册中心 coordinator 那么不需要创建该对象
  */
 public class Gateway {
 
@@ -156,9 +156,7 @@ public class Gateway {
         listener.onSuccess(recoveredState);
     }
 
-    /**
-     * 网关状态恢复监听器  啥玩意???
-     */
+
     public interface GatewayStateRecoveredListener {
         void onSuccess(ClusterState build);
 

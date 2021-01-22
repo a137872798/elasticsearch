@@ -108,7 +108,7 @@ final class StoreRecovery {
     }
 
     /**
-     *
+     * TODO 先忽略这种恢复方式
      * @param mappingUpdateConsumer  处理mapping元数据的对象
      * @param indexShard  恢复的数据会填充到这个分片上
      * @param shards    数据从这些分片中获取
@@ -286,7 +286,7 @@ final class StoreRecovery {
      * @param repository the repository holding the physical files the shard should be recovered from
      * @param listener resolves to <code>true</code> if the shard has been recovered successfully, <code>false</code> if the recovery
      *                 has been ignored due to a concurrent modification of if the clusters state has changed due to async updates.
-     *                 从仓库中恢复数据
+     *                 代表某个分片通过仓库恢复数据
      */
     void recoverFromRepository(final IndexShard indexShard, Repository repository, ActionListener<Boolean> listener) {
         try {
@@ -315,7 +315,7 @@ final class StoreRecovery {
             // got closed on us, just ignore this recovery
             return false;
         }
-        // 只有主分片才有恢复的必要  副本应该是从主分片获取数据的
+        // 副本始终是基于 PEER 进行数据恢复的
         if (indexShard.routingEntry().primary() == false) {
             throw new IndexShardRecoveryException(shardId, "Trying to recover when the shard is in backup state", null);
         }
@@ -514,7 +514,7 @@ final class StoreRecovery {
 
     /**
      * Restores shard from {@link SnapshotRecoverySource} associated with this shard in routing table
-     * 从 repository中恢复数据
+     * 从仓库中恢复数据
      */
     private void restore(IndexShard indexShard, Repository repository, SnapshotRecoverySource restoreSource,
                          ActionListener<Boolean> listener) {
@@ -528,13 +528,15 @@ final class StoreRecovery {
         if (logger.isTraceEnabled()) {
             logger.trace("[{}] restoring shard [{}]", restoreSource.snapshot(), shardId);
         }
+        // 当快照恢复流程结束后 才触发该方法
         final ActionListener<Void> restoreListener = ActionListener.wrap(
             v -> {
-                // 这里恢复的一套流程和 fromStore是一样的
                 final Store store = indexShard.store();
                 bootstrap(indexShard, store);
                 assert indexShard.shardRouting.primary() : "only primary shards can recover from store";
+                // 此时应当还没有续约信息  并将空的信息写入到磁盘中  续约信息是决定 gatewayAllocatorService中 有关副本分配的对象 代表着副本此时与主分片同步的状态
                 writeEmptyRetentionLeasesFile(indexShard);
+                // 开启引擎后才可以往分片中写入数据  如果是通过快照进行恢复的 那么此时事务日志为空
                 indexShard.openEngineAndRecoverFromTranslog();
                 indexShard.getEngine().fillSeqNoGaps(indexShard.getPendingPrimaryTerm());
                 indexShard.finalizeRecovery();
@@ -543,19 +545,22 @@ final class StoreRecovery {
             }, e -> listener.onFailure(new IndexShardRestoreFailedException(shardId, "restore failed", e))
         );
         try {
+            // 因为是基于快照恢复  所以不需要使用事务日志
             translogState.totalOperations(0);
             translogState.totalOperationsOnStart(0);
             indexShard.prepareForIndexRecovery();
             final ShardId snapshotShardId;
+            // 获取作为恢复源的 indexName
             final IndexId indexId = restoreSource.index();
+            // 如果 本次需要恢复的index 就是快照index自身 那么分片id 也是匹配的
             if (shardId.getIndexName().equals(indexId.getName())) {
                 snapshotShardId = shardId;
             } else {
+                // 对应快照源的分片信息
                 snapshotShardId = new ShardId(indexId.getName(), IndexMetadata.INDEX_UUID_NA_VALUE, shardId.id());
             }
             final StepListener<IndexId> indexIdListener = new StepListener<>();
             // If the index UUID was not found in the recovery source we will have to load RepositoryData and resolve it by index name
-            // TODO
             if (indexId.getId().equals(IndexMetadata.INDEX_UUID_NA_VALUE)) {
                 // BwC path, running against an old version master that did not add the IndexId to the recovery source
                 repository.getRepositoryData(ActionListener.map(
@@ -564,7 +569,8 @@ final class StoreRecovery {
                 indexIdListener.onResponse(indexId);
             }
             assert indexShard.getEngineOrNull() == null;
-            // 使用 index触发监听器
+
+            // 当生成 indexId后 触发监听器   这里主要就是从repository中搬回索引文件 同时清理之前存在的其他索引文件
             indexIdListener.whenComplete(idx -> repository.restoreShard(indexShard.store(), restoreSource.snapshot().getSnapshotId(),
                 idx, snapshotShardId, indexShard.recoveryState(), restoreListener), restoreListener::onFailure);
         } catch (Exception e) {
@@ -573,7 +579,7 @@ final class StoreRecovery {
     }
 
     /**
-     * 进行引导
+     * 相当于重启分片  主要就是更新segment_N 中的 historyUUID 字段  以及清空事务日志 并重新生成文件夹
      * @param indexShard
      * @param store
      * @throws IOException

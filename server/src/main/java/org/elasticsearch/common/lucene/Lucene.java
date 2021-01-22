@@ -192,6 +192,8 @@ public class Lucene {
      * <b>Note:</b> this method will fail if there is another IndexWriter open on the given directory. This method will also acquire
      * a write lock from the directory while pruning unused files. This method expects an existing index in the given directory that has
      * the given segments file.
+     *
+     * 仅保留入参的 segment_N 文件
      */
     public static SegmentInfos pruneUnreferencedFiles(String segmentsFileName, Directory directory) throws IOException {
         final SegmentInfos si = readSegmentInfos(segmentsFileName, directory);
@@ -218,6 +220,7 @@ public class Lucene {
             }
         }
         final IndexCommit cp = getIndexCommit(si, directory);
+        // 通过自动调用close 触发 IndexFileDeleter 删除过期文件 (最新的segment_N 相关的所有索引文件会被保留 其他旧的索引文件会被自动清理)
         try (IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig(Lucene.STANDARD_ANALYZER)
                 .setSoftDeletesField(Lucene.SOFT_DELETES_FIELD)
                 .setIndexCommit(cp)

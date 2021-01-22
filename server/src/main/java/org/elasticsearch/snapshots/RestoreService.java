@@ -330,6 +330,7 @@ public class RestoreService implements ClusterStateApplier {
                                     createIndexService.validateIndexSettings(renamedIndexName, snapshotIndexMetadata.getSettings(), false);
 
                                     // 这里以 index-A 作为模板创建 index-B
+                                    // *注意* 这里实际上连同模板index的insync 一起拷贝过去了
                                     IndexMetadata.Builder indexMdBuilder = IndexMetadata.builder(snapshotIndexMetadata)
                                         .state(IndexMetadata.State.OPEN)
                                         .index(renamedIndexName);
@@ -370,7 +371,7 @@ public class RestoreService implements ClusterStateApplier {
                                     validateExistingIndex(currentIndexMetadata, snapshotIndexMetadata, renamedIndexName, partial);
 
                                     // Index exists and it's closed - open it in metadata and start recovery
-                                    // 尽可能用快照索引的元数据信息 去覆盖已存在的索引元数据信息
+                                    // 尽可能用快照索引的元数据信息 去覆盖已存在的索引元数据信息  这里同样会将in-sync的数据拷贝过去
                                     IndexMetadata.Builder indexMdBuilder =
                                         IndexMetadata.builder(snapshotIndexMetadata).state(IndexMetadata.State.OPEN);
                                     indexMdBuilder.version(
@@ -414,7 +415,7 @@ public class RestoreService implements ClusterStateApplier {
                                             currentIndexMetadata.getIndexUUID()));
                                     IndexMetadata updatedIndexMetadata = indexMdBuilder.index(renamedIndexName).build();
 
-                                    // 将indexMetadata的恢复源更新后 插入到路由表中
+                                    // 将indexMetadata的恢复源更新后 插入到路由表中  注意更新indexMetadata后 其他分片都修改成 unassigned了 (实际上这些分片可能依旧分配在相关节点上)
                                     rtBuilder.addAsRestore(updatedIndexMetadata, recoverySource);
                                     blocks.updateBlocks(updatedIndexMetadata);
                                     mdBuilder.put(updatedIndexMetadata, true);
@@ -498,7 +499,8 @@ public class RestoreService implements ClusterStateApplier {
 
                         RoutingTable rt = rtBuilder.build();
                         ClusterState updatedState = builder.metadata(mdBuilder).blocks(blocks).routingTable(rt).build();
-                        // 因为产生了新的分片 所以要进行重路由 而在 gatewayAllocation中 一旦发现某些分片的recoverySource是 restore 就会做特殊处理
+                        // 因为产生了新的分片(或者是将之前一些已经上线的分片 强制修改成unassigned 并等待重新分配)
+                        // 所以要进行重路由 而在 gatewayAllocation中 一旦发现某些分片的recoverySource是 restore 就会做特殊处理
                         return allocationService.reroute(updatedState, "restored snapshot [" + snapshot + "]");
                     }
 
@@ -683,7 +685,7 @@ public class RestoreService implements ClusterStateApplier {
     }
 
     /**
-     * 删除某些index
+     * 由于某些索引被删除而导致恢复任务中止
      *
      * @param oldRestore
      * @param deletedIndices
@@ -813,6 +815,11 @@ public class RestoreService implements ClusterStateApplier {
             }
         }
 
+        /**
+         * 某个将快照作为恢复源的主分片 找到一个合适的节点时触发该方法
+         * @param unassignedShard
+         * @param initializedShard
+         */
         @Override
         public void shardInitialized(ShardRouting unassignedShard, ShardRouting initializedShard) {
             // if we force an empty primary, we should also fail the restore entry
@@ -835,8 +842,8 @@ public class RestoreService implements ClusterStateApplier {
         @Override
         public void unassignedInfoUpdated(ShardRouting unassignedShard, UnassignedInfo newUnassignedInfo) {
             RecoverySource recoverySource = unassignedShard.recoverySource();
-            // TODO 非快照恢复 忽略
             if (recoverySource.getType() == RecoverySource.Type.SNAPSHOT) {
+                // 如果判定该节点无法分配到任何节点上 设置该分片的快照恢复结果为失败
                 if (newUnassignedInfo.getLastAllocationStatus() == UnassignedInfo.AllocationStatus.DECIDERS_NO) {
                     String reason = "shard could not be allocated to any of the nodes";
                     changes(recoverySource).put(

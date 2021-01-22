@@ -33,6 +33,9 @@ import org.elasticsearch.snapshots.RestoreService;
 
 import static org.elasticsearch.snapshots.RestoreService.restoreInProgress;
 
+/**
+ * 该对象可以监控 某次快照恢复操作是否完成
+ */
 public class RestoreClusterStateListener implements ClusterStateListener {
 
     private static final Logger logger = LogManager.getLogger(RestoreClusterStateListener.class);
