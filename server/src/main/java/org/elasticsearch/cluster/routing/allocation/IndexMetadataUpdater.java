@@ -131,7 +131,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
     }
 
     /**
-     * 当完成重定位后  会被移出 in-sync集合   应该是代表此时分片处于非start状态吧
+     * 某个分片执行重分配时 存在一个relocation/init 分片  当init分片完成与主分片的同步后 会转换成start状态 这时获取它关联的source分片 并触发 relocationCompleted 这样该分片就会从inSync中移除
      * @param removedRelocationSource
      */
     @Override
@@ -207,7 +207,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
         Set<String> oldInSyncAllocationIds = oldIndexMetadata.inSyncAllocationIds(shardId.id());
 
         // check if we have been force-initializing an empty primary or a stale primary
-        // TODO 目前还不清楚怎么出现主分片为init 并且 inSync不为空
+        // TODO 目前还不清楚怎么出现主分片为init 并且 inSync不为空  应该是跟FORCE_STALE_PRIMARY_INSTANCE 有关  先忽略
         if (updates.initializedPrimary != null && oldInSyncAllocationIds.isEmpty() == false &&
             oldInSyncAllocationIds.contains(updates.initializedPrimary.allocationId().getId()) == false) {
             // we're not reusing an existing in-sync allocation id to initialize a primary, which means that we're either force-allocating
@@ -287,7 +287,6 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             // only remove allocation id of failed active primary if there is at least one active shard remaining. Assume for example that
             // the primary fails but there is no new primary to fail over to. If we were to remove the allocation id of the primary from the
             // in-sync set, this could create an empty primary on the next allocation.
-            // 如果仅剩一个失败的主分片 还是保留在 inSync中
             if (newShardRoutingTable.activeShards().isEmpty() && updates.firstFailedPrimary != null) {
                 // add back allocation id of failed primary
                 inSyncAllocationIds.add(updates.firstFailedPrimary.allocationId().getId());

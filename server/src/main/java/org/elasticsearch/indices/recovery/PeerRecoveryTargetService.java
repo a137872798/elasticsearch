@@ -235,8 +235,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
                 logger.trace("{} preparing shard for peer recovery", recoveryTarget.shardId());
                 indexShard.prepareForIndexRecovery();
 
-                // 全局检查点就代表所有分片的数据都已经至少同步到这个位置 那么只有之后的数据 需要从primary上拉取
-                // 之前的数据 还是可以从本地恢复
+                // 首先如果本地数据在全局检查点之前 那么尽可能地恢复 这样会减少primary的数据传输量 如果只存在全局检查点之后的数据 这些数据是不可靠的 选择从primary同步全部数据
                 final long startingSeqNo = indexShard.recoverLocallyUpToGlobalCheckpoint();
                 assert startingSeqNo == UNASSIGNED_SEQ_NO || recoveryTarget.state().getStage() == RecoveryState.Stage.TRANSLOG :
                     "unexpected recovery stage [" + recoveryTarget.state().getStage() + "] starting seqno [ " + startingSeqNo + "]";

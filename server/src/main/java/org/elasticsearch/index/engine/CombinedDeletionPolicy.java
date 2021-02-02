@@ -115,7 +115,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
             this.lastCommit = commits.get(commits.size() - 1);
             this.safeCommit = commits.get(keptPosition);
 
-            // 可以看到安全点之后的数据没有被删除  因为其他副本会慢慢同步到最新的数据 所以最新的数据不应该被删除
+            // 安全点代表所有节点都已经同步完前面的数据了 所以可以删除
             for (int i = 0; i < keptPosition; i++) {
                 // 将没有被使用的commit删除
                 if (snapshottedCommits.containsKey(commits.get(i)) == false) {
@@ -198,7 +198,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
         assert safeCommit != null : "Safe commit is not initialized yet";
         assert lastCommit != null : "Last commit is not initialized yet";
         final IndexCommit snapshotting = acquiringSafeCommit ? safeCommit : lastCommit;
-        // 当该commit信息正在被使用时  在删除过期的lucene数据时 就会忽略这个commit
+        // 某个副本可能正在借用这个commit进行数据恢复  当加入到该容器后 就不会在onCommit时被标记成需要删除了
         snapshottedCommits.addTo(snapshotting, 1); // increase refCount
         return new SnapshotIndexCommit(snapshotting);
     }

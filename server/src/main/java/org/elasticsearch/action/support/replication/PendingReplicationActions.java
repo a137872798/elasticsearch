@@ -39,7 +39,7 @@ import java.util.function.Consumer;
 public class PendingReplicationActions implements Consumer<ReplicationGroup>, Releasable {
 
     /**
-     * 记录此时正在往哪些副本执行索引任务
+     * 代表需要往哪些分片执行同步最新写入primary数据的任务
      */
     private final Map<String, Set<RetryableAction<?>>> onGoingReplicationActions = ConcurrentCollections.newConcurrentMap();
     private final ShardId shardId;
@@ -107,7 +107,7 @@ public class PendingReplicationActions implements Consumer<ReplicationGroup>, Re
     }
 
     /**
-     *
+     * 代表需要同步leader最新写入的数据的分片发生了变化
      * @param trackedAllocationIds
      */
     synchronized void acceptNewTrackedAllocationIds(Set<String> trackedAllocationIds) {

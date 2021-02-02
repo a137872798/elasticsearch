@@ -487,10 +487,10 @@ public class InternalEngine extends Engine {
             // we simply run a blocking refresh on the internal reference manager and then steal it's reader
             // it's a save operation since we acquire the reader which incs it's reference but then down the road
             // steal it by calling incRef on the "stolen" reader
-            // 每次必须抢占到锁 并触发refresh方法 这样就可以确保读取到的是最新的reader了
+            // 外部 ReaderManager 主要就是做一层缓存  这里先获取 internalReaderManager的数据 这里就衔接到lucene的数据
             internalReaderManager.maybeRefreshBlocking();
             final ElasticsearchDirectoryReader newReader = internalReaderManager.acquire();
-            // 代表数据还没有加载到内存 或者reader发生了变化 那么就需要重新加载数据
+            // 首次启动 或者内部lucene数据发生了变化 更新缓存
             if (isWarmedUp == false || newReader != referenceToRefresh) {
                 boolean success = false;
                 try {
@@ -700,11 +700,11 @@ public class InternalEngine extends Engine {
                 opsRecovered, translog.currentFileGeneration());
 
             // 之前在恢复过程中 数据只是写入到内存中  在这里针对之前写入lucene的数据进行刷盘
-            // translog 在这之前应该是已经完成持久化了
+            // 并且在恢复过程中是不需要对事务日志进行持久化的 (因为事务日志一开始就存在于磁盘中了)
             commitIndexWriter(indexWriter, translog);
             // 因为上面执行了刷盘操作 这里就要刷新segmentInfos
             refreshLastCommittedSegmentInfos();
-            // 这里主要是刷新 reader对象 并且会触发一组refreshListener
+            // 这里主要是刷新外部对象 就是会连同缓存一起刷新
             refresh("translog_recovery");
         }
 
@@ -3204,13 +3204,12 @@ public class InternalEngine extends Engine {
                 commitData.put(Translog.TRANSLOG_UUID_KEY, translog.getTranslogUUID());
                 // 对应本次commit的数据中 最新的operation的seq
                 commitData.put(SequenceNumbers.LOCAL_CHECKPOINT_KEY, Long.toString(localCheckpoint));
-                // 此时观测到的最大的seq 因为触发该方法时 可能又有新的operation需要处理了 而它们会更新这个maxSeq  TODO 但是这个值存储起来的意义是什么 ???
                 commitData.put(SequenceNumbers.MAX_SEQ_NO, Long.toString(localCheckpointTracker.getMaxSeqNo()));
 
-                // 某些index操作可能会记录一个 maxUnsafeAutoIdTimestamp  那么在处理时可能就会更新到userData中
+                // 某些索引请求会携带一个时间戳信息 这里是记录最大的时间戳
                 commitData.put(MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID, Long.toString(maxUnsafeAutoIdTimestamp.get()));
 
-                // 存储此时的historyUUID TODO 这个值的作用是什么???
+                // 存储此时的historyUUID
                 commitData.put(HISTORY_UUID_KEY, historyUUID);
                 // force_merge 也是原封不动的写回到userData中 这个值的作用是???
                 final String currentForceMergeUUID = forceMergeUUID;

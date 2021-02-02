@@ -596,8 +596,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         // 触发观察者钩子
         routingChangesObserver.shardStarted(initializingShard, startedShard);
 
-
-        // TODO 如果这个分片是由重分配创建的shard 那么它的 relocating 指向的就是source Node  先忽略这段逻辑
+        // 代表这是一个重定向产生的init分片 也是从primary拉取数据
         if (initializingShard.relocatingNodeId() != null) {
             // relocation target has been started, remove relocation source
             RoutingNode relocationSourceNode = node(initializingShard.relocatingNodeId());
@@ -606,7 +605,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             assert relocationSourceShard.getTargetRelocatingShard() == initializingShard : "relocation target mismatch, expected: "
                 + initializingShard + " but was: " + relocationSourceShard.getTargetRelocatingShard();
 
-            // 这里移除了relocating的分片 同时修改成start后 又重新加入到了node中
+            // 这里移除了relocating的分片
             remove(relocationSourceShard);
             routingChangesObserver.relocationCompleted(relocationSourceShard);
 
@@ -894,8 +893,10 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             }
             // 如果移除的是某个relocating分片
         } else if (shard.relocating()) {
+            // 将分片修改成start后 覆盖旧分片
             shard = cancelRelocation(shard);
         }
+        // 移除该分片
         assignedShardsRemove(shard);
         // 如果该分片处于 init状态 那么它之前一定被加入到了recovery容器中 现在不需要对它进行数据恢复了
         if (shard.initializing()) {

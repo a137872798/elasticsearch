@@ -192,27 +192,28 @@ public class RecoverySourceHandler {
                 }
                 assert targetShardRouting.initializing() : "expected recovery target to be initializing but was " + targetShardRouting;
 
-                // 找到该分片的续约信息   在updateShardState中
+                // 续约信息就是描述某个分片此时传输数据的进度  也作为gatewayAllocation 为副本选择节点的判断条件之一
+                // 当某个副本还处于init的recovery阶段时 在主分片还没有创建续约信息  也可能是之前已经同步过的某个副本下线一段时间后又上线 就可以有续约信息了
                 retentionLeaseRef.set(
                     shard.getRetentionLeases().get(ReplicationTracker.getPeerRecoveryRetentionLeaseId(targetShardRouting)));
             }, shardId + " validating recovery target ["+ request.targetAllocationId() + "] registered ",
                 shard, cancellableThreads, logger);
 
-            // 这里获取了一个 软删除策略的续约锁对象  TODO 现在还不清楚怎么用
             final Closeable retentionLock = shard.acquireHistoryRetentionLock();
             resources.add(retentionLock);
             final long startingSeqNo;
 
+
             final boolean isSequenceNumberBasedRecovery
                 // startingSeqNo 代表从哪里开始恢复数据
                 = request.startingSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO
-                // 检测historyUUID 是否是相同的  可以看到在执行一些操作时 会修改historyUUID
+                // 检测historyUUID 是否是相同的  目前只有x-pack相关的会修改 先不看
                 && isTargetSameHistory()
-                // 确保此时lucene中最早的数据在 本次恢复的起始位置之前 这样就能确保数据都完整
+                // 确保lucene数据还存在
                 && shard.hasCompleteHistoryOperations("peer-recovery", request.startingSeqNo())
                 // TODO 这个应该是兼容性代码
                 && ((retentionLeaseRef.get() == null && shard.useRetentionLeasesInPeerRecovery() == false) ||
-                // retentionLeaseRef.get() 是可能为空的  因为续约信息只有 tracker为true的才会创建
+                // retentionLeaseRef.get() 是可能为空的
                    (retentionLeaseRef.get() != null && retentionLeaseRef.get().retainingSequenceNumber() <= request.startingSeqNo()));
             // NB check hasCompleteHistoryOperations when computing isSequenceNumberBasedRecovery, even if there is a retention lease,
             // because when doing a rolling upgrade from earlier than 7.4 we may create some leases that are initially unsatisfied. It's
@@ -220,7 +221,6 @@ public class RecoverySourceHandler {
             // Also it's pretty cheap when soft deletes are enabled, and it'd be a disaster if we tried a sequence-number-based recovery
             // without having a complete history.
 
-            // TODO 现在还不理解
             if (isSequenceNumberBasedRecovery && retentionLeaseRef.get() != null) {
                 // all the history we need is retained by an existing retention lease, so we do not need a separate retention lock
                 retentionLock.close();
@@ -241,11 +241,11 @@ public class RecoverySourceHandler {
             final StepListener<SendSnapshotResult> sendSnapshotStep = new StepListener<>();
             final StepListener<Void> finalizeStep = new StepListener<>();
 
-            // 条件允许的情况 跳过阶段1  TODO
+            // 条件允许的情况 跳过阶段1
             if (isSequenceNumberBasedRecovery) {
                 logger.trace("performing sequence numbers based recovery. starting at [{}]", request.startingSeqNo());
                 startingSeqNo = request.startingSeqNo();
-                // 这里是兼容性代码
+                // 该副本首次拉取数据 需要创建续约信息 之后如果副本重启 就可以根据之前的续约信息判断从哪里开始拉取数据
                 if (retentionLeaseRef.get() == null) {
                     createRetentionLease(startingSeqNo, ActionListener.map(sendFileStep, ignored -> SendFileResult.EMPTY));
                 } else {
@@ -253,7 +253,7 @@ public class RecoverySourceHandler {
                 }
             } else {
 
-                // 这里执行第一阶段的操作
+                // 正常情况下 首次触发 副本还没有在主分片上创建续约信息  走下面的分支
                 final Engine.IndexCommitRef safeCommitRef;
                 try {
                     // safeCommit是最接近 globalCheckpoint的 提交信息
@@ -450,7 +450,7 @@ public class RecoverySourceHandler {
             try (Releasable ignored = FutureUtils.get(permit)) {
                 // check that the IndexShard still has the primary authority. This needs to be checked under operation permit to prevent
                 // races, as IndexShard will switch its authority only when it holds all operation permits, see IndexShard.relocated()
-                // 那种不支持并发  会抢占所有permit的动作很可能就是 relocate  当阻塞结束后发现本主分片已经完成重定向了 就不应该从本分片获取数据了
+                // 因为本主分片已经完成了重定向 不再被使用 所以恢复操作应当从其他分片拉取
                 if (primary.isRelocatedPrimary()) {
                     throw new IndexShardRelocatedException(primary.shardId());
                 }
@@ -672,7 +672,7 @@ public class RecoverySourceHandler {
     }
 
     /**
-     * 创建续约对象
+     * 在某个replicate的恢复节点 首次从某个主分片拉取数据时 就需要初始化续约对象
      * @param startingSeqNo  远端需要恢复数据时 传入的起始偏移量
      * @param listener
      */

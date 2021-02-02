@@ -428,16 +428,16 @@ final class StoreRecovery {
             } catch (Exception e) {
                 throw new IndexShardRecoveryException(shardId, "failed to fetch index version after copying it over", e);
             }
-            // 代表尝试通过 本地分片进行恢复
+            // TODO 代表尝试通过 本地分片进行恢复  先忽略
             if (recoveryState.getRecoverySource().getType() == RecoverySource.Type.LOCAL_SHARDS) {
                 assert indexShouldExists;
                 // 清空事务日志目录下所有的文件  并生成一个新的检查点文件/事务文件   同时将historyUUID/transportUUID 追加到segment_N.userData中
                 bootstrap(indexShard, store);
                 // 将续约信息写入到文件中
                 writeEmptyRetentionLeasesFile(indexShard);
-                // 其余不为 Empty_Store的类型   这种情况 代表之前事务日志中有数据 并且肯定已经存储到userData中了
+                // 代表之前已经有索引数据了
             } else if (indexShouldExists) {
-                // 当使用 EXISTING_STORE 作为恢复源时  要求必须更新historyUUID    与上面Local_Shard的区别是  不需要清除事务日志文件以及创建空文件
+                // ES内置组件都不需要 historyUUID 在x-pack中才有使用
                 if (recoveryState.getRecoverySource().shouldBootstrapNewHistoryUUID()) {
                     store.bootstrapNewHistory();
                     // 这里也要将续约信息写入到文件中
@@ -538,6 +538,7 @@ final class StoreRecovery {
                 writeEmptyRetentionLeasesFile(indexShard);
                 // 开启引擎后才可以往分片中写入数据  如果是通过快照进行恢复的 那么此时事务日志为空
                 indexShard.openEngineAndRecoverFromTranslog();
+                // 填充操作 忽略不计
                 indexShard.getEngine().fillSeqNoGaps(indexShard.getPendingPrimaryTerm());
                 indexShard.finalizeRecovery();
                 indexShard.postRecovery("restore done");

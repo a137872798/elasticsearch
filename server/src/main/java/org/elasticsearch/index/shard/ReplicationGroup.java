@@ -29,7 +29,7 @@ import java.util.Set;
 
 /**
  * Replication group for a shard. Used by a primary shard to coordinate replication and recoveries.
- * 某个分片下所有副本此时的状态
+ * 主分片会负责维护所有的副本此时的数据同步状态 每当主分片感知到集群变化时 就会更新该对象
  */
 public class ReplicationGroup {
 
@@ -39,11 +39,11 @@ public class ReplicationGroup {
     private final IndexShardRoutingTable routingTable;
 
     /**
-     * 应该是数据完全同步的副本存放在该列表
+     * 已经变成start状态的副本会存储在该列表中 代表已经完成与主分片的同步
      */
     private final Set<String> inSyncAllocationIds;
     /**
-     * 完成了最新的快照数据写入 并且开启引擎后  开始同步primary上op时 会存放在该列表
+     * 在往主分片写入数据时 会同时往该列表中所有副本写入数据
      */
     private final Set<String> trackedAllocationIds;
     private final long version;
@@ -65,8 +65,8 @@ public class ReplicationGroup {
     /**
      *
      * @param routingTable  记录某个索引下所有的分片 以及它们会被分配到哪里
-     * @param inSyncAllocationIds
-     * @param trackedAllocationIds  需要追踪信息的所有分片  应该就是要持续同步数据的分片  在往主分片写入索引操作时  只会同时写入到tracked为true的分片上
+     * @param inSyncAllocationIds    目前看来 sync 和 tracked的标识是一致的  sync代表此时已经与primary的数据完成同步 tracked代表会将写入到primary的操作同时写入到副本上
+     * @param trackedAllocationIds
      * @param version 当前副本组的版本号 每次变化 版本号+1
      */
     public ReplicationGroup(IndexShardRoutingTable routingTable, Set<String> inSyncAllocationIds, Set<String> trackedAllocationIds,
@@ -76,7 +76,7 @@ public class ReplicationGroup {
         this.trackedAllocationIds = trackedAllocationIds;
         this.version = version;
 
-        // 这些分片还没有完成数据同步 在写入索引操作阶段这些未完成数据同步的分片信息会上报给leader  (ShardState.remoteShardFailed())
+        // 这部分数据代表还未完成数据同步
         this.unavailableInSyncShards = Sets.difference(inSyncAllocationIds, routingTable.getAllAllocationIds());
         this.replicationTargets = new ArrayList<>();
         this.skippedShards = new ArrayList<>();
@@ -88,7 +88,7 @@ public class ReplicationGroup {
             } else {
                 // 根据不同的情况设置到不同的容器中
 
-                // 代表需要继续同步最新写入的数据
+                // 代表需要继续同步最新写入的数据   这也暗示了处于relocating阶段的分片还是会继续同步primary的写入操作 因为只有当relocating结束时 才会从inSync中移除
                 if (trackedAllocationIds.contains(shard.allocationId().getId())) {
                     replicationTargets.add(shard);
                 } else {
@@ -97,9 +97,10 @@ public class ReplicationGroup {
                         "in-sync shard copy but not tracked: " + shard;
                     skippedShards.add(shard);
                 }
+                // 在重定向尚未完成时 需要继续同步数据  并且此时 重定向后的target分片还处于init状态 会从leader处拉取数据
                 if (shard.relocating()) {
                     ShardRouting relocationTarget = shard.getTargetRelocatingShard();
-                    // 代表在重定向中的目标分片 要继续同步源分片的数据
+                    // 这步判断感觉有点多余 无非就是获取target分片并检测是否需要同步新写入leader的数据
                     if (trackedAllocationIds.contains(relocationTarget.allocationId().getId())) {
                         replicationTargets.add(relocationTarget);
                     } else {

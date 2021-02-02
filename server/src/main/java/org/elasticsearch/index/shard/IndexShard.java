@@ -662,8 +662,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param inSyncAllocationIds         the allocation ids of the currently in-sync shard copies
      * @param routingTable                the shard routing table
      * @throws IOException
-     * 比如本节点上报修改状态的请求被leader通过  在发布到集群通知本节点 就要做一些更新操作
-     * 如果作为副本分片 触发该方法只是简单的将state修改成 started
+     *
+     * 主分片每当感知到集群创建了一个新的副本 就应该要管理它  (因为globalCheckpoint 需要所有副本认可)
      */
     @Override
     public void updateShardState(final ShardRouting newRouting,
@@ -693,8 +693,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     + currentRouting + ", new " + newRouting);
             }
 
-            // 如果当前是主分片 根据相关信息更新
-            // 这里的逻辑主要就是维护 checkpoints globalCheckpoint 等信息
+            // 主分片需要管理所有副本数据恢复进度 以及 往主分片写入数据时 哪些副本需要同步数据
             if (newRouting.primary()) {
                 replicationTracker.updateFromMaster(applyingClusterStateVersion, inSyncAllocationIds, routingTable);
             }
@@ -1902,7 +1901,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             // 传入事务id 只是为了校验 而不是通过该事务id去查找
             globalCheckpoint = Translog.readGlobalCheckpoint(translogConfig.getTranslogPath(), translogUUID);
 
-            // 检测本地持久化的数据是否已经达到全局检查点 如果达到返回 Optional.Empty()
+            // 尝试获取<=全局检查点 的最大的 indexCommit对象
             safeCommit = store.findSafeIndexCommit(globalCheckpoint);
         } catch (org.apache.lucene.index.IndexNotFoundException e) {
             logger.trace("skip local recovery as no index commit found");
@@ -1912,7 +1911,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             return UNASSIGNED_SEQ_NO;
         }
 
-        // 代表本地持久化的数据已经超过了 globalCheckpoint 就不需要从本地恢复数据了
+        // 本地不包含全局检查点之前的数据 因为检查点之后的数据只有primary是可靠的 所以要丢弃 那么所有数据都应当从远端获取
+        // 如果本地存在全局检查点之前的数据 那么只需要同步之间的数据就可以了
         if (safeCommit.isPresent() == false) {
             logger.trace("skip local recovery as no safe commit found");
             return UNASSIGNED_SEQ_NO;
@@ -1944,7 +1944,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             try {
                 /**
                  * 这里就是定义了如何通过事务日志文件恢复数据的函数
-                 * 下面的操作和 primary从主分片恢复数据的逻辑是一致的
+                 * 下面的操作和 primary恢复数据的逻辑是一致的
                  * @param engine 使用的引擎对象
                  * @param snapshot 此时日志文件下所有数据(OP) 结合成的快照对象
                  */
@@ -1959,7 +1959,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     recoveryState.getTranslog().totalLocal(recoveredOps); // adjust the total local to reflect the actual count
                     return recoveredOps;
                 };
-                // 新创建了一个engine对象
+                // 新创建了一个engine对象  engine内部使用的indexCommit 就是略小于全局检查点的commit对象 同时还会删除其他的commit
                 innerOpenEngineAndTranslog(() -> globalCheckpoint);
                 // 只需要从事务日志中将数据恢复到全局检查点的位置  而在primary上是尽可能的从本地恢复数据
                 getEngine().recoverFromTranslog(translogRecoveryRunner, globalCheckpoint);
@@ -1975,6 +1975,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
         try {
             // we need to find the safe commit again as we should have created a new one during the local recovery
+            // 因为这时候已经通过事务日志进行恢复了 不确定能否完全恢复到 global的位置 所以这里返回的是 localCheckpoint
+            // 并且本地事务日志没有达到 globalcheckpoint 就代表这个分片是新创建的 自然需要从其他分片同步 localCheckpoint -> globalCheckpoint之前的全部数据
             final Optional<SequenceNumbers.CommitInfo> newSafeCommit = store.findSafeIndexCommit(globalCheckpoint);
             assert newSafeCommit.isPresent() : "no safe commit found after local recovery";
             return newSafeCommit.get().localCheckpoint + 1;
@@ -2294,7 +2296,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     public void finalizeRecovery() {
         recoveryState().setStage(RecoveryState.Stage.FINALIZE);
         Engine engine = getEngine();
-        // 在fillSeqNoGaps 中可能会写入一些数据 这时就被动的将lucene的数据刷盘
+        // refresh 会刷新luceneReader的数据 已经加载到缓存中
         engine.refresh("recovery_finalization");
         // 因为恢复操作已经完成了 所以开启了删除开关
         engine.config().setEnableGcDeletes(true);

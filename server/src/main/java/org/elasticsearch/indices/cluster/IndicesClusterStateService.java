@@ -762,6 +762,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
             final IndexMetadata indexMetadata = clusterState.metadata().index(shard.shardId().getIndex());
             primaryTerm = indexMetadata.primaryTerm(shard.shardId().id());
             // 每当有一个新的副本从init变成start后 会加入到in-sync队列中 代表这个副本已经准备好接受用户的索引请求
+            // 当主分片首次转换成start时 inSync只有自己
             final Set<String> inSyncIds = indexMetadata.inSyncAllocationIds(shard.shardId().id());
             final IndexShardRoutingTable indexShardRoutingTable = routingTable.shardRoutingTable(shardRouting.shardId());
 

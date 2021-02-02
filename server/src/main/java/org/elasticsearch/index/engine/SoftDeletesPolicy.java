@@ -104,7 +104,7 @@ final class SoftDeletesPolicy {
      * Acquires a lock on soft-deleted documents to prevent them from cleaning up in merge processes. This is necessary to
      * make sure that all operations that are being retained will be retained until the lock is released.
      * This is a analogy to the translog's retention lock; see {@link Translog#acquireRetentionLock()}
-     * TODO 获取软删除文档的续约锁 这是什么意思???
+     * 为了避免这部分的数据被删除
      */
     synchronized Releasable acquireRetentionLock() {
         assert retentionLockCount >= 0 : "Invalid number of retention locks [" + retentionLockCount + "]";

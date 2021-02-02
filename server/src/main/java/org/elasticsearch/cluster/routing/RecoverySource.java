@@ -166,9 +166,12 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
         public static final String FORCED_ALLOCATION_ID = "_forced_allocation_";
 
         /**
-         * 单例模式
+         * 单例模式  默认都是false
          */
         public static final ExistingStoreRecoverySource INSTANCE = new ExistingStoreRecoverySource(false);
+        /**
+         * ES 内置组件没有使用这种恢复源  在x-pack中才有使用
+         */
         public static final ExistingStoreRecoverySource FORCE_STALE_PRIMARY_INSTANCE = new ExistingStoreRecoverySource(true);
 
         private final boolean bootstrapNewHistoryUUID;

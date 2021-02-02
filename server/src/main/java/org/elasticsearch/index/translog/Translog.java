@@ -1919,7 +1919,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
                 // we're shutdown potentially on some tragic event, don't delete anything
                 return;
             }
-            // getMinReferencedGen()获取当前系统中正在被使用的最小的gen
+            // getMinReferencedGen()获取当前系统中正在被使用的最小的gen  2个维度 第一是本节点当前正在引用的事务日志文件 还有一个就是根据全局检查点来判断 全局检查点之前的事务日志可以删除
             // getMinFileGeneration() 此时存在的最小的事务文件
             if (getMinReferencedGen() == getMinFileGeneration()) {
                 return;
@@ -1975,6 +1975,7 @@ public class Translog extends AbstractIndexShardComponent implements IndexShardC
             // 获取最小的gen对应的引用计数  同时也代表这个gen对应的文件不应该被删除 如果没有则会返回MAX_VALUE 代表没有限制
             deletionPolicy.getMinTranslogGenRequiredByLocks(),
             // localCheckpointOfSafeCommit 代表 safeCommit记录的本地检查点  safeCommit 代表在集群中完成同步的globalCheckpoint对应的commit
+            // 这里代表全局检查点之前的事务日志可以删除
             minGenerationForSeqNo(deletionPolicy.getLocalCheckpointOfSafeCommit() + 1, current, readers));
         assert minReferencedGen >= getMinFileGeneration() :
             "deletion policy requires a minReferenceGen of [" + minReferencedGen + "] but the lowest gen available is ["
