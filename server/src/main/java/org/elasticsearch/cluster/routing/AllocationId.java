@@ -118,6 +118,7 @@ public class AllocationId implements ToXContentObject, Writeable {
     /**
      * Creates a new allocation id for a shard that moves to be relocated, populating
      * the transient holder for relocationId.
+     * 每当创建一个新的relocate任务时 会为target分配一个新的 allocationId
      */
     public static AllocationId newRelocation(AllocationId allocationId) {
         assert allocationId.getRelocationId() == null;

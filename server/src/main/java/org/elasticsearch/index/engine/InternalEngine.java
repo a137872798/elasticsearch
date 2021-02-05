@@ -3400,8 +3400,9 @@ public class InternalEngine extends Engine {
     public Translog.Snapshot newChangesSnapshot(String source, MapperService mapperService,
                                                 long fromSeqNo, long toSeqNo, boolean requiredFullRange) throws IOException {
         ensureOpen();
-        // 如果 toSeqNo 超过了上次刷盘的seq 那么针对lucene数据进行刷盘
+        // 更新reader的数据 会间接触发 lucene的刷盘
         refreshIfNeeded(source, toSeqNo);
+        // 根据reader对象 生成查询对象
         Searcher searcher = acquireSearcher(source, SearcherScope.INTERNAL);
         try {
             LuceneChangesSnapshot snapshot = new LuceneChangesSnapshot(

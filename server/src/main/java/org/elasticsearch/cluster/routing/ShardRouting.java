@@ -507,7 +507,7 @@ public final class ShardRouting implements Writeable, ToXContentObject {
      * Make the active shard primary unless it's not primary
      *
      * @throws IllegalShardRoutingStateException if shard is already a primary
-     * 将某个副本对象升级成主分片
+     * 将某个副本对象升级成主分片  可以升级的分片必然已经完成了recovery 此时recoverySource 已经重置为null了
      */
     public ShardRouting moveActiveReplicaToPrimary() {
         assert active(): "expected an active shard " + this;

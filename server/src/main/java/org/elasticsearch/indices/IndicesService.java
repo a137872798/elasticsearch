@@ -1912,7 +1912,6 @@ public class IndicesService extends AbstractLifecycleComponent
 
     /**
      * 更新摇摆索引的信息 当首次为摇摆索引生成indexService对象时 就会触发该方法
-     * TODO 为什么只有摇摆索引的信息需要做持久化
      * @param index
      */
     private void updateDanglingIndicesInfo(Index index) {

@@ -1208,6 +1208,9 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      * @param routingTable                the shard routing table   这时该shard下primary+replica 实际上主分片需要知道此时有多少副本
      *                                    因为每次想要增加globalCheckpoint 应该要获得所有副本的支持
      * 代表接收到leader节点发来的更新分片信息的请求
+     *                                    注意无论是primaryRelocateSource 还是 primaryRelocateTarget
+     *                                    又或者是副本变成了 primary 都会处理这些数据
+     *                                    而主分片降级 会先变成unassigned 也就会从原来的node上移除indexShard
      */
     public synchronized void updateFromMaster(final long applyingClusterStateVersion, final Set<String> inSyncAllocationIds,
                                               final IndexShardRoutingTable routingTable) {
@@ -1234,7 +1237,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             // 当本分片已经启动完成后 之后感知到的副本都会进入这个分支
             if (primaryMode) {
                 // add new initializingIds that are missing locally. These are fresh shard copies - and not in-sync
-                // 当又增加了新的副本后 也需要被主分片管理
+                // 当又增加了新的副本后 也需要被主分片管理   注意当primaryMode变成true后 之后如果inSync增加了 并不会通过这个分支插入到 checkpoints 中
                 for (String initializingId : initializingAllocationIds) {
                     if (checkpoints.containsKey(initializingId) == false) {
                         // 这里断言揭示了 新的init分片必然不在inSync队列中

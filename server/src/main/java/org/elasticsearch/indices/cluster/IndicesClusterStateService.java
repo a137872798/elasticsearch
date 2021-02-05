@@ -527,18 +527,17 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         for (AllocatedIndex<? extends Shard> indexService : indicesService) {
             for (Shard shard : indexService) {
 
-                // 检查索引级的每个分片是否还存在于本节点上 如果不存在 则移除
                 ShardRouting currentRoutingEntry = shard.routingEntry();
                 ShardId shardId = currentRoutingEntry.shardId();
                 ShardRouting newShardRouting = localRoutingNode == null ? null : localRoutingNode.getByShardId(shardId);
 
-                // 代表这个分片此时不应该存在于该节点  进行移除
+                // 比如某个分片已经完成relocate后 source本片就会从routing中被移除 对应的节点感知到后就会关闭indexShard
                 if (newShardRouting == null) {
                     // we can just remove the shard without cleaning it locally, since we will clean it in IndicesStore
                     // once all shards are allocated
                     logger.debug("{} removing shard (not allocated)", shardId);
                     indexService.removeShard(shardId.id(), "removing shard (not allocated)");
-                    // 代表该分片是重新分配的 将旧的分片移除
+                    // 当主分片完成 relocate时  需要更新所有处于init状态的副本/副本的relocateTarget分片的 allocateId 这样就会清除旧的分片 并开启新分片 从最新的primary处恢复数据
                 } else if (newShardRouting.isSameAllocation(currentRoutingEntry) == false) {
                     logger.debug("{} removing shard (stale allocation id, stale {}, new {})", shardId,
                         currentRoutingEntry, newShardRouting);
@@ -550,7 +549,6 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                     // state may result in a new shard being initialized while having the same allocation id as the currently started shard.
                     logger.debug("{} removing shard (not active, current {}, new {})", shardId, currentRoutingEntry, newShardRouting);
                     indexService.removeShard(shardId.id(), "removing shard (stale copy)");
-                    // 当前节点的分片晋升成主分片
                 } else if (newShardRouting.primary() && currentRoutingEntry.primary() == false && newShardRouting.initializing()) {
                     assert currentRoutingEntry.initializing() : currentRoutingEntry; // see above if clause
                     // this can happen when cluster state batching batches activation of the shard, closing an index, reopening it
@@ -711,9 +709,10 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         assert shardRouting.initializing() : "only allow shard creation for initializing shard but was " + shardRouting;
 
         DiscoveryNode sourceNode = null;
-        // 代表属于本节点的分片是副本分片 会先检测主分片是否处于active状态 也就是是否已经完成数据恢复
+        // 代表属于本节点的分片是副本分片 或者是relocateTarget 会先检测主分片是否处于active状态 也就是是否已经完成数据恢复
         if (shardRouting.recoverySource().getType() == Type.PEER)  {
-            // 寻找primary分片所在的节点
+            // 寻找primary分片所在的节点  当primary 发生relocate时 所有处于init状态的副本会进行重启 从最新的primary上恢复数据  如果副本已经处于start状态 代表已经完成了数据同步
+            // 进入了 inSync容器中 将直接由最新的primary转发请求
             sourceNode = findSourceNodeForPeerRecovery(logger, routingTable, nodes, shardRouting);
             // 如果主分片数据恢复还未完成也会返回null 无法创建分片
             if (sourceNode == null) {
@@ -805,7 +804,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
     private static DiscoveryNode findSourceNodeForPeerRecovery(Logger logger, RoutingTable routingTable, DiscoveryNodes nodes,
                                                                ShardRouting shardRouting) {
         DiscoveryNode sourceNode = null;
-        // 当本节点对应的分片不是主分片时
+        // 本分片是普通副本
         if (!shardRouting.primary()) {
             // 找到主分片所在的node  如果主分片此时处于非活跃状态 返回null
             ShardRouting primary = routingTable.shardRoutingTable(shardRouting.shardId()).primaryShard();

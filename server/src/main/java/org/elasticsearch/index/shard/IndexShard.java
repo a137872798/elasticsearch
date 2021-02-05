@@ -682,12 +682,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 throw new IllegalArgumentException("Trying to set a routing entry with shardId " +
                     newRouting.shardId() + " on a shard with shardId " + shardId());
             }
-            // 代表虽然是同一个分片 分配到同一个节点 但是发生在2次分配动作中   allocationId是为了解决ABA的问题
+            // 代表虽然是同一个分片 分配到同一个节点 但是发生在2次分配动作中  这种情况不应该出现 因为在 removeShard时 已经将这种shard关闭了
             if (newRouting.isSameAllocation(currentRouting) == false) {
                 throw new IllegalArgumentException("Trying to set a routing entry with a different allocation. Current " +
                     currentRouting + ", new " + newRouting);
             }
-            // 不允许直接更新分片角色  应该要先经历移除的操作 再重新添加
+            // 不允许从主分片降级成副本 应该要先经历主分片的重分配
             if (currentRouting.primary() && newRouting.primary() == false) {
                 throw new IllegalArgumentException("illegal state: trying to move shard from primary mode to replica mode. Current "
                     + currentRouting + ", new " + newRouting);

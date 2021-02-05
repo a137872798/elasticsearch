@@ -424,6 +424,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         // be accessible. Therefore, we need to protect against the version being null
         // (meaning the node will be going away).
         return assignedShards(shardId).stream()
+            // active 为true 就代表已经完成了 PeerRecovery
                 .filter(shr -> !shr.primary() && shr.active())
                 .filter(shr -> node(shr.currentNodeId()) != null)
             // 将版本号最高的副本返回
@@ -557,7 +558,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         relocatingShards++;
 
         // 主分片重定向后生成的分片 还是主分片
-        // 源分片的 currentNodeId, relocationId  与target的正好相反
+        // 源分片的 currentNodeId, relocationId  与target的正好相反   这里target分片会使用一个新的 allocateId
         ShardRouting source = startedShard.relocate(nodeId, expectedShardSize);
         // 获取重定向后的targetNode对应的分片  重定向的分片recoverySource 总是PEER
         ShardRouting target = source.getTargetRelocatingShard();
@@ -596,7 +597,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         // 触发观察者钩子
         routingChangesObserver.shardStarted(initializingShard, startedShard);
 
-        // 代表这是一个重定向产生的init分片 也是从primary拉取数据
+        // 代表这是一个重定向产生的init分片 也是从primary拉取数据   可能是primary发生relocate 也可能是某个副本发生relocate
         if (initializingShard.relocatingNodeId() != null) {
             // relocation target has been started, remove relocation source
             RoutingNode relocationSourceNode = node(initializingShard.relocatingNodeId());
@@ -605,18 +606,20 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             assert relocationSourceShard.getTargetRelocatingShard() == initializingShard : "relocation target mismatch, expected: "
                 + initializingShard + " but was: " + relocationSourceShard.getTargetRelocatingShard();
 
-            // 这里移除了relocating的分片
+            // 这里移除了relocating的分片 那么在对应节点就会自然的移除indexShard
             remove(relocationSourceShard);
+            // 之后会将该分片从inSync中移除
             routingChangesObserver.relocationCompleted(relocationSourceShard);
 
             // if this is a primary shard with ongoing replica recoveries, reinitialize them as their recovery source changed
-            // 如果是主分片从 init变成start 要重启所有 副本
+            // 如果是主分片发生了relocate  这里会影响到所有副本的recovery  比如一开始在主分片a上进行recovery 同时a也在进行relocate target为b 当完成后 副本应该从b上获取数据
             if (startedShard.primary()) {
                 // 找到某个shardId 对应的所有分片 包含所有副本
                 List<ShardRouting> assignedShards = assignedShards(startedShard.shardId());
                 // copy list to prevent ConcurrentModificationException
                 for (ShardRouting routing : new ArrayList<>(assignedShards)) {
-                    // 找到处于初始状态的所有副本
+                    // 找到处于初始状态的所有副本 因为副本需要进行peerRecovery 所以需要追踪最新的primary分片
+                    // 而处于 relocateSource 或者 start的分片则是记录在 inSync中 由replicateGroup进行管理
                     if (routing.initializing() && routing.primary() == false) {
                         // 如果是某次 relocating的目标分片
                         if (routing.isRelocationTarget()) {
@@ -624,14 +627,13 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                             // 找到source 分片
                             ShardRouting sourceShard = getByAllocationId(routing.shardId(), routing.allocationId().getRelocationId());
                             // cancel relocation and start relocation to same node again
-                            // 以下2步将  某个调用relocation的副本分片还原
-                            // 将之前打算重分配的分片 还原成start状态
+                            // 将之前的source分片恢复成start状态
                             ShardRouting startedReplica = cancelRelocation(sourceShard);
-                            // 将这个打算重分配的分片移除
+                            // 将target分片移除
                             remove(routing);
                             routingChangesObserver.shardFailed(routing,
                                 new UnassignedInfo(UnassignedInfo.Reason.REINITIALIZED, "primary changed"));
-                            // 重新为某个分片重分配
+                            // 重新开启一个relocate任务  不过这时 peerSource 已经变成了最新的主分片位置了
                             relocateShard(startedReplica, sourceShard.relocatingNodeId(),
                                 sourceShard.getExpectedShardSize(), routingChangesObserver);
                         } else {
@@ -677,11 +679,11 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
         // if this is a primary, fail initializing replicas first (otherwise we move RoutingNodes into an inconsistent state)
         if (failedShard.primary()) {
-            // 找到所有处于init状态的副本  已经在写入数据 start/relocate 的副本不处理
             List<ShardRouting> assignedShards = assignedShards(failedShard.shardId());
             if (assignedShards.isEmpty() == false) {
                 // copy list to prevent ConcurrentModificationException
-                // 推测这一步的意义是为了解放这些node 使得primary可以被分配到这些node上
+                // 找到所有处于init状态的副本  已经在写入数据 start/relocate 的副本不处理
+                // 推测是将位置空出来 方便新的主分片分配
                 for (ShardRouting routing : new ArrayList<>(assignedShards)) {
                     if (!routing.primary() && routing.initializing()) {
                         // re-resolve replica as earlier iteration could have changed source/target of replica relocation
@@ -715,7 +717,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                 logger.trace("{}, relocation source failed / cancelled, mark as initializing without relocation source", targetShard);
                 // promote to initializing shard without relocation source and ensure that removed relocation source
                 // is not added back as unassigned shard
-                // 直接将relocate的目标分片修改成init状态  并不会影响数据恢复流程  因为relocate的恢复源一定是 PEER 从主分片拉取数据
+                // 代表是某个副本 由于relocate 产生的init分片  直接当作一个普通的 init分片就可以
                 removeRelocationSource(targetShard);
                 // 目前是 NOOP
                 routingChangesObserver.relocationSourceRemoved(targetShard);
@@ -730,11 +732,12 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             if (failedShard.relocatingNodeId() == null) {
                 if (failedShard.primary()) {
                     // promote active replica to primary if active replica exists (only the case for shadow replicas)
-                    // 当主分片处于init状态失败时 只是简单的修改成 unassigned
+                    // 当主分片处于init状态失败时 尝试寻找其他处于活跃状态的副本 并进行升级
+                    // 比如之前主分片是正常启动的 同时有一组replicate与它保持同步状态  都在inSync中 那么最好是选择某个副本进行升级
                     unassignPrimaryAndPromoteActiveReplicaIfExists(failedShard, unassignedInfo, routingChangesObserver);
                 } else {
                     // initializing shard that is not relocation target, just move to unassigned
-                    // 普通副本只是转换成 unassigned
+                    // 普通副本只是转换成 unassigned 等待重新分配
                     moveToUnassigned(failedShard, unassignedInfo);
                 }
                 // 针对重分配后的节点不可用的情况  这种处理比较简单 不需要转换成unassigned状态 只要继续使用原分片就可以（取消重分配）
@@ -755,12 +758,11 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                 remove(failedShard);
             }
         } else {
-            // 代表在数据写入阶段出现异常
+            // 分片属于 start/relocate
             assert failedShard.active();
             if (failedShard.primary()) {
                 // promote active replica to primary if active replica exists
-                // 因为在这个阶段大概率存在副本分片  如果要等待主分片重定位 + 数据恢复 可能会影响用户操作  所以选择直接将现有inSync中副本进行升级
-                // TODO 这里就要检查 副本的数据恢复完成是否代表着与主分片数据的完全同步   以及会不会出现数据丢失的问题(是否在inSync容器中)
+                // 重新分配原主分片 同时将某个副本升级成主分片  因为active副本已经在 inSync中 所以升级不会影响数据
                 unassignPrimaryAndPromoteActiveReplicaIfExists(failedShard, unassignedInfo, routingChangesObserver);
             } else {
                 // 重定向的副本直接移除就可以 target会继续从主分片拉取数据并最终加入inSync队列
@@ -791,13 +793,13 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
         // 找到目前存活的最高版本的副本
         ShardRouting activeReplica = activeReplicaWithHighestVersion(failedShard.shardId());
-        // 此时没有活跃的副本 对应主分片处于init状态 情况比较简单 只要将主分片修改成unassigned就可以
+        // 此时没有活跃的副本 代表集群之前都没有可用的分片 无法进行升级 只能尝试更换主分片的节点 如果一个副本都没有实际上主分片的失败就代表着数据的丢失
+        // 而本身高可用框架就应该保证至少有某些副本与主分片的数据是同步的 这时候只要将副本升级 同时旧的primary降级就可以了 (还伴随着这个失败分片的重新分配)
         if (activeReplica == null) {
             // 将当前分片变成 unassigned  等待之后重新分配
             moveToUnassigned(failedShard, unassignedInfo);
-            // 对应主副本都处于start状态
         } else {
-            // 如果存在副本  将主分片降级成副本分片
+            // 代表集群之前 已经有部分副本与主分片保持同步 在inSync容器中 而此时主分片fail后 首先应该尝试将某个副本升级
             movePrimaryToUnassignedAndDemoteToReplica(failedShard, unassignedInfo);
             // 将副本升级成主分片
             promoteReplicaToPrimary(activeReplica, routingChangesObserver);
@@ -951,7 +953,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     }
 
     /**
-     * 某个副本原本处于 init状态 当他的主分片由init变成start时 需要更新 副本分片
+     * 当主分片完成relocate时 副本需要更新 peer的目标节点 好从最新的分片上拉取数据
      * @param shard  待更新的副本分片
      * @return
      */
@@ -959,7 +961,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         assert shard.primary() == false : "shard must be a replica: " + shard;
         assert shard.initializing() : "can only reinitialize an initializing replica: " + shard;
         assert shard.isRelocationTarget() == false : "replication target cannot be reinitialized: " + shard;
-        // 主要就是重新生成了一个 分配id
+        // 主要就是重新生成了一个 分配id  在IndicesClusterStateService中 当发现某个分片的allocateId发生变化 会重启一次indexShard 这样就可以从最新的primary上拉取数据了
         ShardRouting reinitializedShard = shard.reinitializeReplicaShard();
         updateAssigned(shard, reinitializedShard);
         return reinitializedShard;

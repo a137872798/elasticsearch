@@ -280,7 +280,7 @@ public class RecoverySourceHandler {
                 logger.trace("performing file-based recovery followed by history replay starting at [{}]", startingSeqNo);
 
                 try {
-                    // 从最新快照开始 还需要写入多少数据
+                    // 预计事务日志数量
                     final int estimateNumOps = estimateNumberOfHistoryOperations(startingSeqNo);
                     // 调用 store.incRef 并将释放引用计数的方法包装成一个对象存储到 resources中
                     final Releasable releaseStore = acquireStore(shard.store());
