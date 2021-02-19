@@ -82,6 +82,12 @@ public class TransportResyncReplicationAction extends TransportWriteAction<Resyn
         return null;
     }
 
+    /**
+     * 在主分片执行任务时触发  实际上数据就是从主分片上生成的 所以不需要任何操作
+     * @param request
+     * @param primary      the primary shard to perform the operation on
+     * @param listener listener for the result of the operation on primary, including current translog location and operation response
+     */
     @Override
     protected void shardOperationOnPrimary(ResyncReplicationRequest request, IndexShard primary,
             ActionListener<PrimaryResult<ResyncReplicationRequest, ResyncReplicationResponse>> listener) {
@@ -107,6 +113,7 @@ public class TransportResyncReplicationAction extends TransportWriteAction<Resyn
          * (at least the highest timestamp from any of these operations) to make sure that we will disable optimization for the same
          * append-only requests with timestamp (sources of these operations) that are replicated; otherwise we may have duplicates.
          */
+        // 这个时间戳 只是在执行operate时 相关的优化措施 不影响核心逻辑
         replica.updateMaxUnsafeAutoIdTimestamp(request.getMaxSeenAutoIdTimestampOnPrimary());
         for (Translog.Operation operation : request.getOperations()) {
             final Engine.Result operationResult = replica.applyTranslogOperation(operation, Engine.Operation.Origin.REPLICA);
@@ -122,10 +129,18 @@ public class TransportResyncReplicationAction extends TransportWriteAction<Resyn
         return location;
     }
 
+    /**
+     * 将某些数据同步到其他分片
+     * @param request
+     * @param parentTask
+     * @param primaryAllocationId
+     * @param primaryTerm
+     * @param listener
+     */
     @Override
     public void sync(ResyncReplicationRequest request, Task parentTask, String primaryAllocationId, long primaryTerm,
                      ActionListener<ResyncReplicationResponse> listener) {
-        // skip reroute phase
+        // skip reroute phase  直接发给本节点处理 因为本节点就是primary 直接进入第二阶段
         transportService.sendChildRequest(
             clusterService.localNode(),
             transportPrimaryAction,

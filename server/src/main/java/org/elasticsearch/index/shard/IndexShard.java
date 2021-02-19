@@ -694,6 +694,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             }
 
             // 主分片需要管理所有副本数据恢复进度 以及 往主分片写入数据时 哪些副本需要同步数据
+            // 这里包含 primary的replicateSource/replicateTarget  以及 晋升成leader的副本
             if (newRouting.primary()) {
                 replicationTracker.updateFromMaster(applyingClusterStateVersion, inSyncAllocationIds, routingTable);
             }
@@ -724,9 +725,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             // 主分片时才需要继续处理
             if (newRouting.primary()) {
-                // 主分片路由相关的信息没有变化 只是state变化
+                // 代表主分片没有发生替换 relocate成功是不会修改term的
                 if (newPrimaryTerm == pendingPrimaryTerm) {
-                    // 主分片被激活了
+                    // 代表分片首次从init变成start
                     if (currentRouting.initializing() && currentRouting.isRelocationTarget() == false && newRouting.active()) {
                         // the master started a recovering primary, activate primary mode.
                         // 激活主分片模式 这样其他分片才可以从主分片恢复数据
@@ -735,7 +736,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         ensurePeerRecoveryRetentionLeasesExist();
                     }
                 } else {
-                    // TODO
+                    // 代表主分片处理失败 某个副本晋升成了新leader (不包含relocate的情况)
                     assert currentRouting.primary() == false : "term is only increased as part of primary promotion";
                     /* Note that due to cluster state batching an initializing primary shard term can failed and re-assigned
                      * in one state causing it's term to be incremented. Note that if both current shard state and new
@@ -768,6 +769,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         throw new IllegalStateException("cannot start resync while it's already in progress");
                     }
                     bumpPrimaryTerm(newPrimaryTerm,
+                        // 当获取到所有permit后触发的函数
                         () -> {
                             shardStateUpdated.await();
                             assert pendingPrimaryTerm == newPrimaryTerm :
@@ -775,6 +777,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                                     ", current routing: " + currentRouting + ", new routing: " + newRouting;
                             assert getOperationPrimaryTerm() == newPrimaryTerm;
                             try {
+                                // 这里触发的函数和 primaryTerm没有发生变化时一样
                                 replicationTracker.activatePrimaryMode(getLocalCheckpoint());
                                 ensurePeerRecoveryRetentionLeasesExist();
                                 /*
@@ -785,7 +788,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                                  * primary/replica re-sync completes successfully and we are now being promoted, we have to restore
                                  * the reverted operations on this shard by replaying the translog to avoid losing acknowledged writes.
                                  */
+                                // 在这里可以理解为某个副本晋升成了leader
                                 final Engine engine = getEngine();
+                                // 将事务日志中所有数据恢复到lucene  在这个阶段其他索引操作都会被阻塞
                                 engine.restoreLocalHistoryFromTranslog((resettingEngine, snapshot) ->
                                     runTranslogRecovery(resettingEngine, snapshot, Engine.Operation.Origin.LOCAL_RESET, () -> {
                                     }));
@@ -794,10 +799,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                                  * as a starting point), but it simplifies reasoning about the relationship between primary terms and
                                  * translog generations.
                                  */
+                                // 滚动事务日志会触发 空闲日志的删除
                                 engine.rollTranslogGeneration();
+                                // 如果存在缺失数据 尝试使用NOOP 进行填充
                                 engine.fillSeqNoGaps(newPrimaryTerm);
                                 replicationTracker.updateLocalCheckpoint(currentRouting.allocationId().getId(),
                                     getLocalCheckpoint());
+                                // 发起数据同步请求
                                 primaryReplicaSyncer.accept(this, new ActionListener<ResyncTask>() {
                                     @Override
                                     public void onResponse(ResyncTask resyncTask) {
@@ -823,7 +831,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                             } catch (final AlreadyClosedException e) {
                                 // okay, the index was deleted
                             }
-                        }, null);
+                        },
+                        // 当执行完操作后触发的监听器
+                        null);
                 }
             }
             // set this last, once we finished updating all internal state.
@@ -2082,7 +2092,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         int opsRecovered = 0;
         Translog.Operation operation;
         // 遍历每个operation对象   通过不断的迭代最终将所有事务日志中的数据都还原了
-        // TODO 在恢复期间每次写入操作都应该要检测engine是否完成恢复 甚至不应该被外部发现  那么是怎么做到的呢
         while ((operation = snapshot.next()) != null) {
             try {
                 logger.trace("[translog] recover op {}", operation);
@@ -3632,8 +3641,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 代表远端请求的主分片任期 与当前节点的主分片任期不一致
-     *
+     * 代表主分片term发生了变化   本操作会与其他所有操作相互隔离 (基于Permit进行隔离)
      * @param newPrimaryTerm
      * @param onBlocked
      * @param combineWithAction
@@ -3811,8 +3819,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 }
             });
 
-        // 检测请求体中携带的主分片任期 是否超过了当前分片记录的任期
-        // TODO 这里先忽略
+        // 检测是否主分片发生了变化    如果主分片发生了变化 那么此时收到的就是一个replica晋升后的resync请求  这个时候需要对事务日志进行一个重置操作 回滚到全局检查点
+        // 并写入新primary自globalCheckpoint之后的数据 在这个过程中需要获取所有permit 并阻塞其他操作
         if (requirePrimaryTermUpdate(opPrimaryTerm, allowCombineOperationWithPrimaryTermUpdate)) {
             synchronized (mutex) {
                 if (requirePrimaryTermUpdate(opPrimaryTerm, allowCombineOperationWithPrimaryTermUpdate)) {
@@ -3821,13 +3829,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     // Having a new primary term here means that the old primary failed and that there is a new primary, which again
                     // means that the master will fail this shard as all initializing shards are failed when a primary is selected
                     // We abort early here to prevent an ongoing recovery from the failed primary to mess with the global / local checkpoint
-                    // 如果当前分片的状态还不稳定  不允许在本地更新 primary的任期
+                    // 非这2种状态不允许与新的主分片进行数据同步
                     if (shardState != IndexShardState.POST_RECOVERY &&
                         shardState != IndexShardState.STARTED) {
                         throw new IndexShardNotStartedException(shardId, shardState);
                     }
 
-                    // 尝试更新主分片任期
+                    // 当抢占到所有permit后 触发内部函数
                     bumpPrimaryTerm(opPrimaryTerm,
                         // 如果发现 operate的任期 比主分片任期小 那么触发该方法
                         () -> {
@@ -3838,11 +3846,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                             final long maxSeqNo = seqNoStats().getMaxSeqNo();
                             logger.info("detected new primary with primary term [{}], global checkpoint [{}], max_seq_no [{}]",
                                 opPrimaryTerm, currentGlobalCheckpoint, maxSeqNo);
-                            // 当此时的全局检查点 小于最大的序列号时 使用这个全局检查点去重置engine
+                            // 裁剪掉全局检查点之前的数据
                             if (currentGlobalCheckpoint < maxSeqNo) {
                                 resetEngineToGlobalCheckpoint();
                             } else {
-                                // 切换到下一个事务日志
+                                // 切换到下一个事务日志 同时将之前的事务日志刷盘
                                 getEngine().rollTranslogGeneration();
                             }
                         }, allowCombineOperationWithPrimaryTermUpdate ? operationListener : null);
@@ -3863,7 +3871,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * 判断从主分片上获取到的 term是否比副本上要大     并且此时支持获取所有许可证
      * @param opPrimaryTerm
      * @param allPermits
      * @return
@@ -4327,7 +4334,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      * Rollback the current engine to the safe commit, then replay local translog up to the global checkpoint.
-     * 重置引擎 回到全局检查点的位置
+     * 主要是裁剪掉全局检查点之后的数据  比如有副本晋升成新的primary 它会向其他分片发起数据同步请求 这时数据同步就是从globalCheckpoint开始的 所以要裁剪掉后面的数据
      */
     void resetEngineToGlobalCheckpoint() throws IOException {
         assert Thread.holdsLock(mutex) == false : "resetting engine under mutex";
@@ -4351,7 +4358,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             verifyNotClosed();
             // we must create both new read-only engine and new read-write engine under engineMutex to ensure snapshotStoreMetadata,
             // acquireXXXCommit and close works.
-            // 在这个时候 又创建了一个只读引擎对象
             final Engine readOnlyEngine =
                 new ReadOnlyEngine(newEngineConfig(replicationTracker), seqNoStats, translogStats, false, Function.identity(), true) {
                     @Override
@@ -4389,7 +4395,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 };
             // 使用只读引擎替换之前的引擎对象  同时关闭之前的引擎
             IOUtils.close(currentEngineReference.getAndSet(readOnlyEngine));
-            // 重新创建引擎对象 并设置到currentEngineReference
+            // 重新创建引擎对象 并设置到currentEngineReference  创建新的engine时 只认可全局检查点之前的lucene索引文件
             newEngineReference.set(engineFactory.newReadWriteEngine(newEngineConfig(replicationTracker)));
             // 使用新创建的引擎对象的事务偏移量去覆盖当前的事务偏移量
             onNewEngine(newEngineReference.get());

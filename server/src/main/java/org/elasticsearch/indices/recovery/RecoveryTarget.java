@@ -279,6 +279,7 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
 
     /**
      * mark the current recovery as done
+     * 标记恢复任务已经完成
      * */
     public void markAsDone() {
         if (finished.compareAndSet(false, true)) {
@@ -356,8 +357,9 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
             // Persist the global checkpoint.
             // 对事务日志进行刷盘
             indexShard.sync();
-            // 将续约信息写入到一个 _state 文件中     TODO 续约信息在整个恢复过程中好像没有被使用到
+            // 将续约信息写入到一个 _state 文件中
             indexShard.persistRetentionLeases();
+            // 代表之前的事务日志可以清除
             if (trimAboveSeqNo != SequenceNumbers.UNASSIGNED_SEQ_NO) {
                 // We should erase all translog operations above trimAboveSeqNo as we have received either the same or a newer copy
                 // from the recovery source in phase2. Rolling a new translog generation is not strictly required here for we won't
@@ -539,16 +541,15 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
             store.incRef();
             try {
                 // 除了本次还原的索引文件外 其余文件都要清除  包括事务文件
-                // TODO 如果这个时候 本节点变成leader节点数据是否会丢失  应该是不会的  这时lucene中存储的应该是最接近globalCheckpoint的数据  也可以理解为这份数据就是所有副本认可的数据
+                // 将本次primary传输外的其他文件删除
                 store.cleanupAndVerify("recovery CleanFilesRequestHandler", sourceMetadata);
 
-                // 这里要重新创建事务日志文件
+                // 重新生成一个事务文件 并将id 关联到lucene.userData中
                 final String translogUUID = Translog.createEmptyTranslog(
                     indexShard.shardPath().resolveTranslog(), globalCheckpoint, shardId, indexShard.getPendingPrimaryTerm());
                 // 更新lucene.userData 中的translogUUID
                 store.associateIndexWithNewTranslog(translogUUID);
 
-                // TODO 主分片会将续约信息同步到所有副本上  这种情况应该不存在
                 if (indexShard.getRetentionLeases().leases().isEmpty()) {
                     // if empty, may be a fresh IndexShard, so write an empty leases file to disk
                     indexShard.persistRetentionLeases();

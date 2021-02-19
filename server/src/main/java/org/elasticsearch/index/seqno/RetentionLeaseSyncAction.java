@@ -118,7 +118,7 @@ public class RetentionLeaseSyncAction extends
 
 
     /**
-     * 代表一个针对续约信息进行同步的请求
+     * 将续约信息同步到其他节点上
      * @param shardId
      * @param primaryAllocationId
      * @param primaryTerm
@@ -131,6 +131,8 @@ public class RetentionLeaseSyncAction extends
         try (ThreadContext.StoredContext ignore = threadContext.stashContext()) {
             // we have to execute under the system context so that if security is enabled the sync is authorized
             threadContext.markAsSystemContext();
+
+            // 记录某个分片此时所有副本数据恢复状态的续约信息
             final Request request = new Request(shardId, retentionLeases);
             final ReplicationTask task = (ReplicationTask) taskManager.register("transport", "retention_lease_sync", request);
             // 请求会先发送到本地节点

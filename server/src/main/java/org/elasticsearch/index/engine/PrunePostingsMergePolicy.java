@@ -61,6 +61,7 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
             toWrap -> new OneMerge(toWrap.segments) {
             @Override
             public CodecReader wrapForMerge(CodecReader reader) throws IOException {
+                // 这里对每个segment的reader对象进行包装 先走原方法
                 CodecReader wrapped = toWrap.wrapForMerge(reader);
                 return wrapReader(wrapped, idField);
             }
@@ -114,7 +115,7 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
                     @Override
                     public Terms terms(String field) throws IOException {
                         Terms in = postingsReader.terms(field);
-                        // 本次处理的不是指定的_id 直接返回即可
+                        // 如果本次查询的field不是 "_id" 直接忽略就好
                         if (idField.equals(field) && in != null) {
                             return new FilterLeafReader.FilterTerms(in) {
                                 @Override
@@ -127,6 +128,7 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
 
                                         /**
                                          * 这个函数是判断遍历出来的term能否正常使用
+                                         * 在FilteredTermsEnum 中会通过next() 遍历term
                                          * @param term
                                          * @return
                                          * @throws IOException
@@ -137,6 +139,7 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
                                             if (fullyDeletedSegment) {
                                                 return AcceptStatus.END; // short-cut this if we don't match anything
                                             }
+                                            // 只有当这个id对应的数据还存在于 liveDoc中 才能返回yes 否则跳过
                                             internal = postings(internal, PostingsEnum.NONE);
                                             if (internal.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
                                                 return AcceptStatus.YES;
@@ -190,6 +193,9 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
         };
     }
 
+    /**
+     * 代表某个term 此时出现的所有位置的posting
+     */
     private static final class OnlyLiveDocsPostingsEnum extends PostingsEnum {
 
         private final Bits liveDocs;
@@ -209,6 +215,11 @@ final class PrunePostingsMergePolicy extends OneMergeWrappingMergePolicy {
             return in.docID();
         }
 
+        /**
+         * 要求该doc没有被删除
+         * @return
+         * @throws IOException
+         */
         @Override
         public int nextDoc() throws IOException {
             int docId;

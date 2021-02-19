@@ -65,8 +65,8 @@ public class ReplicationGroup {
     /**
      *
      * @param routingTable  记录某个索引下所有的分片 以及它们会被分配到哪里
-     * @param inSyncAllocationIds    目前看来 sync 和 tracked的标识是一致的  sync代表此时已经与primary的数据完成同步 tracked代表会将写入到primary的操作同时写入到副本上
-     * @param trackedAllocationIds
+     * @param inSyncAllocationIds
+     * @param trackedAllocationIds    某些副本在完成phase1阶段时 会将该标识修改成true
      * @param version 当前副本组的版本号 每次变化 版本号+1
      */
     public ReplicationGroup(IndexShardRoutingTable routingTable, Set<String> inSyncAllocationIds, Set<String> trackedAllocationIds,

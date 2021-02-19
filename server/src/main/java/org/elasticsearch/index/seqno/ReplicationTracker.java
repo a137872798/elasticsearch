@@ -373,14 +373,13 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 throw new RetentionLeaseNotFoundException(sourceLeaseId);
             }
             final RetentionLease sourceLease = getRetentionLeases().get(sourceLeaseId);
-            // 记得 不在in-sync的分片是不会自动创建续约对象的  而当它们向primary发起 recovery请求时 在完成了 索引文件数据的发送后 会生成续约对象
             retentionLease = innerAddRetentionLease(targetLeaseId, sourceLease.retainingSequenceNumber(), sourceLease.source());
             currentRetentionLeases = retentionLeases;
         }
 
         // Syncing here may not be strictly necessary, because this new lease isn't retaining any extra history that wasn't previously
         // retained by the source lease; however we prefer to sync anyway since we expect to do so whenever creating a new lease.
-        // 此时还是要将续约信息同步到其他节点上
+        // 将最新的续约信息同步到所有相关节点上
         onSyncRetentionLeases.accept(currentRetentionLeases, listener);
         return retentionLease;
     }
@@ -1129,6 +1128,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
     /**
      * Initializes the global checkpoint tracker in primary mode (see {@link #primaryMode}. Called on primary activation or promotion.
+     * @param localCheckpoint 此时主分片的本地检查点
      * 当本节点对应的shard是主分片 并且从init状态变成 started状态时  触发该函数
      */
     public synchronized void activatePrimaryMode(final long localCheckpoint) {
@@ -1209,7 +1209,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *                                    因为每次想要增加globalCheckpoint 应该要获得所有副本的支持
      * 代表接收到leader节点发来的更新分片信息的请求
      *                                    注意无论是primaryRelocateSource 还是 primaryRelocateTarget
-     *                                    又或者是副本变成了 primary 都会处理这些数据
+     *                                    又或者是副本升级成了 primary 都会处理这些数据  (并且是副本升级的场景 inSync必然不为空)
      *                                    而主分片降级 会先变成unassigned 也就会从原来的node上移除indexShard
      */
     public synchronized void updateFromMaster(final long applyingClusterStateVersion, final Set<String> inSyncAllocationIds,
@@ -1234,10 +1234,9 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             boolean removedEntries = checkpoints.keySet().removeIf(
                 aid -> !inSyncAllocationIds.contains(aid) && !initializingAllocationIds.contains(aid));
 
-            // 当本分片已经启动完成后 之后感知到的副本都会进入这个分支
             if (primaryMode) {
                 // add new initializingIds that are missing locally. These are fresh shard copies - and not in-sync
-                // 当又增加了新的副本后 也需要被主分片管理   注意当primaryMode变成true后 之后如果inSync增加了 并不会通过这个分支插入到 checkpoints 中
+                // 当又增加了新的副本后 也需要被主分片管理   注意当primaryMode变成true后 之后的分片必然是先在init容器中 所以就不需要处理inSync了
                 for (String initializingId : initializingAllocationIds) {
                     if (checkpoints.containsKey(initializingId) == false) {
                         // 这里断言揭示了 新的init分片必然不在inSync队列中
@@ -1264,8 +1263,8 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                     checkpoints.put(initializingId, new CheckpointState(localCheckpoint, globalCheckpoint, false, false));
                 }
 
-                // 在执行写入操作后 其他副本会上报 localCheckpoint/globalCheckpoint 所以一开始不需要设置 且容易不准确
-                // 因为这些分片已经完成数据同步了 所以设置insync为true 且 tracked为true  代表往主分片的写入也要复制到这些副本上
+                // 本primary分片变成start后会加入到inSync中 并且会标记此时该分片已经完成了数据同步 如果是从某个副本升级成primary 那么原来所有inSync的分片会直接标记成已同步
+                // 并且这时不需要获取明确的对端检查点 一旦有数据写入 自然会更新检查点
                 for (String inSyncId : inSyncAllocationIds) {
                     final long localCheckpoint = SequenceNumbers.UNASSIGNED_SEQ_NO;
                     final long globalCheckpoint = localCheckpoint;
@@ -1318,7 +1317,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param allocationId    the allocation ID of the shard to mark as in-sync
      * @param localCheckpoint the current local checkpoint on the shard
-     *                        每当primary往副本传输数据并执行恢复操作后 会触发一次该方法 这里会直到
+     *                        当分片完成数据恢复后 尝试将自己标记成已完成同步  这个线程会被卡住
      */
     public synchronized void markAllocationIdAsInSync(final String allocationId, final long localCheckpoint) throws InterruptedException {
         assert invariant();
@@ -1343,7 +1342,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 " that's above the global checkpoint " + getGlobalCheckpoint();
 
 
-        // 检测该分片是否超过了全局检查点  未超过加入到 pendingInSync中  并阻塞当前线程 直到完成同步
+        // 此时发现本地检查点小于全局检查点 代表需要继续同步直到全局检查点间的数据
         if (cps.localCheckpoint < getGlobalCheckpoint()) {
             pendingInSync.add(allocationId);
             try {
@@ -1359,7 +1358,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 pendingInSync.remove(allocationId);
             }
         } else {
-            // 更新replicationGroup信息
+            // 代表该分片在数据恢复后 与全局检查点同步
             cps.inSync = true;
             updateReplicationGroupAndNotify();
             logger.trace("marked [{}] as in-sync", allocationId);
@@ -1403,7 +1402,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert invariant();
         assert primaryMode;
         assert handoffInProgress == false;
-        // 这里维护了主分片管理的所有副本  只有已经完成数据恢复阶段并进入 in-sync 的副本才会添加到 checkpoints
+        // 这里维护了主分片管理的所有副本
         CheckpointState cps = checkpoints.get(allocationId);
         if (cps == null) {
             // can happen if replica was removed from cluster but replication process is unaware of it yet
@@ -1414,7 +1413,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
 
         // 代表该分片在主分片上认为还处于未完成数据同步的状态
         boolean pending = pendingInSync.contains(allocationId);
-        // 当副本最新的 persistedCheckpoint 追赶上主分片的globalCheckpoint时  认为已经完成了同步阶段  进入到 in-sync 队列中
+        // 代表该分片已经完成了全局检查点前的数据同步
         if (pending && cps.localCheckpoint >= getGlobalCheckpoint()) {
             pendingInSync.remove(allocationId);
             pending = false;
@@ -1474,7 +1473,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     private synchronized void updateGlobalCheckpointOnPrimary() {
         assert primaryMode;
 
-        // pendingInsync 代表的是还未进入in-sync的副本 也就是数据还没同步到全局检查点的副本
+        // pendingInSync 代表某些副本完成了recovery阶段 但是主分片又写入了新数据,又需要同步新数据
         final long computedGlobalCheckpoint = computeGlobalCheckpoint(pendingInSync, checkpoints.values(), getGlobalCheckpoint());
         assert computedGlobalCheckpoint >= globalCheckpoint : "new global checkpoint [" + computedGlobalCheckpoint +
             "] is lower than previous one [" + globalCheckpoint + "]";

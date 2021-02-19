@@ -47,8 +47,7 @@ import java.util.Set;
 /**
  * An extension to the {@link ConcurrentMergeScheduler} that provides tracking on merge times, total
  * and current merges.
- * ES 对merge线程池也做处理了吗
- * 在lucene中每当合适的时机会检测是否需要进行merge 因为merge相当于是数据的瘦身 所以不应该阻塞主线程 而是在异步线程中执行
+ * 这里拓展了lucene默认的merge对象 主要是做一些数据统计
  */
 class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
 
@@ -73,6 +72,12 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
      */
     private final MergeSchedulerConfig config;
 
+
+    /**
+     * 表示这个数据是关于哪个shard的
+     * @param shardId
+     * @param indexSettings
+     */
     ElasticsearchConcurrentMergeScheduler(ShardId shardId, IndexSettings indexSettings) {
         this.config = indexSettings.getMergeSchedulerConfig();
         this.shardId = shardId;
@@ -85,6 +90,12 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
         return readOnlyOnGoingMerges;
     }
 
+    /**
+     * 执行merge任务
+     * @param writer
+     * @param merge
+     * @throws IOException
+     */
     @Override
     protected void doMerge(IndexWriter writer, MergePolicy.OneMerge merge) throws IOException {
         // 在执行merge前 统计相关数据 并且触发前置钩子
@@ -95,6 +106,7 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
         currentMergesNumDocs.inc(totalNumDocs);
         currentMergesSizeInBytes.inc(totalSizeInBytes);
 
+        // 这里管理了所有正在执行的merge任务
         OnGoingMerge onGoingMerge = new OnGoingMerge(merge);
         onGoingMerges.add(onGoingMerge);
 
@@ -199,7 +211,7 @@ class ElasticsearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
         if (this.getMaxMergeCount() != config.getMaxMergeCount() || this.getMaxThreadCount() != config.getMaxThreadCount()) {
             this.setMaxMergesAndThreads(config.getMaxMergeCount(), config.getMaxThreadCount());
         }
-        // 每个merge线程关联一个 IO限流器 这里是在调整限流器的阈值
+        // 调节限流参数
         boolean isEnabled = getIORateLimitMBPerSec() != Double.POSITIVE_INFINITY;
         if (config.isAutoThrottle() && isEnabled == false) {
             enableAutoIOThrottle();

@@ -303,7 +303,6 @@ final class IndexShardOperationPermits implements Closeable {
                 // 正常情况下 任务阻塞获取到门票后就可以执行了
                 // 如果该值不为1 代表外部发起了一个阻塞操作  这会抢占所有的门票 导致其他任务无法正常执行 但是又不应该丢弃这些未执行的任务 所以将他们包装后设置到一个队列中
                 if (queuedBlockOperations > 0) {
-                    // TODO 这个获取上下文指的是什么 ???
                     final Supplier<StoredContext> contextSupplier = threadPool.getThreadContext().newRestorableContext(false);
                     final ActionListener<Releasable> wrappedListener;
                     if (executorOnDelay != null) {

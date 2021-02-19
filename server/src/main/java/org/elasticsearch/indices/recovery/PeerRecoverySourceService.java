@@ -120,16 +120,14 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
         final IndexService indexService = indicesService.indexServiceSafe(request.shardId().getIndex());
         final IndexShard shard = indexService.getShard(request.shardId().id());
 
-        // 获取这个分片的路由信息 记录了这个shard相关的信息分散在哪些节点上 并且在哪个节点上是primary分片 在哪些节点上是副本
         final ShardRouting routingEntry = shard.routingEntry();
 
-        // 首先确保该分片是主分片 且处于active状态    active代表主分片已经完成了自身的数据恢复  (就是从本地事务日志中恢复数据)
+        // 首先确保该分片是主分片 并且已经完成了自身的数据恢复
         if (routingEntry.primary() == false || routingEntry.active() == false) {
             throw new DelayRecoveryException("source shard [" + routingEntry + "] is not an active primary");
         }
 
-        // 除了副本可以发起恢复数据的请求外 主分片发生重定向时 新的location可以从旧的node上拉取数据
-        // 信息错误 有可能是 leader节点还没有将最新的元数据同步到本节点上 所以在延时后可以重试
+        // TODO
         if (request.isPrimaryRelocation() && (routingEntry.relocating() == false ||
             routingEntry.relocatingNodeId().equals(request.targetNode().getId()) == false)) {
             logger.debug("delaying recovery of {} as source shard is not marked yet as relocating to {}",
@@ -152,7 +150,7 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
     class StartRecoveryTransportRequestHandler implements TransportRequestHandler<StartRecoveryRequest> {
         @Override
         public void messageReceived(final StartRecoveryRequest request, final TransportChannel channel, Task task) throws Exception {
-            // 本次 recoveryRes 将会通过channel 发送到target
+            // res的处理就是标记某个 peerRecovery已经完成 同时打印日志信息
             recover(request, new ChannelActionListener<>(channel, Actions.START_RECOVERY, request));
         }
     }
@@ -163,7 +161,7 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
     }
 
     /**
-     * 代表此时正在处理的恢复操作   当前是主节点才会维护该对象
+     * 代表此时正在处理的恢复操作   当前是主分片才会维护该对象
      */
     final class OngoingRecoveries {
 

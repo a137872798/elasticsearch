@@ -193,10 +193,6 @@ public class InternalEngine extends Engine {
     // incoming indexing ops to a single thread:
     private final AtomicInteger throttleRequestCount = new AtomicInteger();
 
-    /**
-     * 在初始化时 会将该标识修改成true  代表此时还未从事务文件中恢复数据
-     * 在这个阶段应该是拒绝处理其他请求的
-     */
     private final AtomicBoolean pendingTranslogRecovery = new AtomicBoolean(false);
     private final AtomicLong maxUnsafeAutoIdTimestamp = new AtomicLong(-1);
 
@@ -337,7 +333,6 @@ public class InternalEngine extends Engine {
             internalReaderManager.addListener(versionMap);
             assert pendingTranslogRecovery.get() == false : "translog recovery can't be pending before we set it";
             // don't allow commits until we are done with recovering
-            // 标记此时还未从事务日志中恢复数据  无法执行任何写入操作
             pendingTranslogRecovery.set(true);
             // 从配置中获取相应的监听器对象并进行设置  对应 RefreshListeners,RefreshPendingLocationListener
             for (ReferenceManager.RefreshListener listener : engineConfig.getExternalRefreshListener()) {
@@ -418,6 +413,7 @@ public class InternalEngine extends Engine {
         if (commitUserData.containsKey(Engine.MIN_RETAINED_SEQNO)) {
             lastMinRetainedSeqNo = Long.parseLong(commitUserData.get(Engine.MIN_RETAINED_SEQNO));
         } else {
+            // 如果之前还没有索引文件 会创建一个空的索引文件 同时userData中 max_seq_no 为-1
             lastMinRetainedSeqNo = Long.parseLong(commitUserData.get(SequenceNumbers.MAX_SEQ_NO)) + 1;
         }
         return new SoftDeletesPolicy(
@@ -1999,7 +1995,6 @@ public class InternalEngine extends Engine {
             assert doc.getField(SeqNoFieldMapper.TOMBSTONE_NAME) != null :
                 "Delete tombstone document but _tombstone field is not set [" + doc + " ]";
 
-            // 这些doc都追加上了 软删除字段 TODO 怎么使用
             doc.add(softDeletesField);
             // 在当前文档已经被删除时  如果之后又发起了删除操作  还是会加入一个标记删除的doc
             if (plan.addStaleOpToLucene || plan.currentlyDeleted) {
@@ -2955,7 +2950,7 @@ public class InternalEngine extends Engine {
     private IndexWriterConfig getIndexWriterConfig() {
         // 一开始的分词器是通过插件系统加载的  也有默认的分词器 这里就是利用分词器来配置config对象
         final IndexWriterConfig iwc = new IndexWriterConfig(engineConfig.getAnalyzer());
-        // 在close时 不需要自动提交  因为要考虑到在集群间的同步
+        // 在close时 不需要自动提交
         iwc.setCommitOnClose(false); // we by default don't commit on close
         // 采用 append模式
         iwc.setOpenMode(IndexWriterConfig.OpenMode.APPEND);
@@ -2980,11 +2975,10 @@ public class InternalEngine extends Engine {
         // 指定软删除字段为 "_soft_deletes"
         iwc.setSoftDeletesField(Lucene.SOFT_DELETES_FIELD);
         // RecoverySourcePruneMergePolicy 负责处理 recovery_source 相关的
-        // TODO 这个merge策略先不看 等回顾lucene的merge流程后重看
         mergePolicy = new RecoverySourcePruneMergePolicy(SourceFieldMapper.RECOVERY_SOURCE_NAME, softDeletesPolicy::getRetentionQuery,
             // 这个是保留软删除字段的merge策略 也就是 在merge过程中软删除字段不会被丢弃
             new SoftDeletesRetentionMergePolicy(Lucene.SOFT_DELETES_FIELD, softDeletesPolicy::getRetentionQuery,
-                // 最基础的merge策略先是被这个对象包装 当发现field为_id时需要做特殊处理
+                // 最基础的merge策略先是被这个对象包装 当以"_id" 作为查询条件时 要求doc必须还存活
                 new PrunePostingsMergePolicy(mergePolicy, IdFieldMapper.NAME)));
 
         // 是否打乱merge
@@ -3002,7 +2996,7 @@ public class InternalEngine extends Engine {
         iwc.setSimilarity(engineConfig.getSimilarity());
         iwc.setRAMBufferSizeMB(engineConfig.getIndexingBufferSize().getMbFrac());
         iwc.setCodec(engineConfig.getCodec());
-        // TODO 复合文件先忽略
+        // 复合文件就是将所有文件内数据合并成一个cfs文件
         iwc.setUseCompoundFile(true); // always use compound on flush - reduces # of file-handles on refresh
         // 设置排序对象后 doc将会按照排序规则进行存储
         if (config().getIndexSort() != null) {
@@ -3111,7 +3105,7 @@ public class InternalEngine extends Engine {
         }
 
         /**
-         * merge 后执行
+         * merge完成后的钩子
          *
          * @param merge
          */
@@ -3145,6 +3139,7 @@ public class InternalEngine extends Engine {
                         flush();
                     }
                 });
+                // 此时还有待执行的merge任务 但是已经merge了大量的数据 所以推荐将merge的数据进行持久化
             } else if (merge.getTotalBytesSize() >= engineConfig.getIndexSettings().getFlushAfterMergeThresholdSize().getBytes()) {
                 // we hit a significant merge which would allow us to free up memory if we'd commit it hence on the next change
                 // we should execute a flush on the next operation if that's a flush after inactive or indexing a document.

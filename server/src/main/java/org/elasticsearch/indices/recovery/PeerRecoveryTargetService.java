@@ -216,7 +216,7 @@ public class PeerRecoveryTargetService implements IndexEventListener {
         final StartRecoveryRequest request;
         final RecoveryState.Timer timer;
         CancellableThreads cancellableThreads;
-        // 先找到recoveryId 对应的任务对象
+        // 先找到recoveryId 对应的任务对象    在startRecovery时 会将任务存储到容器中 同时包裹一层引用计数
         try (RecoveryRef recoveryRef = onGoingRecoveries.getRecovery(recoveryId)) {
             if (recoveryRef == null) {
                 logger.trace("not running recovery with id [{}] - can not find it (probably finished)", recoveryId);

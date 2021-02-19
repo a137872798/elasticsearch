@@ -151,6 +151,7 @@ public class RecoverySourceHandler {
 
     /**
      * performs the recovery from the local engine to the target
+     * @param listener 当任务完成时触发监听器
      * 开始从本地将数据传输到远端节点 用于恢复数据
      */
     public void recoverToTarget(ActionListener<RecoveryResponse> listener) {
@@ -211,7 +212,7 @@ public class RecoverySourceHandler {
                 && isTargetSameHistory()
                 // 确保lucene数据还存在
                 && shard.hasCompleteHistoryOperations("peer-recovery", request.startingSeqNo())
-                // TODO 这个应该是兼容性代码
+                // TODO 目前只看到 useRetentionLeasesInPeerRecovery == true 先忽略
                 && ((retentionLeaseRef.get() == null && shard.useRetentionLeasesInPeerRecovery() == false) ||
                 // retentionLeaseRef.get() 是可能为空的
                    (retentionLeaseRef.get() != null && retentionLeaseRef.get().retainingSequenceNumber() <= request.startingSeqNo()));
@@ -232,7 +233,6 @@ public class RecoverySourceHandler {
                 logger.trace("history is retained by retention lock");
             }
 
-
             // 可以看到在基于 PEER 进行数据恢复的过程中 涉及到了几个流程
             final StepListener<SendFileResult> sendFileStep = new StepListener<>();
             // replica 开启engine完成
@@ -242,6 +242,7 @@ public class RecoverySourceHandler {
             final StepListener<Void> finalizeStep = new StepListener<>();
 
             // 条件允许的情况 跳过阶段1
+            // TODO 先忽略上面的分支
             if (isSequenceNumberBasedRecovery) {
                 logger.trace("performing sequence numbers based recovery. starting at [{}]", request.startingSeqNo());
                 startingSeqNo = request.startingSeqNo();
@@ -257,8 +258,7 @@ public class RecoverySourceHandler {
                 final Engine.IndexCommitRef safeCommitRef;
                 try {
                     // safeCommit是最接近 globalCheckpoint的 提交信息
-                    // 每次生成新的操作时 会推动globalCheckpoint 但是不一定会进行commit 所以safeCommit就是最新的快照
-                    // 也就是其他副本从最新的快照中恢复数据后 还需要根据primary的事务日志进行数据恢复
+                    // 每次生成新的操作时 会推动globalCheckpoint 但是不一定会进行commit
                     safeCommitRef = shard.acquireSafeIndexCommit();
                     resources.add(safeCommitRef);
                 } catch (final Exception e) {
@@ -280,13 +280,13 @@ public class RecoverySourceHandler {
                 logger.trace("performing file-based recovery followed by history replay starting at [{}]", startingSeqNo);
 
                 try {
-                    // 预计事务日志数量
+                    // 从安全点到最新事务日志的op数量
                     final int estimateNumOps = estimateNumberOfHistoryOperations(startingSeqNo);
                     // 调用 store.incRef 并将释放引用计数的方法包装成一个对象存储到 resources中
                     final Releasable releaseStore = acquireStore(shard.store());
                     resources.add(releaseStore);
 
-                    // 当任务完成时 释放相关资源   TODO 什么时候可以删除 safeCommit 应该是要等到生成一个新的快照  并且所有节点都认可这个快照 (也就是出现了新的safeCommit 才可以删除旧的)
+                    // 当任务完成时 释放相关资源
                     sendFileStep.whenComplete(r -> IOUtils.close(safeCommitRef, releaseStore), e -> {
                         try {
                             IOUtils.close(safeCommitRef, releaseStore);
@@ -304,7 +304,7 @@ public class RecoverySourceHandler {
                                 // If the target previously had a copy of this shard then a file-based recovery might move its global
                                 // checkpoint backwards. We must therefore remove any existing retention lease so that we can create a
                                 // new one later on in the recovery.
-                                // 进入这种情况 之前的续约信息已经不再可靠了   当续约信息在分片级别完成同步后 会触发监听器
+                                // 先移除旧的续约信息  (续约信息会同步到该shard相关的所有node上)
                                 shard.removePeerRecoveryRetentionLease(request.targetNode().getId(),
                                     new ThreadedActionListener<>(logger, shard.getThreadPool(), ThreadPool.Names.GENERIC,
                                         deleteRetentionLeaseStep, false));
@@ -342,7 +342,7 @@ public class RecoverySourceHandler {
                  * This means that any document indexed into the primary after this will be replicated to this replica as well
                  * make sure to do this before sampling the max sequence number in the next step, to ensure that we send
                  * all documents up to maxSeqNo in phase2.
-                 * 当上面全部的准备工作都完成后  某个副本才可以开始同步 写入到primary的最新数据
+                 * 将分片标记成 tracked 代表往主分片执行的op 需要复写到副本上
                  */
                 runUnderPrimaryPermit(() -> shard.initiateTracking(request.targetAllocationId()),
                     shardId + " initiating tracking of " + request.targetAllocationId(), shard, cancellableThreads, logger);
@@ -383,7 +383,7 @@ public class RecoverySourceHandler {
                 final SendSnapshotResult sendSnapshotResult = sendSnapshotStep.result();
                 final SendFileResult sendFileResult = sendFileStep.result();
 
-                // 生成本次恢复流程的结果对象
+                // 生成本次恢复流程的结果对象  对端只是打印日志
                 final RecoveryResponse response = new RecoveryResponse(sendFileResult.phase1FileNames, sendFileResult.phase1FileSizes,
                     sendFileResult.phase1ExistingFileNames, sendFileResult.phase1ExistingFileSizes, sendFileResult.totalSize,
                     sendFileResult.existingTotalSize, sendFileResult.took.millis(), phase1ThrottlingWaitTime,
@@ -450,7 +450,7 @@ public class RecoverySourceHandler {
             try (Releasable ignored = FutureUtils.get(permit)) {
                 // check that the IndexShard still has the primary authority. This needs to be checked under operation permit to prevent
                 // races, as IndexShard will switch its authority only when it holds all operation permits, see IndexShard.relocated()
-                // 因为本主分片已经完成了重定向 不再被使用 所以恢复操作应当从其他分片拉取
+                // 因为本主分片已经完成了重定向 不再被使用 所以恢复操作应当从其他分片拉取  其他副本分片会被重置 并从新的primary节点上拉取数据
                 if (primary.isRelocatedPrimary()) {
                     throw new IndexShardRelocatedException(primary.shardId());
                 }
@@ -524,7 +524,7 @@ public class RecoverySourceHandler {
      * Phase1 examines the segment files on the target node and copies over the
      * segments that are missing. Only segments that have the same size and
      * checksum can be reused
-     * 从primary拉取数据 用于恢复数据的阶段1
+     * 阶段1就是safeCommit的同步  不涉及事务日志的恢复
      */
     void phase1(IndexCommit snapshot, long startingSeqNo, IntSupplier translogOps, ActionListener<SendFileResult> listener) {
         // 检测任务是否已经被关闭
@@ -550,7 +550,7 @@ public class RecoverySourceHandler {
                 }
             }
 
-            // 检测是否可以跳过第一阶段
+            // 检测是否可以跳过第一阶段  先假设无法跳过
             if (canSkipPhase1(recoverySourceMetadata, request.metadataSnapshot()) == false) {
                 final List<String> phase1FileNames = new ArrayList<>();
                 final List<Long> phase1FileSizes = new ArrayList<>();
@@ -581,7 +581,7 @@ public class RecoverySourceHandler {
                 List<StoreFileMetadata> phase1Files = new ArrayList<>(diff.different.size() + diff.missing.size());
                 phase1Files.addAll(diff.different);
                 phase1Files.addAll(diff.missing);
-                // 需要拉取的文件 单独存储到另一套list中
+                // 将需要处理的数据存储到list中
                 for (StoreFileMetadata md : phase1Files) {
                     if (request.metadataSnapshot().asMap().containsKey(md.name())) {
                         logger.trace("recovery [phase1]: recovering [{}], exists in local store, but is different: remote [{}], local [{}]",
@@ -618,7 +618,7 @@ public class RecoverySourceHandler {
                     // 这里开始传输文件数据流  只针对不一致的文件
                     sendFiles(store, phase1Files.toArray(new StoreFileMetadata[0]), translogOps, sendFilesStep), listener::onFailure);
 
-                // 当所有文件流都传输完毕后 创建续约对象  TODO 为什么中间要参杂一步生成续约对象
+                // 当所有文件流都传输完毕后 创建续约对象  用于标记此时副本数据恢复的阶段
                 sendFilesStep.whenComplete(r -> createRetentionLease(startingSeqNo, createRetentionLeaseStep), listener::onFailure);
 
                 // 下一步发起清理文件的请求  还是在replicaShard节点做处理
@@ -655,7 +655,7 @@ public class RecoverySourceHandler {
                 logger.trace("skipping [phase1] since source and target have identical sync id [{}]", recoverySourceMetadata.getSyncId());
 
                 // but we must still create a retention lease
-                // 跳过文件元数据传输  文件数据传输  删除旧文件的流程  只需要生成续约信息
+                // 跳过文件元数据传输  文件数据传输  删除旧文件的流程  只需要生成续约信息 用于标识此时副本的数据恢复进程  续约信息跟分片的分配有关
                 final StepListener<RetentionLease> createRetentionLeaseStep = new StepListener<>();
                 createRetentionLease(startingSeqNo, createRetentionLeaseStep);
                 createRetentionLeaseStep.whenComplete(retentionLease -> {
@@ -672,8 +672,8 @@ public class RecoverySourceHandler {
     }
 
     /**
-     * 在某个replicate的恢复节点 首次从某个主分片拉取数据时 就需要初始化续约对象
-     * @param startingSeqNo  远端需要恢复数据时 传入的起始偏移量
+     * 当safeCommit的数据复制完毕后 会生成一次续约信息 该对象可以用来判断某个副本更合适被分配到哪个node
+     * @param startingSeqNo  对应safeCommit之后的op序列号  之后需要以该值为起点读取事务日志进行数据恢复
      * @param listener
      */
     void createRetentionLease(final long startingSeqNo, ActionListener<RetentionLease> listener) {
@@ -726,7 +726,7 @@ public class RecoverySourceHandler {
      * @return
      */
     boolean canSkipPhase1(Store.MetadataSnapshot source, Store.MetadataSnapshot target) {
-        // 代表2次提交的数据不一致
+        // 目前没看到syncId 先假设无法跳过阶段1 不影响理解
         if (source.getSyncId() == null || source.getSyncId().equals(target.getSyncId()) == false) {
             return false;
         }
@@ -735,7 +735,7 @@ public class RecoverySourceHandler {
                 "of docs differ: " + source.getNumDocs() + " (" + request.sourceNode().getName() + ", primary) vs " + target.getNumDocs()
                 + "(" + request.targetNode().getName() + ")");
         }
-        // 从userData 中抽取 checkpoint 和 maxSeqNo   为什么能确定这些值会相同呢 还是说在通过了上面 syncId的校验后 能确保这些数据相同
+        // 校验主分片与副本的数据是否一致
         SequenceNumbers.CommitInfo sourceSeqNos = SequenceNumbers.loadSeqNoInfoFromLuceneCommit(source.getCommitUserData().entrySet());
         SequenceNumbers.CommitInfo targetSeqNos = SequenceNumbers.loadSeqNoInfoFromLuceneCommit(target.getCommitUserData().entrySet());
         if (sourceSeqNos.localCheckpoint != targetSeqNos.localCheckpoint || targetSeqNos.maxSeqNo != sourceSeqNos.maxSeqNo) {
@@ -936,7 +936,7 @@ public class RecoverySourceHandler {
     }
 
     /**
-     * 当整个恢复流程完结时触发   在trimAbove之前的数据都可以删除了
+     * 某个副本的peer数据恢复流程结束
      * @param targetLocalCheckpoint
      * @param trimAboveSeqNo
      * @param listener
@@ -954,17 +954,20 @@ public class RecoverySourceHandler {
          * shard as in-sync and relocating a shard. If we acquire the permit then no relocation handoff can complete before we are done
          * marking the shard as in-sync. If the relocation handoff holds all the permits then after the handoff completes and we acquire
          * the permit then the state of the shard will be relocated and this recovery will fail.
-         * 当某个replica 已经完成了recovery阶段 就会进入到 in-sync队列
+         * 当某个replica 已经完成了recovery阶段 就会进入到 in-sync队列   之前在完成phase1后会标记成 tracked
+         * 如果在副本的恢复期间 主分片都没有写入新的数据 副本在与主分片同步数据后他们的 checkpoint会一样 都等于globalCheckpoint
+         * 如果此时主分片又写入了数据 并且成功追加到其他分片上 那么全局偏移量是会增大的 但是之后副本就会加入到 pendingSync容器中 同时之后全局偏移量就不会变化了 除非所有副本都追赶上
+         * 并且这时本线程是阻塞的
          */
         runUnderPrimaryPermit(() -> shard.markAllocationIdAsInSync(request.targetAllocationId(), targetLocalCheckpoint),
             shardId + " marking " + request.targetAllocationId() + " as in sync", shard, cancellableThreads, logger);
 
-        // 获取全局检查点
+        // 因为可能中途发生了阻塞 所以要获取最新的全局检查点
         final long globalCheckpoint = shard.getLastKnownGlobalCheckpoint(); // this global checkpoint is persisted in finalizeRecovery
         final StepListener<Void> finalizeListener = new StepListener<>();
         cancellableThreads.checkForCancel();
 
-        // 发送请求到对端 通知本次恢复已完成
+        // 发送请求到对端 通知本次恢复已完成  这也代表着副本与主分片的数据完全同步 (包括在恢复期间新写入的数据)
         recoveryTarget.finalizeRecovery(globalCheckpoint, trimAboveSeqNo, finalizeListener);
         finalizeListener.whenComplete(r -> {
 

@@ -182,7 +182,6 @@ public class ShardStateAction {
      * @param message            the reason for the failure
      * @param failure            the underlying cause of the failure
      * @param listener           callback upon completion of the request
-     * 当索引操作写入到 primary时  某些副本可能还未进入到 in-sync 队列中 这时候就没必要将请求发送到该节点上  所以触发该方法  注意是由主分片发起的
      */
     public void remoteShardFailed(final ShardId shardId, String allocationId, long primaryTerm, boolean markAsStale, final String message,
                                   @Nullable final Exception failure, ActionListener<Void> listener) {
@@ -425,7 +424,6 @@ public class ShardStateAction {
                     } else {
                         // failing a shard also possibly marks it as stale (see IndexMetadataUpdater)
                         logger.debug("{} failing shard {} (shard failed task: [{}])", task.shardId, matched, task);
-                        // 如果在路由表中找到了这个分片 就标记成失败的分片
                         tasksToBeApplied.add(task);
                         failedShardsToBeApplied.add(new FailedShard(matched, task.message, task.failure, task.markAsStale));
                     }

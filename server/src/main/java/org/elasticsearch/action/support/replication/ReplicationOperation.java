@@ -192,7 +192,7 @@ public class ReplicationOperation<
             assert maxSeqNoOfUpdatesOrDeletes != SequenceNumbers.UNASSIGNED_SEQ_NO : "seqno_of_updates still uninitialized";
             // 副本组描述了当前分片的状态
             final ReplicationGroup replicationGroup = primary.getReplicationGroup();
-            // 该对象本身会监听 replicationGroup的变化 并抽取信息  只维护tracked相关的数据
+            // 该对象本身会监听 replicationGroup的变化 并抽取信息  只维护tracked相关的数据  针对peerRecovery的分片 在完成了safeCommit的索引文件传输 以及创建engine后 就会标记成tracked
             final PendingReplicationActions pendingReplicationActions = primary.getPendingReplicationActions();
             // 根据条件判断 是否要将此时不可用的分片关闭
             markUnavailableShardsAsStale(replicaRequest, replicationGroup);
@@ -424,7 +424,7 @@ public class ReplicationOperation<
     /**
      * Checks whether we can perform a write based on the required active shard count setting.
      * Returns **null* if OK to proceed, or a string describing the reason to stop
-     * 某些请求可能有此时活跃的分片数量限制  当不满足条件时不应该继续执行任务
+     * 某些请求可能有此时活跃的分片数量限制  当不满足条件时不应该继续执行任务   这样比如设置是ALL 然后有正在恢复数据的分片这时就应该拒绝写入
      */
     protected String checkActiveShardCount() {
         // 获取该主分片的 shardId

@@ -107,9 +107,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
     public void onCommit(List<? extends IndexCommit> commits) throws IOException {
         final IndexCommit safeCommit;
         synchronized (this) {
-            // 找到需要保存的最小的commit 对象
-            // 实际上就是检测全局检查点 代表在集群的所有分片上(也可能是超半数节点,目前还不清楚) 数据都已经提交到了某个位置
-            // 这样之前的数据就可以删除了
+            // 除了最接近全局检查点的数据需要保留外 其余索引文件可以删除
             final int keptPosition = indexOfKeptCommits(commits, globalCheckpointSupplier.getAsLong());
             this.safeCommitInfo = SafeCommitInfo.EMPTY;
             this.lastCommit = commits.get(commits.size() - 1);
@@ -117,7 +115,7 @@ public class CombinedDeletionPolicy extends IndexDeletionPolicy {
 
             // 安全点代表所有节点都已经同步完前面的数据了 所以可以删除
             for (int i = 0; i < keptPosition; i++) {
-                // 将没有被使用的commit删除
+                // 如果某个commit信息正在被使用 比如创建快照 那么先不删除
                 if (snapshottedCommits.containsKey(commits.get(i)) == false) {
                     // 加入到删除队列中  先进入删除队列才有可能减少引用计数 才有可能被删除
                     deleteCommit(commits.get(i));

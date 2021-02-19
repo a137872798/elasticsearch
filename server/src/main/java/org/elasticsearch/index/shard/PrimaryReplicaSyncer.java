@@ -81,6 +81,11 @@ public class PrimaryReplicaSyncer {
         this.chunkSize = chunkSize;
     }
 
+    /**
+     * 只有新的primary 会处理 primaryTerm更新的逻辑 之后会将这个变化通知到其他分片上
+     * @param indexShard  本次升级的副本
+     * @param listener
+     */
     public void resync(final IndexShard indexShard, final ActionListener<ResyncTask> listener) {
         Translog.Snapshot snapshot = null;
         try {
@@ -91,6 +96,7 @@ public class PrimaryReplicaSyncer {
             // Wrap translog snapshot to make it synchronized as it is accessed by different threads through SnapshotSender.
             // Even though those calls are not concurrent, snapshot.next() uses non-synchronized state and is not multi-thread-compatible
             // Also fail the resync early if the shard is shutting down
+            // 将全局检查点到最新seq对应的数据 转换成快照数据并返回
             snapshot = indexShard.newChangesSnapshot("resync", startingSeqNo, Long.MAX_VALUE, false);
             final Translog.Snapshot originalSnapshot = snapshot;
             final Translog.Snapshot wrappedSnapshot = new Translog.Snapshot() {
@@ -139,6 +145,7 @@ public class PrimaryReplicaSyncer {
             };
             // We must capture the timestamp after snapshotting a snapshot of operations to make sure
             // that the auto_id_timestamp of every operation in the snapshot is at most this value.
+            // 时间戳是用于快速判断某个id对应的数据是否插入的优化条件 可以先忽略
             final long maxSeenAutoIdTimestamp = indexShard.getMaxSeenAutoIdTimestamp();
             resync(shardId, indexShard.routingEntry().allocationId().getId(), indexShard.getPendingPrimaryTerm(), wrappedSnapshot,
                 startingSeqNo, maxSeqNo, maxSeenAutoIdTimestamp, resyncListener);
@@ -153,6 +160,17 @@ public class PrimaryReplicaSyncer {
         }
     }
 
+    /**
+     * 将某个 primaryTerm对应的某一范围的数据同步到其他副本上
+     * @param shardId
+     * @param primaryAllocationId
+     * @param primaryTerm
+     * @param snapshot
+     * @param startingSeqNo
+     * @param maxSeqNo
+     * @param maxSeenAutoIdTimestamp
+     * @param listener
+     */
     private void resync(final ShardId shardId, final String primaryAllocationId, final long primaryTerm, final Translog.Snapshot snapshot,
                         long startingSeqNo, long maxSeqNo, long maxSeenAutoIdTimestamp, ActionListener<ResyncTask> listener) {
         ResyncRequest request = new ResyncRequest(shardId, primaryAllocationId);
@@ -235,6 +253,10 @@ public class PrimaryReplicaSyncer {
 
         private static final Translog.Operation[] EMPTY_ARRAY = new Translog.Operation[0];
 
+        /**
+         * 将快照中的 operation同步到其他分片上
+         * @throws Exception
+         */
         @Override
         protected void doRun() throws Exception {
             long size = 0;
@@ -257,6 +279,7 @@ public class PrimaryReplicaSyncer {
                 totalSentOps.incrementAndGet();
 
                 // check if this request is past bytes threshold, and if so, send it off
+                // 每次批量传输 chunk大小的数据
                 if (size >= chunkSizeInBytes) {
                     break;
                 }
@@ -273,6 +296,7 @@ public class PrimaryReplicaSyncer {
                 syncAction.sync(request, task, primaryAllocationId, primaryTerm, this);
             } else if (closed.compareAndSet(false, true)) {
                 logger.trace("{} resync completed (total sent: [{}], skipped: [{}])", shardId, totalSentOps.get(), totalSkippedOps.get());
+                // 当所有数据同步完成后触发监听器
                 listener.onResponse(null);
             }
         }
